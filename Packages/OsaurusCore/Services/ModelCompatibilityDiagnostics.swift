@@ -104,6 +104,7 @@ enum ModelCompatibilityDiagnostics {
         }
 
         enum ReasonCode: String {
+            case modelManifestBlocked
             case catalogReady
             case localBundleReady
             case externalBundleUnproven
@@ -345,6 +346,16 @@ enum ModelCompatibilityDiagnostics {
         localBundle: LocalBundleStatus,
         config: ConfigSummary?
     ) -> RuntimeStatus {
+        if let path = localBundle.path,
+            let failure = ModelManifest.loadFailure(at: URL(fileURLWithPath: path))
+        {
+            return RuntimeStatus(
+                kind: .blocked,
+                reason: .modelManifestBlocked,
+                title: L("Model version compatibility"),
+                detail: failure.localizedDescription
+            )
+        }
         if let blocker = unsupportedFamilyStatus(
             modelId: modelId,
             modelName: modelName,
@@ -374,8 +385,7 @@ enum ModelCompatibilityDiagnostics {
             // (e.g. PyTorch / transformers) safetensors export co-mingled in a
             // shared model store — it passes discovery but vmlx cannot load it.
             // Block it here with a clear reason instead of an opaque load crash.
-            if !modelId.lowercased().hasPrefix("osaurusai/"),
-                let path = localBundle.path,
+            if let path = localBundle.path,
                 !ModelFormatDetection.isMLXFormat(at: URL(fileURLWithPath: path))
             {
                 return RuntimeStatus(

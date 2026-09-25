@@ -185,13 +185,22 @@ struct ChatEmptyState: View {
         return "How can I help you today?"
     }
 
-    /// "Shared by Maggie · annietest" for a teammate's shared agent; nil for
-    /// the user's own agents and legacy Mode 2 peers (no owner to name).
+    /// "Shared by Maggie · annietest" for a teammate's shared agent, "Your
+    /// agent on another device · annietest" for one this identity shared
+    /// from a different device; nil for agents hosted here and legacy
+    /// Mode 2 peers (no owner to name).
     private var sharedAttribution: String? {
-        guard isRemoteChat, let shared = sharedAgent, !shared.isMine,
-            let owner = shared.ownerName?.trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty
+        guard isRemoteChat, let shared = sharedAgent, !shared.isHostedHere else { return nil }
+        let workspace = shared.workspaceName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if shared.isOwnedElsewhere {
+            if let workspace, !workspace.isEmpty {
+                return String(format: L("Your agent on another device · %@"), workspace)
+            }
+            return L("Your agent on another device")
+        }
+        guard let owner = shared.ownerName?.trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty
         else { return nil }
-        if let workspace = shared.workspaceName?.trimmingCharacters(in: .whitespacesAndNewlines), !workspace.isEmpty {
+        if let workspace, !workspace.isEmpty {
             return String(format: L("Shared by %@ · %@"), owner, workspace)
         }
         return String(format: L("Shared by %@"), owner)

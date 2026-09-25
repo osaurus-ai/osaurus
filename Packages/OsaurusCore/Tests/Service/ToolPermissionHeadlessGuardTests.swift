@@ -19,6 +19,7 @@
 //  assertion below is about REACHABILITY, not about the boolean.
 //
 
+import Foundation
 import Testing
 
 @testable import OsaurusCore
@@ -68,25 +69,24 @@ struct ToolPermissionHeadlessGuardTests {
         #expect(outcome == .denied)
     }
 
-    /// The spawn path is the one that actually produced the stuck window: its
-    /// dialog carries a model picker, and it had no `Task.isCancelled` early
-    /// return either, so it was the least escapable of the three.
-    @Test func spawnApprovalIsDeniedHeadless() async {
-        let outcome = await ToolPermissionPromptService.requestSpawnApproval(
-            toolName: "image",
+    /// The policy path with a revalidate hook is what spawn uses. Headless it
+    /// must deny before the hook runs — nothing may enqueue.
+    @Test func policyApprovalWithRevalidateIsDeniedHeadlessWithoutRunningTheHook() async {
+        let hookRan = LockedFlag()
+        let outcome = await ToolPermissionPromptService.requestPolicyApproval(
+            toolName: "spawn_agent",
             description: "d",
             argumentsJSON: #"{"resolved_model":"test-model"}"#,
-            modelPickerTitle: "Model",
-            modelOptions: [],
-            currentModel: nil
+            revalidate: {
+                hookRan.set()
+                return nil
+            }
         )
-
-        switch outcome {
-        case .denied:
-            break
-        case .allowed:
-            Issue.record("spawn approval must not self-approve in a headless test process")
-        }
+        #expect(outcome == .denied)
+        // The hook only runs from inside the queue's pump, so an unrun hook
+        // proves nothing was enqueued. (The global queue depth is shared with
+        // the queue suite's presenter stand-in and is not asserted here.)
+        #expect(!hookRan.value, "headless denial must not enqueue or revalidate")
     }
 
     /// No panel may be left behind. A window that outlives the call is the
@@ -99,5 +99,20 @@ struct ToolPermissionHeadlessGuardTests {
             ToolPermissionPromptService.hasOpenPermissionWindowForTesting
         }
         #expect(!stillOpen, "an approval call left a panel on screen")
+    }
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var value: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return flag
+    }
+    func set() {
+        lock.lock()
+        flag = true
+        lock.unlock()
     }
 }

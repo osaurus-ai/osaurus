@@ -121,25 +121,62 @@ struct ModelManagerSuggestedTests {
             let suggested = ModelManager().suggestedModels
             #expect(!suggested.contains { $0.id.lowercased().contains("ling-2.6") })
             // `suggestedModels` is RAM-tiered (the Top Pick can be filtered on a small
-            // runner); the unfiltered curated id list must still carry Raptor.
-            #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-v0.5-8b-a1b-jang_6m"))
+            // runner); the unfiltered curated id list must still carry Raptor 0.6.
+            #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-0.6-4b-jang_6m"))
         }
     }
 
-    @Test @MainActor func raptorEntry_isMainstreamTopPick() async {
+    @Test @MainActor func raptor06Entry_isOnboardingDefaultTopPick() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let raptor = suggested.first {
-                $0.id == "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+                $0.id == "OsaurusAI/Raptor-0.6-4B-JANG_6M"
             }
 
             #expect(raptor != nil)
-            #expect(raptor?.modelType == "bailing_hybrid")
+            #expect(raptor?.modelType == "spark2_5")
             #expect(raptor?.isTopSuggestion == true)
             #expect(raptor?.useCase == .general)
-            #expect(raptor?.downloadSizeBytes == 6_783_354_784)
+            #expect(raptor?.downloadSizeBytes == 3_677_829_017)
             #expect(raptor?.releasedAt != nil)
         }
+    }
+
+    /// Raptor v0.5 8B-A1B is superseded by 0.6 and retired: it is neither
+    /// curated nor allowed back in through the OsaurusAI org auto-fetch.
+    @Test @MainActor func raptorV05Entry_isRetired() async {
+        let v05 = "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+        #expect(!ModelManager.curatedSuggestedIds.contains(v05.lowercased()))
+        #expect(ModelManager.retiredOsaurusOrgIds.contains(v05.lowercased()))
+
+        await withIsolatedModelSizeCache {
+            let manager = ModelManager()
+            #expect(!manager.suggestedModels.contains { $0.id == v05 })
+
+            let resurfaced = MLXModel(
+                id: v05,
+                name: "Raptor v0.5",
+                description: "From OsaurusAI on Hugging Face.",
+                downloadURL: "https://huggingface.co/\(v05)"
+            )
+            manager.applyOsaurusOrgFetch(autoFetched: [resurfaced])
+            #expect(!manager.suggestedModels.contains { $0.id == v05 })
+        }
+    }
+
+    @Test @MainActor func raptorEntries_doNotShareFamilyKey() async {
+        #expect(
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
+                == "osaurusai/raptor-0.6-4b"
+        )
+        #expect(
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")
+                == "osaurusai/raptor-v0.5-8b-a1b"
+        )
+        #expect(
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
+                != ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")
+        )
     }
 
     @Test @MainActor func nanbeige42Entry_isJang6mTopPick() async {
@@ -273,14 +310,13 @@ struct ModelManagerSuggestedTests {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
-            // Recommendation spine: Raptor 8B-A1B hybrid MoE for mainstream
-            // RAM, Ornith 1.5 35B-A3B MXFP8 for the larger tiers, official
-            // OsaurusAI Gemma 4 for the smaller
-            // VL tiers, and Nanbeige 4.2 3B JANG_6M as the text-quality
-            // exception (JANG_6M beats that family's MXFP8). These are the
-            // ONLY Top Picks.
+            // Recommendation spine: Raptor 0.6 4B for 8 GB through mainstream
+            // RAM (v0.5 is retired), Ornith 1.5 35B-A3B MXFP8 for the larger
+            // tiers, official OsaurusAI Gemma 4 for the VL tiers, and
+            // Nanbeige 4.2 3B JANG_6M as the text-quality exception (JANG_6M
+            // beats that family's MXFP8). These are the ONLY Top Picks.
             let expectedTopPicks: Set<String> = [
-                "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
+                "OsaurusAI/Raptor-0.6-4B-JANG_6M",
                 "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
                 "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
                 "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -289,7 +325,7 @@ struct ModelManagerSuggestedTests {
             ]
             #expect(
                 topIds == expectedTopPicks,
-                "Top Picks should be exactly Raptor + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
+                "Top Picks should be exactly Raptor 0.6 + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
             )
             // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / Bonsai, are
             // catalog-only — installable and selectable, just not part of the
@@ -344,6 +380,7 @@ struct ModelManagerSuggestedTests {
             "osaurusai/qwen3.5-35b-a3b-jang_2s",
             "osaurusai/ornith-1.0-9b-mxfp8",
             "osaurusai/ornith-1.0-35b-mxfp8",
+            "osaurusai/raptor-v0.5-8b-a1b-jang_6m",
         ] {
             #expect(!ids.contains(retired), "expected \(retired) to be removed")
         }
@@ -412,6 +449,22 @@ struct ModelManagerSuggestedTests {
         )
     }
 
+    @Test func chatCatalogEligibility_rejectsGGUFRepos() {
+        // GGUF builds ship for Windows; the Mac app cannot run them.
+        #expect(ModelManager.isGGUFRepo(id: "OsaurusAI/Qwen3-8B-GGUF"))
+        #expect(ModelManager.isGGUFRepo(id: "someone/model-gguf-q4"))
+        #expect(ModelManager.isGGUFRepo(id: "OsaurusAI/model", tags: ["GGUF", "llama"]))
+        #expect(!ModelManager.isGGUFRepo(id: "mlx-community/Qwen3-8B-4bit", tags: ["mlx"]))
+        #expect(
+            !ModelManager.isChatCatalogEligible(
+                id: "OsaurusAI/Qwen3-8B-GGUF", pipelineTag: "text-generation")
+        )
+        #expect(
+            !ModelManager.isChatCatalogEligible(
+                id: "OsaurusAI/Qwen3-8B", pipelineTag: "text-generation", tags: ["gguf"])
+        )
+    }
+
     @Test @MainActor func panelOwnedRepos_droppedFromAutoFetchMerge() async {
         await withIsolatedModelSizeCache {
             let manager = ModelManager()
@@ -449,26 +502,43 @@ struct ModelManagerSuggestedTests {
                     "auto-default \(pick.id) at \(gb)GB must not be a Gemma QAT/MXFP4 build")
 
                 // The pick is the largest-base-parameter Top Pick that
-                // comfortably fits. Equal-size variants prefer the larger,
-                // higher-quality footprint. (When nothing is comfortable, the
-                // fallback smallest candidate is allowed.)
+                // comfortably fits, except Raptor 0.6 wins when it fits and
+                // no 12B+ upgrade (Gemma 12B / Ornith 35B) is comfortable.
+                // Equal-size variants prefer the larger, higher-quality
+                // footprint. (When nothing is comfortable, the fallback
+                // smallest candidate is allowed.)
                 let comfortable = candidates.filter {
                     $0.compatibility(totalMemoryGB: gb) == .compatible
                 }
                 if !comfortable.isEmpty {
-                    let maxParameters = comfortable.compactMap(\.parameterCountBillions).max() ?? 0
-                    #expect(
-                        (pick.parameterCountBillions ?? -1) == maxParameters,
-                        "auto-default at \(gb)GB should have the largest comfortable base model"
-                    )
-                    let strongestFamily = comfortable.filter {
-                        ($0.parameterCountBillions ?? 0) == maxParameters
+                    let preferred = comfortable.first {
+                        $0.id == ConfigureAIState.preferredOnboardingModelId
                     }
-                    let maxMem = strongestFamily.compactMap(\.estimatedMemoryGB).max() ?? 0
-                    #expect(
-                        (pick.estimatedMemoryGB ?? -1) == maxMem,
-                        "auto-default at \(gb)GB should prefer the highest-quality fitting variant"
-                    )
+                    let hasLargerRAMTier = comfortable.contains {
+                        ($0.parameterCountBillions ?? 0)
+                            >= ConfigureAIState.largeRAMOnboardingParameterFloor
+                    }
+                    if let preferred, !hasLargerRAMTier {
+                        #expect(
+                            pick.id == preferred.id,
+                            "auto-default at \(gb)GB should be preferred Raptor 0.6"
+                        )
+                    } else {
+                        let maxParameters =
+                            comfortable.compactMap(\.parameterCountBillions).max() ?? 0
+                        #expect(
+                            (pick.parameterCountBillions ?? -1) == maxParameters,
+                            "auto-default at \(gb)GB should have the largest comfortable base model"
+                        )
+                        let strongestFamily = comfortable.filter {
+                            ($0.parameterCountBillions ?? 0) == maxParameters
+                        }
+                        let maxMem = strongestFamily.compactMap(\.estimatedMemoryGB).max() ?? 0
+                        #expect(
+                            (pick.estimatedMemoryGB ?? -1) == maxMem,
+                            "auto-default at \(gb)GB should prefer the highest-quality fitting variant"
+                        )
+                    }
                 }
             }
         }
@@ -490,9 +560,13 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func onboardingDefault_selectsRaptorThrough24GB() async {
+    @Test @MainActor func onboardingDefault_selectsRaptor06Through24GB() async {
         await withIsolatedModelSizeCache {
             let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
+            let eightGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 8
+            )
             let sixteenGB = ConfigureAIState.recommendedLocalPick(
                 from: candidates,
                 totalMemoryGB: 16
@@ -506,20 +580,11 @@ struct ModelManagerSuggestedTests {
                 totalMemoryGB: 24
             )
 
-            let raptorId = "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+            let raptorId = ConfigureAIState.preferredOnboardingModelId
+            #expect(eightGB?.id == raptorId)
             #expect(sixteenGB?.id == raptorId)
             #expect(eighteenGB?.id == raptorId)
             #expect(twentyFourGB?.id == raptorId)
-
-            // Nanbeige JANG_6M (~4.5 GB working set) is a Top Pick but must
-            // not steal the 8 GB multimodal floor (Gemma E2B). Raptor's
-            // measured bundle is intentionally not treated as comfortable on
-            // an 8 GB machine.
-            let eightGB = ConfigureAIState.recommendedLocalPick(
-                from: candidates,
-                totalMemoryGB: 8
-            )
-            #expect(eightGB?.id == "OsaurusAI/gemma-4-E2B-it-8bit")
         }
     }
 }

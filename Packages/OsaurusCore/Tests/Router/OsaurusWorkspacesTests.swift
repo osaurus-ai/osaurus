@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 
@@ -52,6 +53,46 @@ struct WorkspacesWireTypeTests {
         #expect(future.typedSource == nil)
         #expect(future.source == "sponsored")
         #expect(future.isActive)
+    }
+
+    /// Every person DTO carries the router's `osaurus_id` decoration (the
+    /// claimed `@handle`). It names a person when no display name is set,
+    /// ahead of the shortened wallet; `dino_id` stays ignored.
+    @Test func personAndMemberDecodeOsaurusIDAndPreferItOverWallet() throws {
+        let person = try decoder.decode(
+            OsaurusRouterWorkspacePerson.self,
+            from: Data(
+                #"{"account_id":"acct-1","wallet_address":"0xAbC1234567890abcdef1234567890ABCDEF12345","osaurus_id":"rex-42","dino_id":null,"display_name":null}"#
+                    .utf8
+            )
+        )
+        #expect(person.osaurusId == "rex-42")
+        #expect(person.friendlyName == "@rex-42")
+
+        let named = try decoder.decode(
+            OsaurusRouterWorkspacePerson.self,
+            from: Data(#"{"account_id":"acct-1","osaurus_id":"rex-42","display_name":"Rexy"}"#.utf8)
+        )
+        #expect(named.friendlyName == "Rexy")
+
+        let bare = try decoder.decode(
+            OsaurusRouterWorkspacePerson.self,
+            from: Data(#"{"account_id":"acct-1","wallet_address":"0xAbC1234567890abcdef1234567890ABCDEF12345"}"#.utf8)
+        )
+        #expect(bare.osaurusId == nil)
+        #expect(bare.friendlyName == "0xAbC1…2345")
+
+        let member = try decoder.decode(
+            OsaurusRouterWorkspaceMember.self,
+            from: Data(
+                #"{"account_id":"acct-2","wallet_address":"0x0000000000000000000000000000000000000002","osaurus_id":"trice","display_name":"","role":"member"}"#
+                    .utf8
+            )
+        )
+        #expect(member.osaurusId == "trice")
+        #expect(member.friendlyName == "@trice")
+        #expect(OsaurusRouterWorkspacePerson.handle("  ") == nil)
+        #expect(OsaurusRouterWorkspacePerson.handle(nil) == nil)
     }
 
     @Test func workspaceDetailDecodesEntitlementAndPool() throws {
@@ -1126,7 +1167,7 @@ struct WorkspacesAgentProofSignerTests {
             agentAddress: agentAddress,
             timestamp: timestamp,
             masterKey: TestKeys.alicePrivateKey,
-            agentIndex: agentIndex
+            agentKeyPath: .legacy(index: agentIndex)
         )
         #expect(proof.timestamp == timestamp)
         #expect(proof.signature.hasPrefix("0x"))
@@ -1157,7 +1198,7 @@ struct WorkspacesAgentProofSignerTests {
             agentAddress: addressOfIndex1,
             timestamp: 1_717_171_717,
             masterKey: TestKeys.alicePrivateKey,
-            agentIndex: 2
+            agentKeyPath: .legacy(index: 2)
         )
         let message = WorkspacesAgentProofSigner.proofMessage(
             workspaceId: "team-1", agentAddress: addressOfIndex1, timestamp: 1_717_171_717
@@ -1714,6 +1755,79 @@ struct WorkspacesServiceTests {
             service.clearSelection()
             #expect(service.poolBalance == nil)
             #expect(service.autoReload == nil)
+        }
+    }
+
+    /// Every `/workspaces/sync` reconnect delivers a full snapshot. One that
+    /// matches what the service already holds must not republish the list,
+    /// detail, members, agents, or invites — that republish (on a reconnect
+    /// loop) was the Workspaces tab's "constant refresh".
+    @Test func applySyncSnapshot_identicalSnapshotDoesNotRepublish() async throws {
+        try await withService(handler: { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/workspaces/team-1"):
+                return json(liveDetail(balanceMicro: "30000000"))
+            case ("GET", "/workspaces/team-1/credits/balance"):
+                return json(#"{"balance_micro":"30000000","expiring_micro":"0","purchased_micro":"0","frozen":false}"#)
+            case ("GET", "/workspaces/team-1/members"):
+                return json(#"{"data":[{"account_id":"acct-1","wallet_address":"0xabc","osaurus_id":"rex-42","role":"owner"}]}"#)
+            case ("GET", "/workspaces/team-1/invites"), ("GET", "/workspaces/team-1/agents"):
+                return json(#"{"data":[]}"#)
+            default:
+                throw URLError(.badURL)
+            }
+        }) { service, _ in
+            await service.selectWorkspace(id: "team-1")
+            let detail = try #require(service.detail)
+            let snapshot = WorkspaceSyncSnapshot(workspaces: [
+                .init(
+                    workspace: try JSONDecoder().decode(
+                        OsaurusRouterWorkspaceSummary.self,
+                        from: Data(#"{"id":"team-1","name":"Dino Devs","role":"owner","source":"subscription","active":true}"#.utf8)
+                    ),
+                    detail: detail,
+                    members: service.members,
+                    agents: service.workspaceAgents,
+                    invites: service.workspaceInvites
+                )
+            ])
+
+            var publishes: [String] = []
+            var subscriptions: [AnyCancellable] = []
+            subscriptions.append(service.$workspaces.dropFirst().sink { _ in publishes.append("workspaces") })
+            subscriptions.append(service.$detail.dropFirst().sink { _ in publishes.append("detail") })
+            subscriptions.append(service.$members.dropFirst().sink { _ in publishes.append("members") })
+            subscriptions.append(service.$workspaceAgents.dropFirst().sink { _ in publishes.append("agents") })
+            subscriptions.append(service.$workspaceInvites.dropFirst().sink { _ in publishes.append("invites") })
+            subscriptions.append(service.$isLoadingDetail.dropFirst().sink { _ in publishes.append("loading") })
+            defer { subscriptions.forEach { $0.cancel() } }
+
+            // First snapshot: the list was empty until now, so it publishes once.
+            service.applySyncSnapshot(snapshot)
+            #expect(publishes == ["workspaces"])
+            #expect(service.members.first?.friendlyName == "@rex-42")
+
+            // Identical snapshot (a reconnect): nothing visible changed, nothing publishes.
+            publishes.removeAll()
+            service.applySyncSnapshot(snapshot)
+            #expect(publishes.isEmpty, "identical snapshot republished: \(publishes)")
+
+            // A real change still lands.
+            let renamed = WorkspaceSyncSnapshot(workspaces: [
+                .init(
+                    workspace: try JSONDecoder().decode(
+                        OsaurusRouterWorkspaceSummary.self,
+                        from: Data(#"{"id":"team-1","name":"Renamed","role":"owner","source":"subscription","active":true}"#.utf8)
+                    ),
+                    detail: detail,
+                    members: [],
+                    agents: service.workspaceAgents,
+                    invites: service.workspaceInvites
+                )
+            ])
+            service.applySyncSnapshot(renamed)
+            #expect(publishes == ["workspaces", "members"])
+            #expect(service.members.isEmpty)
         }
     }
 
@@ -2394,6 +2508,145 @@ struct WorkspacesServiceTests {
         }
     }
 
+    // MARK: address rotation
+
+    /// After Rotate Key the router still lists the OLD address. The
+    /// migration must, per workspace that shares it: share the new address
+    /// (same display name, fresh proof), then unshare the old one — and skip
+    /// workspaces that never shared the agent. The billing preference, keyed
+    /// by agent id, follows the new address.
+    @Test func migrateShares_resharesNewAddressThenUnsharesOld_andRekeysBilling() async throws {
+        let calls = CallLog()
+        try await withService(handler: { request in
+            let path = request.url?.path ?? "?"
+            calls.append("\(request.httpMethod ?? "?") \(path)")
+            switch (request.httpMethod, path) {
+            case ("GET", "/workspaces"):
+                return json(
+                    #"{"data":[{"id":"team-1","name":"Dino Devs","role":"owner","active":true},{"id":"team-2","name":"Other","role":"member","active":true}]}"#
+                )
+            case ("GET", "/workspaces/team-1/agents"):
+                if calls.count(of: "DELETE /workspaces/team-1/agents/0xOLD000000000000000000000000000000000001") > 0 {
+                    return json(
+                        #"{"data":[{"agent_address":"0xnew000000000000000000000000000000000002","display_name":"Coco (shared)","description":"Writes docs","relay_url":"https://x","shared_at":"2026-08-31T00:00:00.000Z"}]}"#
+                    )
+                }
+                return json(
+                    #"{"data":[{"agent_address":"0xold000000000000000000000000000000000001","display_name":"Coco (shared)","description":"Writes docs","relay_url":"https://x","shared_at":"2026-08-31T00:00:00.000Z"}]}"#
+                )
+            case ("GET", "/workspaces/team-2/agents"):
+                return json(#"{"data":[]}"#)
+            case ("POST", "/workspaces/team-1/agents"):
+                let body = try JSONSerialization.jsonObject(
+                    with: Data(bodyString(request).utf8)
+                ) as? [String: Any]
+                #expect(body?["agent_address"] as? String == "0xnew000000000000000000000000000000000002")
+                #expect(body?["display_name"] as? String == "Coco (shared)")
+                #expect(body?["description"] as? String == "Writes docs")
+                #expect((body?["proof"] as? [String: Any])?["signature"] as? String == "0xproof")
+                return json(
+                    #"{"agent_address":"0xnew000000000000000000000000000000000002","display_name":"Coco (shared)","relay_url":"https://x","shared_at":"2026-08-31T00:00:00.000Z"}"#,
+                    status: 201
+                )
+            case ("DELETE", "/workspaces/team-1/agents/0xOLD000000000000000000000000000000000001"):
+                return json(#"{"revoked":true}"#)
+            default:
+                return json(#"{"data":[]}"#)
+            }
+        }) { service, defaults in
+            let agent = Agent(
+                id: UUID(),
+                name: "Coco",
+                isBuiltIn: false,
+                agentIndex: 1,
+                agentAddress: "0xNEW000000000000000000000000000000000002",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            let previous = "0xOLD000000000000000000000000000000000001"
+            WorkspacesService.setBillingWorkspace(
+                agentId: agent.id, agentAddress: previous, workspaceId: "team-1", defaults: defaults
+            )
+
+            let migration = await service.migrateShares(
+                from: previous,
+                to: agent,
+                makeProof: { workspaceId in
+                    #expect(workspaceId == "team-1")
+                    return .init(timestamp: 1_717_171_717, signature: "0xproof")
+                }
+            )
+
+            #expect(migration.migrated == ["team-1"])
+            #expect(migration.failed.isEmpty)
+            // Share the new address BEFORE unsharing the old one.
+            let sharePos = calls.firstIndex(of: "POST /workspaces/team-1/agents")
+            let unsharePos = calls.firstIndex(of: "DELETE /workspaces/team-1/agents/\(previous)")
+            #expect(sharePos != nil && unsharePos != nil)
+            if let sharePos, let unsharePos { #expect(sharePos < unsharePos) }
+            #expect(calls.count(of: "POST /workspaces/team-2/agents") == 0)
+            // Billing binding survives, now under the new address.
+            #expect(service.billingWorkspaceId(forAgentAddress: previous) == nil)
+            #expect(service.billingWorkspaceId(forAgentAddress: agent.agentAddress!) == "team-1")
+        }
+    }
+
+    @Test func migrateShares_reportsWorkspaceWhoseShareFailed() async throws {
+        try await withService(handler: { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/workspaces"):
+                return json(#"{"data":[{"id":"team-1","name":"Dino Devs","role":"owner","active":true}]}"#)
+            case ("GET", "/workspaces/team-1/agents"):
+                return json(
+                    #"{"data":[{"agent_address":"0xold000000000000000000000000000000000001","display_name":"Coco","relay_url":"https://x","shared_at":"2026-08-31T00:00:00.000Z"}]}"#
+                )
+            case ("POST", "/workspaces/team-1/agents"):
+                return json(#"{"error":{"code":"WORKSPACE_AGENT_LIMIT","message":"full"}}"#, status: 409)
+            default:
+                return json(#"{"data":[]}"#)
+            }
+        }) { service, _ in
+            let agent = Agent(
+                id: UUID(),
+                name: "Coco",
+                isBuiltIn: false,
+                agentIndex: 1,
+                agentAddress: "0xNEW000000000000000000000000000000000002",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            let migration = await service.migrateShares(
+                from: "0xOLD000000000000000000000000000000000001",
+                to: agent,
+                makeProof: { _ in .init(timestamp: 1, signature: "0xproof") }
+            )
+            #expect(migration.migrated.isEmpty)
+            #expect(migration.failed == ["team-1"])
+            #expect(service.lastErrorCode == .agentLimit)
+        }
+    }
+
+    @Test func migrateShares_noopWhenAddressUnchangedOrMissing() async throws {
+        let unchanged = Agent(
+            id: UUID(), name: "Same", isBuiltIn: false, agentIndex: 0,
+            agentAddress: "0xAAA0000000000000000000000000000000000001",
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        let noIdentity = Agent(
+            id: UUID(), name: "None", isBuiltIn: false,
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        try await withService(handler: { request in
+            Issue.record("router must not be called: \(request.url?.path ?? "?")")
+            throw URLError(.badURL)
+        }) { service, _ in
+            let a = await service.migrateShares(
+                from: "0xaaa0000000000000000000000000000000000001", to: unchanged
+            )
+            let b = await service.migrateShares(from: "0xanything", to: noIdentity)
+            #expect(!a.touchedAny)
+            #expect(!b.touchedAny)
+        }
+    }
+
     // MARK: helpers
 
     private func withService(
@@ -2674,6 +2927,30 @@ private let pricesBody =
     #"{"plan":{"seats":null,"max_shared_agents":null,"monthly_credit_micro":"20000000","monthly_credits":"20.00","trial_days":14},"prices":[{"id":"price_month","billing_interval":"month","price_usd_micro":"20000000","price_usd":"20.00","active":true},{"id":"price_year","billing_interval":"year","price_usd_micro":"200000000","price_usd":"200.00","active":true}]}"#
 
 /// Thread-safe request counter for stub handlers (`@Sendable` closures).
+/// Ordered record of "METHOD path" strings the stub saw.
+private final class CallLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String] = []
+
+    func append(_ entry: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.append(entry)
+    }
+
+    func count(of entry: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.filter { $0 == entry }.count
+    }
+
+    func firstIndex(of entry: String) -> Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.firstIndex(of: entry)
+    }
+}
+
 private final class CallCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
@@ -2828,7 +3105,7 @@ struct WorkspaceAutoConnectTests {
         let now = Date()
         let roster = [
             agent("0xA"),  // eligible
-            agent("0xB", owner: "0xme"),  // mine (case-insensitive match)
+            agent("0xB", owner: "0xme"),  // hosted on this Mac (case-insensitive match)
             agent("0xC"),  // already paired
             agent("0xD"),  // handshake in flight
             agent("0xE", online: false),  // host known offline
@@ -2836,7 +3113,7 @@ struct WorkspaceAutoConnectTests {
         ]
         let picked = WorkspaceAgentConnectService.autoConnectCandidates(
             agents: roster,
-            myWalletAddress: "0xME",
+            hostedAddresses: ["0xB"],
             pairedAddresses: ["0xc"],
             connectingAddresses: ["0xd"],
             lastAttempts: [:],
@@ -2854,7 +3131,7 @@ struct WorkspaceAutoConnectTests {
         )
         let picked = WorkspaceAgentConnectService.autoConnectCandidates(
             agents: roster,
-            myWalletAddress: nil,
+            hostedAddresses: [],
             pairedAddresses: [],
             connectingAddresses: [],
             lastAttempts: ["0xa": recent, "0xb": old],
@@ -2863,17 +3140,37 @@ struct WorkspaceAutoConnectTests {
         #expect(picked.map(\.agentAddress) == ["0xB"])
     }
 
-    @Test func unknownSelfWalletNeverExcludesAgents() {
-        // Before the first signed router call the local wallet is unknown;
-        // the owner check must not accidentally match everything or nothing.
+    @Test func noHostedAgentsNeverExcludesAgents() {
+        // A Mac with no agents of its own must not accidentally exclude
+        // everything or nothing.
         let picked = WorkspaceAgentConnectService.autoConnectCandidates(
             agents: [agent("0xA", owner: nil), agent("0xB")],
-            myWalletAddress: nil,
+            hostedAddresses: [],
             pairedAddresses: [],
             connectingAddresses: [],
             lastAttempts: [:]
         )
         #expect(picked.count == 2)
+    }
+
+    @Test func ownWalletAgentHostedOnAnotherDevice_isAutoConnected() {
+        // The same identity on two devices: an agent this wallet shared from
+        // the OTHER device is not hosted here, so it must be treated like a
+        // teammate's and paired over the relay — ownership alone never
+        // excludes it.
+        let roster = [
+            agent("0xHERE", owner: "0xme"),  // hosted on this Mac → skip
+            agent("0xTHERE", owner: "0xme"),  // same wallet, other device → connect
+            agent("0xTEAM", owner: "0xteammate"),
+        ]
+        let picked = WorkspaceAgentConnectService.autoConnectCandidates(
+            agents: roster,
+            hostedAddresses: ["0xhere"],
+            pairedAddresses: [],
+            connectingAddresses: [],
+            lastAttempts: [:]
+        )
+        #expect(picked.map(\.agentAddress) == ["0xTHERE", "0xTEAM"])
     }
 }
 

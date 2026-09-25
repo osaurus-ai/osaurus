@@ -619,16 +619,12 @@ public struct SystemPromptComposer: Sendable {
         snapshot: AgentConfigSnapshot
     ) -> (
         agents: [UUID],
-        models: [String],
-        notes: [String: String],
         launcherModelOverride: String?,
         workspaceAgents: [WorkspaceAgentRef]
     ) {
         if let frozen = snapshot.spawnConfiguration {
             return (
                 agents: frozen.agentIDs,
-                models: frozen.modelNames,
-                notes: frozen.modelNotes,
                 launcherModelOverride: frozen.launcherModelOverride,
                 workspaceAgents: frozen.workspaceAgents
             )
@@ -643,13 +639,6 @@ public struct SystemPromptComposer: Sendable {
                 perAgentEnabled: snapshot.spawnDelegationEnabled,
                 perAgentTargets: snapshot.spawnableAgentIDs
             ),
-            models: SubagentToolVisibility.effectiveSpawnableModels(
-                isDefault: isDefault,
-                config: config,
-                perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentModelTargets: snapshot.spawnableModelNames
-            ),
-            notes: isDefault ? config.spawnableModelNotes : snapshot.spawnableModelNotes,
             launcherModelOverride: SubagentToolVisibility.effectiveSubagentModel(
                 capabilityId: SubagentCapabilityRegistry.spawn.id,
                 isDefault: isDefault,
@@ -705,8 +694,6 @@ public struct SystemPromptComposer: Sendable {
             ? .empty
             : await SpawnDescriptors.resolveForRequest(
                 agentIDs: configuredSpawn.agents,
-                modelNames: configuredSpawn.models,
-                modelNotes: configuredSpawn.notes,
                 launcherModelOverride: configuredSpawn.launcherModelOverride,
                 workspaceAgents: configuredSpawn.workspaceAgents
             )
@@ -1029,7 +1016,8 @@ public struct SystemPromptComposer: Sendable {
                             + "append and put only the new bytes in content. "
                             + "Keep each file_write content under "
                             + "\(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; "
-                            + "for larger files use repeated calls with mode append."
+                            + "for larger files use repeated calls with mode append. "
+                            + SystemPromptTemplates.folderDocumentFormatsLine
                     )
                 )
                 let state = SystemPromptTemplates.sandboxState(
@@ -1366,40 +1354,22 @@ public struct SystemPromptComposer: Sendable {
         }
 
         // Spawn guidance enumerates the launching agent's request-local ACTUAL
-        // spawnable agents + models — so it can't ride the generic guidance loop
-        // above (whose `spawn` entry intentionally keeps `guidance == nil`).
-        // Render a dedicated block whenever any spawn tool reached the schema,
-        // listing only the tool(s) that resolved and reading the same pools
-        // (`SubagentToolVisibility` + the snapshot/config) the visibility gate
-        // used, so the prompt and the callable tools can never disagree. It joins
-        // the cached prefix until a pool edit re-renders it (a one-time bust, like
-        // the other config-driven sections). HTTP parity is automatic: both
-        // surfaces compose through here.
+        // spawnable agents — so it can't ride the generic guidance loop above
+        // (whose `spawn` entry intentionally keeps `guidance == nil`). Render
+        // a dedicated block whenever `spawn_agent` reached the schema, reading
+        // the same pools (`SubagentToolVisibility` + the snapshot/config) the
+        // visibility gate used, so the prompt and the callable tool can never
+        // disagree. It joins the cached prefix until a pool edit re-renders it
+        // (a one-time bust, like the other config-driven sections). HTTP
+        // parity is automatic: both surfaces compose through here.
         if !effectiveToolsOff {
             let agentToolResolved = resolvedNames.contains(
                 SubagentCapabilityRegistry.spawnAgentToolName
             )
-            let modelToolResolved = resolvedNames.contains(
-                SubagentCapabilityRegistry.spawnModelToolName
-            )
-            let batchToolResolved = resolvedNames.contains(
-                SubagentCapabilityRegistry.spawnBatchToolName
-            )
-            if agentToolResolved || modelToolResolved || batchToolResolved {
+            if agentToolResolved {
                 let fallbackConfig = SubagentConfigurationStore.snapshot()
-                // The worker tool-reach line must match what the runtime will
-                // actually grant, so resolve it through the SAME helper the
-                // spawn kind uses (default agent → global config, custom →
-                // its own settings).
-                let toolAccess =
-                    snapshot.spawnConfiguration?.toolAccess
-                    ?? SubagentToolVisibility.effectiveSpawnToolAccess(
-                        isDefault: snapshot.agentId == Agent.defaultId,
-                        config: fallbackConfig,
-                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
-                    )
-                let maxParallel =
-                    snapshot.spawnConfiguration?.budgets.maxParallelSpawns
+                let spawnBudgets =
+                    snapshot.spawnConfiguration?.budgets.normalized
                     ?? SubagentToolVisibility.effectiveBudgets(
                         isDefault: snapshot.agentId == Agent.defaultId,
                         config: fallbackConfig,
@@ -1407,21 +1377,17 @@ public struct SystemPromptComposer: Sendable {
                         sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
                             for: ServerRuntimeSettingsStore.snapshot()
                         )
-                    ).normalized.maxParallelSpawns
+                    ).normalized
                 composer.append(
                     .static(
                         id: "spawn",
                         label: L("Subagents"),
                         content: SystemPromptTemplates.spawnGuidance(
-                            agents: (agentToolResolved || batchToolResolved)
-                                ? toolset.spawnTargets.agents : [],
-                            models: (modelToolResolved || batchToolResolved)
-                                ? toolset.spawnTargets.models : [],
-                            workspaceAgents: (agentToolResolved || batchToolResolved)
-                                ? toolset.spawnTargets.workspaceAgents : [],
-                            availableToolNames: resolvedNames,
-                            toolAccess: toolAccess,
-                            maxParallel: maxParallel
+                            agents: toolset.spawnTargets.agents,
+                            workspaceAgents: toolset.spawnTargets.workspaceAgents,
+                            maxParallel: spawnBudgets.maxParallelSpawns,
+                            maxRemoteParallel: spawnBudgets.maxRemoteParallelSpawns,
+                            launcherHasFolder: executionMode.usesHostFolderTools
                         )
                     )
                 )
@@ -1451,6 +1417,25 @@ public struct SystemPromptComposer: Sendable {
                     )
                 )
             )
+        }
+
+        // Apple apps guidance: rendered only when an enabled app's tool
+        // actually resolved into the schema (custom agents only — the
+        // Default agent never carries Apple tools). Lists the enabled apps
+        // so a change to the Abilities toggles re-renders the block.
+        if !effectiveToolsOff {
+            let resolvedApps = AppleApp.allCases.filter {
+                !resolvedNames.isDisjoint(with: $0.toolNames)
+            }
+            if !resolvedApps.isEmpty {
+                composer.append(
+                    .static(
+                        id: "appleApps",
+                        label: L("Apple Apps"),
+                        content: SystemPromptTemplates.appleAppsGuidance(apps: resolvedApps)
+                    )
+                )
+            }
         }
 
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
@@ -2040,12 +2025,20 @@ public struct SystemPromptComposer: Sendable {
     /// parameter schema (only the prose description is trimmed).
     static func forcedCompactBootstrapSpec(_ tool: Tool) -> Tool {
         let name = tool.function.name
+        var description = oneLineToolDescription(tool.function.description)
+        if name == SubagentCapabilityRegistry.spawnAgentToolName,
+            let original = tool.function.description,
+            let boundary = original.range(of: SpawnAgentTool.routingMetadataMarker) {
+            // Routing data is required even when a constrained schema is
+            // compacted again by a downstream bootstrap consumer.
+            description = (description ?? "") + String(original[boundary.lowerBound...])
+        }
         if constraintPreservingBootstrapToolNames.contains(name) {
             return Tool(
                 type: tool.type,
                 function: ToolFunction(
                     name: name,
-                    description: oneLineToolDescription(tool.function.description),
+                    description: description,
                     parameters: tool.function.parameters
                 )
             )
@@ -2054,7 +2047,7 @@ public struct SystemPromptComposer: Sendable {
             type: tool.type,
             function: ToolFunction(
                 name: name,
-                description: oneLineToolDescription(tool.function.description),
+                description: description,
                 parameters: compactParameterSkeleton(tool.function.parameters)
             )
         )
@@ -2410,8 +2403,6 @@ public struct SystemPromptComposer: Sendable {
             ? .empty
             : SpawnDescriptors.resolveForPreview(
                 agentIDs: configuredSpawn.agents,
-                modelNames: configuredSpawn.models,
-                modelNotes: configuredSpawn.notes,
                 launcherModelOverride: configuredSpawn.launcherModelOverride,
                 workspaceAgents: configuredSpawn.workspaceAgents
             )
@@ -2719,6 +2710,10 @@ public struct SystemPromptComposer: Sendable {
         //     sandbox tools that registered late (the init placeholder or real
         //     tools after provisioning) join the schema instead of being
         //     suppressed forever as "new mid-session tools".
+        // Delegation is also recomputed: creating or repairing the first
+        // runnable target must make spawn_agent available in this existing
+        // conversation. The current target and capability gates below still
+        // remove it when delegation is unavailable or disabled.
         // Late-arriving plugin / MCP tools still need explicit
         // `capabilities_load` to appear — that path is the only sanctioned
         // way to grow the dynamic surface mid-session.
@@ -2728,6 +2723,7 @@ public struct SystemPromptComposer: Sendable {
                 let name = spec.function.name
                 guard let frozen = frozenAlwaysLoadedNames else { return true }
                 return frozen.contains(name) || liveSandboxNames.contains(name)
+                    || name == SubagentCapabilityRegistry.spawnAgentToolName
             }
         }
 
@@ -2853,6 +2849,18 @@ public struct SystemPromptComposer: Sendable {
                     byName.removeValue(forKey: name)
                 }
             }
+        }
+
+        // Built-in Apple apps: authoritative per-agent gate. Every tool of an
+        // app the agent has NOT enabled is stripped in BOTH auto and manual
+        // mode, with no `additionalToolNames` / ticked-manual-name bypass —
+        // the Abilities → Tools toggle is the only switch (a stale
+        // `manualToolNames` entry or a session `capabilities_load` must not
+        // resurrect a tool the user turned off). `ToolRegistry.execute`
+        // enforces the same gate at call time. The Default agent is
+        // additionally excluded wholesale by `orchestratorExcludedToolNames`.
+        for name in AppleApp.disabledToolNames(enabled: snapshot.enabledAppleApps) {
+            byName.removeValue(forKey: name)
         }
 
         // Authoritative per-agent subagent gates, driven by ONE loop over the
@@ -3092,14 +3100,6 @@ public struct SystemPromptComposer: Sendable {
                 perAgentEnabled: snapshot.spawnDelegationEnabled,
                 perAgentTargets: snapshot.spawnableAgentIDs
             )
-        let configuredModelIds =
-            snapshot.spawnConfiguration?.modelNames
-            ?? SubagentToolVisibility.effectiveSpawnableModels(
-                isDefault: isDefault,
-                config: config,
-                perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentModelTargets: snapshot.spawnableModelNames
-            )
         let configuredWorkspaceAgents =
             snapshot.spawnConfiguration?.workspaceAgents
             ?? SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
@@ -3108,17 +3108,19 @@ public struct SystemPromptComposer: Sendable {
                 perAgentEnabled: snapshot.spawnDelegationEnabled,
                 perAgentTargets: snapshot.spawnableWorkspaceAgents
             )
+        let currentTargets = spawnTargets ?? SpawnDescriptors.resolveForPreview(
+            agentIDs: configuredAgentIDs,
+            launcherModelOverride: configuredSpawnPools(snapshot: snapshot).launcherModelOverride,
+            workspaceAgents: configuredWorkspaceAgents
+        )
         let allowedAgentIDs =
-            (spawnTargets?.runnableAgentIDs ?? configuredAgentIDs)
+            currentTargets.runnableAgentIDs
             .filter { $0 != snapshot.agentId }
-        let allowedModelIds =
-            spawnTargets?.runnableModelIds ?? configuredModelIds
         // Workspace targets enter the enum by ADDRESS (durable), never by
         // presence or provider state — see `SpawnDescriptors` and the
         // prefix-cache invariant in `WorkspaceAgentLiveness`.
         let allowedWorkspaceAgents =
-            spawnTargets?.workspaceAgents.map { ($0.ref, $0.name) }
-            ?? configuredWorkspaceAgents.map { ($0, AgentTargetResolver.displayName(for: $0)) }
+            currentTargets.workspaceAgents.map { ($0.ref, $0.name) }
         let allowedWorkspaceAddresses = allowedWorkspaceAgents.map(\.0.agentAddress)
         // Display names for the allow-listed agents, in `allowedAgentIDs` order.
         // Threaded into the schema enums so a strict, enum-enforcing provider
@@ -3129,7 +3131,7 @@ public struct SystemPromptComposer: Sendable {
             + allowedWorkspaceAgents.map(\.1)
 
         if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
-            if spawnTargets != nil, allowedAgentIDs.isEmpty, allowedWorkspaceAddresses.isEmpty {
+            if allowedAgentIDs.isEmpty, allowedWorkspaceAddresses.isEmpty {
                 byName.removeValue(forKey: SubagentCapabilityRegistry.spawnAgentToolName)
             } else {
                 byName[SubagentCapabilityRegistry.spawnAgentToolName] =
@@ -3137,45 +3139,9 @@ public struct SystemPromptComposer: Sendable {
                         spawnAgent,
                         allowedAgentIDs: allowedAgentIDs,
                         allowedAgentNames: allowedAgentNames,
-                        allowedWorkspaceAddresses: allowedWorkspaceAddresses
-                    )
-            }
-        }
-        if let spawnModel = byName[SubagentCapabilityRegistry.spawnModelToolName] {
-            if spawnTargets != nil, allowedModelIds.isEmpty {
-                byName.removeValue(forKey: SubagentCapabilityRegistry.spawnModelToolName)
-            } else {
-                byName[SubagentCapabilityRegistry.spawnModelToolName] =
-                    SpawnModelTool.constrainedSpec(
-                        spawnModel,
-                        allowedModelIds: allowedModelIds
-                    )
-            }
-        }
-        if let spawnBatch = byName[SubagentCapabilityRegistry.spawnBatchToolName] {
-            if spawnTargets != nil, allowedAgentIDs.isEmpty, allowedModelIds.isEmpty,
-                allowedWorkspaceAddresses.isEmpty
-            {
-                byName.removeValue(forKey: SubagentCapabilityRegistry.spawnBatchToolName)
-            } else {
-                let maxParallel =
-                    snapshot.spawnConfiguration?.budgets.maxParallelSpawns
-                    ?? SubagentToolVisibility.effectiveBudgets(
-                        isDefault: isDefault,
-                        config: config,
-                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings,
-                        sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
-                            for: ServerRuntimeSettingsStore.snapshot()
-                        )
-                    ).normalized.maxParallelSpawns
-                byName[SubagentCapabilityRegistry.spawnBatchToolName] =
-                    SpawnBatchTool.constrainedSpec(
-                        spawnBatch,
-                        allowedAgentIDs: allowedAgentIDs,
-                        allowedAgentNames: allowedAgentNames,
-                        allowedModelIds: allowedModelIds,
                         allowedWorkspaceAddresses: allowedWorkspaceAddresses,
-                        maxParallel: maxParallel
+                        agents: currentTargets.agents,
+                        workspaceAgents: currentTargets.workspaceAgents
                     )
             }
         }
@@ -3226,6 +3192,7 @@ public struct SystemPromptComposer: Sendable {
             allowed.formUnion(visibleDelegation)
             if snapshot.computerUseEnabled { allowed.insert(ComputerUseTool.toolName) }
             if snapshot.browserUseEnabled { allowed.insert(BrowserUseTool.toolName) }
+            allowed.formUnion(AppleApp.toolNames(for: snapshot.enabledAppleApps))
             if byName["capabilities"] != nil { allowed.insert("capabilities") }
             if snapshot.hasChannelPublishDestinations {
                 allowed.insert(AgentChannelPublishTool.toolName)
@@ -3250,11 +3217,13 @@ public struct SystemPromptComposer: Sendable {
             // This unconditionally available baseline tool is part of the
             // stable schema. Query wording never adds or removes it.
             allowed.insert("get_current_time")
-            // The orchestrator invariant holds in workspace modes too: even
-            // with a folder/sandbox attached, the Default agent dispatches
-            // artifact delivery to workers (`share_artifact` stays
-            // worker-owned; the native search tools remain available).
+            // The orchestrator invariant holds in workspace modes too: with
+            // a working folder attached the Default agent keeps its configure
+            // surface, reads the folder (`file_read` / `file_search`), and
+            // still dispatches writing, shell work, and artifact delivery to
+            // workers (`orchestratorExcludedToolNames`).
             if snapshot.agentId == Agent.defaultId {
+                allowed.formUnion(ToolRegistry.orchestratorAllowedToolNames)
                 allowed.subtract(ToolRegistry.orchestratorExcludedToolNames)
             }
             byName = byName.filter { allowed.contains($0.key) }
@@ -3290,7 +3259,7 @@ public struct SystemPromptComposer: Sendable {
         // Apply this after every request gate and ablation so a legacy/manual
         // selection or a schema-less backend alias cannot erase supported
         // public arguments from the final model request.
-        for name in ToolRegistry.coreWorkspaceToolNames {
+        for name in ToolRegistry.compactWorkspaceSpecToolNames {
             guard let full = byName[name] else { continue }
             byName[name] = compactWorkspaceSpec(
                 full,
@@ -3304,7 +3273,7 @@ public struct SystemPromptComposer: Sendable {
         let resolved = canonicalToolOrder(Array(byName.values))
 
         // Debug aid for the delegation tool surfacing: confirms whether the
-        // spawn (`spawn_agent` / `spawn_model`) / `image` tools actually reached
+        // spawn (`spawn_agent`) / `image` tools actually reached
         // the model's schema, per the per-agent visibility resolved above.
         let spawnToolNames = SubagentCapabilityRegistry.spawn.toolNames
         let hasSpawn = resolved.contains { spawnToolNames.contains($0.function.name) }
@@ -3326,19 +3295,15 @@ public struct SystemPromptComposer: Sendable {
         let required: [String]
         switch tool.function.name {
         case "file_read":
-            if executionMode.usesSandboxTools, executionMode.hostReadContext == nil {
-                description =
-                    "Read UTF-8 text or list a directory in the VM working folder. "
-                    + "For binary PDF/Word/PowerPoint/XLSX files, use sandbox shell/code extraction."
-            } else if executionMode.usesSandboxTools {
-                description =
-                    "Read/list by path: trusted-folder documents extract PDF/Word/PowerPoint text "
-                    + "and preview XLSX; `/workspace/...` VM paths are raw text only."
-            } else {
-                description =
-                    "Read a file or list a directory. Directly extracts text from PDF, Word, and "
-                    + "PowerPoint and previews XLSX—call this on the document; do not unzip it manually."
-            }
+            // One contract on every route: documents and images under the
+            // VM's `/workspace` share are served by the same host
+            // extractors as a trusted folder (`WorkspaceShareRoute`).
+            description =
+                "Read a file or list a directory. Handles source/text, PDF, Word (.docx/.doc/.rtf), "
+                + "PowerPoint (.pptx), Excel (.xlsx preview; `sheet_name`), and images (shown to vision "
+                + "models, OCR text otherwise). Call it on the document itself; do not unzip or convert first."
+                + (executionMode.usesSandboxTools
+                    ? " Paths resolve in the VM working folder (`/workspace/...`)." : "")
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3380,35 +3345,43 @@ public struct SystemPromptComposer: Sendable {
             required = ["path"]
         case "file_write":
             description =
-                "Create, replace, append, or dry-run a UTF-8 file. To preserve existing bytes, "
-                + "choose append and send only new content."
+                "Create/overwrite text or code, or generate a document by extension: `.xlsx` from "
+                + "CSV/TSV text or JSON rows, `.docx`/`.pdf` from Markdown or HTML — built in, so pass the "
+                + "content directly instead of writing a script or looking for pandoc/reportlab. `.pptx` is "
+                + "not supported. Append adds text without replacing the file (text only); dry_run previews."
             properties = [
                 "path": .object([
                     "type": .string("string"),
-                    "description": .string("Relative file path"),
+                    "description": .string(
+                        "Relative file path; the extension selects text vs. .xlsx/.docx/.pdf generation"
+                    ),
                 ]),
                 "content": .object([
                     "type": .string("string"),
                     "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
                     "description": .string(
-                        "File content, at most \(WorkspaceToolContract.maxWriteContentCharacters) characters"
+                        "File text (at most \(WorkspaceToolContract.maxWriteContentCharacters) characters). "
+                            + "For .xlsx: CSV/TSV rows or {\"sheets\":[{\"name\",\"rows\"}]}; for .docx/.pdf: Markdown or HTML"
                     ),
                 ]),
                 "mode": .object([
                     "type": .string("string"),
                     "enum": .array([.string("overwrite"), .string("append")]),
-                    "description": .string("Default overwrite; append adds content without replacing the file"),
+                    "description": .string(
+                        "Default overwrite; append adds content without replacing the file (text files only; documents are regenerated whole)"
+                    ),
                 ]),
                 "dry_run": .object([
                     "type": .string("boolean"),
-                    "description": .string("Preview without writing (host paths only)"),
+                    "description": .string("Preview the diff or document summary without writing"),
                 ]),
             ]
             required = ["path", "content"]
         case "file_edit":
             description =
-                "Replace one exact, unique text occurrence, optionally as a dry run. "
-                + "For additive changes, use file_write append."
+                "Replace exact text in a UTF-8 file: one unique `old_string`, every occurrence with "
+                + "`replace_all`, or several atomic `edits`. Documents (.docx/.pdf/.xlsx) are not "
+                + "edited in place: read with file_read, then regenerate with file_write."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3416,20 +3389,63 @@ public struct SystemPromptComposer: Sendable {
                 ]),
                 "old_string": .object([
                     "type": .string("string"),
-                    "description": .string("Exact unique text; omit `N|` display prefixes"),
+                    "description": .string(
+                        "Exact text to replace (unique unless replace_all); omit `N|` display prefixes"
+                    ),
                 ]),
                 "new_string": .object([
                     "type": .string("string"),
                     "description": .string("Replacement text"),
+                ]),
+                "replace_all": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Replace every occurrence instead of requiring a unique match"),
+                ]),
+                "edits": .object([
+                    "type": .string("array"),
+                    "description": .string(
+                        "Batch form: [{old_string, new_string}] applied atomically; use instead of top-level old_string/new_string"
+                    ),
+                    "items": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "old_string": .object(["type": .string("string")]),
+                            "new_string": .object(["type": .string("string")]),
+                        ]),
+                        "required": .array([.string("old_string"), .string("new_string")]),
+                    ]),
                 ]),
                 "dry_run": .object([
                     "type": .string("boolean"),
                     "description": .string("Preview without editing (host paths only)"),
                 ]),
             ]
-            required = ["path", "old_string", "new_string"]
+            required = ["path"]
+        case "file_copy":
+            description =
+                "Copy one file to a new path as a raw byte copy (binary-safe: PDFs, images, "
+                + ".docx/.xlsx). Tracked and undoable; use it to version a file before editing."
+            properties = [
+                "source": .object([
+                    "type": .string("string"),
+                    "description": .string("Relative path of the file to copy"),
+                ]),
+                "destination": .object([
+                    "type": .string("string"),
+                    "description": .string("Relative destination path including the filename"),
+                ]),
+                "overwrite": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Replace an existing destination (default false)"),
+                ]),
+            ]
+            required = ["source", "destination"]
         case "file_search":
-            description = "Search file contents or names with optional path, file filter, and result limit."
+            description =
+                "Find which files in the working folder contain a term (default) or match a name. "
+                + "Content search looks inside PDF, Word, PowerPoint, and Excel files too, so use it "
+                + "before opening documents one by one; results carry a line or page/slide/sheet locator. "
+                + "Local files only — not a web search."
             properties = [
                 "pattern": .object([
                     "type": .string("string"),
@@ -3602,9 +3618,17 @@ public struct SystemPromptComposer: Sendable {
         let basePrompt: String
         switch profile {
         case .osaurusAssistant:
-            let prefersCompact = ContextSizeResolver.resolve(modelId: snapshot.model)
-                .prefersCompactPrompt
-            let addendum = DefaultAgentSystemPromptBuilder.render(compact: prefersCompact)
+            let window = ContextSizeResolver.resolve(modelId: snapshot.model)
+            let toolsOff = resolveEffectiveToolsOff(
+                toolsDisabled: snapshot.toolsDisabled,
+                globalToolsDisabled: snapshot.globalToolsDisabled,
+                sizeClassDisablesTools: window.sizeClass.disablesTools,
+                executionMode: executionMode
+            )
+            let addendum = DefaultAgentSystemPromptBuilder.render(
+                compact: window.prefersCompactPrompt,
+                toolsAvailable: !toolsOff
+            )
             let userPersona = snapshot.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             basePrompt = userPersona.isEmpty ? addendum : addendum + "\n\n" + snapshot.systemPrompt
         case .customAgent:

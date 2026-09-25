@@ -2,11 +2,10 @@
 //  SpawnGuidanceTests.swift
 //  OsaurusCoreTests — Subagent framework
 //
-//  The dynamic `spawn` system-prompt renderer. Each tool's block appears ONLY
-//  when its request-local runnable pool is non-empty, and every descriptor
-//  field (locality, provider, size/quant, vision, agent description, and the
-//  user's per-model NOTE) reaches the prose. Availability lifecycle coverage
-//  lives in SpawnTargetAvailabilityTests.
+//  The dynamic `spawn_agent` system-prompt renderer: one delegation tool,
+//  one parallelism rule, one follow-up rule, one results rule, and the
+//  launching agent's actual runnable targets. Availability lifecycle
+//  coverage lives in SpawnTargetAvailabilityTests.
 //
 
 import Foundation
@@ -22,7 +21,8 @@ struct SpawnGuidanceTests {
         description: String? = nil,
         modelId: String? = nil,
         isLocal: Bool? = nil,
-        provider: String? = nil
+        provider: String? = nil,
+        folder: String? = nil
     ) -> SpawnAgentDescriptor {
         SpawnAgentDescriptor(
             id: id,
@@ -30,36 +30,15 @@ struct SpawnGuidanceTests {
             description: description,
             modelId: modelId,
             isLocal: isLocal,
-            providerName: provider
-        )
-    }
-
-    private func model(
-        _ id: String,
-        displayName: String,
-        isLocal: Bool? = nil,
-        provider: String? = nil,
-        params: String? = nil,
-        quant: String? = nil,
-        isVLM: Bool = false,
-        note: String? = nil
-    ) -> SpawnModelDescriptor {
-        SpawnModelDescriptor(
-            id: id,
-            displayName: displayName,
-            isLocal: isLocal,
             providerName: provider,
-            parameterCount: params,
-            quantization: quant,
-            isVLM: isVLM,
-            note: note
+            workingFolderPath: folder
         )
     }
 
-    // MARK: - Renderer: both pools
+    // MARK: - Renderer: descriptor detail
 
-    @Test("both pools render both tool blocks with full descriptor detail + the per-model note")
-    func bothBlocksRenderWithDescriptorDetailAndNote() {
+    @Test("the agent list renders name, description, model locality, and own folder")
+    func agentLinesCarryDescriptorDetail() {
         let text = SystemPromptTemplates.spawnGuidance(
             agents: [
                 agent(
@@ -67,186 +46,171 @@ struct SpawnGuidanceTests {
                     description: "Concise helper",
                     modelId: "qwen3-4b-4bit",
                     isLocal: true
-                )
-            ],
-            models: [
-                model(
-                    "qwen3-4b-4bit",
-                    displayName: "Qwen3 4B",
-                    isLocal: true,
-                    params: "4B",
-                    quant: "4bit",
-                    isVLM: true,
-                    note: "Use for quick local edits"
                 ),
-                model(
-                    "openai/gpt-4o-mini",
-                    displayName: "GPT-4o mini",
+                agent(
+                    "cloudy",
+                    id: UUID(uuidString: "4A78F152-34AC-4867-AD7C-CB5FB6905E70")!,
+                    description: "Frontier reasoning",
+                    modelId: "gpt-4o-mini",
                     isLocal: false,
-                    provider: "OpenAI"
+                    provider: "OpenAI",
+                    folder: "/Users/me/Project"
                 ),
             ]
         )
 
-        // Header + both tool blocks present.
-        #expect(text.contains("## Delegating subtasks (spawn)"))
+        #expect(text.contains("## Delegating work (spawn_agent)"))
         #expect(text.contains("`spawn_agent(input, agent)`"))
-        #expect(text.contains("`spawn_model(input, model)`"))
-        #expect(text.contains("`spawn_batch(jobs)`"))
-
-        // Agent descriptor: canonical UUID, display name, description,
-        // locality, and model id.
-        #expect(text.contains("`5E80D9D2-B821-4B43-AE3B-8C0C7F83E005` — sparky"))
-        #expect(text.contains("Concise helper"))
-        #expect(text.contains("local"))
-        #expect(text.contains("model: qwen3-4b-4bit"))
-
-        // Local model descriptor: id, size, quant, vision, AND the note.
-        #expect(text.contains("`qwen3-4b-4bit`"))
-        #expect(text.contains("4B"))
-        #expect(text.contains("4bit"))
-        #expect(text.contains("vision"))
-        #expect(text.contains("Use for quick local edits"))
-
-        // Remote model descriptor: id, remote locality + provider; no note.
-        #expect(text.contains("`openai/gpt-4o-mini`"))
-        #expect(text.contains("remote"))
-        #expect(text.contains("OpenAI"))
+        // Names and stable IDs are quoted together with their routing descriptions.
+        #expect(text.contains("\"name\":\"sparky\""))
+        #expect(text.contains("\"description\":\"Concise helper\""))
+        #expect(text.contains("5E80D9D2-B821-4B43-AE3B-8C0C7F83E005"))
+        #expect(text.contains("model: qwen3-4b-4bit (local)"))
+        #expect(text.contains("\"name\":\"cloudy\""))
+        #expect(text.contains("\"description\":\"Frontier reasoning\""))
+        #expect(text.contains("gpt-4o-mini (remote) via OpenAI"))
+        #expect(text.contains("own folder: /Users/me/Project"))
     }
 
-    // MARK: - Renderer: per-tool gating
-
-    @Test("an empty agent pool omits the spawn_agent block (and vice-versa for models)")
-    func eachBlockGatesOnItsOwnPool() {
-        // Models only → spawn_model present, spawn_agent absent.
-        let modelsOnly = SystemPromptTemplates.spawnGuidance(
-            agents: [],
-            models: [model("local-model", displayName: "Local", isLocal: true)]
-        )
-        #expect(modelsOnly.contains("`spawn_model(input, model)`"))
-        #expect(!modelsOnly.contains("`spawn_agent(input, agent)`"))
-
-        // Agents only → spawn_agent present, spawn_model absent.
-        let agentsOnly = SystemPromptTemplates.spawnGuidance(
-            agents: [agent("helper")],
-            models: []
-        )
-        #expect(agentsOnly.contains("`spawn_agent(input, agent)`"))
-        #expect(!agentsOnly.contains("`spawn_model(input, model)`"))
-        #expect(modelsOnly.contains("`spawn_batch(jobs)`"))
-        #expect(agentsOnly.contains("`spawn_batch(jobs)`"))
+    @Test("an empty pool renders the rules but no agent list")
+    func emptyPoolRendersNoList() {
+        let text = SystemPromptTemplates.spawnGuidance(agents: [])
+        #expect(text.contains("`spawn_agent(input, agent)`"))
+        #expect(!text.contains("Your agents"))
     }
 
-    @Test("batch-only composition advertises both frozen target pools without single-spawn tools")
-    func batchOnlyCompositionUsesBothTargetPools() {
-        let agentID = UUID(uuidString: "4A78F152-34AC-4867-AD7C-CB5FB6905E70")!
-        let text = SystemPromptTemplates.spawnGuidance(
-            agents: [
-                agent(
-                    "Helper",
-                    id: agentID,
-                    description: "Reads source",
-                    modelId: "local/helper"
-                )
-            ],
-            models: [
-                model(
-                    "remote/reviewer",
-                    displayName: "Reviewer",
-                    isLocal: false,
-                    provider: "Remote"
-                )
-            ],
-            availableToolNames: [SubagentCapabilityRegistry.spawnBatchToolName],
-            maxParallel: 2
-        )
+    // MARK: - One delegation story
 
-        #expect(text.contains("`spawn_batch(jobs)`"))
-        #expect(text.contains("Available agent targets for `spawn_batch`"))
-        #expect(text.contains(agentID.uuidString))
-        #expect(text.contains("Available model targets for `spawn_batch`"))
-        #expect(text.contains("`remote/reviewer`"))
-        #expect(!text.contains("`spawn_agent(input, agent)`"))
-        #expect(!text.contains("`spawn_model(input, model)`"))
-    }
-
-    // MARK: - Renderer: tool reach + parallelism policy
-
-    @Test("tool-reach line tracks the launching agent's SpawnToolAccess")
-    func toolReachLineTracksAccess() {
-        let textOnly = SystemPromptTemplates.spawnGuidance(
-            agents: [agent("helper")],
-            models: [],
-            toolAccess: SpawnToolAccess.none
-        )
-        // Agent targets are TRUE delegations (the child IS the agent, with
-        // its own tools + Working Folder), so the grant line speaks only
-        // about bare-model workers.
-        #expect(textOnly.contains("Agent targets run as a full chat session of that agent"))
-        #expect(textOnly.contains("Bare-model workers (`spawn_model`) have no tools"))
-        #expect(textOnly.contains("No extra generic read-only file tools"))
-        #expect(!textOnly.contains("receive only the added host file_read"))
-        #expect(textOnly.contains("A direct-chat tool omitted from a worker's schema"))
-
-        let readOnly = SystemPromptTemplates.spawnGuidance(
-            agents: [agent("helper")],
-            models: [],
-            toolAccess: .readOnly
-        )
-        #expect(readOnly.contains("Agent targets run as a full chat session of that agent"))
-        #expect(readOnly.contains("Bare-model workers (`spawn_model`) receive only the added host file_read"))
-        #expect(readOnly.contains("file_search"))
-        #expect(readOnly.contains("They cannot write files."))
-        #expect(!readOnly.contains("have no tools"))
-        #expect(!readOnly.contains("sandbox reads"))
-    }
-
-    @Test("context-offload framing, self-contained input rule, and batch limits are always present")
-    func coreRulesAlwaysPresent() {
+    @Test("the removed spawn_model / spawn_batch vocabulary never renders")
+    func removedToolsAreGone() {
         let text = SystemPromptTemplates.spawnGuidance(
             agents: [agent("helper")],
-            models: [],
             maxParallel: 3
         )
-        #expect(text.contains("compact result digest"))
-        #expect(text.contains("bulk reading + summarization"))
-        #expect(text.contains("COMPLETE task as a self-contained prompt"))
-        #expect(text.contains("not this conversation"))
-        #expect(text.contains("at most 3 jobs in one batch"))
-        #expect(text.contains("3 is an upper bound on concurrent workers"))
-        #expect(text.contains("SAME model share one load"))
-        #expect(text.contains("different local models are serialized"))
+        #expect(!text.contains("spawn_model"))
+        #expect(!text.contains("spawn_batch"))
+        #expect(!text.contains("Bare-model"))
+        #expect(!text.contains("digest"))
+        #expect(!text.contains("target_type"))
     }
 
-    @Test("artifact delivery guidance steers file deliverables to share_artifact, not the digest")
-    func artifactDeliveryGuidanceAlwaysPresent() {
+    @Test("the model is told one fan-out story: N spawn_agent calls in one message")
+    func parallelSpawnStoryIsUnified() {
         let text = SystemPromptTemplates.spawnGuidance(
             agents: [agent("helper")],
-            models: []
+            maxParallel: 2,
+            maxRemoteParallel: 6
         )
-        // The orchestrator must learn that a worker's share_artifact reaches
-        // THIS conversation — otherwise it asks workers to paste whole files
-        // into their reply and the digest cap truncates the deliverable.
-        #expect(text.contains("Workers deliver FILES as artifacts"))
-        // Scoped to files that should land in THIS conversation — an agent
-        // with a working folder writes to disk instead (#2703).
-        #expect(text.contains("land in THIS"))
-        #expect(text.contains("`share_artifact`"))
-        #expect(text.contains("artifact card"))
-        #expect(text.contains("`artifacts_shared`"))
-        #expect(text.contains("never ask a worker to paste full file contents"))
+        #expect(text.contains("call `spawn_agent` several times in the SAME message"))
+        #expect(text.contains("up to 2 local and 6 remote/workspace agents"))
+        #expect(text.contains("each call returns its own answer"))
+        #expect(text.contains("Never send independent tasks one message at a time"))
+        #expect(
+            SystemPromptTemplates.parallelSpawnGuidance(maxParallel: 1, maxRemoteParallel: 8)
+                .contains("up to 1 local and 8 remote/workspace agents")
+        )
     }
 
-    @Test("a note is only rendered when present (no dangling em-dash for note-less models)")
-    func noteOnlyRendersWhenPresent() {
+    @Test("follow-ups use continue with the session_id; NEEDS INPUT is answered the same way")
+    func followUpRuleIsPresent() {
+        let text = SystemPromptTemplates.spawnGuidance(agents: [agent("helper")])
+        #expect(text.contains("`continue`"))
+        #expect(text.contains("`session_id`"))
+        #expect(text.contains("NEEDS INPUT:"))
+        #expect(text.contains("`background: true`"))
+        #expect(text.contains("Do not poll or re-send the task"))
+    }
+
+    @Test("the spawn_agent tool description tells the same story as the guidance")
+    func toolDescriptionAgrees() {
+        let description = SpawnAgentTool().description
+        #expect(description.contains("emit all the spawn_agent calls in one message"))
+        #expect(description.contains("`continue`"))
+        #expect(description.contains("NEEDS INPUT:"))
+        #expect(description.contains("inherits yours if it has none"))
+        #expect(!description.contains("spawn_batch"))
+        #expect(!description.contains("spawn_model"))
+    }
+
+    // MARK: - Working folder / deliverables
+
+    @Test("with a launcher folder, folder-less agents inherit it and deliverables go to disk")
+    func launcherFolderInheritance() {
+        let text = SystemPromptTemplates.agentWorkingFolderGuidance(
+            agents: [agent("helper")],
+            launcherHasFolder: true
+        )
+        #expect(text.contains("only spawning and `clarify` are removed"))
+        #expect(text.contains("work in YOUR working folder"))
+        #expect(text.contains("save deliverables"))
+        #expect(text.contains("`file_read`"))
+        #expect(text.contains("`share_artifact`"))
+    }
+
+    @Test("no folder anywhere: agents cannot write files, results come back in the answer")
+    func noFolderAnywhere() {
+        let text = SystemPromptTemplates.agentWorkingFolderGuidance(
+            agents: [agent("helper")],
+            launcherHasFolder: false
+        )
+        #expect(text.contains("cannot write files to disk"))
+        #expect(text.contains("`share_artifact`"))
+        #expect(!text.contains("YOUR working folder"))
+    }
+
+    @Test("agents with their own folder are named and win over inheritance")
+    func ownFolderIsNamed() {
+        let text = SystemPromptTemplates.agentWorkingFolderGuidance(
+            agents: [
+                agent("helper"),
+                agent(
+                    "coder", id: UUID(uuidString: "4A78F152-34AC-4867-AD7C-CB5FB6905E70")!,
+                    folder: "/Users/me/Repo"),
+            ],
+            launcherHasFolder: true
+        )
+        #expect(text.contains("coder work in their own folder"))
+        #expect(text.contains("work in YOUR working folder"))
+    }
+
+    // MARK: - Workspace agents
+
+    @Test("shared agents render as Name@Workspace with owner, address, and the no-folder caveat")
+    func workspaceAgentsRender() throws {
+        let ref = try #require(
+            WorkspaceAgentRef(
+                key: "ws-team:0x0123456789abcdef0123456789abcdef01234567"
+            )
+        )
         let text = SystemPromptTemplates.spawnGuidance(
             agents: [],
-            models: [model("bare-model", displayName: "Bare", isLocal: true)]
+            workspaceAgents: [
+                SpawnWorkspaceAgentDescriptor(
+                    ref: ref,
+                    name: "Reviewer",
+                    description: "Reviews PRs",
+                    workspaceName: "Team",
+                    ownerName: "Ana"
+                )
+            ]
         )
-        #expect(text.contains("`bare-model`"))
-        // The note-less model line ends after the meta parens — there is no
-        // " — " note separator appended for it.
-        #expect(!text.contains("`bare-model` (local) —"))
+        #expect(text.contains("Teammates' shared agents"))
+        #expect(text.contains("\"name\":\"Reviewer@Team\""))
+        #expect(text.contains("Reviews PRs"))
+        #expect(text.contains("owner: Ana"))
+        #expect(text.contains(ref.agentAddress))
+        #expect(text.contains("cannot see your folder"))
+        #expect(text.contains("put the content in `input`"))
+        #expect(text.contains("offline"))
+        // Presence is deliberately absent so the prompt stays byte-stable.
+        #expect(!text.contains("online"))
     }
 
+    @Test("settings lookup is orchestrator work, not a spawn")
+    func settingsLookupIsNotAWorkerJob() {
+        let text = SystemPromptTemplates.spawnGuidance(agents: [agent("helper")])
+        #expect(text.contains("never delegated"))
+        #expect(text.contains("`osaurus_help`"))
+        #expect(text.contains("`osaurus_config`"))
+    }
 }

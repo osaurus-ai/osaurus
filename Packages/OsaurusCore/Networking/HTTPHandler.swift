@@ -7,6 +7,7 @@
 
 import Foundation
 import LocalAuthentication
+import MLX
 @preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
@@ -263,6 +264,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// gates (Osaurus Router) can tell keyed callers from key-less
         /// loopback-trusted ones.
         var callerHasVerifiedAccessKey: Bool = false
+        /// `true` when that verified key is master-scoped. Unlike
+        /// `authedScopeIsMaster` this is also set by the opportunistic
+        /// loopback validation, so owner-only routes (`/credits/*`) can
+        /// refuse agent-scoped keys that loopback trust lets past the gate.
+        var callerAccessKeyIsMaster: Bool = false
         /// Set when the request arrived as an encrypted `/secure/call`
         /// envelope and was rewritten to its inner request. Routes that
         /// hard-require end-to-end encryption (`/agents/{id}/run`,
@@ -375,6 +381,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
             stateRef.value.callerHasVerifiedAccessKey = false
+            stateRef.value.callerAccessKeyIsMaster = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -529,8 +536,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "/", "/health", "/pair", "/pair/challenge", "/pair-invite", "/secure/session",
             ]
             let isPluginRoute = path.hasPrefix("/plugins/")
+            // Agent Channel webhook routes are authenticated by the connection's
+            // provider secret (shared header or HMAC) inside the ingress, not by
+            // an access key; `AgentChannelWebhookIngress` fails closed on its own.
+            let isChannelRoute = path.hasPrefix("/channels/")
             let isLoopback = isLoopbackConnection(context)
-            if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
+            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isLoopback {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
                     authHeader.hasPrefix("Bearer ")
@@ -551,6 +562,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stateRef.value.authedAudience = audience.lowercased()
                         stateRef.value.authedScopeIsMaster =
                             apiKeyValidator.isMasterScoped(audience: audience)
+                        stateRef.value.callerAccessKeyIsMaster = stateRef.value.authedScopeIsMaster
                         stateRef.value.authedKeyIsWorkspaceMinted =
                             !stateRef.value.authedScopeIsMaster
                             && WorkspaceAgentAccessHost.isWorkspaceMintedKey(nonce: keyNonce)
@@ -664,8 +676,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 if authHeader.hasPrefix("Bearer ") {
                     let token = String(authHeader.dropFirst(7))
-                    if case .valid = apiKeyValidator.validate(rawKey: token) {
+                    if case .valid(_, let audience, _) = apiKeyValidator.validate(rawKey: token) {
                         stateRef.value.callerHasVerifiedAccessKey = true
+                        stateRef.value.callerAccessKeyIsMaster =
+                            apiKeyValidator.isMasterScoped(audience: audience)
                     }
                 }
             }
@@ -798,6 +812,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     isLoopback: isPhysicalLoopbackConnection(context),
                     operation: .apply
                 )
+            } else if head.method == .GET, path == "/credits/balance" {
+                handleCreditsBalanceEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -880,6 +903,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     head: head,
                     context: context,
                     path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if path.hasPrefix("/channels/"), let route = AgentChannelWebhookIngress.route(for: path) {
+                handleChannelWebhookEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    route: route,
                     startTime: startTime,
                     userAgent: userAgent
                 )
@@ -1059,7 +1091,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["native_mtp_status"] = summary.nativeMTPStatus ?? NSNull()
                 row["native_mtp_reason"] = summary.nativeMTPReason ?? NSNull()
                 row["generation_defaults"] = Self.generationDefaultsJSONObject(
-                    LocalGenerationDefaults.defaults(forModelId: summary.name)
+                    summary.generationDefaults
                 )
                 if let effective = lastEffectiveGenerationSettings[summary.name] {
                     row["last_effective_generation"] = Self.effectiveGenerationSettingsJSONObject(effective)
@@ -1324,10 +1356,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             var defaultsByModel: [String: Any] = [:]
             var effectiveByModel: [String: Any] = [:]
             for modelName in lastEffectiveGenerationSettings.keys.sorted() {
-                defaultsByModel[modelName] = Self.generationDefaultsJSONObject(
-                    LocalGenerationDefaults.defaults(forModelId: modelName)
-                )
                 if let effective = lastEffectiveGenerationSettings[modelName] {
+                    defaultsByModel[modelName] = Self.generationDefaultsJSONObject(effective.modelDefaults)
                     effectiveByModel[modelName] = Self.effectiveGenerationSettingsJSONObject(effective)
                 }
             }
@@ -1363,6 +1393,80 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: nil,
                 responseBody: body,
                 responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
+    /// `GET /credits/balance` — read-only Osaurus Router credit balance for
+    /// local tools (usage dashboards, menu bar apps). Osaurus signs the router
+    /// request itself, so the caller never touches the wallet key. Loopback
+    /// skips the global auth gate, so `LocalCreditsBalance.isAuthorized` is
+    /// applied here: a verified master key, or the key-less loopback opt-in
+    /// for non-browser callers.
+    private func handleCreditsBalanceEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+        let hasVerifiedMasterKey =
+            stateRef.value.callerHasVerifiedAccessKey && stateRef.value.callerAccessKeyIsMaster
+        let requestHasOrigin = head.headers.contains(name: "Origin")
+
+        runRequestTask(priority: .userInitiated) {
+            let response: (status: Int, json: [String: Any])
+            if LocalCreditsBalance.isAuthorized(
+                callerHasVerifiedMasterKey: hasVerifiedMasterKey,
+                allowsUnkeyedLoopbackSpend: OsaurusRouter.allowsUnkeyedLoopbackSpend,
+                requestHasOrigin: requestHasOrigin
+            ) {
+                let result = await OsaurusRouterAccountService.shared.balanceForLocalAPI()
+                response = LocalCreditsBalance.response(for: result)
+            } else {
+                response = (
+                    403,
+                    LocalCreditsBalance.error(
+                        code: "credits_access_not_authorized",
+                        message: LocalCreditsBalance.unauthorizedMessage
+                    )
+                )
+            }
+            let data = try? JSONSerialization.data(withJSONObject: response.json, options: .osaurusCanonical)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+            let status = HTTPResponseStatus(statusCode: response.status)
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: response.status,
                 startTime: logStartTime
             )
         }
@@ -1559,28 +1663,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            // Use the Settings lifecycle decisions: an MTP depth/policy edit
+            // invalidates the request snapshot, not the resident weights.
+            // Preserve this endpoint's existing compiled-decode refresh
+            // receipt; a reload still does not replace its required restart.
             let loadedModelRefreshNeeded =
-                previous.cache != next.cache
-                || previous.multimodal != next.multimodal
-                || previous.mtp != next.mtp
-                || previous.memorySafety != next.memorySafety
-                // The tied-head codec and DSV4 activation-QAT choice apply at
-                // model construction, so a change takes effect on the next
-                // load — evicting the resident model makes either toggle live.
-                // Compare
-                // effectivePerformance so a nil<->explicit-default edit
-                // (semantically unchanged) does not force a spurious reload.
-                //
-                // NOTE: the *compiled-decode* lever is different — MLX caches
-                // its compile state at the first model load of the process, so
-                // it can only engage when VMLX_ENABLE_UNSAFE_COMPILE is set
-                // before that first load (i.e. at launch from a persisted
-                // setting). A mid-session reload cannot turn it on; that is
-                // surfaced separately via `compiled_decode_restart_required`.
-                || previous.effectivePerformance != next.effectivePerformance
+                ServerController.loadedModelRuntimeInputsRequireRefresh(previous: previous, next: next)
+                || previous.effectivePerformance.compiledDecode != next.effectivePerformance.compiledDecode
             let runtimeConfigInvalidated =
-                previous.generation != next.generation
-                || previous.concurrency != next.concurrency
+                ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next)
             // Compiled decode is a process-startup lever (see above): a change
             // to it only takes effect after restarting Osaurus, so report that
             // explicitly rather than letting the toggle look live.
@@ -1591,6 +1682,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             ServerRuntimeSettingsStore.save(next)
             if loadedModelRefreshNeeded {
                 await ModelRuntime.shared.clearAll()
+            } else {
+                await ModelRuntime.shared.refreshDiskCacheCaps()
             }
             if runtimeConfigInvalidated {
                 await ModelRuntime.shared.invalidateConfig()
@@ -1870,7 +1963,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return
                 }
 
-                let document: OsaurusConfigDocument
+                var document: OsaurusConfigDocument
                 do {
                     document = try ConfigYAML.decode(yaml)
                 } catch let error as ConfigYAMLError {
@@ -1895,7 +1988,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 let plan: ConfigPlan
                 do {
-                    plan = try await MainActor.run {
+                    document = try await ConfigAgentDescriptionPreparation.prepare(document)
+                    plan = try await MainActor.run { [document] in
                         try ConfigPlanner.plan(document: document, prune: prune)
                     }
                 } catch let issues as ConfigPlanIssues {
@@ -2108,17 +2202,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "paged_kv_block_size": cache.pagedKV.blockSize as Any? ?? NSNull(),
             "paged_kv_max_blocks": cache.pagedKV.maxBlocks as Any? ?? NSNull(),
             "block_disk_enabled": cache.blockDisk.enabled,
-            // The cap is a percent of the disk now, so the stored GB field is
-            // nil on every migrated install. Reporting it raw would show
-            // `null` for a cache that in fact has a real cap. Report the share
-            // the user set AND the gigabytes it resolves to on this machine —
-            // the same figure the coordinator enforces.
             "block_disk_max_size_percent": cache.blockDisk.maxSizePercent as Any? ?? NSNull(),
-            "block_disk_max_size_gb": VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
-                percent: cache.blockDisk.maxSizePercent,
-                legacyGB: cache.blockDisk.maxSizeGB,
-                directory: ModelRuntime.cacheDiskDirectoryOverride(for: cache)
-                    ?? OsaurusPaths.diskKVCache()),
+            "block_disk_requested_size_gb": cache.blockDisk.maxSizeGB as Any? ?? NSNull(),
+            "block_disk_max_size_gb": ModelRuntime.diskCacheCap(
+                for: cache, directory: ModelRuntime.cacheDiskDirectoryOverride(for: cache)
+                    ?? OsaurusPaths.diskKVCache()).capGB,
             "block_disk_directory": cache.blockDisk.directory as Any? ?? NSNull(),
             "legacy_disk_enabled": cache.legacyDisk.enabled,
             "live_kv_codec": cache.liveKVCodec.rawValue,
@@ -2180,12 +2268,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func memoryStatusJSONObject(_ status: MemoryStatus) -> [String: Any] {
-        [
+        let allocator = MLX.Memory.snapshot()
+        return [
             "memory_limit": status.memoryLimit,
             "cache_limit": status.cacheLimit,
             "recommended_working_set_bytes": status.recommendedWorkingSetBytes as Any? ?? NSNull(),
             "physical_memory": status.physicalMemory,
             "current_rss": status.currentRSS,
+            // Limits are not occupancy. Keep live allocator counters and
+            // kernel headroom visible for delegation/retention diagnosis.
+            "mlx_active_bytes": allocator.activeMemory,
+            "mlx_cached_bytes": allocator.cacheMemory,
+            "mlx_peak_bytes": allocator.peakMemory,
+            "host_reclaimable_bytes": ChatResidencyHandoff.sampledAvailableMemoryBytes() as Any? ?? NSNull(),
+            "host_memory_pressure": SubagentMemoryPressure.sampled().rawValue,
         ]
     }
 
@@ -3593,11 +3689,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Legacy pairing / invite keys: everything they could reach before, minus
-    /// server administration. `path` is normalized (no `/v1` / `/api` prefix,
-    /// no query string).
+    /// server administration and the owner's account data (`/credits/*`).
+    /// `path` is normalized (no `/v1` / `/api` prefix, no query string).
     static func legacyAgentScopedKeyMayReach(method: HTTPMethod, path: String) -> Bool {
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
-        return components.first != "admin"
+        return components.first != "admin" && components.first != "credits"
     }
 
     /// Strict allowlist for workspace-minted keys. `path` is already
@@ -4246,6 +4342,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id: String
         let name: String
         let description: String
+        let description_required: Bool
+        let description_validation: String?
         /// Mascot avatar identifier (e.g. "green") so paired peers can render
         /// the agent's own avatar instead of a generic monogram. nil = no
         /// mascot (client falls back to the name's initial). User-uploaded
@@ -4431,7 +4529,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let agents = await MainActor.run { AgentManager.shared.agents }
             guard
                 let agent = agents.first(where: { $0.agentAddress?.lowercased() == wanted }),
-                let agentIndex = agent.agentIndex
+                let agentKeyPath = agent.agentKeyPath
             else {
                 reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
                 return
@@ -4445,7 +4543,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     signContext.interactionNotAllowed = true
                     var masterKeyData = try MasterKey.getPrivateKey(context: signContext)
                     defer { masterKeyData.zeroOut() }
-                    var childKey = AgentKey.derive(masterKey: masterKeyData, index: agentIndex)
+                    var childKey = AgentKey.derive(masterKey: masterKeyData, path: agentKeyPath)
                     defer { childKey.zeroOut() }
                     return try signSecureChannelPayload(transcript, privateKey: childKey)
                 }
@@ -4853,7 +4951,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             //    Generating the key triggers biometric auth to derive the
             //    agent key from the Master Key.
             let label = "Paired – \(pairingHost)"
-            guard let agentIndex = agent.agentIndex else {
+            guard let agentKeyPath = agent.agentKeyPath else {
                 reply(
                     status: .internalServerError,
                     body: #"{"error":"Agent is missing a derived key index"}"#,
@@ -4866,7 +4964,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let (fullKey, keyInfo) = try? APIKeyManager.shared.generate(
                     label: label,
                     expiration: expiration,
-                    agentIndex: agentIndex
+                    agentKeyPath: agentKeyPath
                 )
             else {
                 reply(
@@ -4895,7 +4993,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return nil
                 }
                 defer { masterKeyData.zeroOut() }
-                var childKey = AgentKey.derive(masterKey: masterKeyData, index: agentIndex)
+                var childKey = AgentKey.derive(masterKey: masterKeyData, path: agentKeyPath)
                 defer { childKey.zeroOut() }
                 let payload = pairingServerSigningPayload(agentAddress: agentAddress, nonce: req.nonce)
                 guard let sig = try? signPairingServerPayload(payload, privateKey: childKey) else {
@@ -5006,6 +5104,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// redeemer's HPKE public key.
     static let pairInviteRedactedKeys: Set<String> = [
         "attestation", "wallet_signature", "sig", "signature", "nonce", "encPub", "enc_pub",
+        // owner_redeem: the device id is a stable per-device identifier.
+        "device_id",
     ]
 
     /// Redacted twin of a `/pair-invite` request body for the Insights request
@@ -5122,6 +5222,101 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
         }
 
+        /// Shared "key granted" emission for the workspace and owner
+        /// handshakes: same `PairInviteResponse` shape, same redacted twin
+        /// for the request log — never echo the key.
+        func replyGranted(
+            agentAddress: String,
+            agentName: String,
+            agentDescription: String?,
+            agentModel: String?,
+            apiKeyForWire: String,
+            sealedApiKey: PairingKeyEnvelope.Sealed?
+        ) {
+            func responseBody(apiKey: String, sealed: PairingKeyEnvelope.Sealed?) -> String {
+                let body = PairInviteResponse(
+                    agentAddress: agentAddress,
+                    agentName: agentName,
+                    agentDescription: agentDescription,
+                    agentModel: agentModel,
+                    relayBaseURL: "https://\(agentAddress).agent.osaurus.ai",
+                    apiKey: apiKey,
+                    sealedApiKey: sealed,
+                    secureChannel: true
+                )
+                return (try? JSONEncoder.osaurusCanonical().encode(body))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"error":"Encoding failed"}"#
+            }
+            let json = responseBody(apiKey: apiKeyForWire, sealed: sealedApiKey)
+            let redactedJson = responseBody(apiKey: "<redacted>", sealed: nil)
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/pair-invite",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: redactedJson,
+                    responseStatus: 200,
+                    startTime: logStartTime
+                )
+            }
+        }
+
+        func replyRejected(status: Int, message rawMessage: String) {
+            let message = rawMessage
+                .replacingOccurrences(of: "\\", with: "")
+                .replacingOccurrences(of: "\"", with: "'")
+            reply(
+                status: HTTPResponseStatus(statusCode: status),
+                body: #"{"error":"\#(message)"}"#,
+                code: status
+            )
+        }
+
+        // Owner mode: a `{"owner_redeem": …}` envelope is a device holding
+        // the SAME master identity as this host asking for a key to one of
+        // the agents hosted here. Proof is a master-key signature over the
+        // host's nonce; no router, roster, or invite involved.
+        if let envelope = try? JSONDecoder().decode(OwnerPairRedeemEnvelope.self, from: data) {
+            let payload = envelope.ownerRedeem
+            runRequestTask(priority: .userInitiated) {
+                let outcome = await OwnerDeviceAccessHost.shared.handle(payload)
+                switch outcome {
+                case .challenge(let nonce, let expiresIn):
+                    let challenge = OwnerPairChallengeResponse(
+                        ownerChallenge: .init(nonce: nonce, expiresIn: expiresIn)
+                    )
+                    let body =
+                        (try? JSONEncoder.osaurusCanonical().encode(challenge))
+                        .map { String(decoding: $0, as: UTF8.self) }
+                        ?? #"{"error":"Encoding failed"}"#
+                    reply(status: .ok, body: body, code: 200)
+                case .rejected(let rejection):
+                    replyRejected(status: rejection.httpStatus, message: rejection.wireMessage)
+                case .granted(let grant):
+                    replyGranted(
+                        agentAddress: grant.agentAddress,
+                        agentName: grant.agentName,
+                        agentDescription: grant.agentDescription,
+                        agentModel: grant.agentModel,
+                        apiKeyForWire: "",
+                        sealedApiKey: grant.sealedApiKey
+                    )
+                }
+            }
+            return
+        }
+
         // Workspace mode: a `{"team_redeem": …}` envelope is the membership-
         // attestation handshake (teammate connecting to a shared agent), not
         // an invite redemption. Same endpoint so relays need no new route.
@@ -5140,55 +5335,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         ?? #"{"error":"Encoding failed"}"#
                     reply(status: .ok, body: body, code: 200)
                 case .rejected(let rejection):
-                    let message = rejection.wireMessage
-                        .replacingOccurrences(of: "\\", with: "")
-                        .replacingOccurrences(of: "\"", with: "'")
-                    reply(
-                        status: HTTPResponseStatus(statusCode: rejection.httpStatus),
-                        body: #"{"error":"\#(message)"}"#,
-                        code: rejection.httpStatus
-                    )
+                    replyRejected(status: rejection.httpStatus, message: rejection.wireMessage)
                 case .granted(let grant):
-                    func responseBody(apiKey: String, sealed: PairingKeyEnvelope.Sealed?) -> String {
-                        let body = PairInviteResponse(
-                            agentAddress: grant.agentAddress,
-                            agentName: grant.agentName,
-                            agentDescription: grant.agentDescription,
-                            agentModel: grant.agentModel,
-                            relayBaseURL: "https://\(grant.agentAddress).agent.osaurus.ai",
-                            apiKey: apiKey,
-                            sealedApiKey: sealed,
-                            secureChannel: true
-                        )
-                        return (try? JSONEncoder.osaurusCanonical().encode(body))
-                            .map { String(decoding: $0, as: UTF8.self) }
-                            ?? #"{"error":"Encoding failed"}"#
-                    }
-                    let json = responseBody(
-                        apiKey: grant.apiKeyForWire, sealed: grant.sealedApiKey
+                    replyGranted(
+                        agentAddress: grant.agentAddress,
+                        agentName: grant.agentName,
+                        agentDescription: grant.agentDescription,
+                        agentModel: grant.agentModel,
+                        apiKeyForWire: grant.apiKeyForWire,
+                        sealedApiKey: grant.sealedApiKey
                     )
-                    // Redacted twin for the request log — never echo the key.
-                    let redactedJson = responseBody(apiKey: "<redacted>", sealed: nil)
-                    hop {
-                        var headers = [("Content-Type", "application/json; charset=utf-8")]
-                        headers.append(contentsOf: cors)
-                        self.sendResponse(
-                            context: ctx.value,
-                            version: head.version,
-                            status: .ok,
-                            headers: headers,
-                            body: json
-                        )
-                        logSelf.logRequest(
-                            method: "POST",
-                            path: "/pair-invite",
-                            userAgent: logUserAgent,
-                            requestBody: logRequestBody,
-                            responseBody: redactedJson,
-                            responseStatus: 200,
-                            startTime: logStartTime
-                        )
-                    }
                 }
             }
             return
@@ -5221,7 +5377,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let agents = await MainActor.run { AgentManager.shared.agents }
             guard
                 let agent = agents.first(where: { ($0.agentAddress?.lowercased() ?? "") == invite.addr.lowercased() }),
-                let agentIndex = agent.agentIndex,
+                let agentKeyPath = agent.agentKeyPath,
                 let agentAddress = agent.agentAddress
             else {
                 reply(status: .notFound, body: #"{"error":"Agent address not found on this server"}"#, code: 404)
@@ -5264,7 +5420,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let (fullKey, keyInfo) = try APIKeyManager.shared.generate(
                     label: label,
                     expiration: .year1,
-                    agentIndex: agentIndex
+                    agentKeyPath: agentKeyPath
                 )
                 await MainActor.run {
                     AgentInviteStore.attachAccessKey(
@@ -5353,6 +5509,132 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// `POST /channels/{kind}/{connection_id}/inbound`,
+    /// `GET /channels/{kind}/{connection_id}/ping`, and
+    /// `GET /channels/{kind}/{connection_id}/tasks/{task_id}` — the Agent
+    /// Channel webhook ingress. Bearer-exempt: the connection's provider secret
+    /// (shared header or HMAC over the raw body) is the authentication, and the
+    /// ingress verifies it before interpreting a single body byte. The shim only
+    /// copies the raw body, captures the transport facts (source IP, loopback,
+    /// Secure Channel) and hops off the event loop; every decision lives in
+    /// `AgentChannelWebhookIngress` so it is unit-testable without NIO.
+    private func handleChannelWebhookEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        route: AgentChannelWebhookIngress.Route,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let method = head.method
+        let expectedMethod: HTTPMethod
+        switch route {
+        case .inbound: expectedMethod = .POST
+        case .ping, .taskPoll: expectedMethod = .GET
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+
+        guard method == expectedMethod else {
+            let body = #"{"error":{"code":"method_not_allowed","message":"Use \#(expectedMethod.rawValue) for this channel route.","type":"invalid_request_error"}}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8"), ("Allow", expectedMethod.rawValue)]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: .methodNotAllowed, headers: headers, body: body)
+            logRequest(
+                method: method.rawValue,
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 405,
+                startTime: startTime
+            )
+            return
+        }
+
+        var data = Data()
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            data = Data(bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? [])
+        }
+        var headerMap: [String: String] = [:]
+        for (name, value) in head.headers {
+            headerMap[name] = value
+        }
+        // Only the redacted twin ever reaches the Insights request log: the
+        // verification header IS the credential.
+        let redactedHeaders = AgentChannelWebhookIngress.redactedHeaders(headerMap)
+        let logRequestBody: String? = {
+            var summary: [String: Any] = ["headers": redactedHeaders.filter { key, _ in
+                let lowered = key.lowercased()
+                return lowered.hasPrefix("x-osaurus") || lowered == "content-type" || lowered == "idempotency-key"
+            }]
+            summary["body_bytes"] = data.count
+            return (try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]))
+                .map { String(decoding: $0, as: UTF8.self) }
+        }()
+
+        let ingressRequest = AgentChannelWebhookIngressRequest(
+            kind: {
+                switch route {
+                case .inbound(let kind, _), .ping(let kind, _), .taskPoll(let kind, _, _): return kind
+                }
+            }(),
+            connectionId: {
+                switch route {
+                case .inbound(_, let id), .ping(_, let id), .taskPoll(_, let id, _): return id
+                }
+            }(),
+            headers: headerMap,
+            body: data,
+            sourceAddress: remoteIP(context),
+            // The remote-transport policy is about the physical transport, not
+            // the `trustLoopback` auth policy: the server flips `trustLoopback`
+            // off when it binds 0.0.0.0 (expose-to-network), which must NOT
+            // turn a same-Mac 127.0.0.1 caller into a "remote plaintext" peer.
+            // Relay-origin traffic is still excluded by this predicate.
+            isLoopback: isPhysicalLoopbackConnection(context),
+            isSecureChannel: stateRef.value.isSecureChannel
+        )
+
+        runRequestTask(priority: .userInitiated) {
+            let response: AgentChannelWebhookIngressResponse
+            switch route {
+            case .inbound:
+                response = await AgentChannelWebhookIngress.shared.handleInbound(ingressRequest)
+            case .ping:
+                response = await AgentChannelWebhookIngress.shared.handlePing(ingressRequest)
+            case .taskPoll(_, _, let taskId):
+                response = await AgentChannelWebhookIngress.shared.handleTaskPoll(ingressRequest, taskId: taskId)
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: HTTPResponseStatus(statusCode: response.status),
+                    headers: headers,
+                    body: response.body
+                )
+                logSelf.logRequest(
+                    method: method.rawValue,
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: response.body,
+                    responseStatus: response.status,
+                    startTime: logStartTime
+                )
+            }
+        }
+    }
+
     private func handleListAgents(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -5411,6 +5693,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     id: agent.id.uuidString,
                     name: agent.name,
                     description: agent.description,
+                    description_required: agent.requiresDescriptionRepair,
+                    description_validation: AgentDescriptionPolicy.violation(in: agent.description)?.message,
                     avatar: agent.avatar,
                     chat_quick_actions: agent.chatQuickActions,
                     default_model: agent.defaultModel,
@@ -5560,6 +5844,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
+                description_required: agent.requiresDescriptionRepair,
+                description_validation: AgentDescriptionPolicy.violation(in: agent.description)?.message,
                 avatar: agent.avatar,
                 chat_quick_actions: agent.chatQuickActions,
                 default_model: agent.defaultModel,
@@ -6198,6 +6484,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             defer { accessMonitor?.cancel() }
             let inboundOutcome = InboundSharedRun.Outcome()
+            // Hosted run: `share_artifact` results are processed into the
+            // hosted session's store and travel back to the requester on the
+            // final `osaurus_artifacts` chunk (small files only). Plain API
+            // callers keep the raw marker contract.
+            let artifactRelay: RemoteRunArtifactRelay? = inboundRun.map { run in
+                RemoteRunArtifactRelay(
+                    contextId: run.handle.taskId.uuidString,
+                    executionMode: executionMode
+                )
+            }
             // Messages the host has already mirrored into the hosted
             // transcript; the loop hooks flush anything appended past this.
             let mirroredCount = SendableInt(messages.count)
@@ -6310,6 +6606,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // race-free — same capture pattern as `responseContent` above.
             var loggedResponseText = ""
             var loggedToolCalls: [ToolCallLog] = []
+            var runUsage = AgentRunUsage()
 
             // Set when a successful `complete`/`clarify` intercept ends the
             // run — the post-loop tail streams this text (the parsed summary
@@ -6421,6 +6718,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
 
                     responseContent = ""
+                    var stepCompletionTokens: Int?
+                    var stepPromptTokens: Int?
+                    var stepTokensPerSecond: Double?
+                    var stepStopReason: String?
+                    defer {
+                        runUsage.append(
+                            promptTokens: stepPromptTokens ?? Self.estimatePromptTokens(msgs),
+                            completionTokens: stepCompletionTokens ?? TokenEstimator.estimate(responseContent),
+                            tokensPerSecond: stepTokensPerSecond
+                        )
+                    }
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                     )
@@ -6483,7 +6791,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 }
                                 continue
                             }
-                            if StreamingStatsHint.decode(delta) != nil { continue }
+                            if let count = StreamingInputTokenHint.decode(delta) {
+                                stepPromptTokens = count
+                                continue
+                            }
+                            if let stats = StreamingStatsHint.decode(delta) {
+                                // Keep the final cumulative stats for this step;
+                                // intermediate updates must not be counted twice.
+                                stepCompletionTokens = stats.tokenCount
+                                stepPromptTokens = stats.inputTokenCount ?? stepPromptTokens
+                                stepTokensPerSecond = stats.tokensPerSecond
+                                stepStopReason = stats.stopReason
+                                continue
+                            }
                             if StreamingToolHint.isSentinel(delta) { continue }
                             responseContent += delta
                             loggedResponseText += delta
@@ -6558,6 +6878,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         return .toolCalls([inv])
                     }
+
+                    // Preserve the runtime's incomplete terminal state. A
+                    // visible fragment at the output cap is not a final answer.
+                    if stepStopReason == "length" { return .lengthExhausted }
 
                     // Empty turn (0-token / EOS-first, no tool call): don't
                     // record a blank assistant message or end the run on
@@ -6744,7 +7068,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 invocation: outcome.invocation
                             )
                         )
-                        toolResultsByCallId.append((outcome.callId, outcome.result))
+                        let recordedResult: String
+                        if let artifactRelay, outcome.invocation.toolName == "share_artifact",
+                            !outcome.wasError
+                        {
+                            recordedResult = artifactRelay.intercept(rawResult: outcome.result)
+                        } else {
+                            recordedResult = outcome.result
+                        }
+                        toolResultsByCallId.append((outcome.callId, recordedResult))
                         // Host-only tool detail (args + result). Args are the
                         // recorded view so sandbox_secret_set values never
                         // re-enter Insights / agent-run logs. The peer still
@@ -6845,7 +7177,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // the actual on-wire status (200) so dashboards don't
                 // mis-attribute a delivered stream as a 500.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -6962,8 +7294,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 loggedResponseText += text
             }
+            let finalUsage = runUsage
+            let includeUsage = req.stream_options?.include_usage == true
+            let returnedArtifacts = artifactRelay?.payload() ?? []
             hop {
+                if !returnedArtifacts.isEmpty {
+                    writerBound.value.writeArtifactsChunk(
+                        returnedArtifacts,
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
+                }
                 writerBound.value.writeFinish(model, responseId: responseId, created: created, context: ctx.value)
+                if includeUsage {
+                    writerBound.value.writeUsageChunk(
+                        promptTokens: finalUsage.promptTokens,
+                        completionTokens: finalUsage.completionTokens,
+                        tokensPerSecond: finalUsage.tokensPerSecond,
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
+                }
                 writerBound.value.writeEnd(ctx.value)
             }
             logSelf.logRequest(
@@ -7652,6 +8001,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseStatus: 400,
                 startTime: startTime,
                 errorMessage: "Invalid request body"
+            )
+            return
+        }
+
+        do {
+            try EmbeddingService.validateAPIModel(request.model)
+        } catch {
+            let message = error.localizedDescription
+            let payload: [String: Any] = ollamaFormat
+                ? ["error": message]
+                : ["error": [
+                    "message": message, "type": "invalid_request_error",
+                    "param": "model", "code": "unsupported_embedding_model",
+                ]]
+            // Model IDs are caller-controlled; encode rather than interpolate
+            // so quotes, newlines and backslashes remain valid JSON.
+            let json = (try? JSONSerialization.data(withJSONObject: payload))
+                .map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":"Unsupported embedding model"}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: json)
+            logRequest(
+                method: "POST", path: logPath, userAgent: userAgent,
+                requestBody: requestBodyString, responseBody: json, responseStatus: 400,
+                startTime: startTime, errorMessage: message
             )
             return
         }
@@ -9079,7 +9454,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 defer { keepaliveTask.cancel() }
                 defer { admissionToken.release() }
                 var accumulated = ""
-                let finishReason = "stop"
+                var finishReason = "stop"
+                var actualPromptTokens: Int?
+                var actualCompletionTokens: Int?
                 do {
                     let stream = try await MLXService.shared.streamRawCompletion(
                         prompt: prompt,
@@ -9088,13 +9465,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stopSequences: stop
                     )
                     if disconnected.value { throw CancellationError() }
-                    // `streamRawCompletion` yields only plain generated text
-                    // (reasoning / tool / stats events are dropped upstream in
-                    // `ModelRuntime.streamRawText`), so no sentinel filtering is
-                    // needed here.
                     for try await delta in stream {
                         if disconnected.value { throw CancellationError() }
-                        if delta.isEmpty { continue }
+                        if let count = StreamingInputTokenHint.decode(delta) {
+                            actualPromptTokens = count
+                            continue
+                        }
+                        if let stats = StreamingStatsHint.decode(delta) {
+                            actualPromptTokens = stats.inputTokenCount ?? actualPromptTokens
+                            actualCompletionTokens = stats.tokenCount
+                            finishReason = stats.stopReason ?? finishReason
+                            continue
+                        }
+                        if delta.isEmpty || StreamingToolHint.isSentinel(delta) { continue }
                         accumulated += delta
                         let chunk = CompletionResponseDTO(
                             id: responseId,
@@ -9109,15 +9492,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                     }
                 } catch {
-                    hop { writerBound.value.writeError(error.localizedDescription, context: ctx.value) }
+                    hop {
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    logSelf.logRequest(
+                        method: "POST", path: "/completions", userAgent: logUserAgent,
+                        requestBody: logRequestBody, responseStatus: 200, startTime: startTime,
+                        model: model, finishReason: .error, errorMessage: error.localizedDescription
+                    )
+                    return
                 }
+                let resolvedPromptTokens = actualPromptTokens ?? promptTokens
+                let resolvedCompletionTokens = actualCompletionTokens ?? TokenEstimator.estimate(accumulated)
                 let final = CompletionResponseDTO(
                     id: responseId,
                     object: "text_completion",
                     created: created,
                     model: model,
                     choices: [CompletionChoiceDTO(text: "", index: 0, finish_reason: finishReason)],
-                    usage: nil
+                    usage: req.streamOptions?.include_usage == true
+                        ? CompletionUsageDTO(
+                            prompt_tokens: resolvedPromptTokens,
+                            completion_tokens: resolvedCompletionTokens,
+                            total_tokens: resolvedPromptTokens + resolvedCompletionTokens
+                        ) : nil
                 )
                 hop {
                     if let json = Self.encodeCompletionJSON(final) {
@@ -9133,8 +9532,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    tokensInput: promptTokens,
-                    tokensOutput: TokenEstimator.estimate(accumulated),
+                    tokensInput: resolvedPromptTokens,
+                    tokensOutput: resolvedCompletionTokens,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens
                 )
@@ -9153,20 +9552,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stopSequences: stop
                 )
                 var text = ""
+                var actualPromptTokens: Int?
+                var actualCompletionTokens: Int?
+                var finishReason = "stop"
                 for try await delta in stream {
-                    text += delta
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        actualPromptTokens = count
+                        continue
+                    }
+                    if let stats = StreamingStatsHint.decode(delta) {
+                        actualPromptTokens = stats.inputTokenCount ?? actualPromptTokens
+                        actualCompletionTokens = stats.tokenCount
+                        finishReason = stats.stopReason ?? finishReason
+                        continue
+                    }
+                    if !StreamingToolHint.isSentinel(delta) { text += delta }
                 }
-                let completionTokens = TokenEstimator.estimate(text)
+                let resolvedPromptTokens = actualPromptTokens ?? promptTokens
+                let completionTokens = actualCompletionTokens ?? TokenEstimator.estimate(text)
                 let response = CompletionResponseDTO(
                     id: responseId,
                     object: "text_completion",
                     created: created,
                     model: model,
-                    choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: "stop")],
+                    choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: finishReason)],
                     usage: CompletionUsageDTO(
-                        prompt_tokens: promptTokens,
+                        prompt_tokens: resolvedPromptTokens,
                         completion_tokens: completionTokens,
-                        total_tokens: promptTokens + completionTokens
+                        total_tokens: resolvedPromptTokens + completionTokens
                     )
                 )
                 let body = Self.encodeCompletionJSON(response) ?? "{}"
@@ -9191,11 +9604,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    tokensInput: promptTokens,
+                    tokensInput: resolvedPromptTokens,
                     tokensOutput: completionTokens,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens,
-                    finishReason: .stop
+                    finishReason: RequestLog.FinishReason(rawValue: finishReason) ?? .stop
                 )
             } catch {
                 let message = error.localizedDescription
@@ -9547,6 +9960,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Tool completions finish by throwing after the runtime's
                 // terminal stats. Keep accounting outside do so both tool
                 // catch branches can emit the same authoritative usage.
+                var authoritativeInputTokens: Int?
                 var authoritativeCompletionTokens: Int?
                 var authoritativeTokensPerSecond: Double?
                 var accumulatedContent = ""
@@ -9628,7 +10042,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             }
                             continue
                         }
+                        if let count = StreamingInputTokenHint.decode(delta) {
+                            authoritativeInputTokens = count
+                            continue
+                        }
                         if let stats = StreamingStatsHint.decode(delta) {
+                            authoritativeInputTokens = stats.inputTokenCount ?? authoritativeInputTokens
                             authoritativeCompletionTokens = stats.tokenCount
                             authoritativeTokensPerSecond = stats.tokensPerSecond
                             if let stopReason = stats.stopReason {
@@ -9699,10 +10118,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         return
                     }
                     let includeUsage = req.stream_options?.include_usage == true
-                    let promptTokens = Self.estimatePromptTokens(enrichedReq.messages)
+                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(enrichedReq.messages)
                     let completionTokens =
                         authoritativeCompletionTokens ?? TokenEstimator.estimate(accumulatedContent)
-                    httpTrace.set("http_prompt_tokens_estimate", promptTokens)
+                    httpTrace.set("http_prompt_tokens", promptTokens)
+                    httpTrace.set("http_prompt_tokens_estimated", authoritativeInputTokens == nil ? 1 : 0)
                     httpTrace.set("http_completion_tokens", completionTokens)
                     let finalStreamFinishReason = streamFinishReason
                     let finalTokensPerSecond = authoritativeTokensPerSecond
@@ -9784,7 +10204,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // because the enriched value is scoped to the `do` block
                     // and unavailable in this catch — at worst we under-
                     // count by the agent system-prompt fragment.
-                    let promptTokens = Self.estimatePromptTokens(req.messages)
+                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(req.messages)
                     let requestTools = req.tools
                     let completionTokens = authoritativeCompletionTokens ?? TokenEstimator.estimate(
                         accumulatedContent + accumulatedReasoning
@@ -9863,7 +10283,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     markSemanticDeltaIfConnected()
                     httpTrace.set("http_tool_call_count", 1)
                     let includeUsage = req.stream_options?.include_usage == true
-                    let promptTokens = Self.estimatePromptTokens(req.messages)
+                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(req.messages)
                     let requestTools = req.tools
                     let completionTokens = authoritativeCompletionTokens ?? TokenEstimator.estimate(
                         accumulatedContent + accumulatedReasoning + inv.toolName + inv.jsonArguments
@@ -9922,7 +10342,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_error_written")
@@ -10241,7 +10661,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // NDJSON response shape (and decode reasoning here
                     // first) when an upstream client requests it.
                     if StreamingReasoningHint.decode(delta) != nil { continue }
-                    if StreamingStatsHint.decode(delta) != nil { continue }
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        hop { writerBound.value.setInputTokens(count) }
+                        continue
+                    }
+                    if let stats = StreamingStatsHint.decode(delta) {
+                        hop {
+                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
+                            writerBound.value.setOutputTokens(stats.tokenCount)
+                        }
+                        continue
+                    }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     if let chunk = contentCoalescer.append(delta) {
                         markSemanticDeltaIfChannelActive()
@@ -10362,7 +10792,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // NDJSON response head was already 200 — surface as in-band
                 // NDJSON error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -10406,7 +10836,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     content: message?.content ?? "",
                     toolCalls: message?.tool_calls,
-                    done: true
+                    done: true,
+                    usage: response.usage
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -10666,7 +11097,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 for try await delta in stream {
                     if disconnected.value { throw CancellationError() }
                     if StreamingReasoningHint.decode(delta) != nil { continue }
-                    if StreamingStatsHint.decode(delta) != nil { continue }
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        hop { writerBound.value.setInputTokens(count) }
+                        continue
+                    }
+                    if let stats = StreamingStatsHint.decode(delta) {
+                        hop {
+                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
+                            writerBound.value.setOutputTokens(stats.tokenCount)
+                        }
+                        continue
+                    }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     if let chunk = contentCoalescer.append(delta) {
                         hop {
@@ -10711,7 +11152,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } catch {
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -10754,7 +11195,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let body = Self.ollamaGenerateJSON(
                     model: request.model,
                     response: content,
-                    done: true
+                    done: true,
+                    usage: response.usage
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -10811,13 +11253,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    private static func ollamaGenerateJSON(model: String, response: String, done: Bool) -> String {
-        let object: [String: Any] = [
+    private static func ollamaGenerateJSON(model: String, response: String, done: Bool, usage: Usage? = nil) -> String {
+        var object: [String: Any] = [
             "model": model,
             "created_at": Date().ISO8601Format(),
             "response": response,
             "done": done,
         ]
+        if done, let usage {
+            object["prompt_eval_count"] = usage.prompt_tokens
+            object["eval_count"] = usage.completion_tokens
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical) else {
             return #"{"done":true}"#
         }
@@ -10828,7 +11274,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String,
         content: String,
         toolCalls: [ToolCall]? = nil,
-        done: Bool
+        done: Bool,
+        usage: Usage? = nil
     ) -> String {
         var message: [String: Any] = [
             "role": "assistant",
@@ -10844,12 +11291,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ]
             }
         }
-        let object: [String: Any] = [
+        var object: [String: Any] = [
             "model": model,
             "created_at": Date().ISO8601Format(),
             "message": message,
             "done": done,
         ]
+        if done, let usage {
+            object["prompt_eval_count"] = usage.prompt_tokens
+            object["eval_count"] = usage.completion_tokens
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: object) else {
             return #"{"message":{"role":"assistant","content":""},"done":true}"#
         }
@@ -11845,44 +12296,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
         }
 
-        struct CallBody: Codable {
+        struct CallBody: Decodable {
             let name: String
-            let arguments: AnyCodable?
-        }
-
-        // Lightweight AnyCodable for arguments passthrough
-        struct AnyCodable: Codable {
-            let value: Any
-            init(from decoder: Decoder) throws {
-                let container = try decoder.singleValueContainer()
-                if let b = try? container.decode(Bool.self) { value = b; return }
-                if let i = try? container.decode(Int.self) { value = i; return }
-                if let d = try? container.decode(Double.self) { value = d; return }
-                if let s = try? container.decode(String.self) { value = s; return }
-                if let arr = try? container.decode([AnyCodable].self) { value = arr.map { $0.value }; return }
-                if let dict = try? container.decode([String: AnyCodable].self) {
-                    value = dict.mapValues { $0.value }
-                    return
-                }
-                value = NSNull()
-            }
-            func encode(to encoder: Encoder) throws {
-                var container = encoder.singleValueContainer()
-                switch value {
-                case let b as Bool: try container.encode(b)
-                case let i as Int: try container.encode(i)
-                case let d as Double: try container.encode(d)
-                case let s as String: try container.encode(s)
-                case let arr as [Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: arr, options: .osaurusCanonical)
-                    try container.encode(String(decoding: enc, as: UTF8.self))
-                case let dict as [String: Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical)
-                    try container.encode(String(decoding: enc, as: UTF8.self))
-                default:
-                    try container.encodeNil()
-                }
-            }
+            let arguments: [String: JSONValue]?
         }
 
         guard let req = try? JSONDecoder().decode(CallBody.self, from: data) else {
@@ -11905,14 +12321,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        let argsJSON: String = {
-            if let a = req.arguments?.value,
-                let d = try? JSONSerialization.data(withJSONObject: a, options: .osaurusCanonical)
-            {
-                return String(decoding: d, as: UTF8.self)
-            }
-            return "{}"
-        }()
+        let argsData = try? JSONEncoder.osaurusCanonical().encode(req.arguments ?? [:])
+        let argsJSON = argsData.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
 
         // External deny list: app-only tool classes are never invocable
         // through the MCP bridge (they're also hidden from `/mcp/tools`).
@@ -12305,7 +12715,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 messageId: messageId,
                 model: model,
                 inputTokens: inputTokens,
-                context: ctx.value
+                context: ctx.value,
+                deferUntilInput: true
             )
         }
 
@@ -12361,8 +12772,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         continue
                     }
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        hop { writerBound.value.setInputTokens(count, context: ctx.value) }
+                        continue
+                    }
                     if let stats = StreamingStatsHint.decode(delta) {
                         hop {
+                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count, context: ctx.value) }
                             writerBound.value.setOutputTokens(stats.tokenCount)
                         }
                         continue
@@ -12462,7 +12878,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -13197,8 +13613,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         continue
                     }
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        hop { writerBound.value.setInputTokens(count) }
+                        continue
+                    }
                     if let stats = StreamingStatsHint.decode(delta) {
                         hop {
+                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
                             writerBound.value.setOutputTokens(stats.tokenCount)
                         }
                         continue
@@ -13374,7 +13795,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(

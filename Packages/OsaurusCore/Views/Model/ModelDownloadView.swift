@@ -98,6 +98,11 @@ struct ModelDownloadView: View {
 
     /// Model to show in the detail sheet
     @State private var modelToShowDetails: MLXModel? = nil
+    /// Token sheet requested by a Hugging Face model link the Hub refused
+    /// with 401/403. Hosted here rather than on the catalog's token card:
+    /// the card is not rendered while the search (now prefilled with the
+    /// refused repo) has no results, so a request parked on it never fires.
+    @State private var showTokenPromptForDeepLink = false
 
     /// Drives the "model can't be used" alert shown when a greyed (non-MLX)
     /// card is tapped, instead of opening its detail sheet.
@@ -170,6 +175,19 @@ struct ModelDownloadView: View {
             LiveSystemStatusBar()
                 .opacity(hasAppeared ? 1 : 0)
 
+            Toggle(isOn: $modelManager.automaticallyChecksModelUpdates) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Automatically Check Model Updates", bundle: .module)
+                    Text("Checks installed OsaurusAI models every six hours. Never downloads model files automatically.", bundle: .module)
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                }
+            }
+            .toggleStyle(.switch)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .settingsLandingAnchor("models.automaticUpdates")
+
             modelListView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
         }
@@ -198,7 +216,15 @@ struct ModelDownloadView: View {
             }
 
             refreshGridLists()
+            Task { await modelManager.refreshAutomaticModelUpdates() }
             DispatchQueue.main.async { applyPendingModelDetail() }
+        }
+        // Replays on subscribe, so a link that arrived before this view
+        // existed (cold launch) is applied on first render too.
+        .onReceive(managementState.$pendingModelDeepLink) { request in
+            guard let request else { return }
+            managementState.pendingModelDeepLink = nil
+            applyModelDeepLink(request)
         }
         .onReceive(managementState.$pendingModelDetailId) { _ in
             // `$pendingModelDetailId` replays its current value the moment the
@@ -245,6 +271,20 @@ struct ModelDownloadView: View {
                 if Task.isCancelled { return }
                 modelManager.fetchRemoteMLXModels(searchText: newValue)
             }
+        }
+        .sheet(isPresented: $showTokenPromptForDeepLink) {
+            HuggingFaceTokenPromptSheet {
+                retryDeepLinkAfterTokenSaved()
+            }
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .onReceive(managementState.$pendingHuggingFaceTokenPrompt) { requested in
+            guard requested else { return }
+            managementState.pendingHuggingFaceTokenPrompt = false
+            // Presenting from inside the publisher callback is silently
+            // dropped (replay lands mid-render; the warm case lands while the
+            // link handler's alert is still tearing down), so hop a turn.
+            DispatchQueue.main.async { showTokenPromptForDeepLink = true }
         }
         .sheet(item: $modelToShowDetails) { model in
             // Family cards open with their full variant list so the sheet
@@ -717,6 +757,16 @@ struct ModelDownloadView: View {
             onPause: { modelManager.pauseDownload(model.id) },
             onResume: { modelManager.resumeDownload(model.id) }
         )
+        .overlay(alignment: .topTrailing) {
+            if let check = modelManager.manifestChecks[model.id.lowercased()], check.updateAvailable || check.verificationRequired {
+                Text(check.updateAvailable ? "Update available" : "Verification needed", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     /// Grid of ModelRowView cards. Surviving cells (same `id` before and
@@ -1878,11 +1928,60 @@ struct ModelDownloadView: View {
     /// CTA). Mirrors `AgentsView.applyPendingRemoteAgentDetail`: resolves the
     /// repo id against the catalog, then opens the sheet and clears the
     /// request.
+    /// Applies a `pendingModelDeepLink`: same effect as opening the view with
+    /// `deeplinkModelId`, but on the live view so no hosting-controller swap
+    /// is needed when the window is already open.
+    private func applyModelDeepLink(_ request: ManagementStateManager.ModelDeepLinkRequest) {
+        let modelId = request.modelId
+        searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
+        debouncedSearchText = searchText
+        _ = modelManager.resolveModel(byRepoId: modelId)
+        selectedTab = .all
+        didChooseInitialTab = true
+        modelManager.fetchRemoteMLXModels(searchText: searchText)
+        refreshGridLists()
+    }
+
     private func applyPendingModelDetail() {
         guard let pendingId = managementState.pendingModelDetailId else { return }
         guard let model = modelManager.resolveModel(byRepoId: pendingId) else { return }
         managementState.pendingModelDetailId = nil
-        modelToShowDetails = model
+        presentDetailSheet(for: model)
+    }
+
+    /// A link that failed with 401/403 parked its repo id; now that a token
+    /// exists, resolve it again and open its detail sheet, or say why it is
+    /// still refused the same way the link handler would.
+    private func retryDeepLinkAfterTokenSaved() {
+        guard let repoId = managementState.pendingDeepLinkRetryModelId else { return }
+        managementState.pendingDeepLinkRetryModelId = nil
+        Task { @MainActor in
+            let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: repoId)
+            if case .model(let model) = resolution {
+                // The token sheet is still dismissing when `onSaved` runs.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    presentDetailSheet(for: model)
+                }
+            } else {
+                HuggingFaceDeepLinkAlert.present(resolution, modelId: repoId)
+            }
+        }
+    }
+
+    /// Presents the detail sheet for `model`. When another model's sheet is
+    /// already up (a second Hub link while the first is open), swapping the
+    /// `.sheet(item:)` value in place leaves the old content on screen, so
+    /// dismiss first and present again once the dismissal has run.
+    private func presentDetailSheet(for model: MLXModel) {
+        guard let current = modelToShowDetails else {
+            modelToShowDetails = model
+            return
+        }
+        if current.id == model.id { return }
+        modelToShowDetails = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            modelToShowDetails = model
+        }
     }
 
     private func chooseInitialTabIfNeeded() {

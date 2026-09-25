@@ -85,10 +85,6 @@ struct ModelDetailView: View, Identifiable {
     /// Whether the file listing is currently loading
     @State private var isLoadingFiles = false
 
-    /// Repair status: nil = idle, true = succeeded, false = failed
-    @State private var isRepairing = false
-    @State private var repairResult: Bool?
-
     /// Transient "copied" feedback for the external-model path copy button
     @State private var didCopyPath = false
 
@@ -132,6 +128,7 @@ struct ModelDetailView: View, Identifiable {
             ScrollView {
                 VStack(spacing: 14) {
                     compatibilityLine
+                    manifestStatus
 
                     variantPickerSection
 
@@ -179,10 +176,14 @@ struct ModelDetailView: View, Identifiable {
                 await loadReadmeIfNeeded()
             }
         }
+        .task(id: model.id) { await modelManager.checkModelManifest(model) }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             // The shared cache is invalidated on this notification; re-resolve
             // off-main so the checkmark stays in sync after a download or delete.
             Task { await loadDownloadState() }
+            Task { await modelManager.checkModelManifest(model, force: true) }
+            diagnostics = nil
+            Task { await loadDiagnostics() }
         }
     }
 
@@ -203,8 +204,6 @@ struct ModelDetailView: View, Identifiable {
         isLoadingReadme = false
         allFiles = nil
         isLoadingFiles = false
-        isRepairing = false
-        repairResult = nil
         didCopyPath = false
         diagnostics = nil
         resolvedIsDownloaded = MLXModelDownloadCache.value(for: variant.id) ?? false
@@ -1173,11 +1172,76 @@ struct ModelDetailView: View, Identifiable {
         .detailCardSurface()
     }
 
+    private var manifestStatus: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let check = modelManager.manifestChecks[model.id.lowercased()] {
+                if let version = check.local.manifest?.modelVersion {
+                    Text("Installed model revision: \(version)", bundle: .module)
+                }
+                if check.updateAvailable, let version = check.remote?.manifest?.modelVersion {
+                    Text("Model update available: revision \(version)", bundle: .module)
+                        .foregroundStyle(theme.accentColor)
+                }
+                switch check.status {
+                case .unversionedPublisher:
+                    Text("No versioned updates published. Repair can verify this repository's files.", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                case .verificationRequired:
+                    Text("Installed revision unknown. Verify files to check for updates.", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                case .current:
+                    Text("Published revision matches the installed revision.", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                case .installedNewer:
+                    Text("Installed revision is newer than the published revision.", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                case .invalidLocal:
+                    if case .invalid(let failure) = check.local {
+                        Text(failure.localizedDescription)
+                            .foregroundStyle(theme.errorColor)
+                    }
+                case .unavailable, .updateAvailable:
+                    EmptyView()
+                }
+                if let required = check.remote?.manifest?.requiredOsaurusVersion {
+                    Text("Requires Osaurus \(required) or later", bundle: .module)
+                }
+                if let error = check.error {
+                    Text("Could not check for model updates: \(error)", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                if isExternalModel, check.updateAvailable || check.verificationRequired {
+                    Text("Update this model in the application that manages its files.", bundle: .module)
+                }
+            }
+            Button {
+                Task { await modelManager.checkModelManifest(model, force: true) }
+            } label: {
+                Text("Check for Model Updates", bundle: .module)
+            }
+            .disabled(modelManager.manifestChecksInFlight.contains(model.id.lowercased()))
+        }
+        .font(.system(size: 12))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("model-manifest-status")
+    }
+
     // MARK: - Action Footer
 
     private var actionFooter: some View {
         VStack(spacing: 0) {
             Divider()
+
+            if let message = modelManager.downloadService.repairMessages[model.id] {
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .accessibilityIdentifier("model-repair-status")
+            }
 
             Group {
                 switch modelManager.effectiveDownloadState(for: model) {
@@ -1336,32 +1400,19 @@ struct ModelDetailView: View, Identifiable {
                 }
                 .buttonStyle(PlainButtonStyle())
 
-                Button(action: {
-                    repairResult = nil
-                    isRepairing = true
-                    Task {
-                        await repairModel()
-                        isRepairing = false
-                    }
-                }) {
-                    HStack(spacing: 4) {
-                        if isRepairing {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle())
-                                .scaleEffect(0.5)
-                                .frame(width: 12, height: 12)
-                        } else if let result = repairResult {
-                            Image(systemName: result ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                .font(.system(size: 11))
-                                .foregroundColor(result ? theme.successColor : theme.errorColor)
-                        }
-                        Text("Repair", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                    }
+                Button(action: { modelManager.downloadService.repair(model) }) {
+                    Text(
+                        modelManager.manifestChecks[model.id.lowercased()]?.updateAvailable == true
+                            ? "Update Model"
+                            : modelManager.manifestChecks[model.id.lowercased()]?.verificationRequired == true
+                                ? "Verify Model" : "Repair",
+                        bundle: .module
+                    )
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.accentColor)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(isRepairing)
+                .localizedHelp("Verify model files against Hugging Face and restore missing or changed files.")
             }
 
             Spacer()
@@ -1405,20 +1456,6 @@ struct ModelDetailView: View, Identifiable {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             withAnimation(.easeInOut(duration: 0.15)) { didCopyPath = false }
         }
-    }
-
-    // MARK: - Repair
-
-    private func repairModel() async {
-        // The only caller allowed to restore weights and to overwrite files
-        // that differ from the Hub — because the user asked for it by name.
-        let success = await ModelDownloadService.ensureComplete(
-            for: model,
-            directory: model.localDirectory,
-            clearSentinel: true,
-            intent: .explicitRepair
-        )
-        await MainActor.run { repairResult = success }
     }
 
     // MARK: - Helper Functions

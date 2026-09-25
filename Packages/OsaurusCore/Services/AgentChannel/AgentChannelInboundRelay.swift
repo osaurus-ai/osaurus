@@ -85,6 +85,8 @@ final class AgentChannelInboundRelay {
     private let auditLog: AgentChannelAuditLog
     private let taskManager: BackgroundTaskManager
     private let activityCenter: AgentChannelInboundActivityCenter
+    private let focusPreference: AgentChannelInboundFocusPreference
+    private let revealTask: @MainActor (UUID) -> Void
     private var activePartitions = Set<String>()
 
     init(
@@ -92,13 +94,27 @@ final class AgentChannelInboundRelay {
         safetyGate: ChannelRemoteSafetyGate = .shared,
         auditLog: AgentChannelAuditLog = .shared,
         taskManager: BackgroundTaskManager = .shared,
-        activityCenter: AgentChannelInboundActivityCenter = .shared
+        activityCenter: AgentChannelInboundActivityCenter = .shared,
+        focusPreference: AgentChannelInboundFocusPreference = .shared,
+        revealTask: @escaping @MainActor (UUID) -> Void = { ChatWindowManager.shared.revealTask($0) }
     ) {
         self.substrate = substrate
         self.safetyGate = safetyGate
         self.auditLog = auditLog
         self.taskManager = taskManager
         self.activityCenter = activityCenter
+        self.focusPreference = focusPreference
+        self.revealTask = revealTask
+    }
+
+    /// Settings → Channels → Incoming → Focus Chat on Incoming Messages: when
+    /// enabled, every inbound message brings its conversation forward (focus
+    /// the tab, order the chat window front, open one if none is up). Off by
+    /// default; a monitoring/dedicated machine turns it on to see each
+    /// channel activation as it happens.
+    func revealConversationIfPreferred(taskId: UUID) {
+        guard focusPreference.isEnabled else { return }
+        revealTask(taskId)
     }
 
     func submit(_ request: AgentChannelInboundRelayRequest) async -> AgentChannelInboundRelaySubmission {
@@ -126,7 +142,7 @@ final class AgentChannelInboundRelay {
         case .workspace(let ref):
             let roster = WorkspaceRosterStore.shared
             guard roster.agent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId) != nil,
-                !roster.isOwnAgent(address: ref.agentAddress)
+                !roster.isHostedHere(address: ref.agentAddress)
             else {
                 return .suppressed("inbound_workspace_agent_unavailable")
             }
@@ -291,6 +307,8 @@ final class AgentChannelInboundRelay {
             taskId = handle.id
         }
 
+        revealConversationIfPreferred(taskId: taskId)
+
         let terminal = await waitForReply(taskId: taskId, runStartedAt: runStartedAt)
         switch terminal {
         case .reply(let text, let awaitingClarification, let artifacts):
@@ -417,6 +435,11 @@ final class AgentChannelInboundRelay {
         return max(0, applicable.count - maxPreloadedPluginTools)
     }
 
+    /// Header of the attachment trailer appended to the channel content.
+    /// Shared with `ChannelMessageEnvelope`, which splits the trailer off for
+    /// display, so the producer and the parser can never drift apart.
+    nonisolated static let attachmentContextHeader = "Attachments supplied by the channel (untrusted metadata):"
+
     private static func attachmentContext(_ attachments: [AgentChannelStoredAttachment]) -> String {
         guard !attachments.isEmpty else { return "" }
         let lines = attachments.map { attachment in
@@ -428,7 +451,7 @@ final class AgentChannelInboundRelay {
             return "- \(attachment.kind.rawValue): \(attachment.providerId)"
                 + (details.isEmpty ? "" : " (\(details))")
         }
-        return "\n\nAttachments supplied by the channel (untrusted metadata):\n"
+        return "\n\n" + attachmentContextHeader + "\n"
             + lines.joined(separator: "\n")
     }
 
@@ -457,10 +480,7 @@ final class AgentChannelInboundRelay {
             }
             guard let state = taskManager.taskState(for: taskId) else {
                 if let stored = ChatSessionStore.load(id: taskId),
-                   let text = stored.turns.last(where: {
-                       $0.role == .assistant
-                           && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                   })?.content {
+                   let text = Self.latestAssistantReply(in: stored.turns) {
                     return .reply(
                         text,
                         awaitingClarification: false,
@@ -485,10 +505,7 @@ final class AgentChannelInboundRelay {
                 }
                 return .failed("The agent is waiting for input but did not provide a clarification question.")
             case .completed:
-                if let text = state.chatSession?.turns.last(where: {
-                    $0.role == .assistant
-                        && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                })?.content {
+                if let text = Self.latestAssistantReply(in: state.chatSession?.turns ?? []) {
                     return .reply(
                         text,
                         awaitingClarification: false,
@@ -506,6 +523,22 @@ final class AgentChannelInboundRelay {
             }
         }
         return .failed("The channel task was cancelled.")
+    }
+
+    /// The visible reply of a finished channel turn: the last assistant turn
+    /// with non-blank content. Shared by the relay's reply wait and the
+    /// pull-based `/channels/{kind}/{id}/tasks/{task_id}` poll route so both
+    /// surfaces agree on what "the reply" is.
+    nonisolated static func latestAssistantReply(in turns: [ChatTurnData]) -> String? {
+        turns.last(where: {
+            $0.role == .assistant
+                && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })?.content
+    }
+
+    /// Live-session twin of `latestAssistantReply(in:)`.
+    static func latestAssistantReply(in turns: [ChatTurn]) -> String? {
+        turns.last(where: { $0.role == .assistant && !$0.contentIsBlank })?.content
     }
 
     /// Artifacts eligible for channel delivery: created by this run, backed by

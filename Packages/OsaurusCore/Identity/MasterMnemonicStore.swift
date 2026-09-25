@@ -44,32 +44,15 @@ public struct MasterMnemonicStore: Sendable {
             delete()
         }
 
-        let status = addToKeychain(data: data, synchronizable: true)
-        if status != errSecSuccess {
-            let fallback = addToKeychain(data: data, synchronizable: false)
-            guard fallback == errSecSuccess else {
-                throw OsaurusIdentityError.keychainWriteFailed
-            }
+        // Same dual-write as `MasterKey`: default group always (older
+        // builds read only that), shared group as an additional copy.
+        guard MasterKey.addGenericPassword(service: service, account: account, label: label, data: data)
+        else {
+            throw OsaurusIdentityError.keychainWriteFailed
         }
     }
 
-    // Mirrors `MasterKey`: a synchronizable iCloud Keychain item.
-    private static func addToKeychain(data: Data, synchronizable: Bool) -> OSStatus {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrLabel as String: "Osaurus Recovery Phrase",
-        ]
-        if synchronizable {
-            query[kSecAttrSynchronizable as String] = true
-            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-        } else {
-            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        }
-        return SecItemAdd(query as CFDictionary, nil)
-    }
+    static let label = "Osaurus Recovery Phrase"
 
     // MARK: - Existence
 
@@ -127,7 +110,30 @@ public struct MasterMnemonicStore: Sendable {
         guard words.count == 24 else {
             throw OsaurusIdentityError.mnemonicInvalidWordCount
         }
+        migrateToSharedGroupIfNeeded(data: data)
         return words
+    }
+
+    /// Once per process, same mirror as `MasterKey`: make sure a synced
+    /// phrase exists in both the default and the shared group. Adds copies
+    /// only; never deletes, so older builds keep the item they can see.
+    private static let migrationLock = NSLock()
+    private nonisolated(unsafe) static var migrationAttempted = false
+
+    private static func migrateToSharedGroupIfNeeded(data: Data) {
+        guard let group = OsaurusKeychainGroup.shared else { return }
+        migrationLock.lock()
+        let alreadyTried = migrationAttempted
+        migrationAttempted = true
+        migrationLock.unlock()
+        guard !alreadyTried else { return }
+        MasterKey.mirrorGenericPassword(
+            service: service,
+            account: account,
+            label: label,
+            data: data,
+            sharedGroup: group
+        )
     }
 
     // MARK: - Delete

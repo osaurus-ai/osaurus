@@ -26,6 +26,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Projects                         | Stable    | "Key Features"     | PROJECTS.md                   | Models/Project/Project.swift, Managers/ProjectManager.swift, Views/Chat/ProjectDetailView.swift, Managers/Chat/ChatSessionsManager.swift, Services/Chat/SystemPromptComposer.swift, Services/Memory/MemoryService.swift |
 | Privacy Filter                   | Experimental | "Key Features"  | PRIVACY_FILTER.md             | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
+| Apple Apps (built-in, per-agent) | Stable    | "Tools & Plugins"  | APPLE_APPS.md                 | AppleApps/, Tools/ToolRegistry.swift, Services/Chat/SystemPromptComposer.swift, Views/Agent/AgentCapabilityManagerView.swift |
 | Orchestrator (default agent)     | Stable    | "Orchestrator"     | ORCHESTRATOR.md               | Models/Agent/DefaultAgentConfiguration.swift, Services/Chat/DefaultAgentSystemPromptBuilder.swift, Views/Settings/OrchestratorSettingsView.swift |
 | Agent DB & Self-Scheduling       | Stable    | "Agents"           | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Managers/NextRunScheduler.swift, Tools/Database/, Views/Agent/AgentDBTabViews.swift, Views/Agent/NextRunPanelView.swift |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
@@ -493,6 +494,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - **Custom System Prompts** — Define unique instructions for each agent
 - **Automated Capabilities** — Tools, skills, and methods are automatically selected via RAG search based on the task
 - **Per-Agent Feature Gates** — Configure → Features groups every capability by purpose and keeps extra ones off by default to keep the tool list lean (see below)
+- **Apple Apps** — Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps & Location, Music, and Shortcuts are built-in tool families toggled per app under Abilities → Tools; enabling asks for the macOS grant, sends and deletes always ask for approval, and the Orchestrator provisions them via `capabilities.apple_apps` (see [APPLE_APPS.md](APPLE_APPS.md))
 - **Visual Themes** — Assign a custom theme that activates with the agent
 - **Generation Settings** — Configure default model, temperature, and max tokens
 - **Import/Export** — Share agents as JSON files for backup or sharing
@@ -510,6 +512,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 | Memory & Recall | `searchMemoryEnabled` | Memory Recall | off | `search_memory` |
 | Autonomy | `selfSchedulingEnabled` | Self-scheduling | off | `schedule_next_run` / `cancel_next_run` / `notify` + scheduling UI |
 | Autonomy | `computerUseEnabled` | Computer Use | off | `computer_use` entry tool (custom agents only; plus per-agent autonomy ceiling) |
+| Apple Apps | `enabledAppleApps` | one picker group per app under Abilities → Tools | off (all) | That app's `calendar_*` / `reminders_*` / `contacts_*` / `notes_*` / `mail_*` / `messages_*` / `location_*` + `maps_*` / `music_*` / `shortcuts_*` tools — stripped in auto **and** manual mode, refused at execution, never discoverable (see [APPLE_APPS.md](APPLE_APPS.md)) |
 | Data | `dbEnabled` | Database | off | `db_*` tools + DB tabs |
 | Code Execution | sandbox settings | Autonomous Execution / Plugin Creation / Sandbox Network / Read Secret Files | off | Sandbox capabilities (visible but disabled when the container isn't running) |
 
@@ -664,7 +667,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Storage/AgentChannelMessageStore.swift` — inbound messages + outbound intents
 - `Views/Settings/AgentChannelConnectionCenterView.swift`, `Views/Settings/AgentChannelDestinationViews.swift` — Channels center, Channel Posting cards, Customize sheet, outbox review
 
-**Documentation:** [AGENT_CHANNELS.md](AGENT_CHANNELS.md) (architecture and flows), [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) (security model), [AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md) (setup guide)
+**Documentation:** [AGENT_CHANNELS.md](AGENT_CHANNELS.md) (architecture and flows), [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) (security model), [AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md) (setup guide), [AGENT_CHANNELS_N8N.md](AGENT_CHANNELS_N8N.md) (n8n webhook channel)
 
 **Storage:** `~/.osaurus/config/agent-channels.json` (connections + bindings), Agent Channel message store (messages + outbound intents)
 

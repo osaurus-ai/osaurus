@@ -10,6 +10,18 @@ import Testing
 
 struct EmbeddingServiceTests {
 
+    @Test(arguments: ["potion-base-4M", "minishlab/potion-base-4M"])
+    func acceptsSupportedAPIModel(_ model: String) throws {
+        try EmbeddingService.validateAPIModel(model)
+    }
+
+    @Test(arguments: ["mxbai-embed-large-v1", "bge-small-en-v1.5", "other/potion-base-4M", "", "potion-base-4M-extra"])
+    func rejectsUnsupportedAPIModel(_ model: String) {
+        #expect(throws: EmbeddingService.APIModelError.self) {
+            try EmbeddingService.validateAPIModel(model)
+        }
+    }
+
     @Test func embeddingDimensionIs128() {
         #expect(EmbeddingService.embeddingDimension == 128)
     }

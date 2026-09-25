@@ -63,13 +63,18 @@ final class ServerController: ObservableObject {
     /// when no controller exists yet — the settings are persisted and
     /// take effect when the server starts.
     static func applyRuntimeSettingsFromConfigureTool(
-        _ settings: VMLXServerRuntimeSettings
+        _ settings: VMLXServerRuntimeSettings,
+        mtpSelectionIsFamilyDefault: Bool = false
     ) async -> RuntimeSettingsApplyEffects? {
         guard let controller = ServerControllerHolder.shared.controller else {
-            ServerRuntimeSettingsStore.save(settings)
+            if mtpSelectionIsFamilyDefault {
+                ServerRuntimeSettingsStore.saveFamilyMTPDefault(settings)
+            } else {
+                ServerRuntimeSettingsStore.save(settings)
+            }
             return nil
         }
-        return await controller.saveRuntimeSettings(settings)
+        return await controller.saveRuntimeSettings(settings, mtpSelectionIsFamilyDefault: mtpSelectionIsFamilyDefault)
     }
 
     /// Current runtime settings + server liveness for the declarative
@@ -344,6 +349,7 @@ final class ServerController: ObservableObject {
                     self.runtimeSettings = latest
                 }
                 self.synchronizeSpawnBatchLimit(from: latest)
+                await ModelRuntime.shared.refreshDiskCacheCaps()
             }
         }
         if let existingRuntimeSettings {
@@ -456,7 +462,11 @@ final class ServerController: ObservableObject {
 
     /// Saves the current configuration to disk
     func saveConfiguration() {
+        let previousIdlePolicy = ServerConfigurationStore.load()?.modelIdleResidencyPolicy
         ServerConfigurationStore.save(configuration)
+        if previousIdlePolicy != configuration.modelIdleResidencyPolicy {
+            Task { await ModelRuntime.shared.refreshIdleResidencyPolicy() }
+        }
     }
 
     /// Persists the supplied vmlx runtime settings, projects the
@@ -477,7 +487,8 @@ final class ServerController: ObservableObject {
 
     @discardableResult
     func saveRuntimeSettings(
-        _ requestedSettings: VMLXServerRuntimeSettings
+        _ requestedSettings: VMLXServerRuntimeSettings,
+        mtpSelectionIsFamilyDefault: Bool = false
     ) async -> RuntimeSettingsApplyEffects {
         let settings =
             ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
@@ -495,7 +506,11 @@ final class ServerController: ObservableObject {
         )
 
         runtimeSettings = settings
-        ServerRuntimeSettingsStore.save(settings)
+        if mtpSelectionIsFamilyDefault {
+            ServerRuntimeSettingsStore.saveFamilyMTPDefault(settings)
+        } else {
+            ServerRuntimeSettingsStore.save(settings)
+        }
         synchronizeSpawnBatchLimit(from: settings)
 
         let configChanged = projected != previousConfig
@@ -522,6 +537,8 @@ final class ServerController: ObservableObject {
             : 0
         if loadedModelRefreshNeeded {
             await ModelRuntime.shared.clearAll()
+        } else {
+            await ModelRuntime.shared.refreshDiskCacheCaps()
         }
         if restartWasRequested {
             await restartServer()
@@ -543,7 +560,7 @@ final class ServerController: ObservableObject {
         previous: VMLXServerRuntimeSettings,
         next: VMLXServerRuntimeSettings
     ) -> Bool {
-        previous.cache != next.cache
+        previous.cache.requiresModelReload(comparedTo: next.cache)
             || previous.multimodal != next.multimodal
             // Only the MTP fields that change what gets LOADED force a reload.
             // Comparing the whole `mtp` struct meant changing the draft-token
@@ -594,6 +611,7 @@ final class ServerController: ObservableObject {
     ) -> Bool {
         previous.generation != next.generation
             || previous.concurrency != next.concurrency
+            || previous.mtp != next.mtp
     }
 
     // MARK: - Private Helpers
@@ -621,44 +639,6 @@ final class ServerController: ObservableObject {
     }
 
     private func getLocalIPAddress() -> String {
-        var address: String = "127.0.0.1"
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0 else { return address }
-        guard let firstAddr = ifaddr else { return address }
-
-        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
-            let flags = Int32(ptr.pointee.ifa_flags)
-            let addr = ptr.pointee.ifa_addr.pointee
-
-            // Check for running IPv4 interface, and skip loopback
-            if (flags & (IFF_UP | IFF_RUNNING | IFF_LOOPBACK)) == (IFF_UP | IFF_RUNNING) {
-                if addr.sa_family == AF_INET {
-                    // Found an active IPv4 address
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                    if getnameinfo(
-                        ptr.pointee.ifa_addr,
-                        socklen_t(addr.sa_len),
-                        &hostname,
-                        socklen_t(hostname.count),
-                        nil,
-                        socklen_t(0),
-                        NI_NUMERICHOST
-                    ) == 0 {
-                        // Trim at NUL terminator before decoding to avoid deprecated cString initializer.
-                        let nulTrimmed = hostname.prefix { $0 != 0 }
-                        let ip = String(decoding: nulTrimmed.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-                        let name = String(cString: ptr.pointee.ifa_name)
-                        if name.starts(with: "en") {  // en0, en1, etc. are common for Wi-Fi/Ethernet on macOS
-                            address = ip
-                            break
-                        }
-                    }
-                }
-
-            }
-        }
-
-        freeifaddrs(ifaddr)
-        return address
+        LocalNetworkAddress.primaryIPv4()
     }
 }

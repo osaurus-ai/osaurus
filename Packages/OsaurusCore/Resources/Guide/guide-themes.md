@@ -14,7 +14,7 @@ System / Light / Dark. Pick it in the Themes tab (applying the built-in Light or
 
 ## Theme gallery
 
-- Management (⌘⇧M) → Themes: browse built-in and installed themes, Apply Theme, Import, Export, Share, Delete.
+- Settings… (⌘,) → Themes: browse built-in and installed themes, Apply Theme, Import, Export, Share, Delete.
 - Themes customize chat colors, glass effects, fonts, animations, and message bubbles; backgrounds can be solid, gradient, or image.
 - Create custom themes in the editor with live preview. Colors are `#RRGGBB` or `#AARRGGBB`; `followsSystemAccent` re-derives accent colors from the macOS accent.
 

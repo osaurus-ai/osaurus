@@ -8,7 +8,7 @@ access), and every action passes through the **same safe-by-default autonomy
 gate as Computer Use** before it runs.
 
 Browser Use is the native replacement for the retired `osaurus.browser`
-plugin. Existing plugin installs keep working as a card in Settings → Plugins
+plugin. Existing plugin installs keep working as a card in Settings… (⌘,) → Tools → Native Plugins
 with a "Built into Osaurus" banner, but their tools and skill no longer load;
 each agent's WebKit profile is migrated so sign-ins carry over (see
 [Migration](#migration-from-the-osaurusbrowser-plugin)).

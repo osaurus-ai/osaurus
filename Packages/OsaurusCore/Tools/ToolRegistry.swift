@@ -269,14 +269,11 @@ public final class ToolRegistry: ObservableObject {
             // plain "what is the time?" (a common first-message smoke test)
             // otherwise makes them guess. Always loaded; no side effects.
             CurrentTimeTool(),
-            // Text-delegation family: `spawn_agent` hands a task to a configured
-            // agent (its prompt + model); `spawn_model` hands a task to a bare
-            // spawnable model id; `spawn_batch` performs bounded fan-out over
-            // either pool. All three gate per-agent (their pools) in
+            // Delegation: `spawn_agent` hands a task to a configured agent
+            // (its prompt + model + tools). Several calls in one message form
+            // one wave (`SpawnWaveGate`). Gated per-agent (its pool) in
             // `SystemPromptComposer.resolveTools` via `SubagentToolVisibility`.
             SpawnAgentTool(),
-            SpawnModelTool(),
-            SpawnBatchTool(),
             // Native local image generation/editing (one `image` tool; source_paths
             // → edit). Tool body enforces the separate Agent Delegation permission
             // defaults and low-RAM unload policy.
@@ -349,6 +346,15 @@ public final class ToolRegistry: ObservableObject {
             AppleScriptTool(),
             MacQueryTool(),
         ]
+        // Built-in Apple app tools (Calendar, Reminders, Contacts, Notes,
+        // Mail, Messages, Maps/Location, Music, Shortcuts) — the
+        // native replacement for the osaurus-tools Apple plugins. Always
+        // registered so the runtime can execute them; the composer strips
+        // every app the agent has not enabled (`enabledAppleApps`) and the
+        // Orchestrator never carries them (`orchestratorExcludedToolNames`).
+        // Each conforms to `PermissionedTool` with the app's macOS
+        // permission(s) as requirements so the first call prompts via TCC.
+        + AppleAppToolCatalog.makeTools()
         var configChanged = false
         for tool in builtIns {
             register(tool)
@@ -560,8 +566,11 @@ public final class ToolRegistry: ObservableObject {
     /// `agent_channel_*` tool automatically keeps it off external surfaces.
     /// These names refuse with a structured envelope regardless of
     /// registration state and are hidden from `/mcp/tools` listings.
+    /// Built-in Apple app tools are denied as a family too: they read and
+    /// write the user's personal data and are gated per agent, so the
+    /// unauthenticated loopback bridge must never reach them.
     nonisolated public static let externallyDeniedToolNames: Set<String> =
-        externallyDeniedHostToolNames.union(agentChannelToolNames)
+        externallyDeniedHostToolNames.union(agentChannelToolNames).union(AppleApp.allToolNames)
 
     /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
     /// folder-bounded remote agent run may use (gated on
@@ -618,6 +627,42 @@ public final class ToolRegistry: ObservableObject {
         )
     }
 
+    /// Whether the current execution may run a tool of `app`: a custom agent
+    /// with the app enabled in its Abilities. The Default agent and calls
+    /// without an agent context are refused.
+    static func isAppleAppEnabledForCurrentAgent(_ app: AppleApp) -> Bool {
+        guard let agentId = ChatExecutionContext.currentAgentId, agentId != Agent.defaultId else { return false }
+        return AgentManager.shared.effectiveCapabilities(for: agentId).enabledAppleApps.contains(app)
+    }
+
+    /// Envelope for an Apple tool whose app is off for the calling agent
+    /// (or that was called without an agent). Names the one real switch.
+    nonisolated static func appleAppOffEnvelope(tool: String, app: AppleApp, agentId: UUID?) -> String {
+        let message: String
+        if agentId == nil {
+            message =
+                "'\(tool)' belongs to the built-in \(app.displayName) app and only runs inside an Osaurus agent that has \(app.displayName) enabled."
+        } else if agentId == Agent.defaultId {
+            message =
+                "'\(tool)' belongs to the built-in \(app.displayName) app. The Default agent never uses Apple app tools; enable \(app.displayName) on a custom agent (`osaurus_config` → capabilities.apple_apps) and delegate to it."
+        } else {
+            message =
+                "'\(tool)' belongs to the built-in \(app.displayName) app, which is off for this agent. It cannot be loaded with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps (or have the Orchestrator set capabilities.apple_apps), then retry."
+        }
+        return ToolEnvelope.failure(
+            kind: .rejected, message: message, tool: tool, retryable: false,
+            metadata: ["apple_app": app.rawValue]
+        )
+    }
+
+    private func appleAppGateRefusal(for tool: AppleToolBase) -> String? {
+        if Self.isAppleAppEnabledForCurrentAgent(tool.app) { return nil }
+        ToolRegistryLogger.registry.error(
+            "refusing '\(tool.name, privacy: .public)': \(tool.app.rawValue, privacy: .public) is not enabled for the current agent"
+        )
+        return Self.appleAppOffEnvelope(tool: tool.name, app: tool.app, agentId: ChatExecutionContext.currentAgentId)
+    }
+
     /// Resolve the permission gate (missing system permissions, ask/deny
     /// policy, auto-grants) for one tool call without executing it. Throws
     /// the same errors `execute` would on denial. Unknown tools are a
@@ -672,14 +717,75 @@ public final class ToolRegistry: ObservableObject {
     /// the bare target is. This preserves the (unusual but valid) possibility
     /// of a plugin whose literal registered name starts with `tool/`.
     private func resolvedRegisteredName(for rawName: String) -> String {
-        guard toolsByName[rawName] == nil,
-            let target = Self.deferredToolAliasTarget(rawName),
-            toolsByName[target] != nil
-        else {
-            return rawName
+        guard toolsByName[rawName] == nil else { return rawName }
+        if let target = Self.deferredToolAliasTarget(rawName), toolsByName[target] != nil {
+            return target
         }
-        return target
+        // An MCP server's own instructions and tool descriptions name its
+        // tools canonically (`abc`), while the registry exposes them prefixed
+        // (`xyz_abc`). A model following the server's documented workflow
+        // calls the canonical name; resolve it within the originating
+        // provider instead of dead-ending on tool_not_found (#2856). The
+        // scope and permission gates then run on the resolved name, exactly
+        // as they would for a `tool/` alias — nothing becomes callable that
+        // was not already.
+        if let exposed = uniqueMCPToolName(forCanonical: rawName) {
+            ToolRegistryLogger.registry.notice(
+                "resolving canonical MCP tool '\(rawName, privacy: .public)' to '\(exposed, privacy: .public)'"
+            )
+            return exposed
+        }
+        return rawName
     }
+
+    /// Registered MCP wrappers whose server-side (canonical) name is `name`.
+    func mcpTools(forCanonical name: String) -> [MCPProviderTool] {
+        toolsByName.values
+            .compactMap { $0 as? MCPProviderTool }
+            .filter { $0.mcpToolName == name }
+            .sorted { $0.name < $1.name }
+    }
+
+    /// The one exposed name a canonical MCP tool name maps to: the sole
+    /// provider publishing it, or, when several do, the sole one exposed to
+    /// this request. nil when nothing matches or the choice would be a guess.
+    func uniqueMCPToolName(forCanonical name: String) -> String? {
+        guard !keepsDedicatedNotFoundHandling(name) else { return nil }
+        let matches = mcpTools(forCanonical: name)
+        guard !matches.isEmpty else { return nil }
+        let exposed: [MCPProviderTool]
+        if let scope = ChatExecutionContext.toolExecutionScope {
+            exposed = matches.filter { scope.permits($0.name) }
+        } else {
+            exposed = matches
+        }
+        // A universal fetch name (`fetch`, `web_fetch`) keeps its
+        // search_and_extract steer unless the server's tool of that name is
+        // actually in the model's schema; an unexposed MCP `fetch` must not
+        // turn a working steer into a loader round-trip.
+        if Self.isHallucinatedFetchToolName(name), exposed.isEmpty { return nil }
+        if exposed.count == 1 { return exposed[0].name }
+        if exposed.isEmpty, matches.count == 1 { return matches[0].name }
+        return nil
+    }
+
+    /// Names `execute` answers with a dedicated, actionable message when they
+    /// are unregistered — attach a folder, enable the Apple app, the sandbox
+    /// is still starting — or that belong to a built-in. Resolving one of
+    /// these into an MCP provider would replace that message with a generic
+    /// loader hint, so a same-named remote tool stays reachable only under
+    /// its exposed name.
+    private func keepsDedicatedNotFoundHandling(_ name: String) -> Bool {
+        builtInToolNames.contains(name)
+            || Self.coreWorkspaceToolNames.contains(name)
+            || Self.redactionToolNames.contains(name)
+            || name.hasPrefix("sandbox_")
+            || AppleApp.app(forTool: name) != nil
+    }
+
+    /// `userInfo` keys on the code-7 (missing system permission) error.
+    nonisolated static let missingPermissionUserInfoKey = "ai.osaurus.toolRegistry.permission"
+    nonisolated static let missingPermissionSettingsURLUserInfoKey = "ai.osaurus.toolRegistry.systemSettingsURL"
 
     /// The permission gate shared by `execute` and `resolvePermissionGate`:
     /// system-permission prompts, the per-tool ask/deny/auto policy
@@ -691,6 +797,13 @@ public final class ToolRegistry: ObservableObject {
         )
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
+            // Computer Use funnel: this gate is the one chokepoint every real
+            // `computer_use` invocation passes, so it is where an ATTEMPT is
+            // counted. Every later refusal (agent auth, model, admission) is
+            // attributed by `ComputerUseTool`; the Accessibility refusal below
+            // is the only one that happens before the tool body exists.
+            let isComputerUse = name == ComputerUseTool.toolName
+            if isComputerUse { FeatureTelemetry.computerUseAttempt() }
 
             // Check system permissions and prompt the user for any that are missing
             let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
@@ -703,15 +816,26 @@ public final class ToolRegistry: ObservableObject {
                 from: requirements
             )
             if !stillMissing.isEmpty {
+                if isComputerUse {
+                    FeatureTelemetry.computerUseRefused(stage: .permissionAccessibility)
+                }
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
-                throw NSError(
-                    domain: "ToolRegistry",
-                    code: 7,
-                    userInfo: [
-                        NSLocalizedDescriptionKey:
-                            "Missing system permissions for tool: \(name). Required: \(missingNames). Please grant these permissions in the Permissions tab or System Settings."
-                    ]
-                )
+                // Typed like `AppleToolError.permissionDenied`: the first
+                // missing permission's stable name and its System Settings
+                // pane ride along so the envelope tells the model exactly
+                // which grant is missing and where it lives (the Apple app
+                // tools hit this gate before their body runs).
+                var userInfo: [String: Any] = [
+                    NSLocalizedDescriptionKey:
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or the Osaurus Permissions tab), then try again."
+                ]
+                if let first = stillMissing.first {
+                    userInfo[Self.missingPermissionUserInfoKey] = first.rawValue
+                    if let url = first.systemSettingsURL?.absoluteString {
+                        userInfo[Self.missingPermissionSettingsURLUserInfoKey] = url
+                    }
+                }
+                throw NSError(domain: "ToolRegistry", code: 7, userInfo: userInfo)
             }
 
             let defaultPolicy = permissioned.defaultPermissionPolicy
@@ -728,6 +852,20 @@ public final class ToolRegistry: ObservableObject {
                 )
                 effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, resolved)
             }
+            // A per-call tool refuses every pre-grant: the run lease and the
+            // global auto-allow both go through the shortcuts below, and a
+            // lease taken for a bulk WRITE must not end up covering a delete
+            // later in the same run. It also refuses a configured `.auto` —
+            // whether set from the Tools catalog menu or `tools.policies` in a
+            // declarative document — because "always confirmed" cannot depend
+            // on a policy the Orchestrator can rewrite. `.deny` still wins.
+            let perCallApproval =
+                (tool as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
+                || (tool as? ArgumentAwarePerCallApprovalTool)?
+                    .requiresApprovalEveryCall(argumentsJSON: argumentsJSON) == true
+            if perCallApproval {
+                effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, .ask)
+            }
             switch effectivePolicy {
             case .deny:
                 throw NSError(
@@ -737,12 +875,6 @@ public final class ToolRegistry: ObservableObject {
                 )
             case .ask:
                 let approved: Bool
-                // A per-call tool refuses every pre-grant: the run lease and
-                // the global auto-allow both go through the shortcuts below,
-                // and a lease taken for a bulk WRITE must not end up covering
-                // a delete later in the same run.
-                let perCallApproval =
-                    (tool as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
                 if permissioned.handlesOwnApproval {
                     // The tool runs its own purpose-built interactive
                     // approval in its body (osaurus_config's plan-review
@@ -801,7 +933,8 @@ public final class ToolRegistry: ObservableObject {
                         description: tool.description,
                         argumentsJSON: approvalArgumentsJSON,
                         knowledgeWritePreview: writePreview,
-                        perCallApprovalOnly: perCallApproval
+                        perCallApprovalOnly: perCallApproval,
+                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON)
                     )
                     switch outcome {
                     case .denied:
@@ -866,7 +999,8 @@ public final class ToolRegistry: ObservableObject {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
                         description: tool.description,
-                        argumentsJSON: approvalArgumentsJSON
+                        argumentsJSON: approvalArgumentsJSON,
+                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON)
                     )
                 }
                 if !approved {
@@ -921,6 +1055,15 @@ public final class ToolRegistry: ObservableObject {
         // plugin GROUP that happens to share an alias name (`plugin/fetch`)
         // keeps its own load rescue instead of being steered away from the
         // capability the user deliberately installed.
+        // A canonical MCP tool name that several connected servers publish,
+        // more than one of them exposed here: `resolvedRegisteredName` could
+        // not pick, so name the exposed candidates by provider rather than
+        // refuse opaquely. These are tools already in the model's schema,
+        // not rumors, so the no-"did you mean" rule does not apply (#2856).
+        if toolsByName[name] == nil, let ambiguous = ambiguousCanonicalMCPEnvelope(for: name) {
+            return ambiguous
+        }
+
         // A prefix-dropped plugin tool name: the Exa plugin registers
         // `exa_search_web_fetch_exa`; the model (Ornith, 2026-09-05 report)
         // called `web_fetch_exa`. When exactly ONE tool exposed to THIS
@@ -1022,6 +1165,11 @@ public final class ToolRegistry: ObservableObject {
                     retryable: false
                 ).toJSONString()
             }
+            // Built-in Apple app tools: name the real switch instead of an
+            // opaque refusal or a loader hint that would be rejected.
+            if let app = AppleApp.app(forTool: name) {
+                return Self.appleAppOffEnvelope(tool: name, app: app, agentId: ChatExecutionContext.currentAgentId)
+            }
             let toolAvailability = availability(forTool: name, agentAllowedNames: agentAllowed)
             // The default agent's capabilities_load is gated to the configure
             // write tools, so the hint would only steer it into a rejected
@@ -1103,6 +1251,14 @@ public final class ToolRegistry: ObservableObject {
                     + "before answering that it can't be done).",
                 toolName: name
             ).toJSONString()
+        }
+        // Built-in Apple app tools: authoritative per-agent gate at call
+        // time. The composer strips these from the schema when the owning
+        // app is off; this is the matching execution-side check so no
+        // surface (a stale loaded name, a direct call, a worker) can run
+        // one for an agent — or no agent — that has not enabled the app.
+        if let apple = tool as? AppleToolBase, let refusal = appleAppGateRefusal(for: apple) {
+            return refusal
         }
         if let invalidArguments = Self.invalidToolArgumentsEnvelope(
             argumentsJSON,
@@ -1357,6 +1513,39 @@ public final class ToolRegistry: ObservableObject {
             )
         }
         return activeSandboxAgentContext
+    }
+
+    /// Where calling `name` with these arguments will land: the isolated VM,
+    /// this Mac, or a remote MCP server. Shown on the approval card
+    /// (osaurus#2651). Resolved from the same state the tool body routes
+    /// on — `isSandboxTool`, the provider's transport/execution host, and
+    /// for the context-routed workspace vocabulary the sandbox bridge +
+    /// folder root the body will read — so the card never claims a surface
+    /// the call will not use. Callers must invoke it inside the same
+    /// task-local scope as the execution (the permission gate does).
+    func executionSurface(for name: String, argumentsJSON: String) -> ToolExecutionSurface {
+        if isSandboxTool(name) { return .sandboxVM }
+        guard let tool = toolsByName[name] else { return .nativeHost }
+        if let mcp = tool as? MCPProviderTool {
+            let provider = MCPProviderManager.shared.configuration.providers
+                .first { $0.id == mcp.providerId }
+            return .forMCPProvider(
+                transport: provider?.transport,
+                executionHost: provider?.executionHost
+            )
+        }
+        if ToolExecutionSurface.contextRoutedToolNames.contains(name) {
+            return .forContextRoutedTool(
+                name: name,
+                pathArgument: ToolExecutionSurface.routedPathArgument(
+                    toolName: name,
+                    argumentsJSON: argumentsJSON
+                ),
+                hasSandboxBridge: combinedSandboxReadBridge != nil,
+                hasFolderRoot: ChatExecutionContext.currentFolderRoot != nil
+            )
+        }
+        return .nativeHost
     }
 
     /// Sandbox agent name bound for Agent DB file tools. Same resolution
@@ -1758,6 +1947,24 @@ public final class ToolRegistry: ObservableObject {
         return toolsByName[name] != nil
     }
 
+    /// Whether the registered tool asks for approval on every call
+    /// unconditionally (`PerCallApprovalTool`, e.g. `messages_send`,
+    /// `calendar_delete_event`). `execute` forces the effective policy to
+    /// `.ask` for these, so a configured `auto` is stored but never
+    /// honoured; the Tools catalog menu hides Auto and the declarative
+    /// planner says the setting is inert.
+    func requiresPerCallApproval(_ name: String) -> Bool {
+        (toolsByName[name] as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
+    }
+
+    /// Whether the registered tool asks on every call for SOME arguments
+    /// (`ArgumentAwarePerCallApprovalTool`, e.g. `mail_compose` with
+    /// `send: true`). `auto` still applies to the other calls (drafts), so the
+    /// menu keeps offering it; the planner adds the caveat.
+    func mayRequirePerCallApproval(_ name: String) -> Bool {
+        toolsByName[name] is ArgumentAwarePerCallApprovalTool
+    }
+
     /// Explicit per-tool enablement and policy overrides, for the
     /// declarative config exporter/planner. Only names the user (or a
     /// previous apply) explicitly touched appear here.
@@ -1845,7 +2052,12 @@ public final class ToolRegistry: ObservableObject {
             requirements = []
         }
         let configured = configuration.policy[name]
-        let effective = configured ?? defaultPolicy
+        var effective = configured ?? defaultPolicy
+        // Mirror `execute`: a per-call approval tool never runs on `auto`, so
+        // the pill must not show "Auto" for a stored value that is inert.
+        if effective == .auto, requiresPerCallApproval(name) {
+            effective = .ask
+        }
         var grants: [String: Bool] = [:]
         // Only track grants for non-system requirements
         for r in requirements where !SystemPermissionService.isSystemPermission(r) {
@@ -1880,6 +2092,7 @@ public final class ToolRegistry: ObservableObject {
     /// are immediately usable; subsequent registrations preserve the user's choice.
     /// Strips any pre-existing MCP / plugin bucket flag — live registration wins.
     func registerSandboxTool(_ tool: OsaurusTool, runtimeManaged: Bool = false) {
+        if !runtimeManaged, refusesBuiltInCollision(name: tool.name, source: "sandbox plugin") { return }
         let firstTime =
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
@@ -1980,6 +2193,7 @@ public final class ToolRegistry: ObservableObject {
     /// subsequent registrations preserve the user's choice.
     func registerMCPTool(_ tool: MCPProviderTool) {
         let name = tool.name
+        if refusesBuiltInCollision(name: name, source: "MCP provider '\(tool.providerName)'") { return }
         if let existing = toolsByName[name] as? MCPProviderTool,
             existing.providerId != tool.providerId
         {
@@ -2024,6 +2238,7 @@ public final class ToolRegistry: ObservableObject {
     /// system-owned dynamic surfaces such as Agent Channels; plugin-owned tools
     /// must use `registerPluginTool(_:)` so ownership diagnostics stay correct.
     func registerNativeDynamicTool(_ tool: OsaurusTool) {
+        if refusesBuiltInCollision(name: tool.name, source: "native dynamic") { return }
         let firstTime =
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
@@ -2050,6 +2265,7 @@ public final class ToolRegistry: ObservableObject {
     /// Auto-enables the tool on first registration so it is immediately usable;
     /// subsequent registrations (e.g. hot-reload) preserve the user's choice.
     func registerPluginTool(_ tool: OsaurusTool) {
+        if refusesBuiltInCollision(name: tool.name, source: "plugin") { return }
         let firstTime =
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
@@ -2070,6 +2286,19 @@ public final class ToolRegistry: ObservableObject {
                 parameters: tool.parameters
             )
         }
+    }
+
+    /// A built-in name is never overwritten by an MCP or plugin tool: a
+    /// remote `calendar_events` would otherwise be governed by the Calendar
+    /// toggle, skip TCC, and run under the built-in's permission policy.
+    /// Refused registrations are logged and dropped; the external tool stays
+    /// reachable only under a non-colliding name.
+    private func refusesBuiltInCollision(name: String, source: String) -> Bool {
+        guard builtInToolNames.contains(name) else { return false }
+        ToolRegistryLogger.registry.error(
+            "refusing \(source, privacy: .public) tool '\(name, privacy: .public)': the name belongs to a built-in tool"
+        )
+        return true
     }
 
     /// Whether a tool was registered from a native dylib plugin.
@@ -2151,16 +2380,21 @@ public final class ToolRegistry: ObservableObject {
         "file_write", "file_edit",
     ]
 
-    /// Folder tools that exist ONLY for combined mode. `file_copy` bridges
-    /// file bytes between the workspace and the sandbox — meaningless in
-    /// plain folder mode (shell `cp` covers host-side copies) and in plain
-    /// sandbox mode (no workspace). Visible in BOTH read-only and writable
-    /// combined mode; host-bound destinations are gated at execute time on
-    /// the `ChatExecutionContext.allowHostFolderWrites` task-local (always
-    /// false now that combined mode is gone), not by hiding the tool.
-    static let combinedModeBridgeToolNames: Set<String> = [
+    /// Folder tools that need a host workspace but are NOT part of the
+    /// five-tool VM contract. `file_copy` is the binary-safe duplicate
+    /// (host→host in folder mode; host↔`/workspace` share when a sandbox
+    /// bridge is bound). Hidden in VM-only mode where shell `cp` covers
+    /// sandbox-side copies and there is no workspace to copy from.
+    static let hostWorkspaceOnlyToolNames: Set<String> = [
         "file_copy"
     ]
+
+    /// Tool names that receive the compact public workspace schema in
+    /// `SystemPromptComposer.resolveTools`: the five VM-contract tools plus
+    /// `file_copy` when the mode exposes it.
+    static var compactWorkspaceSpecToolNames: Set<String> {
+        coreWorkspaceToolNames.union(hostWorkspaceOnlyToolNames)
+    }
 
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
     var runtimeManagedToolNames: Set<String> {
@@ -2221,10 +2455,6 @@ public final class ToolRegistry: ObservableObject {
             }
             excluded.formUnion(folderExcluded)
         } else {
-            // Plain folder mode: hide the combined-mode-only bridge —
-            // there is no sandbox to bridge to, and `shell_run` (`cp`)
-            // covers host-side copies.
-            excluded.formUnion(Self.combinedModeBridgeToolNames)
             // Git tools are registered process-wide with the rest of the
             // folder surface but only make sense against a repo — filter
             // them per request from THIS session's folder context (the old
@@ -2627,6 +2857,26 @@ public final class ToolRegistry: ObservableObject {
         return candidates.count == 1 ? candidates[0] : nil
     }
 
+    /// The steer for a canonical MCP name that two or more exposed providers
+    /// publish; nil unless at least two are exposed to this request.
+    func ambiguousCanonicalMCPEnvelope(for name: String) -> String? {
+        guard let scope = ChatExecutionContext.toolExecutionScope else { return nil }
+        let exposed = mcpTools(forCanonical: name).filter { scope.permits($0.name) }
+        guard exposed.count > 1 else { return nil }
+        let choices = exposed.map { "'\($0.name)' (\($0.providerName))" }.joined(separator: ", ")
+        ToolRegistryLogger.registry.notice(
+            "canonical MCP tool '\(name, privacy: .public)' is published by \(exposed.count) exposed providers"
+        )
+        return ToolErrorEnvelope(
+            kind: .toolNotFound,
+            reason:
+                "There is no '\(name)' tool. More than one connected MCP server publishes '\(name)': "
+                + choices + ". Call the one you mean by its exact exposed name.",
+            toolName: name,
+            retryable: true
+        ).toJSONString()
+    }
+
     /// " and its own arguments: required <a, b>; optional <c>" for the
     /// steered-to tool, so the model does not carry the invented tool's
     /// argument shape over (following "same arguments" got an invalid_args
@@ -2693,7 +2943,7 @@ public final class ToolRegistry: ObservableObject {
         "update_skill"
     ]
 
-    static let nonDiscoverableBuiltInToolNames: Set<String> = [
+    static let nonDiscoverableBuiltInToolNames: Set<String> = Set([
         ComputerUseTool.toolName,
         BrowserUseTool.toolName,
         // Same authoritative per-agent contract as the pair above: the
@@ -2701,9 +2951,13 @@ public final class ToolRegistry: ObservableObject {
         // strips them otherwise, with no capabilities_load carve-out.
         // Discovering them on an agent with the flag off produced a
         // discover→load dead loop ("gated built-in and cannot be enabled").
-        "spawn_agent", "spawn_model", "spawn_batch",
+        "spawn_agent",
         "applescript", "mac_query",
-    ]
+    ])
+    // Built-in Apple app tools follow the same contract (per-app toggle on
+    // the agent, no load carve-out) — discovering `mail_list` on an agent
+    // with Mail off only sent the model into the same dead loop.
+    .union(AppleApp.allToolNames)
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.
     /// These are always included when registered — mode exclusions handle
@@ -2886,13 +3140,10 @@ extension ToolRegistry {
     //     `spawnedWorkerBaselineToolNames`, minus the spawn family and
     //     `clarify` (`TextSubagentKind.isExcludedChildTool`), intersected
     //     with `specsForSpawnedOperations` (cancellation audit).
-    //   * `.bareModelWorker` — a bare-model spawned child: only the curated
-    //     read-only file set (`TextSubagentKind.readOnlyChildToolNames`).
     public enum ToolSurface: Sendable {
         case orchestrator
         case customAgent
         case spawnedWorker
-        case bareModelWorker
     }
 
     /// Tools the orchestrator (Default agent) must NEVER carry, because its
@@ -2905,14 +3156,26 @@ extension ToolRegistry {
     /// `web_search` / `search_and_extract` are NOT excluded: quick lookups
     /// are a basic orchestrator capability (heavy research still dispatches
     /// to workers).
-    nonisolated static let orchestratorExcludedToolNames: Set<String> = [
-        "share_artifact"
-    ]
+    nonisolated static let orchestratorExcludedToolNames: Set<String> = Set([
+        "share_artifact",
+        // The Orchestrator reads its working folder (`file_read` /
+        // `file_search`) to brief workers and read their deliverables; the
+        // workers do the writing and shell work in that folder.
+        "file_write", "file_edit", "shell_run", "redact_file",
+    ])
+    // The built-in Apple app tools (Calendar, Mail, Messages, …) are a
+    // custom-agent capability: the Orchestrator enables them on other
+    // agents through `osaurus_config` (`capabilities.apple_apps`) and
+    // dispatches the actual calendar/mail work there. Excluded here so
+    // not even a ticked manual name or a session load leaks one into the
+    // Orchestrator's schema.
+    .union(AppleApp.allToolNames)
 
     /// Baseline names every agent-target spawned worker carries regardless
     /// of the target's capability toggles: time for grounding, and
-    /// `share_artifact` because a worker's shared file is the ONLY way its
-    /// output artifacts reach the user (the parent receives just a digest).
+    /// `share_artifact` so a worker can hand a file straight to the user
+    /// (deliverables otherwise land in the working folder and the parent
+    /// receives a short summary naming them).
     nonisolated static let spawnedWorkerBaselineToolNames: Set<String> = [
         "get_current_time", "share_artifact",
     ]

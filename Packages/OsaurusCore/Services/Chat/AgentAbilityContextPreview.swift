@@ -57,9 +57,9 @@ struct AgentAbilityContextPreview: Equatable {
         var videoEnabled: Bool? = nil
         var appleScriptEnabled: Bool? = nil
         var spawnableAgentIDs: [UUID]? = nil
-        var spawnableModelNames: [String]? = nil
-        var spawnableModelNotes: [String: String]? = nil
         var spawnConfiguration: AgentSpawnConfigSnapshot? = nil
+        /// Live Abilities-tab Apple Apps toggles (nil = use the stored set).
+        var enabledAppleApps: Set<AppleApp>? = nil
         /// Full live Sandbox-tab configuration. `codeExecutionEnabled`
         /// remains the compatibility fallback for Overview-only callers.
         var autonomousConfig: AutonomousExecConfig? = nil
@@ -208,8 +208,6 @@ struct AgentAbilityContextPreview: Equatable {
             appleScriptEnabled: draft.appleScriptEnabled ?? base.appleScriptEnabled,
             spawnableAgentIDs: draft.spawnableAgentIDs ?? base.spawnableAgentIDs,
             spawnableAgentNames: base.legacySpawnableAgentNames,
-            spawnableModelNames: draft.spawnableModelNames ?? base.spawnableModelNames,
-            spawnableModelNotes: draft.spawnableModelNotes ?? base.spawnableModelNotes,
             spawnConfiguration: draft.spawnConfiguration ?? base.spawnConfiguration,
             // Fold the draft flags with the persisted grant list the way
             // `capture` pre-folds them: no grants means no knowledge tools
@@ -219,7 +217,8 @@ struct AgentAbilityContextPreview: Equatable {
                 && draft.knowledgeCuratorEnabled
                 && !effectiveCollections.isEmpty,
             knowledgeCollections: draft.knowledgeEnabled ? effectiveCollections : [],
-            hasChannelPublishDestinations: base.hasChannelPublishDestinations
+            hasChannelPublishDestinations: base.hasChannelPublishDestinations,
+            enabledAppleApps: draft.enabledAppleApps ?? base.enabledAppleApps
         )
 
         // Mirror ChatView's optimistic execution-mode estimate: autonomous-on

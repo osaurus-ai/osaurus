@@ -86,10 +86,16 @@ struct SchedulesView: View {
                                         )
                                     },
                                     onRunNow: {
-                                        scheduleManager.runNow(schedule.id)
-                                        scheduleManager.refresh()
-                                        reloadHistorySummaries()
-                                        showSuccess("Started \"\(schedule.name)\"")
+                                        switch scheduleManager.runNow(schedule.id) {
+                                        case .started:
+                                            scheduleManager.refresh()
+                                            reloadHistorySummaries()
+                                            showSuccess("Started \"\(schedule.name)\"")
+                                        case .alreadyRunning:
+                                            showSuccess("\"\(schedule.name)\" is already running")
+                                        case .notFound:
+                                            break
+                                        }
                                     },
                                     onShowHistory: {
                                         historySchedule = schedule
@@ -2025,13 +2031,15 @@ private struct AgentPicker: View {
 
     private var selectedAgentDescription: String? {
         if let option = selectedWorkspaceOption {
-            return String(format: L("Workspace agent · %@"), option.subtitle)
+            let purpose = (try? AgentDescriptionPolicy.validated(option.description ?? ""))
+                ?? L("Description required")
+            return "\(option.subtitle) — \(purpose)"
         }
         if selectedAgentId == nil {
             return L("Uses the default system behavior")
         }
-        let desc = selectedAgent?.description ?? ""
-        return desc.isEmpty ? nil : desc
+        return (try? AgentDescriptionPolicy.validated(selectedAgent?.description ?? ""))
+            ?? L("Description required — open Configure")
     }
 
     private var hasDescription: Bool {
@@ -2130,7 +2138,8 @@ private struct AgentPicker: View {
                     ForEach(agents, id: \.id) { agent in
                         AgentOptionRow(
                             name: agent.name,
-                            description: agent.description,
+                            description: (try? AgentDescriptionPolicy.validated(agent.description))
+                                ?? L("Description required — open Configure"),
                             isSelected: selectedAgentId == agent.id,
                             action: {
                                 selectedTarget = .local(agent.id)
@@ -2153,7 +2162,7 @@ private struct AgentPicker: View {
                     ForEach(workspaceAgents) { option in
                         AgentOptionRow(
                             name: option.name,
-                            description: option.description.map { "\(option.subtitle) — \($0)" } ?? option.subtitle,
+                            description: "\(option.subtitle) — \((try? AgentDescriptionPolicy.validated(option.description ?? "")) ?? L("Description required"))",
                             isSelected: selectedTarget?.workspaceRef == option.ref,
                             presence: option.presence,
                             action: {
@@ -2165,7 +2174,7 @@ private struct AgentPicker: View {
                 }
             }
             .padding(8)
-            .frame(minWidth: 280)
+            .frame(width: 360)
             .background(theme.cardBackground)
         }
     }

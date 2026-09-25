@@ -57,11 +57,6 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
 
     private let params: ImageJobParams
     private let argumentsJSON: String
-    /// Load policy snapshotted in `resolveModel`, read by `admissionClass`:
-    /// `.agentSingleResidency` unloads chat models inside the coordinator, so
-    /// the run must hold the GPU exclusively even though the host handoff
-    /// stays passthrough (the coordinator is the residency authority).
-    private var loadPolicy: SubagentImageLoadPolicy = .agentSingleResidency
     private var resolvedTarget: MediaModelTarget?
     private var selectedMediaModel: MediaModelInfo?
 
@@ -103,7 +98,6 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             )
         }
         let modelKind: SubagentModelKind = params.isEdit ? .imageEdit : .imageGeneration
-        self.loadPolicy = config.imageJobLoadPolicy
         let configured = SubagentToolVisibility.effectiveImageModel(
             isEdit: params.isEdit,
             isDefault: isDefault,
@@ -161,15 +155,12 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         }
     }
 
-    /// The image model is always a local MLX graph; under `.agentSingleResidency`
-    /// the coordinator additionally unloads/restores chat models, which is a
-    /// full residency handoff — exclusive. Other policies keep the image model
-    /// alongside (in-place local).
+    /// Every local image run owns one producer and may swap the parent under
+    /// the current shared setting. Residency is refreshed in the producer,
+    /// after admission waits; an earlier image preference cannot weaken it.
     func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
         if !resolved.isLocal { return .remote }
-        return loadPolicy == .agentSingleResidency
-            ? SubagentAdmissionClass.localExclusive
-            : SubagentAdmissionClass.localInPlace
+        return .localExclusive
     }
 
     // MARK: - Permission
@@ -194,7 +185,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         var approvalValues: [String: Any] = [
             "resolved_model": resolved.name,
             "backend": selectedMediaModel.map(Self.backendDescription) ?? "Local",
-            "image_job_load_policy": config.imageJobLoadPolicy.rawValue,
+            "image_job_load_policy": config.imageJobLoadPolicy.effectiveCleanupPolicy.rawValue,
+            "parent_swap_enabled": config.localOrchestratorTextHandoffActive,
         ]
         if let privacy = selectedMediaModel?.privacy {
             approvalValues["privacy"] = privacy

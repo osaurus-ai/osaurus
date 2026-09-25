@@ -52,6 +52,39 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["max_tokens"] == nil)
     }
 
+    /// GPT-6 Astra has no dotted minor (`gpt-6-astra`) but is a reasoning
+    /// model like the rest of the gpt-5+ line: it must take the
+    /// `max_completion_tokens` key and the request must not carry the
+    /// sampler knobs Astra rejects.
+    @Test func encode_gpt6Astra_usesMaxCompletionTokens() throws {
+        let request = Self.makeRequest(model: "gpt-6-astra", maxTokens: 4096)
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["max_completion_tokens"] as? Int == 4096)
+        #expect(payload["max_tokens"] == nil)
+
+        // Official API-key route accepts every documented Astra effort.
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let (accepted, thinking) = RemoteProviderService.remoteChatReasoningControls(
+                providerType: .openResponses,
+                host: "api.openai.com",
+                model: "gpt-6-astra",
+                effort: effort
+            )
+            #expect(accepted == effort, "official API must accept \(effort)")
+            #expect(thinking == nil)
+        }
+        // `none` is a GPT-5.6-only wire value; Astra rejects it, so the
+        // direct-rail alias stays stripped even on the official host.
+        let (none, _) = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openResponses,
+            host: "api.openai.com",
+            model: "gpt-6-astra",
+            effort: "none"
+        )
+        #expect(none == nil)
+    }
+
     @Test func encode_nilMaxTokens_omitsBothKeys() throws {
         let request = Self.makeRequest(model: "mistral-small-latest", maxTokens: nil)
         let payload = try Self.encodeAsDictionary(request)
@@ -262,6 +295,21 @@ struct RemoteChatRequestEncodingTests {
                 parameters: params
             ) == 16_384
         )
+    }
+
+    /// Adaptive-thinking Claude generations return HTTP 400 "`temperature` is
+    /// deprecated for this model." — the encoder must omit the sampler knobs
+    /// for them (opus-5 included) while older dated snapshots keep them.
+    @Test func anthropicRequest_omitsSamplerKnobsForAdaptiveThinkingModels() throws {
+        for model in ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "anthropic/claude-opus-5"] {
+            let anthropic = Self.makeRequest(model: model, maxTokens: 1024).toAnthropicRequest()
+            #expect(anthropic.temperature == nil, "\(model) must not carry temperature")
+            #expect(anthropic.top_p == nil, "\(model) must not carry top_p")
+        }
+        let legacy = Self.makeRequest(model: "claude-haiku-4-5", maxTokens: 1024).toAnthropicRequest()
+        // Float(0.7) widened to Double — compare with tolerance.
+        let legacyTemperature = try #require(legacy.temperature)
+        #expect(abs(legacyTemperature - 0.7) < 0.0001)
     }
 
     @Test func anthropicStreamingToolsEnableEagerInputStreaming() throws {
@@ -954,6 +1002,254 @@ struct RemoteChatRequestEncodingTests {
 
         let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
         #expect(request.toChatCompletionRequest().tools == nil)
+    }
+
+    /// Codex CLI sends `reasoning: {"summary": "auto"}` with no `effort` when
+    /// it has no metadata for a custom-provider model. `effort` is optional
+    /// in the Responses API; requiring it rejected every Codex turn with
+    /// "missing required key `effort` at reasoning".
+    @Test func openResponsesRequest_acceptsReasoningWithoutEffort() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "raptor-0.6-4b-jang_6m",
+              "input": "hi",
+              "reasoning": { "summary": "auto" },
+              "stream": true
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        #expect(request.reasoning?.effort == nil)
+        #expect(request.reasoning?.summary == "auto")
+        // No effort on the wire means no effort override downstream — the
+        // model's own default applies, not a synthetic one.
+        #expect(request.toChatCompletionRequest().reasoning_effort == nil)
+
+        // An explicit effort still round-trips.
+        let withEffort = Data(
+            #"""
+            { "model": "m", "input": "hi", "reasoning": { "effort": "low" } }
+            """#.utf8
+        )
+        let explicit = try JSONDecoder().decode(OpenResponsesRequest.self, from: withEffort)
+        #expect(explicit.toChatCompletionRequest().reasoning_effort == "low")
+    }
+
+    /// The exact request shape Codex CLI 0.155.1 (`codex exec`) sends a custom
+    /// `wire_api = "responses"` provider, captured against a loopback echo
+    /// server and trimmed (instructions/prompts shortened, two goal tools
+    /// dropped). Every structural feature is kept: `instructions`, developer +
+    /// user `message` items with `input_text` parts, `strict: false` function
+    /// tools, a `namespace` tool with nested `tools`, a `web_search` tool,
+    /// `reasoning` without `effort`, `store: false`, `include`,
+    /// `prompt_cache_key`, and `client_metadata`. This is the request the
+    /// Server → "Use with Codex CLI" card exists to serve.
+    @Test func openResponsesRequest_decodesCodexCLICustomProviderTurn() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "raptor-0.6-4b-jang_6m",
+              "instructions": "You are a coding agent running in the Codex CLI, a terminal-based coding assista…",
+              "input": [
+                {
+                  "type": "message",
+                  "id": "msg_01a0c717-a8c9-7a50-b9b7-cd9fe5a2faf1",
+                  "role": "developer",
+                  "content": [
+                    { "type": "input_text", "text": "<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is s…" },
+                    { "type": "input_text", "text": "<permissions instructions>\nFilesystem sandboxing defines which files can be read or writte…" }
+                  ]
+                },
+                {
+                  "type": "message",
+                  "id": "msg_01a0c717-a8c9-7a50-b9b7-cdaed8ad1386",
+                  "role": "user",
+                  "content": [
+                    { "type": "input_text", "text": "<environment_context>\n  <cwd>/tmp/osaurus-codex-proof/work</cwd>\n  <shell>zsh</shell>\n  <c…" }
+                  ]
+                },
+                {
+                  "type": "message",
+                  "id": "msg_01a0c717-a8d6-7b51-8c77-9a2510199d49",
+                  "role": "user",
+                  "content": [
+                    { "type": "input_text", "text": "Use the shell to read notes.txt in the current directory, then reply with only the secret …" }
+                  ]
+                }
+              ],
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "exec_command",
+                  "description": "Runs a command in a PTY, returning outpu",
+                  "strict": false,
+                  "parameters": {
+                    "type": "object",
+                    "properties": { "cmd": { "type": "string" }, "max_output_tokens": { "type": "number" } },
+                    "required": ["cmd"],
+                    "additionalProperties": false
+                  }
+                },
+                {
+                  "type": "function",
+                  "name": "view_image",
+                  "description": "View a local image file from the filesys",
+                  "strict": false,
+                  "parameters": {
+                    "type": "object",
+                    "properties": { "path": { "type": "string", "description": "Local filesystem path to an image file." } },
+                    "required": ["path"],
+                    "additionalProperties": false
+                  }
+                },
+                {
+                  "type": "namespace",
+                  "name": "multi_agent_v1",
+                  "description": "Tools for spawning and managing sub-agen",
+                  "tools": [
+                    {
+                      "type": "function",
+                      "name": "close_agent",
+                      "description": "Close an agent and any open descendants ",
+                      "strict": false,
+                      "parameters": {
+                        "type": "object",
+                        "properties": { "target": { "type": "string", "description": "Agent id to close (from spawn_" } },
+                        "required": ["target"],
+                        "additionalProperties": false
+                      }
+                    }
+                  ]
+                },
+                { "type": "web_search", "external_web_access": false }
+              ],
+              "tool_choice": "auto",
+              "parallel_tool_calls": true,
+              "reasoning": { "summary": "auto" },
+              "store": false,
+              "stream": true,
+              "include": ["reasoning.encrypted_content"],
+              "prompt_cache_key": "01a0c717-a8a2-74a1-9434-3d7c54e37a0b",
+              "client_metadata": {
+                "root_turn_id": "01a0c717-a8b7-7c30-b1a2-0be24521a36e",
+                "x-codex-turn-metadata": "{\"request_kind\":\"turn\"}"
+              }
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        #expect(request.model == "raptor-0.6-4b-jang_6m")
+        #expect(request.stream == true)
+        #expect(request.reasoning?.effort == nil)
+        #expect(request.reasoning?.summary == "auto")
+
+        let chat = request.toChatCompletionRequest()
+        #expect(chat.reasoning_effort == nil)
+        // Only the two top-level function tools become chat tools; the
+        // namespace and web_search tools are passed over, not rejected.
+        let toolNames = chat.tools?.map(\.function.name) ?? []
+        #expect(toolNames == ["exec_command", "view_image"])
+        #expect(chat.tools?.allSatisfy { $0.function.strict == false } == true)
+        // `instructions` leads as the system message, followed by the three
+        // input messages in order.
+        #expect(chat.messages.first?.role == "system")
+        #expect(chat.messages.count == 4)
+        #expect(chat.messages.last?.role == "user")
+        #expect(chat.messages.last?.content?.contains("notes.txt") == true)
+    }
+
+    /// Codex CLI's history replay, captured from Codex 0.155.1 via a logging
+    /// proxy across a tool-calling turn and a `codex exec resume` follow-up:
+    /// - the prior `function_call` is echoed with `id`/`call_id`/`name`/
+    ///   `arguments` but no `status`;
+    /// - the `function_call_output` carries an `id`;
+    /// - the model's own answer comes back as an assistant `message` whose
+    ///   content part is `output_text`, not `input_text`.
+    /// Each of those is legal Responses input, and each one individually made
+    /// the whole `input` array fail to decode ("wrong type at input —
+    /// expected OpenResponsesInput"), so Codex could never get past its first
+    /// tool call or resume a thread.
+    @Test func openResponsesRequest_promptCacheKeyBecomesTheSessionId() throws {
+        // Codex CLI's thread id rides in `prompt_cache_key`; the local runtime
+        // keys the disk-cache chain and memory prefixes on `session_id`.
+        let keyed = try JSONDecoder().decode(
+            OpenResponsesRequest.self,
+            from: Data(
+                #"{"model":"m","input":"hi","prompt_cache_key":"01a0c717-a8a2-74a1-9434-3d7c54e37a0b"}"#.utf8))
+        #expect(keyed.toChatCompletionRequest().session_id == "01a0c717-a8a2-74a1-9434-3d7c54e37a0b")
+        let blank = try JSONDecoder().decode(
+            OpenResponsesRequest.self, from: Data(#"{"model":"m","input":"hi","prompt_cache_key":"  "}"#.utf8))
+        #expect(blank.toChatCompletionRequest().session_id == nil)
+        let absent = try JSONDecoder().decode(
+            OpenResponsesRequest.self, from: Data(#"{"model":"m","input":"hi"}"#.utf8))
+        #expect(absent.toChatCompletionRequest().session_id == nil)
+    }
+
+    @Test func openResponsesRequest_decodesCodexCLIToolFollowUpTurn() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "raptor-0.6-4b-jang_6m",
+              "instructions": "You are a coding agent…",
+              "input": [
+                { "type": "message", "id": "msg_1", "role": "user", "content": [{ "type": "input_text", "text": "Read notes.txt" }] },
+                { "type": "function_call", "id": "item_22D2E438C5DA49A9B85E88FC", "name": "exec_command", "arguments": "{\"cmd\":\"cat notes.txt\"}", "call_id": "call_2BF20B37D3C744A29988B76E" },
+                { "type": "function_call_output", "id": "fco_01a0c72a-b4d0-7c70-8c49-078c4389894c", "call_id": "call_2BF20B37D3C744A29988B76E", "output": "Chunk ID: 2afbed\nProcess exited with code 0\nOutput:\nThe secret word is PTERODACTYL.\n" },
+                { "type": "message", "id": "item_2142E6240EDB4A8DA2796DFE", "role": "assistant", "content": [{ "type": "output_text", "text": "PTERODACTYL" }] },
+                { "type": "message", "id": "msg_2", "role": "user", "content": [{ "type": "input_text", "text": "How many letters?" }] }
+              ],
+              "tools": [
+                { "type": "function", "name": "exec_command", "strict": false, "parameters": { "type": "object", "properties": { "cmd": { "type": "string" } }, "required": ["cmd"] } }
+              ],
+              "tool_choice": "auto",
+              "reasoning": { "summary": "auto" },
+              "store": false,
+              "stream": true
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        guard case .items(let items) = request.input else {
+            Issue.record("expected item input")
+            return
+        }
+        #expect(items.count == 5)
+        guard case .functionCall(let call) = items[1] else {
+            Issue.record("expected function_call item")
+            return
+        }
+        #expect(call.status == nil)
+        #expect(call.call_id == "call_2BF20B37D3C744A29988B76E")
+        #expect(call.name == "exec_command")
+        guard case .message(let assistant) = items[3],
+            case .parts(let parts) = assistant.content,
+            case .outputText(let replayed) = parts.first
+        else {
+            Issue.record("expected assistant message with an output_text part")
+            return
+        }
+        #expect(assistant.role == "assistant")
+        #expect(replayed.text == "PTERODACTYL")
+
+        let chat = request.toChatCompletionRequest()
+        // system, user, assistant(tool_calls), tool, assistant(answer), user
+        #expect(chat.messages.map(\.role) == ["system", "user", "assistant", "tool", "assistant", "user"])
+        #expect(chat.messages[2].tool_calls?.first?.id == "call_2BF20B37D3C744A29988B76E")
+        #expect(chat.messages[2].tool_calls?.first?.function.name == "exec_command")
+        #expect(chat.messages[3].tool_call_id == "call_2BF20B37D3C744A29988B76E")
+        #expect(chat.messages[3].content?.contains("PTERODACTYL") == true)
+        #expect(chat.messages[4].content == "PTERODACTYL")
+        #expect(chat.messages[5].content == "How many letters?")
+
+        // Re-encoding keeps the replayed part as `output_text`, so a
+        // Responses-native upstream sees the item exactly as Codex sent it.
+        let reencoded = try JSONEncoder().encode(items[3])
+        #expect(String(decoding: reencoded, as: UTF8.self).contains("\"output_text\""))
+        #expect(!String(decoding: reencoded, as: UTF8.self).contains("\"input_text\""))
     }
 
     @Test func openResponsesRequest_rejectsFunctionToolWithoutName() throws {
@@ -2700,7 +2996,7 @@ struct RemoteChatRequestEncodingTests {
 
     // MARK: - prompt_cache_key (session-scoped OpenAI prompt-cache routing)
 
-    @Test func supportsPromptCacheKey_onlyForGenuineOpenAIHosts() throws {
+    @Test func supportsPromptCacheKey_allowlistsKeyedCacheTargets() throws {
         #expect(
             RemoteProviderService.supportsPromptCacheKey(
                 providerType: .openaiLegacy,
@@ -2713,26 +3009,90 @@ struct RemoteChatRequestEncodingTests {
                 host: "eu.api.openai.com"
             )
         )
-        // Third-party OpenAI-compat schemas can be strict about unknown
-        // fields — same rationale as router-only `idempotency_key`.
         #expect(
-            !RemoteProviderService.supportsPromptCacheKey(
-                providerType: .openaiLegacy,
-                host: "api.x.ai"
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openResponses,
+                host: "api.openai.com"
             )
         )
+        // Osaurus Router validates and forwards the key upstream (OpenAI,
+        // xAI) so cached turns bill at the discounted rate — any host.
         #expect(
-            !RemoteProviderService.supportsPromptCacheKey(
+            RemoteProviderService.supportsPromptCacheKey(
                 providerType: .osaurusRouter,
                 host: "router.osaurus.ai"
             )
         )
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .osaurusRouter,
+                host: "staging-router.example.com"
+            )
+        )
+        // Azure OpenAI Foundry shares OpenAI's request schema.
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .azureOpenAI,
+                host: "my-resource.openai.azure.com"
+            )
+        )
+        // OpenRouter forwards the key to OpenAI-backed models.
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "openrouter.ai"
+            )
+        )
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "OpenRouter.ai"
+            )
+        )
+        // Third-party OpenAI-compat schemas can be strict about unknown
+        // fields — same rationale as router-only `idempotency_key`.
+        for host in ["api.x.ai", "api.deepseek.com", "api.fireworks.ai", "api.venice.ai", "notopenrouter.ai"] {
+            #expect(
+                !RemoteProviderService.supportsPromptCacheKey(
+                    providerType: .openaiLegacy,
+                    host: host
+                ),
+                "\(host)"
+            )
+        }
         #expect(
             !RemoteProviderService.supportsPromptCacheKey(
                 providerType: .anthropic,
                 host: "api.anthropic.com"
             )
         )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .gemini,
+                host: "generativelanguage.googleapis.com"
+            )
+        )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .osaurus,
+                host: "127.0.0.1"
+            )
+        )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openAICodex,
+                host: "chatgpt.com"
+            )
+        )
+    }
+
+    @Test func promptCacheKey_isSessionScopedAndRouterSafe() throws {
+        let key = RemoteProviderService.promptCacheKey(forSession: "6F9619FF-8B86-D011-B42D-00C04FC964FF")
+        #expect(key == "osaurus-session-6F9619FF-8B86-D011-B42D-00C04FC964FF")
+        // Router accepts `[A-Za-z0-9._:-]{1,200}`; UUID session ids fit.
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-")
+        #expect(key.unicodeScalars.allSatisfy { allowed.contains($0) })
+        #expect(key.count <= 200)
     }
 
     @Test func wireBody_carriesPromptCacheKeyOnlyWhenSet() throws {
@@ -2747,7 +3107,7 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["prompt_cache_key"] as? String == "osaurus-session-ABC")
     }
 
-    @Test func buildChatRequest_setsSessionScopedPromptCacheKeyForOpenAIOnly() async throws {
+    @Test func buildChatRequest_setsSessionScopedPromptCacheKeyPerTarget() async throws {
         func service(host: String, providerType: RemoteProviderType) -> RemoteProviderService {
             RemoteProviderService(
                 provider: RemoteProvider(
@@ -2790,6 +3150,7 @@ struct RemoteChatRequestEncodingTests {
                 toolChoice: nil
             )
         #expect(compatReq.promptCacheKey == nil)
+        #expect(compatReq.openRouterSessionId == nil)
 
         // No session id → no key, even on the genuine OpenAI host.
         let noSessionReq = await service(host: "api.openai.com", providerType: .openaiLegacy)
@@ -2802,6 +3163,113 @@ struct RemoteChatRequestEncodingTests {
                 toolChoice: nil
             )
         #expect(noSessionReq.promptCacheKey == nil)
+
+        // Router: key travels with every session turn, including agent-loop
+        // tool rounds (same session id, tool-result tail), next to the
+        // router-only idempotency fields.
+        let routerReq = await service(host: "router.osaurus.ai", providerType: .osaurusRouter)
+            .buildChatRequest(
+                messages: [
+                    ChatMessage(role: "user", content: "hi"),
+                    ChatMessage(
+                        role: "assistant",
+                        content: "",
+                        tool_calls: [
+                            ToolCall(
+                                id: "call_1",
+                                type: "function",
+                                function: ToolCallFunction(name: "f", arguments: "{}")
+                            )
+                        ],
+                        tool_call_id: nil
+                    ),
+                    ChatMessage(role: "tool", content: "ok", tool_calls: nil, tool_call_id: "call_1"),
+                ],
+                parameters: params,
+                model: "gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(routerReq.promptCacheKey == "osaurus-session-SESSION-1")
+        #expect(routerReq.openRouterSessionId == nil)
+        let routerPayload = try Self.decodeAsDictionary(
+            try JSONEncoder.osaurusCanonical().encode(routerReq)
+        )
+        #expect(routerPayload["prompt_cache_key"] as? String == "osaurus-session-SESSION-1")
+        #expect(routerPayload["session_id"] == nil)
+
+        // Azure: key only (no session_id).
+        let azureReq = await service(host: "my-resource.openai.azure.com", providerType: .azureOpenAI)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(azureReq.promptCacheKey == "osaurus-session-SESSION-1")
+        #expect(azureReq.openRouterSessionId == nil)
+        let azurePayload = try Self.decodeAsDictionary(
+            try JSONEncoder.osaurusCanonical().encode(azureReq)
+        )
+        #expect(azurePayload["prompt_cache_key"] as? String == "osaurus-session-SESSION-1")
+        #expect(azurePayload["session_id"] == nil)
+
+        // OpenRouter: key + sticky-routing session_id, model still on the wire.
+        let openRouterReq = await service(host: "openrouter.ai", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "openai/gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(openRouterReq.promptCacheKey == "osaurus-session-SESSION-1")
+        #expect(openRouterReq.openRouterSessionId == "SESSION-1")
+        #expect(openRouterReq.remoteAgentSessionId == nil)
+        let openRouterPayload = try Self.decodeAsDictionary(
+            try JSONEncoder.osaurusCanonical().encode(openRouterReq)
+        )
+        #expect(openRouterPayload["prompt_cache_key"] as? String == "osaurus-session-SESSION-1")
+        #expect(openRouterPayload["session_id"] as? String == "SESSION-1")
+        #expect(openRouterPayload["model"] as? String == "openai/gpt-5.2")
+        #expect(openRouterPayload["idempotency_key"] == nil)
+
+        // OpenRouter without a session id: neither field.
+        let openRouterNoSession = await service(host: "openrouter.ai", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: GenerationParameters(temperature: 0.7, maxTokens: 256),
+                model: "openai/gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(openRouterNoSession.promptCacheKey == nil)
+        #expect(openRouterNoSession.openRouterSessionId == nil)
+        let bare = try JSONEncoder.osaurusCanonical().encode(openRouterNoSession)
+        #expect(!String(decoding: bare, as: UTF8.self).contains("session_id"))
+
+        // Other compat hosts: neither, even with a session.
+        for host in ["api.deepseek.com", "api.fireworks.ai"] {
+            let req = await service(host: host, providerType: .openaiLegacy)
+                .buildChatRequest(
+                    messages: [ChatMessage(role: "user", content: "hi")],
+                    parameters: params,
+                    model: "m",
+                    stream: true,
+                    tools: nil,
+                    toolChoice: nil
+                )
+            #expect(req.promptCacheKey == nil, Comment(rawValue: host))
+            #expect(req.openRouterSessionId == nil, Comment(rawValue: host))
+            let payload = try Self.decodeAsDictionary(try JSONEncoder.osaurusCanonical().encode(req))
+            #expect(payload["prompt_cache_key"] == nil, Comment(rawValue: host))
+            #expect(payload["session_id"] == nil, Comment(rawValue: host))
+        }
     }
 
     /// Surfaces that don't derive a key (subagent runner, plugin

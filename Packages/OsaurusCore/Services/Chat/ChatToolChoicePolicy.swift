@@ -71,7 +71,8 @@ enum ChatToolChoicePolicy {
             tools.contains(where: { $0.function.name == "redact_file" })
         {
             return .function(
-                .init(type: "function", function: .init(name: "redact_file")))
+                .init(type: "function", function: .init(name: "redact_file"))
+            )
         }
 
         return requiresToolCall(tools: tools, userText: userText) ? .required : .auto
@@ -127,7 +128,12 @@ enum ChatToolChoicePolicy {
 
     private static func containsCallableName(_ name: String, in text: String) -> Bool {
         guard !name.isEmpty else { return false }
-        return text.contains(name)
+        // Tool names are identifiers, not word fragments: "completed" must not
+        // require the `complete` tool. Keep punctuation around explicit calls
+        // and backticked names valid, including names containing regex syntax.
+        let escapedName = NSRegularExpression.escapedPattern(for: name)
+        let pattern = #"(?<![\p{L}\p{N}_-])"# + escapedName + #"(?![\p{L}\p{N}_-])"#
+        return text.range(of: pattern, options: .regularExpression) != nil
     }
 
     private static func containsNegatedToolIntent(_ text: String) -> Bool {
@@ -141,6 +147,15 @@ enum ChatToolChoicePolicy {
             "do not call",
             "don't call",
             "dont call",
+            "without calling",
+            "do not run",
+            "don't run",
+            "dont run",
+            "without running",
+            "do not invoke",
+            "don't invoke",
+            "dont invoke",
+            "without invoking",
         ].contains { text.contains($0) }
     }
 

@@ -65,6 +65,15 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     /// and the runtime falls back to the live registry.
     public var manualToolNames: [String]?
 
+    /// The Orchestrator's working folder (security-scoped bookmark). The
+    /// Orchestrator itself only READS here (`file_read` / `file_search`) to
+    /// understand and plan; subagents it spawns that have no working folder
+    /// of their own inherit this folder with full read/write file tools.
+    /// Set from the composer folder chip or Settings → Orchestrator.
+    public var workingFolderBookmark: Data?
+    /// Plain-path fallback / display value for `workingFolderBookmark`.
+    public var workingFolderPath: String?
+
     /// Effective display name: the trimmed custom name, or `nil` when
     /// the built-in default ("Osaurus") should be used.
     public var resolvedDisplayName: String? {
@@ -72,6 +81,11 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
             !name.isEmpty
         else { return nil }
         return name
+    }
+
+    /// Whether a working folder is configured (bookmark or path).
+    public var hasWorkingFolder: Bool {
+        workingFolderBookmark != nil || workingFolderPath?.isEmpty == false
     }
 
     public init(
@@ -83,7 +97,9 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         autonomousExec: AutonomousExecConfig? = nil,
         claudeCode: ClaudeCodeAgentConfig? = nil,
         toolSelectionMode: ToolSelectionMode? = nil,
-        manualToolNames: [String]? = nil
+        manualToolNames: [String]? = nil,
+        workingFolderBookmark: Data? = nil,
+        workingFolderPath: String? = nil
     ) {
         self.displayName = displayName
         self.systemPrompt = systemPrompt
@@ -94,6 +110,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         self.claudeCode = claudeCode
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
+        self.workingFolderBookmark = workingFolderBookmark
+        self.workingFolderPath = workingFolderPath?.isEmpty == false ? workingFolderPath : nil
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,6 +126,10 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
+        // Working folder — added with the Orchestrator rework; absent before.
+        workingFolderBookmark = try? c.decodeIfPresent(Data.self, forKey: .workingFolderBookmark)
+        let path = try? c.decodeIfPresent(String.self, forKey: .workingFolderPath)
+        workingFolderPath = path?.isEmpty == false ? path : nil
         // Legacy `manualSkillNames` keys are intentionally ignored: skills are
         // universally available to custom agents.
     }

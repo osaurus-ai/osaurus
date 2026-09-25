@@ -39,6 +39,51 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
+    func toolsDisabledDoesNotAdvertiseUnavailableOrchestratorFunctions() {
+        for compact in [false, true] {
+            let enabled = DefaultAgentSystemPromptBuilder.render(compact: compact)
+            let disabled = DefaultAgentSystemPromptBuilder.render(compact: compact, toolsAvailable: false)
+            #expect(disabled.contains("Tools are unavailable"))
+            for name in ["spawn_agent", "osaurus_help", "osaurus_config", "osaurus_inspect"] {
+                #expect(!disabled.contains(name))
+                #expect(enabled.contains(name))
+            }
+            #expect(DefaultAgentSystemPromptBuilder.render(compact: compact) == enabled)
+        }
+    }
+
+    @Test
+    func defaultChatDisabledToolGatesAlsoGateItsPersona() {
+        let cases: [(Bool, Bool, String?, ExecutionMode)] = [
+            (true, false, nil, .none),
+            (false, true, nil, .none),
+            (false, true, nil, .sandbox),
+            (false, false, "foundation", .none),
+        ]
+        for (agentDisabled, globalDisabled, model, mode) in cases {
+            let snapshot = AgentConfigSnapshot(
+                agentId: Agent.defaultId,
+                toolsDisabled: agentDisabled,
+                globalToolsDisabled: globalDisabled,
+                memoryDisabled: true,
+                autonomousConfig: nil,
+                toolMode: .auto,
+                model: model,
+                manualToolNames: nil,
+                systemPrompt: "User persona survives.",
+                dbEnabled: false
+            )
+            let rendered = SystemPromptComposer.forChat(
+                snapshot: snapshot, agentId: Agent.defaultId, executionMode: mode
+            ).render()
+            #expect(rendered.contains("Tools are unavailable"))
+            #expect(rendered.contains("User persona survives."))
+            #expect(!rendered.contains("spawn_agent"))
+            #expect(!rendered.contains("osaurus_help"))
+        }
+    }
+
+    @Test
     func render_listsEveryDomainWriteTool() {
         let domains = [
             Self.probe(id: "providers", writeToolNames: ["osaurus_provider"]),
@@ -129,7 +174,7 @@ struct DefaultAgentSystemPromptBuilderTests {
         // of real tool calls, and compact under-specified osaurus_help's
         // action shape. The compact prompt must name actions explicitly and
         // never coin a "read tools" noun.
-        #expect(compact.contains("{action: 'topics' | 'read', topic: ...}"))
+        #expect(compact.contains("{action: 'topics' | 'read' | 'find', topic/query: ...}"))
         #expect(!compact.contains("read tools"))
         #expect(!compact.contains("Reads are"))
     }
@@ -351,6 +396,10 @@ struct DefaultAgentSystemPromptBuilderTests {
             #expect(rendered.contains("osaurus_help"))
             #expect(rendered.contains("answer"))
             #expect(rendered.lowercased().contains("memory") || rendered.contains("from its text"))
+            #expect(rendered.contains("find"))
+            #expect(
+                rendered.contains("Computer Use") || rendered.localizedCaseInsensitiveContains("spawn"),
+                "both variants must forbid hunting Settings via spawn/Computer Use")
         }
     }
 
@@ -366,8 +415,8 @@ struct DefaultAgentSystemPromptBuilderTests {
         #expect(rendered.contains("osaurus_config"))
         #expect(rendered.contains("create"))
         #expect(rendered.contains("spawn_agent"))
-        // `active_agent` stays documented as the NEW-chats pointer only.
-        #expect(rendered.contains("active_agent"))
+        // `new_chat_agent` stays documented as the NEW-chats pointer only.
+        #expect(rendered.contains("new_chat_agent"))
     }
 
     @Test
@@ -463,6 +512,27 @@ struct DefaultAgentSystemPromptBuilderTests {
         let afterRender = DefaultAgentSystemPromptBuilder.render()
         #expect(beforeRender != afterRender)
         #expect(afterRender.contains(probeWrite))
+    }
+
+    /// Discovery of teammates' shared agents is taught in both variants:
+    /// read them with `osaurus_inspect` scope `shared_agents`, address them
+    /// as `Name@Workspace`, and remember they cannot see the folder.
+    @Test
+    func render_teachesSharedAgentDiscoveryInBothVariants() {
+        for compact in [false, true] {
+            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: [Self.probe(id: "config", writeToolNames: ["osaurus_config"])],
+                compact: compact
+            )
+            #expect(rendered.contains("shared_agents"), "compact=\(compact)")
+            #expect(rendered.contains("`Name@Workspace`"), "compact=\(compact)")
+            #expect(rendered.contains("cannot see your folder"), "compact=\(compact)")
+            #expect(rendered.contains("`input`"), "compact=\(compact)")
+        }
+        let full = DefaultAgentSystemPromptBuilder._renderForTests(
+            domains: [Self.probe(id: "config", writeToolNames: ["osaurus_config"])]
+        )
+        #expect(full.contains("delegation.spawnable_workspace_agents"))
     }
 
     @Test

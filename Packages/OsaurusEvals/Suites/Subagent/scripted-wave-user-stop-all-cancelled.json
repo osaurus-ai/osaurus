@@ -1,0 +1,45 @@
+{
+  "id": "subagent.scripted-wave-user-stop-all-cancelled",
+  "domain": "subagent",
+  "label": "Subagent • user stop settles a wave as all_cancelled",
+  "query": "Stop a two-child remote fan-out and preserve one terminal row per caller-stable job id.",
+  "notes": "Model-free. Both remote-class children enter the real SubagentSession host as one spawn_agent wave, then the real interrupt-center path stops them. The aggregate must settle exactly two rows in caller order, classify both as user_denied, report all_cancelled, and never duplicate a child row.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "scriptedWave": [
+        {
+          "id": "cancel-a",
+          "target": "scripted-remote",
+          "remote": true,
+          "runDelayMs": 5000,
+          "rendezvousArrivals": 2
+        },
+        {
+          "id": "cancel-b",
+          "target": "scripted-remote",
+          "remote": true,
+          "runDelayMs": 5000,
+          "rendezvousArrivals": 2
+        }
+      ],
+      "interruptAfterMs": 100,
+      "expectSuccess": false,
+      "expectEnvelopeKind": "user_denied",
+      "expectResultKind": "spawn_wave_result",
+      "expectRunsCompleted": 0,
+      "expectRunsSettled": 2,
+      "expectRunEnvelopeKinds": [
+        "user_denied",
+        "user_denied"
+      ],
+      "expectWaveAggregateStatus": "all_cancelled",
+      "expectWaveJobIDs": [
+        "cancel-a",
+        "cancel-b"
+      ]
+    }
+  }
+}

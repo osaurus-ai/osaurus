@@ -215,6 +215,23 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
         }
 
+        // Qwen's configured XML template owns the full JSON schema and its
+        // validation errors. Keep parity with the engine bridge: a native
+        // failure must not fall back to Nemotron/Gemma or lose schema fields.
+        if Qwen3XMLToolTemplate.matchesTemplate(
+            upstream.configuredChatTemplate(forTools: !(tools?.isEmpty ?? true))
+        ) {
+            return try upstream.applyChatTemplate(
+                messages: messages,
+                chatTemplate: nil,
+                addGenerationPrompt: addGenerationPrompt,
+                truncation: false,
+                maxLength: nil,
+                tools: tools,
+                additionalContext: additionalContext
+            )
+        }
+
         // Osaurus uses this bridge, not the engine's tokenizer macro. Shared
         // BOS/ChatML tokens do not make MiniCPM a Nemotron tool dialect.
         // Preserve its configured grammar, native omitted/on/off tail and

@@ -1,0 +1,105 @@
+{
+  "id": "workspace_delegation.offline-refusal-then-replan",
+  "domain": "subagent",
+  "label": "Workspace delegation • offline shared agent → typed refusal → re-plan",
+  "query": "The Orchestrator delegates to an offline teammate agent, reads the refusal, and re-plans to an online one (then a local one).",
+  "notes": "Model-free. Step 1: Research@Acme resolves but its host is offline (last seen 2 min ago) — the tool result is the exact typed refusal with the re-plan instruction; nothing is admitted and no card is planned. Step 2: the re-plan to Writer@Acme is admitted under the workspace kind on Ask (one card, pool-spend wording). Step 3: the local fallback Coder runs under spawn on Always Allow (no card).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "workspace",
+      "workspaceDelegation": {
+        "scenario": {
+          "localAgents": [
+            "Coder"
+          ],
+          "sharedAgents": [
+            {
+              "name": "Research",
+              "workspaceId": "ws-acme",
+              "workspaceName": "Acme",
+              "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+              "online": false,
+              "lastSeenSecondsAgo": 120
+            },
+            {
+              "name": "Writer",
+              "workspaceId": "ws-acme",
+              "workspaceName": "Acme",
+              "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa02",
+              "online": true,
+              "lastSeenSecondsAgo": null
+            }
+          ],
+          "localPolicy": "always_allow",
+          "workspacePolicy": "ask",
+          "steps": [
+            {
+              "targets": [
+                "Research@Acme"
+              ],
+              "artifacts": null
+            },
+            {
+              "targets": [
+                "Writer@Acme"
+              ],
+              "artifacts": null
+            },
+            {
+              "targets": [
+                "Coder"
+              ],
+              "artifacts": null
+            }
+          ]
+        },
+        "expected": [
+          {
+            "resolutions": [
+              "workspace:Research@Acme"
+            ],
+            "refusals": [
+              "Workspace agent Research is offline (last seen 2 min ago). Its owner's Mac is not connected to the relay. Pick a different agent for this task, or report that it is unavailable."
+            ],
+            "policy": "",
+            "cardKinds": [],
+            "cardDescription": "",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          },
+          {
+            "resolutions": [
+              "workspace:Writer@Acme"
+            ],
+            "refusals": [
+              ""
+            ],
+            "policy": "ask",
+            "cardKinds": [
+              "spawn_workspace"
+            ],
+            "cardDescription": "Let this agent run 1 subagents in parallel? They run on teammates' Macs and spend those workspaces' pools.",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          },
+          {
+            "resolutions": [
+              "local:Coder"
+            ],
+            "refusals": [
+              ""
+            ],
+            "policy": "always_allow",
+            "cardKinds": [
+              "spawn"
+            ],
+            "cardDescription": "Let this agent run 1 subagents in parallel?",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          }
+        ]
+      }
+    }
+  }
+}

@@ -305,19 +305,82 @@ final class ConfigureAIState: ObservableObject {
             ?? candidates.first
     }
 
+    /// Preferred first-run local model. Named explicitly because v0.5 parses
+    /// as 8B and would otherwise beat 0.6's 4B under the largest-parameter
+    /// rule, and Gemma E4B is also a 4B Top Pick that could steal 8 GB.
+    static let preferredOnboardingModelId = "OsaurusAI/Raptor-0.6-4B-JANG_6M"
+
+    /// The bundled local brain the full distribution can commit without
+    /// showing the Configure AI step, or `nil` when that step must run.
+    ///
+    /// All four gates must hold; any miss falls back to the normal step so
+    /// the light build, a seed that has not landed yet (cross-volume models
+    /// directory still copying), a user who deleted the seeded model, and a
+    /// Mac where Raptor 0.6 only fits in the `.tight` band all get the full
+    /// chooser:
+    ///
+    ///   1. `isFullDistribution` — the app shipped with `BundledModels`.
+    ///   2. The preferred onboarding model is a curated Top Pick (so it is
+    ///      what the chooser would have offered).
+    ///   3. It is on disk (`isDownloaded`, i.e. `BundledModelSeeder` finished).
+    ///   4. It fits **comfortably** (`.compatible`) — the same rule
+    ///      `recommendedLocalPick` uses for the auto-default.
+    static func bundledLocalBrainReady(
+        from candidates: [MLXModel],
+        totalMemoryGB: Double,
+        isFullDistribution: Bool = BundledModelSeeder.isFullDistribution
+    ) -> MLXModel? {
+        guard isFullDistribution else { return nil }
+        guard
+            let bundled = candidates.first(where: {
+                $0.isTopSuggestion && $0.id == preferredOnboardingModelId
+            })
+        else { return nil }
+        guard bundled.isDownloaded else { return nil }
+        guard bundled.compatibility(totalMemoryGB: totalMemoryGB) == .compatible else { return nil }
+        return bundled
+    }
+
+    /// App-facing wrapper over `bundledLocalBrainReady(from:totalMemoryGB:)`
+    /// that reads the live catalog (curated entries merged with the on-disk
+    /// scan, so `isDownloaded` reflects the seeded bundle).
+    func bundledLocalBrainReady(totalMemoryGB: Double) -> MLXModel? {
+        Self.bundledLocalBrainReady(
+            from: ModelManager.shared.deduplicatedModels(),
+            totalMemoryGB: totalMemoryGB
+        )
+    }
+
+    /// Commit the bundled brain exactly as `chooseLocalAndContinue` would for
+    /// an on-disk model — no download, no disk preflight — so
+    /// `finishOnboarding` pins it through `localDefaultModelIdToPin`.
+    func commitBundledLocalBrain(_ model: MLXModel) {
+        selectedModel = model
+        diskSpaceWarning = nil
+        selectedBrainSource = .local
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false)
+    }
+
+    /// Parameter-count floor that marks the large-RAM upgrade lane (Gemma 12B,
+    /// Ornith 35B). Comfortable models at or above this beat the preferred
+    /// Raptor 0.6 default.
+    static let largeRAMOnboardingParameterFloor = 12.0
+
     /// Pure, testable core of the onboarding default pick. Given the curated
     /// top-pick `candidates` and the machine RAM, returns the model onboarding
     /// should pre-select (or `nil` when there are no candidates).
     ///
-    /// Rule: auto-default to the curated Top Pick with the **largest base
-    /// parameter count** that **comfortably** fits (`.compatible`, so never
-    /// into the `.tight` band). For variants of the same base model, prefer
-    /// the larger resident footprint as the higher-quality precision.
-    /// Top Picks are the maintained onboarding recommendation set. Raptor v0.5
-    /// 8B-A1B is the mainstream-RAM text default; dense Bonsai 27B, LFM2.5 8B,
-    /// and dense Ornith 1.5 9B remain catalog choices rather than first-run
-    /// defaults. When nothing is comfortable (very low RAM), fall back to the
-    /// smallest candidate overall so onboarding never dead-ends.
+    /// Rule: auto-default to Raptor 0.6 when it **comfortably** fits
+    /// (`.compatible`, never the `.tight` band) and no larger-RAM Top Pick
+    /// (Gemma 12B / Ornith 35B) is also comfortable. Otherwise pick the
+    /// curated Top Pick with the **largest base parameter count** that
+    /// comfortably fits; equal-size variants prefer the larger resident
+    /// footprint. Top Picks are the maintained onboarding recommendation
+    /// set. Raptor v0.5 8B-A1B is retired from the catalog entirely.
+    /// Dense Bonsai 27B, LFM2.5 8B, and dense Ornith 1.5 9B remain catalog
+    /// choices rather than first-run defaults. When nothing is comfortable
+    /// (very low RAM), fall back to the smallest candidate overall so
+    /// onboarding never dead-ends.
     ///
     /// This replaced the earlier Gemma-4-QAT auto-default spine: the Gemma 4
     /// `qat-MXFP4` builds are no longer curated Top Picks, so they are neither
@@ -346,6 +409,15 @@ final class ConfigureAIState: ObservableObject {
                 ($0.estimatedMemoryGB ?? .greatestFiniteMagnitude)
                     < ($1.estimatedMemoryGB ?? .greatestFiniteMagnitude)
             })
+        }
+
+        if let preferred = comfortable.first(where: { $0.id == preferredOnboardingModelId }) {
+            let hasLargerRAMTier = comfortable.contains {
+                ($0.parameterCountBillions ?? 0) >= largeRAMOnboardingParameterFloor
+            }
+            if !hasLargerRAMTier {
+                return preferred
+            }
         }
 
         return strongest(comfortable) ?? smallest(candidates)

@@ -27,6 +27,12 @@ struct ChatSessionSidebar: View {
     /// confusing "no results" empty state.
     let agentId: UUID
     let currentSessionId: UUID?
+    /// True while the active chat was entered from its project's detail
+    /// page (or started there via ⌘N). The Projects lens stays put when the
+    /// agent changes for that reason: the user is browsing a project, not
+    /// picking an agent, so flipping to the Agents lens would lose their
+    /// place. Explicit agent picks clear the flag before switching.
+    var keepsProjectsLens: Bool = false
     /// Live width of the rail, driven by the parent's resize handle so the
     /// inner content (titles, chips, rows) reflows to fill the chosen width.
     var width: CGFloat = SidebarStyle.width
@@ -57,6 +63,9 @@ struct ChatSessionSidebar: View {
     /// replaces the removed agent-selector pill; same effect as picking an
     /// agent from it).
     var onSelectAgent: ((UUID) -> Void)? = nil
+    /// Start a fresh chat with a local agent straight from its row (hover
+    /// "+" / context menu), without selecting the agent first.
+    var onNewChatWithAgent: ((UUID) -> Void)? = nil
     /// Lowercased address of the workspace teammate's agent the window's
     /// active tab is chatting with, or nil for a local chat. While set, the
     /// matching team-agent row is the selected one (no local row is).
@@ -69,6 +78,17 @@ struct ChatSessionSidebar: View {
     /// Select a workspace teammate's shared agent (by address) for this
     /// window — same effect as picking a local agent.
     var onSelectWorkspaceAgent: ((String, String) -> Void)? = nil
+    /// LAN-discovered peers (Bonjour). Rendered under "On This Network" when
+    /// a selection handler is wired — restoring the reach the removed toolbar
+    /// agent pill's section provided.
+    var discoveredAgents: [DiscoveredAgent] = []
+    /// Id of the discovered agent the window's active tab is chatting with,
+    /// or nil for a local/relay chat. While set, the matching network row is
+    /// the selected one (no local row is).
+    var activeDiscoveredAgentId: UUID? = nil
+    /// Select a LAN-discovered agent: runs the pairing sheet on first pick,
+    /// then connects — the same flow the removed agent pill drove.
+    var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
 
     enum ExportFormat {
         case markdown
@@ -106,6 +126,9 @@ struct ChatSessionSidebar: View {
     /// scrolls the first one into view so the user can see where the
     /// imports landed (they sort by original date, not to the top).
     @ObservedObject private var importHighlight = ChatSessionImportHighlight.shared
+    /// Agents that appeared during this app run and haven't been opened
+    /// yet; their rows carry an accent ring and a "New" pill until tapped.
+    @ObservedObject private var newAgentHighlight = NewAgentHighlightStore.shared
     @State private var editingSessionId: UUID?
     @State private var editingBuffer: String = ""
     /// IDs the user has multi-selected (⌘-click to toggle, ⇧-click to
@@ -297,12 +320,29 @@ struct ChatSessionSidebar: View {
         .onChange(of: searchQuery) { _, query in
             scheduleContentSearch(query)
         }
-        .onChange(of: agentId) { _, _ in
+        .onChange(of: agentId) { _, newAgentId in
             sourceFilter = .all
             searchQuery = ""
             hoveredFilter = nil
-            selectedTab = .chats
+            if !keepsProjectsLens { selectedTab = .chats }
             clearSelection()
+            // Opening an agent by any route (row tap, tab switch, deep link)
+            // is "seen": the new-agent ring comes off.
+            if workspaceAgentAddress == nil {
+                newAgentHighlight.markSeen(localAgentId: newAgentId)
+            }
+        }
+        .onChange(of: workspaceAgentAddress) { _, address in
+            if let address {
+                newAgentHighlight.markSeen(sharedAgentAddress: address)
+            }
+        }
+        .onAppear {
+            if let workspaceAgentAddress {
+                newAgentHighlight.markSeen(sharedAgentAddress: workspaceAgentAddress)
+            } else {
+                newAgentHighlight.markSeen(localAgentId: agentId)
+            }
         }
         // Switching lenses is a context change like an agent switch: the
         // inner filter/search/selection state belongs to the previous lens.
@@ -1062,13 +1102,16 @@ struct ChatSessionSidebar: View {
                     let activity = activityStatus(for: agent)
                     AgentSidebarRow(
                         agent: agent,
-                        // A team-agent tab owns the selection: no local row
-                        // is highlighted while one is active.
-                        isSelected: agent.id == agentId && workspaceAgentAddress == nil,
+                        // A team-agent or network-agent tab owns the
+                        // selection: no local row is highlighted while one
+                        // is active.
+                        isSelected: agent.id == agentId && workspaceAgentAddress == nil
+                            && activeDiscoveredAgentId == nil,
                         // The selected agent's row reflects the session the
                         // window is showing (the active tab's chat), so the
                         // sidebar always answers "which chat is this?".
                         currentSessionTitle: agent.id == agentId && workspaceAgentAddress == nil
+                            && activeDiscoveredAgentId == nil
                             ? sessions.first(where: { $0.id == currentSessionId })?.title
                             : nil,
                         activityStatus: activity,
@@ -1083,7 +1126,17 @@ struct ChatSessionSidebar: View {
                             guard let address = agent.agentAddress else { return }
                             unshare(SharedAgentIdentity.resolve(address: address, workspaceId: workspace.id), from: workspace)
                         },
-                        onSelect: { onSelectAgent?(agent.id) },
+                        isNew: newAgentHighlight.isNew(localAgentId: agent.id),
+                        onSelect: {
+                            newAgentHighlight.markSeen(localAgentId: agent.id)
+                            onSelectAgent?(agent.id)
+                        },
+                        onNewChat: onNewChatWithAgent.map { start in
+                            {
+                                newAgentHighlight.markSeen(localAgentId: agent.id)
+                                start(agent.id)
+                            }
+                        },
                         onStop: activity == nil ? nil : { stopActivity(for: agent) },
                         isReorderable: !agent.isBuiltIn,
                         isDragging: draggingAgentId == agent.id,
@@ -1116,6 +1169,14 @@ struct ChatSessionSidebar: View {
                 if !directlySharedAgents.isEmpty {
                     sharedAgentsSection(directlySharedAgents)
                 }
+
+                // Peers discovered over Bonjour that aren't already paired
+                // (paired ones render under their workspace / "Shared with
+                // you" row instead). Selecting one hands off to ChatView's
+                // pairing/connect flow.
+                if !visibleDiscoveredAgents.isEmpty {
+                    discoveredAgentsSection(visibleDiscoveredAgents)
+                }
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 8)
@@ -1124,6 +1185,7 @@ struct ChatSessionSidebar: View {
             .animation(theme.animationQuick(), value: displayedAgents.map(\.id))
             .animation(theme.animationQuick(), value: rosterStore.rosters.map(\.id))
             .animation(theme.animationQuick(), value: directlySharedAgents.map(\.id))
+            .animation(theme.animationQuick(), value: visibleDiscoveredAgents.map(\.id))
         }
         .scrollIndicators(.hidden)
     }
@@ -1174,10 +1236,63 @@ struct ChatSessionSidebar: View {
                         ? sessions.first(where: { $0.id == currentSessionId })?.title
                         : nil,
                     activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: ""),
+                    isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
                     // Same tab / history / connect flow as a team agent; the
                     // session context simply carries no workspace id.
-                    onSelect: { onSelectWorkspaceAgent?(address, "") },
+                    onSelect: {
+                        newAgentHighlight.markSeen(sharedAgentAddress: address)
+                        onSelectWorkspaceAgent?(address, "")
+                    },
                     onRemove: { removeDirectShare(remote) }
+                )
+            }
+        }
+    }
+
+    // MARK: On This Network
+
+    /// LAN-discovered peers that still need a sidebar row: the browser
+    /// already excludes this device's own agents, so only peers with an
+    /// existing pairing row (workspace roster or "Shared with you") drop
+    /// out here.
+    private var visibleDiscoveredAgents: [DiscoveredAgent] {
+        guard onSelectDiscoveredAgent != nil else { return [] }
+        let pairedAddresses = Set(
+            remoteAgentManager.remoteAgents.map { $0.agentAddress.lowercased() }
+        )
+        return discoveredAgents
+            .filter { Self.isVisibleDiscovered($0, pairedAddresses: pairedAddresses) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Pure partition rule (testable): a discovered peer renders under
+    /// "On This Network" unless a pairing for its address already owns a
+    /// row in another section. Addressless peers (pre-Secure-Channel) have
+    /// nothing to match a pairing on, so they always render.
+    nonisolated static func isVisibleDiscovered(
+        _ agent: DiscoveredAgent, pairedAddresses: Set<String>
+    ) -> Bool {
+        guard let address = agent.address?.lowercased(), !address.isEmpty else { return true }
+        return !pairedAddresses.contains(address)
+    }
+
+    @ViewBuilder
+    private func discoveredAgentsSection(_ agents: [DiscoveredAgent]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            sidebarSectionHeader(
+                icon: "antenna.radiowaves.left.and.right",
+                title: L("On This Network"),
+                help: L("Osaurus agents discovered on your local network")
+            )
+
+            ForEach(agents) { agent in
+                DiscoveredAgentSidebarRow(
+                    agent: agent,
+                    isSelected: activeDiscoveredAgentId == agent.id,
+                    currentSessionTitle: activeDiscoveredAgentId == agent.id
+                        ? sessions.first(where: { $0.id == currentSessionId })?.title
+                        : nil,
+                    onSelect: { onSelectDiscoveredAgent?(agent) }
                 )
             }
         }
@@ -1278,7 +1393,11 @@ struct ChatSessionSidebar: View {
                             ? sessions.first(where: { $0.id == currentSessionId })?.title
                             : nil,
                         activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: workspaceId),
-                        onSelect: { onSelectWorkspaceAgent?(address, workspaceId) },
+                        isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
+                        onSelect: {
+                            newAgentHighlight.markSeen(sharedAgentAddress: address)
+                            onSelectWorkspaceAgent?(address, workspaceId)
+                        },
                         onOpenWorkspace: { openWorkspaceInSettings(id: workspaceId) }
                     )
                 }
@@ -1434,14 +1553,21 @@ struct ChatSessionSidebar: View {
                                 ? sessions.first(where: { $0.id == currentSessionId })?.title
                                 : nil,
                             activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: workspace.id),
-                            onSelect: { onSelectWorkspaceAgent?(address, workspace.id) },
+                            isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
+                            onSelect: {
+                                newAgentHighlight.markSeen(sharedAgentAddress: address)
+                                onSelectWorkspaceAgent?(address, workspace.id)
+                            },
                             onOpenInNewWindow: {
                                 ChatWindowManager.shared.openNewChatWindow(withWorkspaceAgentAddress: address,
                                     workspaceId: workspace.id
                                 )
                             },
                             onOpenWorkspace: { openWorkspaceInSettings(id: workspace.id) },
-                            onUnshare: identity.isMine ? { unshare(identity, from: workspace) } : nil
+                            // Unshare is an ownership right: an agent this
+                            // identity shared from another device can be
+                            // unshared from here too.
+                            onUnshare: identity.isOwnedByMe ? { unshare(identity, from: workspace) } : nil
                         )
                     }
                 }
@@ -1815,7 +1941,13 @@ private struct AgentSidebarRow: View {
     var sharedWorkspaces: [OsaurusRouterWorkspaceSummary] = []
     var onShareToWorkspace: ((OsaurusRouterWorkspaceSummary) -> Void)?
     var onUnshareFromWorkspace: ((OsaurusRouterWorkspaceSummary) -> Void)?
+    /// Appeared during this app run and not opened yet: accent ring + pill.
+    var isNew: Bool = false
     let onSelect: () -> Void
+    /// Start a fresh chat with this agent. Shown as a hover "+" so the user
+    /// can open a new chat without first selecting the agent and then
+    /// reaching for the "+" in the tab strip.
+    var onNewChat: (() -> Void)? = nil
     /// Stop every live run on this agent. Shown on hover while
     /// `activityStatus` is non-nil.
     var onStop: (() -> Void)? = nil
@@ -1869,6 +2001,10 @@ private struct AgentSidebarRow: View {
                             )
                             .accessibilityLabel(Text("Shared with workspace", bundle: .module))
                     }
+                    if isNew {
+                        NewAgentPill()
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1909,16 +2045,30 @@ private struct AgentSidebarRow: View {
             // there). The selected row is already signalled by its
             // background, so no checkmark.
             else if isHovered {
-                Button(action: openAgentSettings) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
-                        .contentShape(Rectangle())
+                HStack(spacing: 2) {
+                    if let onNewChat {
+                        Button(action: onNewChat) {
+                            Image(systemName: "plus.bubble")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                        .localizedHelp("New Chat")
+                    }
+                    Button(action: openAgentSettings) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
+                    .localizedHelp(agent.isBuiltIn ? LocalizedStringKey("Orchestrator Settings") : LocalizedStringKey("Agent Settings"))
                 }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp(agent.isBuiltIn ? LocalizedStringKey("Orchestrator Settings") : LocalizedStringKey("Agent Settings"))
                 .transition(.opacity)
             }
         }
@@ -1926,6 +2076,7 @@ private struct AgentSidebarRow: View {
         .padding(.vertical, 8)
         .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
         .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .newAgentHighlight(isNew)
         .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .offset(y: dragOffset)
         .zIndex(isDragging ? 1 : 0)
@@ -1934,11 +2085,18 @@ private struct AgentSidebarRow: View {
         .contextMenu { agentContextMenu }
         // Same threshold as the tab strip: a short travel keeps clicks as
         // taps; beyond it the press becomes a reorder drag.
+        //
+        // A non-reorderable row (the built-in Orchestrator) must keep every
+        // gesture applied ABOVE this modifier alive: the tap that selects the
+        // agent, the hover gear, and the context menu. `.subviews` disables
+        // only the drag added here; `.none` would disable the whole subview
+        // hierarchy's gestures too, which made the Orchestrator row
+        // unselectable (#2729).
         .gesture(
             DragGesture(minimumDistance: 4, coordinateSpace: .global)
                 .onChanged { onDragChanged?($0.translation.height) }
                 .onEnded { _ in onDragEnded?() },
-            including: isReorderable ? .all : .none
+            including: isReorderable ? .all : .subviews
         )
         .onHover { hovering in
             withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
@@ -1964,16 +2122,13 @@ private struct AgentSidebarRow: View {
     /// share/unshare actions that otherwise live only in Settings.
     @ViewBuilder
     private var agentContextMenu: some View {
-        Button(action: openAgentSettings) {
-            Label(L("Open Settings"), systemImage: "gearshape")
-        }
-        if let address = agent.agentAddress, !address.isEmpty {
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(address, forType: .string)
-            } label: {
-                Label(L("Copy Address"), systemImage: "doc.on.doc")
+        if let onNewChat {
+            Button(action: onNewChat) {
+                Label(LCached("New Chat"), systemImage: "plus.bubble")
             }
+        }
+        Button(action: openAgentSettings) {
+            Label(LCached("Open Settings"), systemImage: "gearshape")
         }
         if !shareableWorkspaces.isEmpty, let onShareToWorkspace {
             Menu {
@@ -1981,7 +2136,7 @@ private struct AgentSidebarRow: View {
                     Button(workspace.name) { onShareToWorkspace(workspace) }
                 }
             } label: {
-                Label(L("Share to Workspace…"), systemImage: "person.2.fill")
+                Label(LCached("Share to Workspace…"), systemImage: "person.2.fill")
             }
         }
         if !sharedWorkspaces.isEmpty, let onUnshareFromWorkspace {
@@ -1990,7 +2145,7 @@ private struct AgentSidebarRow: View {
                 Button(role: .destructive) {
                     onUnshareFromWorkspace(workspace)
                 } label: {
-                    Label(String(format: L("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
+                    Label(String(format: LCached("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
                 }
             }
         }
@@ -2000,13 +2155,58 @@ private struct AgentSidebarRow: View {
     private func liveStatusLine(_ status: SessionActivityMonitor.Status) -> String {
         switch status {
         case .waitingForInput:
-            return L("Needs your input")
+            return LCached("Needs your input")
         case .working:
             if let step = activityStep?.trimmingCharacters(in: .whitespacesAndNewlines), !step.isEmpty {
-                return "\(L("Working")) · \(step)"
+                return "\(LCached("Working")) · \(step)"
             }
-            return L("Working…")
+            return LCached("Working…")
         }
+    }
+}
+
+// MARK: - New Agent Highlight
+
+/// Accent ring + soft glow around an agent row that appeared after the
+/// sidebar first saw the agent list (created, imported, shared, or paired
+/// during this app run). Same idiom as the session-import flash, but it
+/// stays until the user opens the agent once (`NewAgentHighlightStore`).
+private struct NewAgentRowHighlight: ViewModifier {
+    let isNew: Bool
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous)
+                    .stroke(theme.accentColor.opacity(isNew ? 0.75 : 0), lineWidth: 1.5)
+                    .shadow(color: theme.accentColor.opacity(isNew ? 0.45 : 0), radius: 5)
+                    .allowsHitTesting(false)
+            )
+            .animation(.easeOut(duration: 0.6), value: isNew)
+    }
+}
+
+extension View {
+    fileprivate func newAgentHighlight(_ isNew: Bool) -> some View {
+        modifier(NewAgentRowHighlight(isNew: isNew))
+    }
+}
+
+/// Small "New" capsule after an agent's name so the row reads as new even
+/// where the ring is subtle (light themes, a row at the very edge).
+private struct NewAgentPill: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text("New", bundle: .module)
+            .font(.system(size: 8, weight: .bold))
+            .textCase(.uppercase)
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(Capsule().fill(theme.accentColor.opacity(0.16)))
+            .accessibilityLabel(Text("New agent", bundle: .module))
     }
 }
 
@@ -2025,6 +2225,8 @@ private struct WorkspaceAgentSidebarRow: View {
     let isSelected: Bool
     var currentSessionTitle: String? = nil
     var activityStatus: SessionActivityMonitor.Status? = nil
+    /// Appeared on the roster during this app run and not opened yet.
+    var isNew: Bool = false
     let onSelect: () -> Void
     /// Own agent: open its Settings ▸ Agents detail (the gear).
     var onOpenSettings: (() -> Void)?
@@ -2041,7 +2243,10 @@ private struct WorkspaceAgentSidebarRow: View {
     @Environment(\.theme) private var theme
     @State private var isHovered = false
 
-    private var isMine: Bool { identity.isMine }
+    /// Hosted on this Mac — the row reads relay reachability and opens the
+    /// agent's Settings. Own agents on another device are remote from here
+    /// and take the teammate affordances (Chat, pairing status).
+    private var isMine: Bool { identity.isHostedHere }
     private var isOffline: Bool {
         if case .offline = status { return true }
         return false
@@ -2080,11 +2285,17 @@ private struct WorkspaceAgentSidebarRow: View {
             .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(identity.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 4) {
+                    Text(identity.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if isNew {
+                        NewAgentPill()
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 subtitle
                     .font(.system(size: 10))
@@ -2114,6 +2325,7 @@ private struct WorkspaceAgentSidebarRow: View {
         .padding(.vertical, 8)
         .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
         .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .newAgentHighlight(isNew)
         .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .onTapGesture(perform: onSelect)
         .contextMenu { contextMenuItems }
@@ -2207,7 +2419,11 @@ private struct WorkspaceAgentSidebarRow: View {
 
     private var ownerAndModelLabel: String {
         var parts: [String] = []
-        if let owner = identity.ownerName, !owner.isEmpty { parts.append(owner) }
+        if identity.isOwnedElsewhere {
+            parts.append(L("Your agent · other device"))
+        } else if let owner = identity.ownerName, !owner.isEmpty {
+            parts.append(owner)
+        }
         if let model = identity.modelLabel { parts.append(model) }
         if parts.isEmpty { parts.append(L("Shared agent")) }
         return parts.joined(separator: " · ")
@@ -2248,6 +2464,12 @@ private struct WorkspaceAgentSidebarRow: View {
             if let sharedAs = identity.sharedAsName {
                 lines.append(String(format: L("shared as “%@”"), sharedAs))
             }
+        } else if identity.isOwnedElsewhere {
+            lines.append(
+                identity.workspaceName.map {
+                    String(format: L("Your agent — shared with %@ from another of your devices"), $0)
+                } ?? L("Your agent — shared from another of your devices")
+            )
         } else if let owner = identity.ownerName, !owner.isEmpty {
             lines.append(String(format: L("Shared by %@"), owner))
         }
@@ -2313,6 +2535,8 @@ private struct RemoteAgentSidebarRow: View {
     let isSelected: Bool
     var currentSessionTitle: String? = nil
     var activityStatus: SessionActivityMonitor.Status? = nil
+    /// Paired during this app run and not opened yet.
+    var isNew: Bool = false
     let onSelect: () -> Void
     /// Direct share: forget the pairing.
     var onRemove: (() -> Void)?
@@ -2344,11 +2568,17 @@ private struct RemoteAgentSidebarRow: View {
             .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(agent.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 4) {
+                    Text(agent.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if isNew {
+                        NewAgentPill()
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 // The section header already says "Shared with you"; a row
                 // with no note or model shows no subtitle, like a local
@@ -2387,6 +2617,7 @@ private struct RemoteAgentSidebarRow: View {
         .padding(.vertical, 8)
         .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
         .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .newAgentHighlight(isNew)
         .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .onTapGesture(perform: onSelect)
         .contextMenu {
@@ -2445,6 +2676,134 @@ private struct RemoteAgentSidebarRow: View {
         let description = agent.description.trimmingCharacters(in: .whitespacesAndNewlines)
         if !description.isEmpty { lines.append(description) }
         lines.append(agent.shortAddress)
+        return lines.joined(separator: "\n")
+    }
+}
+
+// MARK: - Discovered Agent Row
+
+/// Row for an unpaired LAN peer under "On This Network". Same shape as
+/// `RemoteAgentSidebarRow` (avatar, name, subtitle) with a network badge on
+/// the avatar; a Bonjour advertisement carries no mascot, so the avatar is
+/// always a monogram. Tapping runs ChatView's pairing/connect flow — the
+/// same handoff the removed toolbar agent pill made.
+private struct DiscoveredAgentSidebarRow: View {
+    let agent: DiscoveredAgent
+    let isSelected: Bool
+    var currentSessionTitle: String? = nil
+    let onSelect: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AgentAvatarView(
+                mascotId: nil,
+                name: agent.name,
+                tint: agentColorFor(agent.name),
+                diameter: 26,
+                customImageURL: nil,
+                monogramFontSize: 12,
+                borderWidth: 0
+            )
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "network")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(1.5)
+                    .background(Circle().fill(theme.sidebarBackground))
+                    .offset(x: 2, y: 2)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(agent.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if agent.supportsSecureChannel {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(theme.successColor)
+                            .help(L("End-to-end encrypted"))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !agent.supportsSecureChannel {
+                    // Old peer: agent traffic hard-requires E2E, so chat will
+                    // be refused until it upgrades. Say so up front.
+                    Text("Needs upgrade for encrypted chat", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.warningColor)
+                        .lineLimit(1)
+                } else if let currentSessionTitle {
+                    Text(currentSessionTitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.accentColor.opacity(0.9))
+                        .lineLimit(1)
+                } else if let subtitleLabel {
+                    Text(verbatim: subtitleLabel)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText.opacity(0.85))
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+        .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .onTapGesture(perform: onSelect)
+        .contextMenu {
+            Button(action: onSelect) { Label(L("Chat"), systemImage: "bubble.left") }
+            if let address = agent.address, !address.isEmpty {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(address, forType: .string)
+                } label: {
+                    Label(L("Copy Address"), systemImage: "doc.on.doc")
+                }
+            }
+        }
+        .onHover { hovering in
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                isHovered = hovering
+            }
+        }
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
+        .help(helpText)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: "\(agent.name), \(L("On This Network"))"))
+    }
+
+    /// "host · description", either alone, or nil when neither is known —
+    /// the same composition the agent pill's network row used.
+    private var subtitleLabel: String? {
+        var parts: [String] = []
+        if let host = agent.host, !host.isEmpty {
+            // "device.local." → "device", as the agent pill rendered it.
+            parts.append(
+                host
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                    .replacingOccurrences(of: "\\.local$", with: "", options: .regularExpression)
+            )
+        }
+        if !agent.agentDescription.isEmpty {
+            parts.append(agent.agentDescription)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var helpText: String {
+        var lines: [String] = [agent.name]
+        if !agent.agentDescription.isEmpty { lines.append(agent.agentDescription) }
+        // The fingerprint lets the user verify the cryptographic identity,
+        // not just the attacker-controllable display name.
+        if let fingerprint = agent.addressFingerprint { lines.append(fingerprint) }
         return lines.joined(separator: "\n")
     }
 }
@@ -3092,7 +3451,7 @@ private struct SessionRow: View {
         case .imported:
             return Text("Imported", bundle: .module)
         case .delegation:
-            return Text("Delegated", bundle: .module)
+            return Text("Orchestrator", bundle: .module)
         case .workspace:
             if let caller = session.workspace?.callerLabel {
                 return Text(verbatim: "Workspace · \(caller)")
@@ -3363,8 +3722,9 @@ struct SessionStopButton: View {
 
 /// Checkbox row rendered as the delete-confirmation accessory. Writes
 /// straight to the session-scoped preference so the toggle survives
-/// across consecutive deletes within the same app run.
-private struct DontAskAgainToggle: View {
+/// across consecutive deletes within the same app run. Shared with the tab
+/// strip's Delete item.
+struct DontAskAgainToggle: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var pref = DeleteConfirmationPreference.shared
 
@@ -3423,6 +3783,25 @@ struct ChatHistoryList: View {
     var onStop: ((UUID) -> Void)? = nil
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
     var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
+    /// Origin lens chosen in the dialog's Filter popover.
+    var sourceFilter: ChatHistorySourceFilter = .all
+    /// Archived lens: true lists only archived chats, false hides them.
+    var showArchived: Bool = false
+    /// Project lens chosen in the dialog's Filter popover (nil = any).
+    var projectFilter: UUID? = nil
+    /// Workspace lens chosen in the dialog's Filter popover (nil = any).
+    var workspaceFilter: String? = nil
+    /// Plugin lens chosen in the dialog's Filter popover (nil = any; "" =
+    /// plugin chats with no recorded plugin id).
+    var pluginFilter: String? = nil
+    /// Schedule / watcher lenses: the schedule or watcher id those runs
+    /// stamp as the session's external key (nil = any).
+    var scheduleFilter: String? = nil
+    var watcherFilter: String? = nil
+    /// Capability lenses; a chat must carry every selected badge.
+    var capabilityFilter: Set<SessionCapability> = []
+    /// Resets the dialog's source / archived lenses from the empty state.
+    var onClearFilters: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
@@ -3440,8 +3819,25 @@ struct ChatHistoryList: View {
     @State private var selectedIds: Set<UUID> = []
     @State private var selectionAnchorId: UUID?
 
+    private var hasActiveFilter: Bool {
+        showArchived || sourceFilter != .all || projectFilter != nil || workspaceFilter != nil
+            || pluginFilter != nil || scheduleFilter != nil || watcherFilter != nil
+            || !capabilityFilter.isEmpty
+    }
+
     private var filteredSessions: [ChatSessionData] {
-        let visible = sessions.filter { !$0.archived }
+        let visible = sessions.filter { session in
+            session.archived == showArchived && sourceFilter.matches(session)
+                && (projectFilter == nil || session.projectId == projectFilter)
+                && (workspaceFilter == nil || session.workspace?.workspaceId == workspaceFilter)
+                && (pluginFilter == nil
+                    || (session.source == .plugin && (session.sourcePluginId ?? "") == pluginFilter))
+                && (scheduleFilter == nil
+                    || (session.source == .schedule && session.externalSessionKey == scheduleFilter))
+                && (watcherFilter == nil
+                    || (session.source == .watcher && session.externalSessionKey == watcherFilter))
+                && capabilityFilter.isSubset(of: session.capabilities)
+        }
         let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
         let matched: [ChatSessionData]
         if trimmed.isEmpty {
@@ -3484,6 +3880,29 @@ struct ChatHistoryList: View {
                 placeholder(icon: "bubble.left.and.bubble.right", text: "No chats yet")
             } else if filteredSessions.isEmpty, isContentSearchInFlight {
                 placeholder(icon: nil, text: "Searching conversations…")
+            } else if filteredSessions.isEmpty, hasActiveFilter,
+                searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+            {
+                // Lens (not search) produced the empty list: offer a way
+                // back instead of the search-flavored no-results view.
+                VStack(spacing: 8) {
+                    placeholder(
+                        icon: showArchived ? "archivebox" : "line.3.horizontal.decrease.circle",
+                        text: showArchived ? "No archived chats" : "No chats match this filter"
+                    )
+                    if let onClearFilters {
+                        Button {
+                            withAnimation(theme.animationQuick()) { onClearFilters() }
+                        } label: {
+                            Text("Clear Filters", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                        .padding(.bottom, 16)
+                    }
+                }
             } else if filteredSessions.isEmpty {
                 SidebarNoResultsView(searchQuery: searchQuery) {
                     withAnimation(theme.animationQuick()) { searchQuery = "" }

@@ -234,6 +234,184 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
         }
     }
 
+    // MARK: - Slot Alignment
+
+    /// Snap window for treating an early wall-clock stamp as a consumed slot.
+    /// `min(60, interval / 2)` so a 1-minute cadence cannot consume the next
+    /// minute on a slightly late fire. Compare with strict `<`, not `<=`.
+    public static func slotSnapTolerance(interval: TimeInterval) -> TimeInterval {
+        min(60, max(interval, 0) / 2)
+    }
+
+    /// Whether `next` should be treated as already consumed by `raw`.
+    public static func shouldConsumeNextSlot(
+        raw: Date,
+        next: Date,
+        interval: TimeInterval
+    ) -> Bool {
+        next.timeIntervalSince(raw) < slotSnapTolerance(interval: interval)
+    }
+
+    /// Nominal snap interval. For `everyNMinutes` this is the stored N
+    /// (not the 5-minute `nextRunDate` clamp) so a 1-minute cadence stays
+    /// at a 30s window even if slot generation still clamps to 5.
+    ///
+    /// Cron uses the gap *after* `reference` from two successive
+    /// `nextRunDate` results. That is not "the real period" for irregular
+    /// expressions (`0 9,17 * * *` varies by time of day). Harmless here:
+    /// any gap ≥ 2 minutes still caps at 60. The 60s fallback is only
+    /// unsafe for a sub-2-minute cron whose next two dates fail to
+    /// compute, which should not happen.
+    public func slotSnapIntervalSeconds(around reference: Date) -> TimeInterval {
+        switch self {
+        case .once:
+            return 120
+        case .everyNMinutes(let minutes):
+            return TimeInterval(max(minutes, 1) * 60)
+        case .hourly:
+            return 3600
+        case .daily:
+            return 86_400
+        case .weekly:
+            return 7 * 86_400
+        case .monthly:
+            return 30 * 86_400
+        case .yearly:
+            return 365 * 86_400
+        case .cron:
+            guard let next = nextRunDate(after: reference),
+                let following = nextRunDate(after: next)
+            else {
+                return 120
+            }
+            let gap = following.timeIntervalSince(next)
+            return gap > 0 ? gap : 120
+        }
+    }
+
+    public func slotSnapToleranceSeconds(around reference: Date) -> TimeInterval {
+        Self.slotSnapTolerance(interval: slotSnapIntervalSeconds(around: reference))
+    }
+
+    /// If `raw` is within the snap window before the next slot, treat that
+    /// slot as already consumed and return the slot instant.
+    public func alignedAnchor(from raw: Date) -> Date {
+        if case .once = self { return raw }
+        guard let next = nextRunDate(after: raw) else { return raw }
+        if Self.shouldConsumeNextSlot(
+            raw: raw,
+            next: next,
+            interval: slotSnapIntervalSeconds(around: raw)
+        ) {
+            return next
+        }
+        return raw
+    }
+
+    /// Result of walking to the most recent slot that is `<= now`.
+    public struct LatestDueSlotWalk: Sendable, Equatable {
+        public var slot: Date?
+        public var steps: Int
+
+        public init(slot: Date?, steps: Int) {
+            self.slot = slot
+            self.steps = steps
+        }
+    }
+
+    /// Most recent slot `<= now` after `rawAnchor`. Returns `nil` when the
+    /// first candidate is already `> now` (empty case: the timer owns that
+    /// slot, not the missed-replay path), even if it is inside
+    /// `shouldRunNow`'s 60s forward window.
+    ///
+    /// Walk start: `everyNMinutes` / `hourly` / `daily` begin at
+    /// `max(anchor, now - 2 * interval)` so a months-old 5-minute schedule
+    /// does not step tens of thousands of times at launch. Two intervals
+    /// (not one) so a DST shift or the strict `>` boundary cannot skip
+    /// the slot we want. Weekly / monthly / yearly walk from the aligned
+    /// anchor — their gaps can exceed the nominal period (monthly on the
+    /// 31st: Jan 31 → Mar 31 is 59 days). Cron uses the observed next gap
+    /// only as a walk bound, not as "the real period."
+    ///
+    /// If that fast start returns `nil` but `nextRunDate(after: aligned)`
+    /// is already `<= now`, the start skipped a real miss (irregular cron
+    /// or DST). Walk again from the aligned anchor. Hitting the iteration
+    /// cap returns `nil` so the timer path can catch up from a live slot
+    /// rather than stamping a mid-walk leftover.
+    public func latestDueSlot(
+        after rawAnchor: Date,
+        asOf now: Date,
+        maxIterations: Int = 512
+    ) -> LatestDueSlotWalk {
+        let aligned = alignedAnchor(from: rawAnchor)
+        let cap = max(1, maxIterations)
+        let fast = walkDueSlots(
+            from: walkStart(alignedAnchor: aligned, asOf: now),
+            asOf: now,
+            maxIterations: cap
+        )
+        if fast.slot != nil {
+            return fast
+        }
+        if let first = nextRunDate(after: aligned), first <= now {
+            return walkDueSlots(from: aligned, asOf: now, maxIterations: cap)
+        }
+        return LatestDueSlotWalk(slot: nil, steps: fast.steps)
+    }
+
+    private func walkDueSlots(
+        from start: Date,
+        asOf now: Date,
+        maxIterations: Int
+    ) -> LatestDueSlotWalk {
+        var cursor = start
+        var lastDue: Date?
+        var steps = 0
+        while steps < maxIterations {
+            guard let next = nextRunDate(after: cursor) else {
+                return LatestDueSlotWalk(slot: lastDue, steps: steps)
+            }
+            if next > now {
+                return LatestDueSlotWalk(slot: lastDue, steps: steps)
+            }
+            lastDue = next
+            cursor = next
+            steps += 1
+        }
+        return LatestDueSlotWalk(slot: nil, steps: steps)
+    }
+
+    /// Actual slot spacing used to bound the latest-due walk.
+    /// `everyNMinutes` matches `nextRunDate`'s 5-minute clamp so
+    /// `now - 2 * interval` cannot land after the real latest slot.
+    private func walkIntervalSeconds(around reference: Date) -> TimeInterval? {
+        switch self {
+        case .everyNMinutes(let minutes):
+            return TimeInterval(max(minutes, 5) * 60)
+        case .hourly:
+            return 3600
+        case .daily:
+            return 86_400
+        case .cron:
+            guard let next = nextRunDate(after: reference),
+                let following = nextRunDate(after: next)
+            else {
+                return nil
+            }
+            let gap = following.timeIntervalSince(next)
+            return gap > 0 ? gap : nil
+        case .once, .weekly, .monthly, .yearly:
+            return nil
+        }
+    }
+
+    private func walkStart(alignedAnchor: Date, asOf now: Date) -> Date {
+        guard let interval = walkIntervalSeconds(around: alignedAnchor) else {
+            return alignedAnchor
+        }
+        return max(alignedAnchor, now.addingTimeInterval(-2 * interval))
+    }
+
     // MARK: - Private Helpers
 
     private func timeString(hour: Int, minute: Int) -> String {
@@ -476,11 +654,58 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         lastTriggeredAt ?? lastRunAt
     }
 
-    /// Calculate the next run date from the execution anchor.
+    /// Execution anchor snapped to the consumed slot when the raw stamp
+    /// landed inside the interval-aware early-fire window (e.g. 04:59:59
+    /// for a 05:00 daily). One-shot anchors are never snapped.
+    public var consumedExecutionAnchor: Date? {
+        guard let raw = executionAnchor else { return nil }
+        if case .once = frequency { return raw }
+        return frequency.alignedAnchor(from: raw)
+    }
+
+    /// Calculate the next run date from the consumed execution anchor.
     public func nextRunDateAfterExecutionAnchor(asOf now: Date = Date()) -> Date? {
         guard isEnabled else { return nil }
         if case .once = frequency, executionAnchor != nil { return nil }
-        return frequency.nextRunDate(after: executionAnchor ?? now)
+        return frequency.nextRunDate(after: consumedExecutionAnchor ?? now)
+    }
+
+    /// Most recent slot that is already `<= now`. `nil` when nothing is
+    /// overdue — including when the next slot is in the 60s `shouldRunNow`
+    /// window but still in the future.
+    ///
+    /// With no execution anchor (never run), walk from
+    /// `now - initialLookbackSeconds` so a late first fire stamps today's
+    /// slot instead of `nextRunDate(after: now)` (tomorrow). The missed
+    /// path still requires an anchor and will not use this lookback.
+    public func latestDueSlot(
+        asOf now: Date = Date(),
+        initialLookbackSeconds: TimeInterval = 3600
+    ) -> Date? {
+        guard isEnabled else { return nil }
+        if case .once(let date) = frequency {
+            return date <= now && executionAnchor == nil ? date : nil
+        }
+        let raw = executionAnchor ?? now.addingTimeInterval(-initialLookbackSeconds)
+        return frequency.latestDueSlot(after: raw, asOf: now).slot
+    }
+
+    /// Recurring catch-up: a prior trigger exists and a later slot is
+    /// already past. One-shots and never-run schedules are not missed
+    /// replays — the timer / one-shot path owns those.
+    public func hasMissedRecurringRun(asOf now: Date = Date()) -> Bool {
+        guard isEnabled else { return false }
+        if case .once = frequency { return false }
+        guard executionAnchor != nil else { return false }
+        return latestDueSlot(asOf: now) != nil
+    }
+
+    /// Slot to stamp when the timer selects this schedule. Prefer the most
+    /// recent overdue slot so a stale anchor does not cascade one skipped
+    /// fire at a time; otherwise the upcoming slot (`shouldRunNow` may be
+    /// true up to 60s early).
+    public func scheduledFireTime(asOf now: Date = Date()) -> Date? {
+        latestDueSlot(asOf: now) ?? nextRunDateAfterExecutionAnchor(asOf: now)
     }
 
     /// Human-readable description of when this will next run
@@ -537,7 +762,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
             return date <= latestAllowedFireDate
         }
 
-        let checkFrom = executionAnchor ?? now.addingTimeInterval(-initialLookbackSeconds)
+        let checkFrom = consumedExecutionAnchor ?? now.addingTimeInterval(-initialLookbackSeconds)
         guard let nextRun = frequency.nextRunDate(after: checkFrom) else { return false }
         return nextRun <= latestAllowedFireDate
     }

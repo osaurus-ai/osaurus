@@ -1,0 +1,201 @@
+{
+  "id": "ram_admission.reporter-resident-normal-pressure",
+  "domain": "subagent",
+  "label": "Three singles then sequential children: resident reuse with normal pressure",
+  "query": "Replay explicit host facts through production planner, recovery and one persistent reservation actor.",
+  "notes": "Reporter byte counts replayed with explicitly normal pressure; reporter pressure was not supplied. Companion legacy scenario covers unknown pressure. No physical 16GB hardware claim.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "ram_admission",
+      "ramAdmission": {
+        "scenario": {
+          "localJobs": 1,
+          "remoteJobs": 0,
+          "agentLimit": 1,
+          "engineLimit": 1,
+          "batching": true,
+          "ramSafety": true,
+          "steps": [
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "after": null,
+              "reclaimSucceeds": false
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "after": null,
+              "reclaimSucceeds": false
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "after": null,
+              "reclaimSucceeds": false
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "reclaimSucceeds": true
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "reclaimSucceeds": true
+            }
+          ]
+        },
+        "expected": [
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          }
+        ]
+      }
+    }
+  }
+}

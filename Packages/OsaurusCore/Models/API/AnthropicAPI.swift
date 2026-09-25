@@ -32,13 +32,36 @@ struct AnthropicMessagesRequest: Codable, Sendable {
     var cache_control: AnthropicCacheControl? = nil
 }
 
-/// `{"type": "ephemeral"}` cache-control marker. Only "ephemeral" exists in
-/// the API today (5-minute TTL, refreshed on each hit).
-struct AnthropicCacheControl: Codable, Sendable {
+/// `{"type": "ephemeral", "ttl": "1h"?}` cache-control marker. Only
+/// "ephemeral" exists in the API today. `ttl` is omitted for the default
+/// 5-minute cache (write billed 1.25x input) and `"1h"` for the one-hour
+/// cache (write billed 2x input); both are refreshed on every hit and read
+/// at 0.1x. See `AnthropicCacheControl.forConversation(lastMessageRole:)`.
+struct AnthropicCacheControl: Codable, Sendable, Equatable {
     let type: String
+    var ttl: String? = nil
 
-    init(type: String = "ephemeral") {
+    static let oneHourTTL = "1h"
+
+    init(type: String = "ephemeral", ttl: String? = nil) {
         self.type = type
+        self.ttl = ttl
+    }
+
+    /// Pick the TTL from the shape of the request. A trailing `user` turn
+    /// means a human is in the loop — the next request may arrive after the
+    /// 5-minute window, so the 1h write premium (2x vs 1.25x) is cheap
+    /// insurance against re-paying the whole prefix at full price. A trailing
+    /// `tool` result is a tight agent loop; the next call lands within
+    /// seconds, so the default 5m cache is the cheaper write. Mirrors the
+    /// Osaurus Router's server-side rule so BYOK and hosted turns behave alike.
+    static func forConversation(lastMessageRole: String?) -> AnthropicCacheControl {
+        switch lastMessageRole {
+        case "tool":
+            return AnthropicCacheControl()
+        default:
+            return AnthropicCacheControl(ttl: oneHourTTL)
+        }
     }
 }
 
@@ -757,12 +780,13 @@ struct MessageDeltaEvent: Codable, Sendable {
 
     struct MessageDeltaUsage: Codable, Sendable {
         let output_tokens: Int
+        let input_tokens: Int?
     }
 
-    init(stopReason: String?, outputTokens: Int) {
+    init(stopReason: String?, outputTokens: Int, inputTokens: Int? = nil) {
         self.type = "message_delta"
         self.delta = MessageDelta(stop_reason: stopReason, stop_sequence: nil)
-        self.usage = MessageDeltaUsage(output_tokens: outputTokens)
+        self.usage = MessageDeltaUsage(output_tokens: outputTokens, input_tokens: inputTokens)
     }
 }
 

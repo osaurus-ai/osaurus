@@ -4,31 +4,28 @@ import Testing
 
 @testable import OsaurusCore
 
-/// The greedy-while-MTP contract, exercised through the SINGLE resolution
-/// site (`MLXBatchAdapter.effectiveGenerationSettings`) that feeds the run
-/// parameters, the API's `last_effective_generation`, and the log line —
-/// there is no second coercion pass to drift out of sync with it.
-///
-/// Starting point for every case is Qwen 3.8 Flash Next's shipped
-/// generation_config.json sampler (temperature 1.0, top-p 0.95, top-k 20)
-/// arriving as BUNDLE defaults with no per-request overrides:
-/// - native MTP active → effective greedy 0/1/0/0, `mtpGreedyEnforced` and
-///   `samplerWasChanged` both true;
-/// - AR (no drafter) and DFlash 2 → bundle sampler preserved, flags false;
-/// - an already-greedy resolution under MTP → enforced but NOT changed.
-@Suite struct MTPGreedyCoercionTests {
+/// Regression for the former blanket greedy override. MTP must consume the
+/// same resolved sampler as AR: request > explicit runtime setting > bundle.
+/// These resolver checks are not real-model sampling/cache qualification.
+@Suite struct MTPSamplingPreservationTests {
 
     private func resolve(
         draftStrategy: MLXLMCommon.DraftStrategy?,
         bundleTemperature: Float = 1.0,
         bundleTopP: Float = 0.95,
-        bundleTopK: Int = 20
+        bundleTopK: Int = 20,
+        modelName: String = "JANGQ-AI/Qwen3.8-Flash-Next-JANG_4M",
+        requestTemperature: Float? = nil,
+        requestTopP: Float? = nil,
+        requestTopK: Int? = nil,
+        runtime: VMLXServerGenerationDefaults = .init()
     ) -> MLXBatchAdapter.EffectiveGenerationSettings {
         let generation = GenerationParameters(
-            temperature: nil,
+            temperature: requestTemperature,
             maxTokens: 16_384,
             maxTokensExplicit: false,
-            topPOverride: nil,
+            topPOverride: requestTopP,
+            topKOverride: requestTopK,
             minPOverride: nil,
             repetitionPenalty: nil
         )
@@ -41,30 +38,30 @@ import Testing
             repetitionPenalty: nil,
             doSample: true
         )
-        // Mirrors the production call site: greedy is forced exactly when
-        // the effective draft strategy actually runs native MTP.
+        // Same resolution entry point and inputs as the production adapter.
         return MLXBatchAdapter.effectiveGenerationSettings(
-            modelName: "JANGQ-AI/Qwen3.8-Flash-Next-JANG_4M",
+            modelName: modelName,
             generation: generation,
-            runtimeDefaults: VMLXServerGenerationDefaults(),
+            runtimeDefaults: runtime,
             maxBatchSize: 1,
             modelDefaults: bundleDefaults,
-            draftStrategy: draftStrategy,
-            forcesGreedyForNativeMTP: draftStrategy?.usesNativeMTP == true
+            draftStrategy: draftStrategy
         )
     }
 
-    @Test("native MTP resolves the bundle sampler to greedy 0/1/0/0 and flags it")
-    func mtpActiveCoercesToGreedy() {
-        let effective = resolve(
-            draftStrategy: .nativeMTP(depth: 2, verifierMode: nil))
-        #expect(effective.temperature == 0)
-        #expect(effective.topP == 1)
-        #expect(effective.topK == 0)
-        #expect(effective.minP == 0)
-        #expect(effective.mtpGreedyEnforced)
-        #expect(effective.samplerWasChanged)
-        #expect(effective.draftStrategy == DraftStrategy.nativeMTP(depth: 2).kindName)
+    @Test("both Qwen families preserve their bundle sampler when MTP is active")
+    func mtpActivePreservesBundleSampler() {
+        for modelName in ["JANGQ-AI/Qwen3.8-27B-JANG_4D", "JANGQ-AI/Qwen3.8-Flash-Next-JANG_4M"] {
+            let effective = resolve(
+                draftStrategy: .nativeMTP(depth: 2), modelName: modelName)
+            #expect(effective.temperature == 1)
+            #expect(effective.topP == 0.95)
+            #expect(effective.topK == 20)
+            #expect(effective.minP == 0)
+            #expect(!effective.mtpGreedyEnforced)
+            #expect(!effective.samplerWasChanged)
+            #expect(effective.draftStrategy == DraftStrategy.nativeMTP(depth: 2).kindName)
+        }
     }
 
     @Test("AR (no drafter) preserves the bundle generation_config sampler")
@@ -89,7 +86,7 @@ import Testing
         #expect(!effective.samplerWasChanged)
     }
 
-    @Test("an already-greedy resolution under MTP is enforced but not changed")
+    @Test("a declared greedy sampler remains greedy without MTP coercion")
     func alreadyGreedyIsNotACoercion() {
         let effective = resolve(
             draftStrategy: .nativeMTP(depth: 1, verifierMode: nil),
@@ -98,7 +95,33 @@ import Testing
             bundleTopK: 0
         )
         #expect(effective.temperature == 0)
-        #expect(effective.mtpGreedyEnforced)
+        #expect(!effective.mtpGreedyEnforced)
+        #expect(!effective.samplerWasChanged)
+    }
+
+    @Test func explicitRequestStillOutranksRuntimeAndBundle() {
+        var runtime = VMLXServerGenerationDefaults()
+        runtime.temperature = 0.4
+        runtime.topP = 0.8
+        runtime.topK = 15
+        let effective = resolve(
+            draftStrategy: .nativeMTP(depth: 3),
+            requestTemperature: 0.7, requestTopP: 0.9, requestTopK: 32, runtime: runtime)
+        #expect(effective.temperature == 0.7)
+        #expect(effective.topP == 0.9)
+        #expect(effective.topK == 32)
+        #expect(!effective.samplerWasChanged)
+    }
+
+    @Test func explicitRuntimeSamplerStillOutranksBundle() {
+        var runtime = VMLXServerGenerationDefaults()
+        runtime.temperature = 0.4
+        runtime.topP = 0.8
+        runtime.topK = 15
+        let effective = resolve(draftStrategy: .nativeMTP(depth: 1), runtime: runtime)
+        #expect(effective.temperature == 0.4)
+        #expect(effective.topP == 0.8)
+        #expect(effective.topK == 15)
         #expect(!effective.samplerWasChanged)
     }
 }

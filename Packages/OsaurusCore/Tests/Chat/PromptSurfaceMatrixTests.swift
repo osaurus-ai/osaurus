@@ -214,7 +214,7 @@ struct PromptSurfaceMatrixTests {
                 let gatedTools: Set<String> = [
                     "render_chart", "speak", "search_memory",
                     "schedule_next_run", "cancel_next_run", "notify",
-                    ComputerUseTool.toolName, "spawn_agent", "spawn_model", "spawn_batch",
+                    ComputerUseTool.toolName, "spawn_agent",
                     "image", "applescript",
                 ]
 
@@ -258,10 +258,11 @@ struct PromptSurfaceMatrixTests {
 
                 #expect(!rows[6].sectionIds.contains("spawn"))
                 #expect(rows[6].toolNames.contains("spawn_agent"))
-                #expect(rows[6].toolNames.contains("spawn_batch"))
+                #expect(!rows[6].toolNames.contains("spawn_batch"))
+                #expect(!rows[6].toolNames.contains("spawn_model"))
                 #expect((rows[6].context.enabledManifest ?? "").isEmpty)
                 #expect(rows[6].toolNames.count == rows[6].context.tools.count)
-                for spawnToolName in ["spawn_agent", "spawn_batch"] {
+                for spawnToolName in ["spawn_agent"] {
                     let featureTool = rows[3].context.tools.first {
                         $0.function.name == spawnToolName
                     }

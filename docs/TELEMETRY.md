@@ -54,13 +54,14 @@ The events are organized around three product questions.
 | Pillar | Question | Primary signals |
 |--------|----------|-----------------|
 | Engagement | Are people using the core product? | `message_sent`, `chat_session_started`, `agent_run` |
-| Retention / lifecycle | Do people come back and run the server? | `app_launched`, `server_started` (DAU/WAU/sessions derived by Aptabase) |
+| Retention / lifecycle | Do people come back and run the server? | `daily_active`, `app_launched`, `server_started` |
 | Feature adoption | Which features get used? | `model_downloaded`, `remote_provider_added`, `mcp_provider_added`, `agent_created` |
 
-Retention, session counts, new-vs-returning users, app version, OS version,
-and locale are derived by Aptabase from its **anonymous** session model plus
-the events below. No persistent per-user identifier is added by Osaurus to
-make this work.
+Session counts, app version, OS version, and locale are derived by Aptabase
+from its **anonymous** session model plus the events below. Cohort retention
+is computed from event *counts* using the install-cohort dimensions described
+under "Install cohort and age" — no persistent per-user identifier is added by
+Osaurus to make this work.
 
 ## Common properties (every event)
 
@@ -77,6 +78,30 @@ shipping an exact, potentially-identifying memory size. It is anonymous and
 stays behind the same opt-out consent gate as every other event.
 
 ## Event catalog
+
+### `model_memory_sample` (silent diagnostics)
+
+Observed on the existing off-main two-second resource tick, independently of
+chat windows. One initial observation per sampled local-model residency episode,
+then phase/severity changes only, capped at eight events per episode. Very short
+episodes between ticks can be missed. Synthetic QA states never transmit.
+This uses the same consent gate and source-build no-key behavior described above.
+
+| Property | Values |
+|---|---|
+| `phase` | `loading`, `resident` |
+| `severity` | `none`, `elevated`, `critical` (existing swap-growth classifier) |
+| `host_swap_gib`, `peak_swap_growth_gib`, `process_footprint_gib` | `0`, `<1`, `1-4`, `4-16`, `16-64`, `64+` GiB buckets |
+| `host_swapins_pages_s`, `host_decompressions_pages_s` | `0`, `<100`, `100-1000`, `1000-10000`, `10000-100000`, `100000+`, `unknown` |
+
+No model name/path, episode identifier, exact timestamp, content or token counts
+are attached. The in-memory episode identifier only deduplicates ticks. Swap and
+page rates are host-wide observations, not proof that Osaurus caused swapping or
+that swapping caused slow generation. Peak growth follows the existing
+cold-load-through-first-output observation window. These events never influence
+admission, model selection, unload timing, samplers, caches, or macOS swap policy.
+
+### Other events
 
 Every property listed below is the complete event-specific set. In addition,
 the common `total_memory_gb` property above is attached to every event.
@@ -153,9 +178,80 @@ below are sent.
 | `kind` | string | `cold` (full image unpack), `warm` (reused rootfs), `warmFallback` (warm attempt failed, cold rebuild succeeded), or `template` (rootfs cloned copy-on-write from the immutable base template) |
 | `duration_bucket` | string | Coarse total-boot latency bucket: `lt_1s`, `1_5s`, `5_15s`, `15_60s`, `1_5m`, `gte_5m` |
 
+### `sandbox_provision_failure`
+
+Emitted once per distinct sandbox startup or per-agent provisioning failure
+recorded by `SandboxToolRegistrar`. The cool-down and lockout notices that
+follow one failure are local-only and do not re-emit. Every value is a token
+from a closed list; the user-facing error message, paths, hosts, and agent
+identity stay on the machine (a mirror of the same tokens is kept in
+`~/.osaurus/container/startup-failures.json` and shown in Settings → Sandbox →
+Diagnostics so users can self-report).
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `category` | string | `container_unavailable` (cold start could not provision), `runtime_start_failed` (a previously provisioned VM did not start or was lost), `agent_provision_failed` (VM up, per-agent bootstrap failed), `vmnet_in_use` (another Osaurus process owns the VM) |
+| `backend` | string | `vm` (macOS 26+ Containerization VM) or `seatbelt` (macOS 15 and earlier `sandbox-exec` fallback) |
+| `phase` | string | `availability`, `runtime_start`, `vm_ownership`, `agent_provision`, or the refined `agent_provision.bootstrap_exec` / `agent_provision.bootstrap_script` / `agent_provision.bootstrap_timeout` |
+| `error_class` | string | One of `SandboxToolRegistrar.failureErrorClasses`: `sandbox_*` cases of `SandboxError`, `posix_*` (`eexist`, `ebusy`, `eaddrinuse`, `eacces`, `eperm`, `enospc`, `other`), `cocoa_*` (`file_exists`, `out_of_space`, `no_permission`, `other`), `url_*` (`offline`, `timeout`, `dns`, `other`), `sdk_grpc`, `sdk_vmnet`, `cancelled`, `none`, `other` |
+| `trigger` | string | What ran the registration: `launch_autostart`, `on_demand` (first sandboxed tool use), `agent_switch`, `agent_updated`, `status_change`, `auto_retry`, `runtime_recovery`, `external` (chat send / plugin host / evals) |
+| `cold_start` | bool | `true` when the sandbox had never completed setup on this machine (first-run download path), `false` for a warm restart |
+
 ### `app_launched`
 
-Emitted once at launch. No properties. Baseline signal for retention.
+Emitted once at launch. Carries the three install-cohort dimensions below
+(see "Install cohort and age") so launches can be segmented by cohort; no
+other properties.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `install_cohort` | string | ISO week the install belongs to, e.g. `2026-W38` |
+| `install_age_days` | string | Whole local calendar days since the install's first launch: `0`, `1`, … `364`, or `365+` |
+| `install_cohort_source` | string | How the install date was determined: `install`, `inferred`, or `unknown` |
+
+### `daily_active`
+
+Emitted **at most once per local calendar day per install**, on the first
+launch (or first event-producing launch) of that day. Carries exactly the
+three install-cohort dimensions listed under `app_launched`. This is the
+retention numerator and denominator: launch frequency within a day cannot
+inflate it, and it does not depend on Aptabase's own daily-user heuristic.
+
+### Install cohort and age
+
+Aptabase has no user id, and the daily user count it derives server-side is
+not joinable across days. Cohort retention therefore cannot be computed from
+`app_launched` alone. Instead, each install keeps a **first-launch date**
+locally (in `UserDefaults`) and sends two derived, low-cardinality dimensions:
+the ISO week of that date and the number of days since it. Day-N retention
+for cohort W is then a ratio of two counts:
+
+```
+count(daily_active where install_cohort = W and install_age_days = N)
+count(daily_active where install_cohort = W and install_age_days = 0)
+```
+
+No identifier is involved — this is the same pattern as `brain_source` and
+`total_memory_gb`: a fact stored on the device, attached as a coarse bucket.
+
+**How the date is determined** (`install_cohort_source`):
+
+- `install` — the install's first-ever launch stamped the current date.
+- `inferred` — the install predates this dimension (it existed before the
+  version that introduced it). Its date is the earliest filesystem creation
+  time of the Osaurus data directories (`~/.osaurus`, and the retired
+  `~/Library/Application Support/com.dinoki.osaurus` where it still exists).
+  Day-level precision; two file-metadata reads, no database is opened.
+- `unknown` — the install predates this dimension and neither data directory
+  could be inspected. The stamp is the launch that introduced the dimension.
+  Dashboards should exclude these rows from cohort math.
+
+The stamp is written once and never updated, so re-running onboarding or
+upgrading cannot move a user between cohorts. Caveats: resetting
+`UserDefaults` (or a fresh macOS user account) starts a new cohort, and
+combining `install_cohort` with `install_age_days` and the event date can
+reconstruct the install *day* — a ~365-valued bucket per year, not an
+identifier.
 
 ### `model_downloaded`
 
@@ -188,7 +284,11 @@ Emitted when a user configures an MCP (tool) provider.
 ### `agent_created`
 
 Emitted when a user creates an agent. Built-in agents seeded by the app are
-excluded. No properties — count only, with no name or configuration.
+excluded. No name, prompt, or configuration is attached.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `number_of_agents` | int | Total agents on the install after this one was added (built-in included). Lets the dashboard derive the typical number of agents per user. |
 
 ### `settings_opened`
 

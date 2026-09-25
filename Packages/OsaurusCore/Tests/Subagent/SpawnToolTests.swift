@@ -2,12 +2,11 @@
 //  SpawnToolTests.swift
 //  OsaurusCoreTests — Subagent framework
 //
-//  Model-free guardrail tests for the spawn family — `spawn_agent` (agent
-//  context) and `spawn_model` (bare model). The full nested loop needs a live
-//  model (covered by the AgentLoop eval suite); these pin everything that must
-//  hold without one: the unified recursion guard, argument validation, the
-//  registry-timeout opt-out, and the per-agent / per-pool reject-before-evict
-//  gates for BOTH tools.
+//  Model-free guardrail tests for `spawn_agent`, the one delegation tool.
+//  The full nested loop needs a live model (covered by the AgentLoop eval
+//  suite); these pin everything that must hold without one: the unified
+//  recursion guard, argument validation (incl. `continue`), the
+//  registry-timeout opt-out, and the per-agent reject-before-evict gates.
 //
 
 import Foundation
@@ -53,11 +52,10 @@ struct SpawnToolTests {
         // role is gone.
         #expect(knowledge.contains("update_knowledge_ticket"))
 
-        // Knowledge MUTATION stays with the parent: a corpus write whose only
-        // gate is an approval card must not fire from inside a subagent feed
-        // the user is not watching as directly.
-        #expect(!knowledge.contains("write_knowledge"))
-        #expect(!knowledge.contains("delete_knowledge"))
+        // Fully capable workers: knowledge mutation rides along with the
+        // grant (its approval card is still the consent gate).
+        #expect(knowledge.contains("write_knowledge"))
+        #expect(knowledge.contains("delete_knowledge"))
 
         // The curator flag is inert; it can no longer widen a child's tools.
         let curator = Set(
@@ -115,28 +113,14 @@ struct SpawnToolTests {
         #expect(ToolEnvelope.isError(agentResult))
         #expect(agentResult.contains("cannot be called from inside"))
 
-        let modelResult = try await SubagentSession.$activeKindId.withValue("image") {
-            try await SpawnModelTool().execute(
-                argumentsJSON: #"{"model":"qwen3-4b-4bit","input":"summarize"}"#
-            )
-        }
-        #expect(ToolEnvelope.isError(modelResult))
-        #expect(modelResult.contains("cannot be called from inside"))
-
-        let batchResult = try await SubagentSession.$activeKindId.withValue("image") {
-            try await SpawnBatchTool().execute(
-                argumentsJSON:
-                    #"{"jobs":[{"id":"a","target_type":"model","target":"qwen3-4b-4bit","input":"summarize"}]}"#
-            )
-        }
-        #expect(ToolEnvelope.isError(batchResult))
-        #expect(batchResult.contains("cannot be called from inside"))
     }
 
     @Test func spawnAgentRejectsMissingArguments() async throws {
         let missingAgent = try await SpawnAgentTool().execute(argumentsJSON: #"{"input":"do a thing"}"#)
         #expect(ToolEnvelope.isError(missingAgent))
         #expect(missingAgent.contains("agent"))
+        // The error teaches the alternative: `continue` stands in for `agent`.
+        #expect(ToolEnvelope.failureMessage(missingAgent).contains("continue"))
 
         let missingInput = try await SpawnAgentTool().execute(argumentsJSON: #"{"agent":"helper"}"#)
         #expect(ToolEnvelope.isError(missingInput))
@@ -146,151 +130,112 @@ struct SpawnToolTests {
         #expect(ToolEnvelope.isError(malformed))
     }
 
-    @Test func spawnModelRejectsMissingArguments() async throws {
-        let missingModel = try await SpawnModelTool().execute(argumentsJSON: #"{"input":"do a thing"}"#)
-        #expect(ToolEnvelope.isError(missingModel))
-        #expect(missingModel.contains("model"))
-
-        let missingInput = try await SpawnModelTool().execute(argumentsJSON: #"{"model":"qwen3-4b-4bit"}"#)
-        #expect(ToolEnvelope.isError(missingInput))
-        #expect(missingInput.contains("input"))
-
-        let malformed = try await SpawnModelTool().execute(argumentsJSON: "not json")
-        #expect(ToolEnvelope.isError(malformed))
-    }
-
-    @Test func spawnModelRejectsWhitespaceModelBeforeSpawnabilityGate() async throws {
-        let result = try await SpawnModelTool().execute(
-            argumentsJSON: #"{"input":"do a thing","model":"   \n\t"}"#
+    @Test func spawnAgentContinueRequiresAKnownSession() async throws {
+        // A malformed handle is an argument error.
+        let malformed = try await SpawnAgentTool().execute(
+            argumentsJSON: #"{"input":"next step","continue":"not-a-uuid"}"#
         )
-        #expect(ToolEnvelope.isError(result))
-        #expect(ToolEnvelope.failureMessage(result).contains("cannot be blank"))
-        #expect(!ToolEnvelope.failureMessage(result).contains("Model '' is not spawnable"))
+        #expect(ToolEnvelope.isError(malformed))
+        #expect(malformed.contains(#""field":"continue""#))
+
+        // A well-formed handle that no delegated run produced is refused with
+        // an actionable message (never silently starts a fresh worker). The
+        // lookup opens the chat-history DB, so run it against an isolated
+        // store that is closed again on exit — a handle left open here would
+        // be re-opened inside a later suite's temp root by the storage
+        // migration coordinator.
+        try await ChatHistoryTestStorage.run {
+            let foreign = try await SpawnAgentTool().execute(
+                argumentsJSON:
+                    #"{"input":"next step","continue":"00000000-0000-4000-8000-0000000000AB"}"#
+            )
+            #expect(ToolEnvelope.isError(foreign))
+            #expect(ToolEnvelope.failureMessage(foreign).contains("session"))
+        }
     }
 
     @Test func bypassesRegistryTimeout() {
-        // The nested loop outlives the registry's per-tool wall clock; both spawn
-        // tools must opt out so the host owns the deadline.
+        // The nested loop outlives the registry's per-tool wall clock; the
+        // spawn tool must opt out so the host owns the deadline.
         #expect(SpawnAgentTool().bypassRegistryTimeout)
-        #expect(SpawnModelTool().bypassRegistryTimeout)
-        #expect(SpawnBatchTool().bypassRegistryTimeout)
     }
 
     @Test func toolNamesMatchTheRegistry() {
-        // The two tools are the SSOT names from the shared `spawn` capability.
+        // `spawn_agent` is the ONE delegation tool (spawn_model / spawn_batch
+        // were removed — several calls in one message are the fan-out).
         #expect(SpawnAgentTool().name == "spawn_agent")
-        #expect(SpawnModelTool().name == "spawn_model")
-        #expect(SpawnBatchTool().name == "spawn_batch")
-        #expect(
-            SubagentCapabilityRegistry.spawn.toolNames
-                == ["spawn_agent", "spawn_model", "spawn_batch"]
-        )
+        #expect(SubagentCapabilityRegistry.spawn.toolNames == ["spawn_agent"])
     }
 
     @Test func spawnAgentDescriptionStatesTheDelegatedToolBoundary() {
         let description = SpawnAgentTool().description
         // The child IS the target agent (a real chat session with that
-        // agent's own tools), and its on-disk reach is the agent's configured
-        // working folder — not the launcher's tools or folder.
-        #expect(description.contains("chat session of the target agent"))
-        #expect(description.contains("that agent's own enabled tools"))
-        #expect(description.contains("configured working folder"))
-        #expect(description.contains("remain parent-owned"))
+        // agent's own tools and folder, inheriting the launcher's folder when
+        // it has none); the story is short enough for small models.
+        #expect(description.contains("Delegate a task to an agent"))
+        #expect(description.contains("using its tools and working folder"))
+        #expect(description.contains("inherits yours if it has none"))
+        #expect(description.contains("`session_id`"))
         #expect(!description.contains("cancellation-audited"))
-        #expect(!description.contains("calendar agent can create events"))
+        #expect(!description.contains("spawn_batch"))
+        #expect(!description.contains("spawn_model"))
     }
 
-    @Test func everySpawnSchemaUsesTheStandaloneInputContract() throws {
-        func inputDescription(
-            _ tool: any OsaurusTool,
-            nestedInJobs: Bool = false
-        ) throws -> String {
-            guard case .object(let root)? = tool.parameters,
-                case .object(let properties)? = root["properties"]
-            else {
-                Issue.record("Expected object tool schema with properties")
-                return ""
-            }
-            let input: [String: JSONValue]
-            if nestedInJobs {
-                guard case .object(let jobs)? = properties["jobs"],
-                    case .object(let items)? = jobs["items"],
-                    case .object(let jobProperties)? = items["properties"],
-                    case .object(let nestedInput)? = jobProperties["input"]
-                else {
-                    Issue.record("Expected nested spawn_batch input schema")
-                    return ""
-                }
-                input = nestedInput
-            } else {
-                guard case .object(let directInput)? = properties["input"] else {
-                    Issue.record("Expected direct spawn input schema")
-                    return ""
-                }
-                input = directInput
-            }
-            guard case .string(let description)? = input["description"] else {
-                Issue.record("Expected string input description")
-                return ""
-            }
-            return description
+    @Test func spawnSchemaUsesTheStandaloneInputContract() throws {
+        guard case .object(let root)? = SpawnAgentTool().parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let input)? = properties["input"],
+            case .string(let description)? = input["description"]
+        else {
+            Issue.record("Expected object tool schema with an `input` description")
+            return
         }
-
         let expected = SpawnInputContract.schemaDescription
-        #expect(try inputDescription(SpawnAgentTool()) == expected)
-        #expect(try inputDescription(SpawnModelTool()) == expected)
-        #expect(try inputDescription(SpawnBatchTool(), nestedInJobs: true) == expected)
+        #expect(description == expected)
         #expect(expected.contains("complete standalone task"))
-        #expect(expected.contains("cannot see the parent chat"))
-        #expect(expected.contains("Never refer to a previous/earlier message"))
+        #expect(expected.contains("cannot see this chat"))
+        #expect(expected.contains("required output format"))
+
+        // `input` is the only required field: `agent` OR `continue` selects
+        // the worker.
+        if case .array(let required)? = root["required"] {
+            #expect(required == [.string("input")])
+        }
+        #expect(properties["continue"] != nil)
+        #expect(properties["agent"] != nil)
     }
 
-    @Test func singleSpawnToolsExposeOptionalBackgroundParameter() throws {
-        func backgroundProperty(_ tool: any OsaurusTool) throws -> [String: JSONValue] {
-            guard case .object(let root)? = tool.parameters,
-                case .object(let properties)? = root["properties"],
-                case .object(let background)? = properties["background"]
-            else {
-                Issue.record("Expected a `background` property on \(tool.name)")
-                return [:]
-            }
-            // Optional: `background` must never join the required list.
-            if case .array(let required)? = root["required"] {
-                #expect(!required.contains(.string("background")))
-            }
-            return background
+    @Test func spawnAgentExposesOptionalBackgroundParameter() throws {
+        guard case .object(let root)? = SpawnAgentTool().parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let background)? = properties["background"]
+        else {
+            Issue.record("Expected a `background` property on spawn_agent")
+            return
         }
-
-        for tool in [SpawnAgentTool(), SpawnModelTool()] as [any OsaurusTool] {
-            let background = try backgroundProperty(tool)
-            #expect(background["type"] == .string("boolean"))
-            guard case .string(let description)? = background["description"] else {
-                Issue.record("Expected a string `background` description on \(tool.name)")
-                continue
-            }
-            #expect(description == SpawnInputContract.backgroundParameterDescription)
+        // Optional: `background` must never join the required list.
+        if case .array(let required)? = root["required"] {
+            #expect(!required.contains(.string("background")))
         }
+        #expect(background["type"] == .string("boolean"))
+        #expect(
+            background["description"]
+                == .string(SpawnInputContract.backgroundParameterDescription)
+        )
         #expect(
             SpawnInputContract.backgroundParameterDescription.contains("returns immediately")
         )
         #expect(
             SpawnInputContract.backgroundParameterDescription.contains("follow-up message")
         )
-
-        // spawn_batch stays synchronous — no background knob in its schema.
-        if case .object(let root)? = SpawnBatchTool().parameters,
-            case .object(let properties)? = root["properties"]
-        {
-            #expect(properties["background"] == nil)
-        }
     }
 
-    @Test func allSpawnSurfacesDoNotLexicallyRejectParentReferencePhrases() {
+    @Test func spawnInputDoesNotLexicallyRejectParentReferencePhrases() {
         let inputs = [
             (
                 input: #"Translate the quoted phrase "previous message" into French."#,
                 field: "input",
-                tool: "spawn_model"
+                tool: "spawn_agent"
             ),
             (
                 input: #"Review this code: let label = "message above"."#,
@@ -299,8 +244,8 @@ struct SpawnToolTests {
             ),
             (
                 input: "Translate '이전 메시지' into English.",
-                field: "jobs[0].input",
-                tool: "spawn_batch"
+                field: "input",
+                tool: "spawn_agent"
             ),
         ]
         for value in inputs {
@@ -327,21 +272,13 @@ struct SpawnToolTests {
             #expect(
                 SpawnInputContract.validationFailure(
                     input: input,
-                    tool: "spawn_model"
+                    tool: "spawn_agent"
                 ) == nil
             )
         }
     }
 
-    @Test func allSpawnSurfacesRejectBlankInputStructurally() async throws {
-        let model = try await SpawnModelTool().execute(
-            argumentsJSON: #"{"input":" \n\t ","model":"not-allowed"}"#
-        )
-        #expect(ToolEnvelope.isError(model))
-        #expect(ToolEnvelope.failureMessage(model).contains("cannot be blank"))
-        #expect(model.contains(#""field":"input""#))
-        #expect(!ToolEnvelope.failureMessage(model).contains("not spawnable"))
-
+    @Test func spawnAgentRejectsBlankInputStructurally() async throws {
         let agent = try await SpawnAgentTool().execute(
             argumentsJSON: #"{"input":"   ","agent":"not-allowed"}"#
         )
@@ -349,23 +286,13 @@ struct SpawnToolTests {
         #expect(ToolEnvelope.failureMessage(agent).contains("cannot be blank"))
         #expect(agent.contains(#""field":"input""#))
         #expect(!ToolEnvelope.failureMessage(agent).contains("not spawnable"))
-
-        let batch = try await SpawnBatchTool().execute(
-            argumentsJSON:
-                #"{"jobs":[{"id":"a","target_type":"model","target":"not-allowed","input":" \n\t "}]} "#
-        )
-        #expect(ToolEnvelope.isError(batch))
-        #expect(ToolEnvelope.failureMessage(batch).contains("blank `target` or `input`"))
     }
 
     @Test func agentKindShape() {
         let helperID = UUID(uuidString: "AAAAAAAA-1111-4111-8111-111111111111")!
         let kind = TextSubagentKind(agentID: helperID, input: "x")
         #expect(kind.capability.id == "spawn")
-        #expect(
-            kind.capability.toolNames
-                == ["spawn_agent", "spawn_model", "spawn_batch"]
-        )
+        #expect(kind.capability.toolNames == ["spawn_agent"])
         // spawn runs the chosen agent's model → it may resolve a DIFFERENT
         // local model and run the residency handoff (unlike the same-model
         // image / computer_use / sandbox kinds).
@@ -373,15 +300,7 @@ struct SpawnToolTests {
         #expect(kind.feedTitle.contains(helperID.uuidString))
     }
 
-    @Test func modelKindShape() {
-        // The model-mode kind shares the same capability but titles itself with
-        // the bare model id (no agent).
-        let kind = TextSubagentKind(model: "qwen3-4b-4bit", input: "x")
-        #expect(kind.capability.id == "spawn")
-        #expect(kind.feedTitle.contains("qwen3-4b-4bit"))
-    }
-
-    @Test func spawnModelUsagePrefersPositiveProviderThroughput() {
+    @Test func spawnUsagePrefersPositiveProviderThroughput() {
         let resolved = AgentSubagentRunner.resolvedTokensPerSecond(
             reported: 73.5,
             completionTokens: 42,
@@ -390,7 +309,7 @@ struct SpawnToolTests {
         #expect(resolved == 73.5)
     }
 
-    @Test func spawnModelUsageMeasuresThroughputWhenProviderReportsZero() {
+    @Test func spawnUsageMeasuresThroughputWhenProviderReportsZero() {
         let resolved = AgentSubagentRunner.resolvedTokensPerSecond(
             reported: 0,
             completionTokens: 5,
@@ -399,7 +318,7 @@ struct SpawnToolTests {
         #expect(resolved == 20)
     }
 
-    @Test func spawnModelUsageDoesNotInventThroughputWithoutMeasurement() {
+    @Test func spawnUsageDoesNotInventThroughputWithoutMeasurement() {
         #expect(
             AgentSubagentRunner.resolvedTokensPerSecond(
                 reported: nil,
@@ -447,12 +366,15 @@ struct SpawnToolTests {
             deadline: Date().addingTimeInterval(10),
             sessionId: "reasoning-tool-final-regression",
             enableThinking: true,
+            reasoningEffort: "low",
             toolset: toolset,
             onChannelDelta: { delta in
                 channelProbe.record(delta)
             },
             streamProvider: { request in
-                try await probe.stream(for: request)
+                #expect(request.enable_thinking == true)
+                #expect(request.reasoning_effort == "low")
+                return try await probe.stream(for: request)
             }
         )
 
@@ -522,29 +444,6 @@ struct SpawnToolTests {
                 // The custom-agent message points at the agent's own Subagents
                 // tab, not the global Main Chat pool.
                 #expect(message.contains("not spawnable from this agent"))
-            } catch {
-                Issue.record("expected SubagentError.denied, got \(error)")
-            }
-        }
-    }
-
-    /// Per-pool enforcement (models): the main chat's `spawn_model` pool is
-    /// authoritative for the Default agent. With an empty model pool, a
-    /// `spawn_model` against any id must reject before model/residency work.
-    @Test func mainChatSpawnModelRejectsModelOutsideItsPool() async throws {
-        let lease = await acquireSubagentStoreSandbox("spawn-model-pool-enforcement")
-        defer { lease.release() }
-        SubagentConfigurationStore.save(
-            SubagentConfiguration(spawnableModelNames: ["allowed-model"])
-        )
-
-        await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
-            do {
-                _ = try await TextSubagentKind(model: "not-in-pool", input: "x")
-                    .resolveModel(SubagentScope.current())
-                Issue.record("spawn_model of a model outside the pool should be denied")
-            } catch let SubagentError.denied(message) {
-                #expect(message.contains("not spawnable"))
             } catch {
                 Issue.record("expected SubagentError.denied, got \(error)")
             }

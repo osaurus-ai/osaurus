@@ -35,11 +35,45 @@ public struct DiskCacheUsage: Equatable, Sendable {
     /// Non-zero is the observable proof the eviction janitor is running.
     public let evictions: Int
 
-    public init(usedBytes: Int, maxBytes: Int, evictions: Int = 0, isDisabled: Bool = false) {
+    /// The runtime's most recent quota-pressure report: what happened
+    /// (`activeTipDropped` / `activeChainTrimmed`), which chat it was about,
+    /// and a counter that moves once per report. Nil / 0 when the cache has
+    /// only ever taken rows of chats that were not in progress — the quiet
+    /// case that needs no warning.
+    public let pressureKind: String?
+    public let pressureChainId: String?
+    public let pressureSeq: Int
+
+    public init(
+        usedBytes: Int, maxBytes: Int, evictions: Int = 0, isDisabled: Bool = false,
+        pressureKind: String? = nil, pressureChainId: String? = nil, pressureSeq: Int = 0
+    ) {
         self.usedBytes = max(0, usedBytes)
         self.maxBytes = max(0, maxBytes)
         self.evictions = max(0, evictions)
         self.isDisabled = isDisabled
+        self.pressureKind = pressureKind
+        self.pressureChainId = pressureChainId
+        self.pressureSeq = max(0, pressureSeq)
+    }
+
+    /// An oversized newest snapshot warrants an actionable capacity notice.
+    /// Trimming alone does not establish that useful progress was lost.
+    /// Even an oversized snapshot can leave a shorter reusable prefix behind;
+    /// this event must never be described as proof of a completely cold reply.
+    public func pressureAffects(session: String?) -> Bool {
+        guard let session, pressureKind == Self.tipDroppedKind else { return false }
+        return pressureChainId == session
+    }
+
+    static let tipDroppedKind = "activeTipDropped"
+
+    /// What to tell the user when `pressureAffects(session:)` is true.
+    public var pressureText: String {
+        String(
+            format: L("This chat's latest saved progress exceeds the %@ SSD cache limit. Replies may need to process more of the conversation again. Increase Disk Cache Size to retain more progress."),
+            maxLabel
+        )
     }
 
     /// Share of the quota in use, clamped to 0 when no quota is configured.
@@ -78,12 +112,16 @@ public struct DiskCacheUsage: Equatable, Sendable {
     /// reading a chat window; the sentence has to say what they will notice
     /// (long chats get slower to start) and what they can do about it.
     public var warningText: String {
-        let pct = Int((usedFraction * 100).rounded())
+        let pct = String(format: "%.0f", usedFraction * 100)
         return
-            "Cache is \(pct)% full — older conversation data is being removed, "
-            + "so long chats may need to re-read from the beginning and will be "
-            + "slower to start. Increase Disk Cache Size in Settings."
+            "SSD cache is using \(pct)% of its configured limit. "
+            + (evictions > 0
+                ? "Older cached data has been removed; some replies may be slower to start. "
+                : "When space is needed, older cached data may be removed and replies may be slower to start. ")
+            + "Increase Disk Cache Size in Settings, or clear cached data. Clearing can make the next reply slower while the cache rebuilds."
     }
+
+    public var shouldWarn: Bool { !isDisabled && maxBytes > 0 && usedFraction >= 0.75 }
 
     /// GB with one decimal above 1 GB, MB below it. Keeps the footer readable
     /// at a glance without a units column that shifts as the cache grows.

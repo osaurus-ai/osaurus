@@ -115,22 +115,13 @@ enum SubagentModelResolution {
     /// default model source, evaluated on the main actor only when no override
     /// is configured. An unavailable configured override fails closed.
     ///
-    /// `requestedModel` is an EXPLICIT run-model target (the `spawn_model`
-    /// tool's `model` argument, including each `spawn_batch` model job). Unlike
-    /// `evalModel` it does NOT bypass residency. It ranks above the per-agent
-    /// override and kind default, but its persisted allow-list membership is
-    /// not treated as proof of current availability: the target must still be
-    /// Foundation, an installed local model, or a model advertised by a
-    /// currently connected provider before the residency decision can run.
-    ///
     /// The delegated dispatcher carries the resolved model into the child so
     /// execution uses the same model admission priced.
     static func resolve(
         capabilityId: String,
         agentId: UUID?,
         evalModel: String?,
-        requestedModel: String? = nil,
-        invokingParentModelName: String? = nil,
+        invokingParentModelName: String?,
         idleWaitSeconds: Int,
         deniedMessage: String,
         unavailableMessage: String,
@@ -147,17 +138,7 @@ enum SubagentModelResolution {
 
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = agentId == Agent.defaultId
-        let requested = await MainActor.run {
-            currentRequestedTarget(requestedModel)
-        }
-        if trimmedNonEmpty(requestedModel) != nil, requested == nil {
-            throw SubagentError.unavailable(unavailableMessage)
-        }
         let model: String? = try await MainActor.run {
-            // Explicit target (spawn_model) wins over the override/default, but
-            // only after current availability was proven above. It still flows
-            // into the residency decision below (not a bypass).
-            if let requested { return requested }
             if honorConfiguredOverride {
                 let settings = agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings }
                 let configuredOverride = SubagentToolVisibility.effectiveSubagentModel(
@@ -199,26 +180,4 @@ enum SubagentModelResolution {
         )
     }
 
-    /// Normalize and validate one explicit model-only spawn target against
-    /// current runtime truth. This is intentionally independent of the picker
-    /// cache: a cache row can be cold or stale, while local installation state
-    /// and the connected provider catalog are the owning sources used during
-    /// preparation. Both `spawn_model` and `spawn_batch` reuse this check via
-    /// `resolve`, before admission or any model unload/load can occur.
-    @MainActor
-    static func currentRequestedTarget(_ id: String?) -> String? {
-        guard let trimmed = trimmedNonEmpty(id) else { return nil }
-        if trimmed == ModelPickerItem.foundation().id {
-            return AppConfiguration.shared.foundationModelAvailable ? trimmed : nil
-        }
-        if ModelManager.findInstalledModel(named: trimmed) != nil {
-            return trimmed
-        }
-        if let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
-            forStoredId: trimmed
-        ) {
-            return remote.id
-        }
-        return nil
-    }
 }

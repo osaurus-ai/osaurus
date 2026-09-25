@@ -29,19 +29,16 @@ struct SubagentConfigurationStoreTests {
 
         let config = SubagentConfiguration(
             localTextDelegationEnabled: true,
-            imageDelegationEnabled: true,
             defaultImageGenerationModelId: "  flux  ",
             defaultImageEditModelId: "qwen-edit",
             imageJobLoadPolicy: .unloadImageAfterAgentJob,
-            appleScriptDelegationEnabled: true,
             defaultAppleScriptModelId: "  applescript-model  ",
             permissionDefaults: SubagentPermissionDefaults(
                 policies: ["spawn": .alwaysAllow, "image": .deny]
             ),
             budgets: SubagentBudgets(
                 maxDelegateTokens: 100_000,
-                maxDelegateTurns: 99,
-                maxToolCalls: 99,
+                maxDelegateTurns: 999,
                 maxElapsedSeconds: 99_999
             )
         )
@@ -55,20 +52,15 @@ struct SubagentConfigurationStoreTests {
         SubagentConfigurationStore.invalidateSnapshot()
         let reloaded = SubagentConfigurationStore.snapshot()
         #expect(reloaded.localTextDelegationEnabled == true)
-        #expect(reloaded.imageDelegationEnabled == true)
         #expect(reloaded.localOrchestratorTextHandoffActive == true)
-        #expect(reloaded.imageDelegationActive == true)
         #expect(reloaded.defaultImageGenerationModelId == "flux")
         #expect(reloaded.imageJobLoadPolicy == .unloadImageAfterAgentJob)
-        #expect(reloaded.appleScriptDelegationEnabled)
-        #expect(reloaded.appleScriptDelegationActive)
         #expect(reloaded.defaultAppleScriptModelId == "applescript-model")
         #expect(reloaded.permissionDefaults.policy(for: "spawn") == .alwaysAllow)
         #expect(reloaded.permissionDefaults.policy(for: "image") == .deny)
-        #expect(reloaded.budgets.maxDelegateTokens == 32_768)
-        #expect(reloaded.budgets.maxDelegateTurns == 8)
-        #expect(reloaded.budgets.maxToolCalls == 32)
-        #expect(reloaded.budgets.maxElapsedSeconds == 1_800)
+        #expect(reloaded.budgets.maxDelegateTokens == SubagentBudgets.tokenBounds.upperBound)
+        #expect(reloaded.budgets.maxDelegateTurns == SubagentBudgets.turnBounds.upperBound)
+        #expect(reloaded.budgets.maxElapsedSeconds == SubagentBudgets.elapsedBounds.upperBound)
     }
 
     @Test("parallel cold readers materialize one atomic snapshot revision")
@@ -80,8 +72,7 @@ struct SubagentConfigurationStoreTests {
 
         let expected = SubagentConfiguration(
             localTextDelegationEnabled: true,
-            budgets: SubagentBudgets(maxParallelSpawns: 4),
-            spawnableModelNames: ["local/worker"]
+            budgets: SubagentBudgets(maxParallelSpawns: 4)
         ).normalized
         let file = lease.sandbox.appendingPathComponent(
             "agent-delegation.json"
@@ -144,22 +135,12 @@ struct SubagentConfigurationStoreTests {
             budgets: SubagentBudgets(
                 maxDelegateTokens: 4096,
                 maxDelegateTurns: 4,
-                maxToolCalls: 6,
                 maxElapsedSeconds: 300,
                 maxParallelSpawns: 5
             ),
             subagentModelOverrides: [
                 SubagentCapabilityRegistry.spawn.id: "local/orchestrator-helper"
-            ],
-            spawnableModelNames: [
-                "local/fast-helper",
-                "openai/frontier-helper",
-            ],
-            spawnableModelNotes: [
-                "local/fast-helper": "Fast local file batches",
-                "openai/frontier-helper": "Hard research",
-            ],
-            spawnToolAccess: .readOnly
+            ]
         )
 
         SubagentConfigurationStore.save(config)
@@ -169,21 +150,13 @@ struct SubagentConfigurationStoreTests {
         let reloaded = SubagentConfigurationStore.snapshot()
         #expect(reloaded.spawnableAgentIDs == [researcherID, coderID])
         #expect(
-            reloaded.spawnableModelNames
-                == ["local/fast-helper", "openai/frontier-helper"]
-        )
-        #expect(reloaded.spawnableModelNotes["local/fast-helper"] == "Fast local file batches")
-        #expect(reloaded.spawnableModelNotes["openai/frontier-helper"] == "Hard research")
-        #expect(
             reloaded.permissionDefaults.policy(for: SubagentCapabilityRegistry.spawn.id)
                 == .alwaysAllow
         )
         #expect(reloaded.budgets.maxDelegateTokens == 4096)
         #expect(reloaded.budgets.maxDelegateTurns == 4)
-        #expect(reloaded.budgets.maxToolCalls == 6)
         #expect(reloaded.budgets.maxElapsedSeconds == 300)
         #expect(reloaded.budgets.maxParallelSpawns == 5)
-        #expect(reloaded.spawnToolAccess == .readOnly)
         #expect(
             reloaded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
                 == "local/orchestrator-helper"
@@ -265,11 +238,8 @@ struct SubagentConfigurationStoreTests {
         let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
 
         #expect(decoded.localTextDelegationEnabled == true)
-        #expect(decoded.imageDelegationEnabled == false)
         // No master switch: the handoff is active whenever its own toggle is on.
         #expect(decoded.localOrchestratorTextHandoffActive == true)
-        // The main chat's image switch is off here, so image stays inactive.
-        #expect(decoded.imageDelegationActive == false)
         #expect(decoded.defaultImageGenerationModelId == "flux")
     }
 

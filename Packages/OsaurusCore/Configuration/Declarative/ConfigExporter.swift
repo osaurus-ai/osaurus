@@ -107,6 +107,9 @@ enum ConfigExporter {
                 caps.selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
                 caps.computerUseEnabled = agent.settings.computerUseEnabled
                 caps.browserUseEnabled = agent.settings.browserUseEnabled
+                caps.appleApps = AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue)
+                caps.imageEnabled = agent.settings.imageEnabled
+                caps.applescriptEnabled = agent.settings.appleScriptEnabled
                 caps.speakEnabled = agent.settings.speakEnabled
                 caps.renderChartEnabled = agent.settings.renderChartEnabled
                 caps.relayEnabled = relay.isEnabled(for: agent.id)
@@ -122,9 +125,7 @@ enum ConfigExporter {
         let agents = AgentManager.shared.agents
         var section = DelegationSection()
         section.localTextEnabled = config.localTextDelegationEnabled
-        section.imageEnabled = config.imageDelegationEnabled
         section.videoEnabled = config.videoDelegationEnabled
-        section.applescriptEnabled = config.appleScriptDelegationEnabled
         section.applescriptExecutionMode =
             ConfigAppBehaviorEnums.applescriptModeKey(for: config.defaultAppleScriptExecutionMode)
         // The pool stores agent UUIDs; the document uses names. Ids without a
@@ -132,9 +133,12 @@ enum ConfigExporter {
         section.spawnableAgents = config.spawnableAgentIDs.compactMap { id in
             agents.first { $0.id == id }?.name
         }
-        section.spawnableModels = config.spawnableModelNames
         section.spawnableWorkspaceAgents = config.spawnableWorkspaceAgents.map(\.key)
-        section.spawnToolAccess = config.spawnToolAccess.rawValue
+        if !config.workspaceAutoJoinDisabledIds.isEmpty {
+            section.workspaceAutoJoin = Dictionary(
+                uniqueKeysWithValues: config.workspaceAutoJoinDisabledIds.map { ($0, false) }
+            )
+        }
         var defaults: [String: String] = [:]
         for kindId in ConfigAppBehaviorEnums.permissionKindIds {
             defaults[kindId] = config.permissionDefaults.policy(for: kindId).rawValue
@@ -143,9 +147,9 @@ enum ConfigExporter {
         let budgets = config.budgets.normalized
         section.budgetMaxTokens = budgets.maxDelegateTokens
         section.budgetMaxTurns = budgets.maxDelegateTurns
-        section.budgetMaxToolCalls = budgets.maxToolCalls
         section.budgetMaxSeconds = budgets.maxElapsedSeconds
         section.budgetMaxParallelSpawns = budgets.maxParallelSpawns
+        section.budgetMaxRemoteParallelSpawns = budgets.maxRemoteParallelSpawns
         section.ramSafetyPreflight = config.ramSafetyPreflightEnabled
         section.coexistenceEnabled = config.subagentCoexistenceEnabled
         return section

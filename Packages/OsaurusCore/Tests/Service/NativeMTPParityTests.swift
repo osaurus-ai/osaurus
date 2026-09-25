@@ -45,11 +45,8 @@ struct NativeMTPParityTests {
     /// Turning MTP off must drop the strategy for a loaded head, so the model
     /// returns to ordinary sampled decoding rather than staying greedy.
     @Test func offReturnsToOrdinaryDecoding() {
-        // `requestDraftStrategy` reads live settings; the contract asserted
-        // here is the one the readout showed live: mode=off resolved to
-        // "draft none" with the sampler back at temp 1 / top-p 0.95.
         let loaded = MLXLMCommon.DraftStrategy.nativeMTP(depth: 2, verifierMode: nil)
-        #expect(loaded.usesNativeMTP == true, "precondition: a head was loaded")
+        #expect(ModelRuntime.requestDraftStrategy(loaded, mtp: .init(mode: .off)) == nil)
     }
 
     /// The picker row is gated on the engine's per-model status, so a model

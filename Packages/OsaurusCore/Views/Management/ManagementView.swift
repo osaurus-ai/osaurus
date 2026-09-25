@@ -72,7 +72,14 @@ struct ManagementView: View {
 
     var body: some View {
         sidebarNavigation
-            .frame(minWidth: 940, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
+            // The floor is clamped to the window's screen by `WindowManager`
+            // so a small display can still show the whole window (#2761).
+            .frame(
+                minWidth: stateManager.minimumContentSize.width,
+                maxWidth: .infinity,
+                minHeight: stateManager.minimumContentSize.height,
+                maxHeight: .infinity
+            )
             .background(theme.primaryBackground)
             .environment(\.theme, themeManager.currentTheme)
             .tint(theme.accentColor)
@@ -287,14 +294,6 @@ private extension ManagementView {
                 hasAppeared = true
             }
         }
-        // First touch lazily creates SPUStandardUpdaterController, whose init
-        // reads bundle/defaults state off disk — and this appear fires during
-        // the launch-time management-window prewarm. Defer it past launch
-        // congestion instead of stalling the prewarm frame; a delayed
-        // background check is invisible to the user.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            updater.checkForUpdatesInBackground()
-        }
     }
 
     func handleTabChange(to newTab: ManagementTab) {
@@ -336,6 +335,13 @@ private extension ManagementView {
             case .server: stateManager.serverSectionRequest = subTab
             case .imageGeneration: stateManager.imageGenerationSubTabRequest = subTab
             case .memory: stateManager.memorySubTabRequest = subTab
+            case .agents:
+                // Agent detail tabs (`capabilities` for the Apple app groups)
+                // are routed by `AgentsView.routeSettingsLanding` from the
+                // landing id itself, because the destination also has to pick
+                // an agent; the catalog's `subTab` documents the tab raw value
+                // (`AgentDetailTabRoute`) for help/find consumers.
+                break
             default: break
             }
         }

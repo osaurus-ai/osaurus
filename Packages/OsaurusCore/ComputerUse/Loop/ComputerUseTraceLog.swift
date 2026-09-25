@@ -84,6 +84,12 @@ enum ComputerUseTraceLog {
     /// Capture the parser's raw tool invocation before ChatEngine coerces and
     /// schema-validates its arguments. This proves whether a malformed field
     /// was model/parser output or was introduced by canonicalization.
+    /// Free-form loop event (e.g. a stale-view compaction pass).
+    static func note(_ message: String) {
+        guard isEnabled else { return }
+        write("note \(message)")
+    }
+
     static func recordRawInvocation(toolName: String, arguments: String) {
         guard isEnabled, toolName == AgentAction.toolName else { return }
         write("raw_invocation tool=\(toolName) arguments=\(String(reflecting: arguments))")

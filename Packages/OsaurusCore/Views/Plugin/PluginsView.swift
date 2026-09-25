@@ -52,8 +52,6 @@ struct PluginsView: View {
     private let claudeSlashCommands = SlashCommandRegistry.shared
     @ObservedObject private var claudeMCPManager = MCPProviderManager.shared
 
-    // GitHub-import sheet state.
-    @State private var showGitHubImport: Bool = false
     // Claude userConfig sheet.
     @State private var showClaudeUserConfigSheet: Bool = false
     @State private var claudeUserConfigTarget: ClaudePluginInstalled?
@@ -277,34 +275,6 @@ struct PluginsView: View {
                     onSave: { reload() }
                 )
             }
-        }
-        .sheet(isPresented: $showGitHubImport) {
-            GitHubImportSheet(
-                onImport: { skills in
-                    Task { @MainActor in
-                        _ = await claudeSkillManager.importSkillsFromMarkdown(skills)
-                        showGitHubImport = false
-                        claudeAggregator.refresh()
-                        showSuccess(
-                            skills.count == 1 ? L("Imported 1 item") : L("Imported \(skills.count) items")
-                        )
-                    }
-                },
-                onCancel: { showGitHubImport = false },
-                onPluginInstallComplete: { report in
-                    Task { @MainActor in
-                        await claudeSkillManager.refresh()
-                        claudeAggregator.refresh()
-                        await updateFilteredLists()
-                        let total =
-                            report.totalImportedSkills + report.totalImportedAgents
-                            + report.totalImportedCommands + report.totalImportedMCPProviders
-                        if total > 0 {
-                            showSuccess(total == 1 ? L("Installed 1 item") : L("Installed \(total) items"))
-                        }
-                    }
-                }
-            )
         }
         .sheet(isPresented: $showClaudeUserConfigSheet) {
             if let target = claudeUserConfigTarget,
@@ -531,9 +501,6 @@ struct PluginsView: View {
                     reload()
                     isRefreshButtonLoading = false
                 }
-            }
-            ClaudePluginImportButton {
-                showGitHubImport = true
             }
         } tabsRow: {
             let claudeCount = filteredClaudePlugins.count
@@ -1065,51 +1032,6 @@ struct PluginsView: View {
         PluginsView()
     }
 #endif
-
-// MARK: - Claude Plugin Import Button
-
-/// Single-action button mirroring the Skills header dropdown but
-/// scoped to Claude plugins (GitHub-only). Lifts the dispatch-after-
-/// dismiss safety net from `SkillsView`'s `ImportDropdownButton` so a
-/// `.sheet` presented from inside the menu doesn't deadlock SwiftUI.
-private struct ClaudePluginImportButton: View {
-    @Environment(\.theme) private var theme
-    let onSelect: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: { dispatchAfterDismiss(onSelect) }) {
-            HStack(spacing: 6) {
-                Image(systemName: "square.and.arrow.down")
-                    .font(.system(size: 13, weight: .medium))
-                Text("Import", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .foregroundStyle(theme.secondaryText)
-            .fixedSize()
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .opacity(isHovering ? 0.8 : 1)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering }
-        }
-        .localizedHelp("Import Claude plugin from GitHub")
-    }
-
-    private func dispatchAfterDismiss(_ action: @escaping () -> Void) {
-        Task { @MainActor in
-            try? await Task.sleepForPopoverDismiss()
-            action()
-        }
-    }
-}
 
 // MARK: - Plugin Card (Grid)
 
@@ -1978,12 +1900,19 @@ private struct PluginDetailView: View {
     /// owning settings tab instead of the plugin's own configuration.
     private var supersededBanner: some View {
         let nativeTab = PluginManager.nativeSettingsTab(forSupersededPlugin: plugin.pluginId)
+        let appleApp = AppleApp.allCases.first { $0.supersededPluginId == plugin.pluginId }
         let detail: LocalizedStringKey =
             switch plugin.pluginId {
             case "osaurus.browser":
                 "The browser is now a native feature. This plugin's tools and skill are no longer loaded — enable Browser Use on a custom agent's Subagents tab, and manage sessions in Settings → Browser. You can uninstall this plugin."
-            default:
+            case "osaurus.search":
                 "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin."
+            default:
+                if let appleApp {
+                    "\(appleApp.displayName) tools are now built into Osaurus. This plugin's tools are no longer loaded — turn \(appleApp.displayName) on for a custom agent under Agents → Abilities → Tools (off by default). You can uninstall this plugin."
+                } else {
+                    "This plugin's functionality is now built into Osaurus. Its tools are no longer loaded. You can uninstall this plugin."
+                }
             }
         return detailCard {
             HStack(spacing: 12) {
@@ -2878,6 +2807,10 @@ struct ClaudePluginsMarketplaceView: View {
     /// Shared header search query from the hosting view.
     let searchText: String
 
+    /// Incremented by the host after an out-of-band install (e.g. the GitHub
+    /// import sheet) so installed state is re-read.
+    var installGeneration: Int = 0
+
     @State private var hasAppeared = false
     @State private var selectedCategory: String?
     @State private var filteredMarketplaceEntries: [MarketplacePlugin] = []
@@ -2917,6 +2850,10 @@ struct ClaudePluginsMarketplaceView: View {
             await updateFilteredEntries()
         }
         .onChange(of: selectedCategory) { _, _ in Task { await updateFilteredEntries() } }
+        .onChange(of: installGeneration) { _, _ in
+            claudeAggregator.refresh()
+            Task { await claudeAggregator.checkForUpdates() }
+        }
         .onReceive(claudeMarketplace.$entries) { _ in Task { await updateFilteredEntries() } }
         .onReceive(claudeAggregator.$plugins) { _ in Task { await updateFilteredEntries() } }
         .sheet(isPresented: $showUserConfigSheet) {
@@ -2940,6 +2877,9 @@ struct ClaudePluginsMarketplaceView: View {
     private var marketplaceContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // Claude plugin installs and update checks go through the
+                // GitHub API, so surface token status here as well.
+                GitHubTokenCard()
                 if !claudeMarketplace.categories.isEmpty {
                     MarketplaceCategoryChips(
                         categories: claudeMarketplace.categories.map { category in

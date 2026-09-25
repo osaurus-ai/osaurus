@@ -298,9 +298,29 @@ let package = Package(
         // vmlx-swift#408 pins quantized-embedding output to bf16 under the
         // Gemma-4/DSV4 jang_affine mmap preserve branches (the last audited
         // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
+        // vmlx-swift#475 corrects GLM media prefill and ordered image history,
+        // and validates complete model-owned disk state before live restore.
+        // vmlx-swift#479 retains Gemma image and tool history during explicit
+        // tool selection, keeping rendered image slots aligned with pixels.
+        // Also preserves the Bonsai2 strict Hadamard/packed ternary loading,
+        // native Qwen template/schema handling and multimodal tool history.
+        // vmlx-swift#481 fuses exact packed-ternary expansion on Metal;
+        // #482 bounds Qwen3.5/Bonsai2 media language prefill while retaining
+        // full-prompt M-RoPE positions and complete KV/GDN companion state.
+        // vmlx-swift#484 uses FP16 Bonsai2 attention K/V after norms/RoPE,
+        // retaining FP32 GDN recurrence and isolating old cache precision.
+        // vmlx-swift#489 indexes linked SSD payloads, scopes quota retention
+        // to conversation chains, and reports current-chat capacity pressure.
+        // vmlx-swift#493 adds native MiMo V2.6 mixed-quant/media runtime,
+        // resident expert dispatch, and correct post-answer cache boundaries.
+        // vmlx-swift#508 fuses exact BF16 Spark GELU/multiply for large
+        // prefill shapes; short/decode shapes retain the reference expression.
+        // #512 validates persisted architecture state before granting SSD hits
+        // and serializes validation with MLX disk I/O. #513 honors validated
+        // max_tokens bundle aliases with max_new_tokens precedence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "9460dcc133b3509899265afd21deffaffc3eb9e9"
+            revision: "6827ef1153efa434f04ebeff801d9d6b0ce3e6bd"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -314,7 +334,7 @@ let package = Package(
             url: "https://github.com/rryam/VecturaKit",
             revision: "3bc52538f16a95d956c575abbc7e0423737dfd64"
         ),
-        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
+        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.23.2"),
         .package(path: "../OsaurusNetworking"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
@@ -460,6 +480,7 @@ let package = Package(
                 .product(name: "OsaurusNetworking", package: "OsaurusNetworking"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
                 .product(name: "P256K", package: "swift-secp256k1"),
+                .product(name: "libsecp256k1", package: "swift-secp256k1"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "Containerization", package: "containerization"),
                 .product(name: "ContainerizationExtras", package: "containerization"),
@@ -500,7 +521,7 @@ let package = Package(
                 .product(name: "VecturaKit", package: "VecturaKit"),
             ],
             path: "Tests",
-            resources: [.process("ComputerUse/Fixtures")]
+            resources: [.process("ComputerUse/Fixtures"), .copy("Identity/Fixtures")]
         ),
     ]
 )

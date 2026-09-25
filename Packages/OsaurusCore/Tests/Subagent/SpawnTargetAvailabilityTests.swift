@@ -25,33 +25,23 @@ struct SpawnTargetAvailabilityTests {
         )
     }
 
-    @Test("request discovery covers agent-only, model-only, and launcher-override pools")
+    @Test("request discovery covers agent-only and launcher-override pools")
     func requestDiscoveryCoverage() {
         #expect(
             SpawnDescriptors.requiresLocalDiscovery(
                 agentIDs: [researcherID],
-                modelNames: [],
                 launcherModelOverride: nil
             )
         )
         #expect(
             SpawnDescriptors.requiresLocalDiscovery(
                 agentIDs: [],
-                modelNames: ["local/model"],
-                launcherModelOverride: nil
-            )
-        )
-        #expect(
-            SpawnDescriptors.requiresLocalDiscovery(
-                agentIDs: [],
-                modelNames: [],
                 launcherModelOverride: "local/override"
             )
         )
         #expect(
             !SpawnDescriptors.requiresLocalDiscovery(
                 agentIDs: [],
-                modelNames: [],
                 launcherModelOverride: " \n "
             )
         )
@@ -59,8 +49,6 @@ struct SpawnTargetAvailabilityTests {
 
     private func resolve(
         agents: [UUID] = [],
-        models: [String] = [],
-        notes: [String: String] = [:],
         sources: [SpawnDescriptors.AgentSource] = [],
         locals: [MLXModel] = [],
         localAuthoritative: Bool,
@@ -71,8 +59,6 @@ struct SpawnTargetAvailabilityTests {
     ) -> SpawnTargetAvailabilitySnapshot {
         SpawnDescriptors.resolve(
             agentIDs: agents,
-            modelNames: models,
-            modelNotes: notes,
             agentSources: sources,
             localModels: locals,
             localCatalogIsAuthoritative: localAuthoritative,
@@ -82,77 +68,6 @@ struct SpawnTargetAvailabilityTests {
             foundationAvailable: false,
             launcherModelOverride: launcherOverride
         )
-    }
-
-    @Test("cold, warm, and removed local targets remain distinct")
-    func localLifecycle() throws {
-        let id = "local/availability-model"
-        let cold = resolve(
-            models: [id],
-            notes: [id: "Use for local work"],
-            localAuthoritative: false
-        )
-        #expect(cold.modelTargets.first?.state == .checking)
-        #expect(cold.models.isEmpty)
-        #expect(cold.modelTargets.first?.descriptor.note == "Use for local work")
-
-        let warm = resolve(
-            models: [id],
-            locals: [localModel(id)],
-            localAuthoritative: true
-        )
-        #expect(warm.modelTargets.first?.state == .runnable)
-        #expect(warm.runnableModelIds == [id])
-
-        let removed = resolve(models: [id], localAuthoritative: true)
-        #expect(removed.modelTargets.first?.state == .missing)
-        #expect(removed.models.isEmpty)
-    }
-
-    @Test("connected, disconnected, and removed remote targets fail closed")
-    func remoteLifecycle() throws {
-        let providerId = UUID(uuidString: "A2D41B56-44EB-4CFA-A2EC-61F24001EB77")!
-        let canonical = try #require(
-            SpawnRemoteModelIdentity.make(
-                providerId: providerId,
-                modelId: "vendor/remote-model"
-            )
-        )
-        let target = RemoteProviderManager.ConnectedSpawnModelTarget(
-            id: canonical,
-            providerId: providerId,
-            providerName: "Cloud",
-            modelId: "vendor/remote-model",
-            pickerModelId: "cloud/vendor/remote-model"
-        )
-        let picker = ModelPickerItem.fromRemoteModel(
-            modelId: target.pickerModelId,
-            providerName: target.providerName,
-            providerId: target.providerId
-        )
-
-        let connected = resolve(
-            models: [canonical],
-            localAuthoritative: true,
-            pickerItems: [picker],
-            remoteTargets: [target],
-            remoteProviderNames: [providerId: "Cloud"]
-        )
-        #expect(connected.modelTargets.first?.state == .runnable)
-        #expect(connected.runnableModelIds == [canonical])
-        #expect(connected.models.first?.providerName == "Cloud")
-
-        let disconnected = resolve(
-            models: [canonical],
-            localAuthoritative: true,
-            remoteProviderNames: [providerId: "Cloud"]
-        )
-        #expect(disconnected.modelTargets.first?.state == .disconnected)
-        #expect(disconnected.models.isEmpty)
-
-        let removed = resolve(models: [canonical], localAuthoritative: true)
-        #expect(removed.modelTargets.first?.state == .missing)
-        #expect(removed.models.isEmpty)
     }
 
     @Test("agent follows launcher override precedence and target model availability")
@@ -225,7 +140,7 @@ struct SpawnTargetAvailabilityTests {
         #expect(snapshot.agents.isEmpty)
     }
 
-    @Test("one availability snapshot drives exact single, batch, and prompt targets")
+    @Test("one availability snapshot drives the spawn_agent schema and the prompt targets")
     func snapshotKeepsPromptAndSchemasInParity() throws {
         let runnableAgentID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
         let staleAgentID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
@@ -245,50 +160,16 @@ struct SpawnTargetAvailabilityTests {
             isLocal: nil,
             providerName: nil
         )
-        let runnableModel = SpawnModelDescriptor(
-            id: "local/direct-model",
-            displayName: "Direct Model",
-            isLocal: true,
-            providerName: nil,
-            parameterCount: "7B",
-            quantization: "4bit",
-            isVLM: false,
-            note: "Use for direct work"
-        )
-        let staleModel = SpawnModelDescriptor(
-            id: "local/deleted-model",
-            displayName: "Deleted Model",
-            isLocal: nil,
-            providerName: nil,
-            parameterCount: nil,
-            quantization: nil,
-            isVLM: false,
-            note: nil
-        )
         let snapshot = SpawnTargetAvailabilitySnapshot(
             agentTargets: [
                 .init(descriptor: runnableAgent, state: .runnable),
                 .init(descriptor: staleAgent, state: .missing),
-            ],
-            modelTargets: [
-                .init(descriptor: runnableModel, state: .runnable),
-                .init(descriptor: staleModel, state: .missing),
             ]
         )
 
         let agentTool = SpawnAgentTool.constrainedSpec(
             SpawnAgentTool().asOpenAITool(),
             allowedAgentIDs: snapshot.runnableAgentIDs
-        )
-        let modelTool = SpawnModelTool.constrainedSpec(
-            SpawnModelTool().asOpenAITool(),
-            allowedModelIds: snapshot.runnableModelIds
-        )
-        let batchTool = SpawnBatchTool.constrainedSpec(
-            SpawnBatchTool().asOpenAITool(),
-            allowedAgentIDs: snapshot.runnableAgentIDs,
-            allowedModelIds: snapshot.runnableModelIds,
-            maxParallel: 2
         )
 
         func directEnum(_ tool: Tool, field: String) -> [String] {
@@ -302,38 +183,15 @@ struct SpawnTargetAvailabilityTests {
                 return nil
             }
         }
-        func batchEnum(_ tool: Tool) -> [String] {
-            guard case .object(let root)? = tool.function.parameters,
-                case .object(let properties)? = root["properties"],
-                case .object(let jobs)? = properties["jobs"],
-                case .object(let items)? = jobs["items"],
-                case .object(let jobProperties)? = items["properties"],
-                case .object(let target)? = jobProperties["target"],
-                case .array(let values)? = target["enum"]
-            else { return [] }
-            return values.compactMap {
-                if case .string(let value) = $0 { return value }
-                return nil
-            }
-        }
 
         #expect(directEnum(agentTool, field: "agent") == [runnableAgentID.uuidString])
-        #expect(directEnum(modelTool, field: "model") == ["local/direct-model"])
-        #expect(
-            Set(batchEnum(batchTool))
-                == Set([runnableAgentID.uuidString, "local/direct-model"])
-        )
 
         let guidance = SystemPromptTemplates.spawnGuidance(
             agents: snapshot.agents,
-            models: snapshot.models,
             maxParallel: 2
         )
-        #expect(guidance.contains("`\(runnableAgentID.uuidString)`"))
         #expect(guidance.contains("Researcher"))
-        #expect(guidance.contains("`local/direct-model`"))
         #expect(!guidance.contains("Deleted Agent"))
-        #expect(!guidance.contains("local/deleted-model"))
     }
 
     @Test("passing display names widens the schema enum to accept name or UUID")
@@ -351,21 +209,6 @@ struct SpawnTargetAvailabilityTests {
                 return nil
             }
         }
-        func batchEnum(_ tool: Tool) -> [String] {
-            guard case .object(let root)? = tool.function.parameters,
-                case .object(let properties)? = root["properties"],
-                case .object(let jobs)? = properties["jobs"],
-                case .object(let items)? = jobs["items"],
-                case .object(let jobProperties)? = items["properties"],
-                case .object(let target)? = jobProperties["target"],
-                case .array(let values)? = target["enum"]
-            else { return [] }
-            return values.compactMap {
-                if case .string(let value) = $0 { return value }
-                return nil
-            }
-        }
-
         let agentTool = SpawnAgentTool.constrainedSpec(
             SpawnAgentTool().asOpenAITool(),
             allowedAgentIDs: [agentID],
@@ -376,20 +219,6 @@ struct SpawnTargetAvailabilityTests {
         #expect(
             directEnum(agentTool, field: "agent")
                 == [agentID.uuidString, "Transcript Cleaner"]
-        )
-
-        let batchTool = SpawnBatchTool.constrainedSpec(
-            SpawnBatchTool().asOpenAITool(),
-            allowedAgentIDs: [agentID],
-            allowedAgentNames: ["Transcript Cleaner"],
-            allowedModelIds: ["local/direct-model"],
-            maxParallel: 2
-        )
-        #expect(
-            Set(batchEnum(batchTool))
-                == Set([
-                    agentID.uuidString, "Transcript Cleaner", "local/direct-model",
-                ])
         )
     }
 
@@ -437,4 +266,41 @@ struct SpawnTargetAvailabilityTests {
         #expect(snapshot.agents.map(\.modelId) == ["local/helper-write", "local/helper-read"])
         #expect(snapshot.agents.map(\.description) == ["Writable helper", "Read-only helper"])
     }
+    @Test("missing descriptions exclude local and workspace targets without losing identity")
+    func descriptionRepairGatesAvailability() {
+        let modelID = "local/description-fixture"
+        for description in ["", "   ", String(repeating: "x", count: 161)] {
+            let snapshot = resolve(
+                agents: [researcherID],
+                sources: [.init(id: researcherID, name: "Legacy Helper", description: description, modelId: modelID)],
+                locals: [localModel(modelID)], localAuthoritative: true)
+            #expect(snapshot.agentTargets.first?.descriptor.id == researcherID)
+            #expect(snapshot.agentTargets.first?.state == .descriptionRequired)
+            #expect(snapshot.agents.isEmpty)
+            #expect(snapshot.runnableAgentIDs.isEmpty)
+        }
+        let ref = WorkspaceAgentRef(workspaceId: "description-test", agentAddress: "0x0123456789abcdef0123456789abcdef01234567")
+        let invalid = SpawnDescriptors.resolveWorkspaceTargets(configured: [ref], sources: [
+            .init(ref: ref, name: "Remote Helper", description: "", workspaceName: "Team", ownerName: "Owner")
+        ])
+        #expect(invalid.first?.state == .descriptionRequired)
+        #expect(invalid.first?.descriptor.ref == ref)
+        let repaired = SpawnDescriptors.resolveWorkspaceTargets(configured: [ref], sources: [
+            .init(ref: ref, name: "Remote Helper", description: "Reviews research sources.", workspaceName: "Team", ownerName: "Owner")
+        ])
+        #expect(repaired.first?.state == .runnable)
+    }
+
+    @Test("optional workspace blurbs do not hide a usable paired description")
+    func workspaceDescriptionFallback() {
+        let host = "Reviews supplied research sources."
+        let oldBlurbs: [String?] = [nil, "", "   ", String(repeating: "x", count: 161), "bad\nmetadata"]
+        for listed in oldBlurbs {
+            #expect(SpawnDescriptors.workspaceRoutingDescription(listed: listed, paired: host) == host)
+        }
+        #expect(SpawnDescriptors.workspaceRoutingDescription(listed: "  Reviews code.  ", paired: host) == "Reviews code.")
+        #expect(SpawnDescriptors.workspaceRoutingDescription(listed: "", paired: " ") == "")
+        #expect(SpawnDescriptors.workspaceRoutingDescription(listed: nil, paired: nil) == "")
+    }
+
 }

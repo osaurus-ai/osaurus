@@ -4,6 +4,19 @@
 //
 //  Presents a modern confirmation dialog when a tool requires user approval.
 //
+//  One coordinator, one panel at a time. Every approval request becomes a
+//  queued entry with its own identity and continuation; exactly one entry is
+//  presented, and resolving it (button, keyboard, close, cancellation) tears
+//  down exactly its own panel and presents the next entry. Concurrent callers
+//  — parallel tool calls whose bodies prompt (`spawn_agent`, image/video
+//  billing, the config fallback) or a delegated child prompting while the
+//  parent does — therefore never overwrite each other's window.
+//
+//  History: the previous implementation kept a single static window slot. Two
+//  concurrent `spawn_agent` prompts overwrote it; the first panel stayed on
+//  screen with dead button handlers after the second resolved, and its Stop
+//  cancellation hook was lost, so its continuation could never be resumed.
+//
 
 import AppKit
 import Foundation
@@ -11,45 +24,7 @@ import SwiftUI
 
 @MainActor
 enum ToolPermissionPromptService {
-    private static var permissionWindow: NSPanel?
-    /// Card size reported by `onGeometryChange` during the sizing layout
-    /// pass, applied once the panel is registered.
-    private static var lastRenderedCardSize: CGSize?
-    private static var localKeyMonitor: Any?
-    private static var closeObserver: NSObjectProtocol?
-    /// Identity + cancellation hook for the currently presented policy prompt.
-    /// The id prevents a delayed task-cancellation callback from dismissing a
-    /// newer prompt that happened to open after the cancelled one completed.
-    private static var pendingPolicyPrompt: (id: UUID, cancel: () -> Void)?
-    private static var pendingApprovalPrompt: (id: UUID, cancel: () -> Void)?
-
-    /// A test process has nobody to press the button.
-    ///
-    /// All three approval entry points below block on a
-    /// `withCheckedContinuation` that is only ever resumed by a panel button,
-    /// so a test that reaches one hangs — and because the bundle runs in a
-    /// single process, every test behind it hangs too. Observed 2026-08-22:
-    /// the whole OsaurusCore suite sat for 40+ minutes with a 0-byte log while
-    /// a live `swiftpm-testing-helper` held a 460x478 "Tool Permission" panel
-    /// on screen (`CGWindowListCopyWindowInfo` showed it at layer 8). A 0-byte
-    /// log plus a live process is blocked, not slow.
-    ///
-    /// `RuntimeEnvironment.isUnderTests` already names *"creates an `NSPanel`
-    /// without a display server"* as exactly what it is for, and already
-    /// matches `processName == "swiftpm-testing-helper"`. The guard existed;
-    /// this service simply never consulted it — correct code that was never
-    /// reached.
-    ///
-    /// Denying is the deterministic answer and matches the registry's existing
-    /// "external-surface / headless denials" semantics. It cannot regress a
-    /// green test: today, any test reaching here hangs rather than passes, so
-    /// no passing test can depend on approval succeeding.
-    private static var isHeadlessTestProcess: Bool { RuntimeEnvironment.isUnderTests }
-
-    /// Whether a permission panel is currently on screen. Exists so a test can
-    /// assert that no window outlives an approval call — the window left
-    /// behind is the thing that could neither be clicked nor quit.
-    static var hasOpenPermissionWindowForTesting: Bool { permissionWindow != nil }
+    // MARK: - Public outcome vocabularies (unchanged for callers)
 
     enum PolicyApprovalOutcome: Sendable, Equatable {
         case denied
@@ -64,19 +39,155 @@ enum ToolPermissionPromptService {
         case alwaysAllow
     }
 
+    /// Internal resolution shared by every entry point. Public entry points
+    /// map it onto their own narrower vocabulary.
+    enum PromptResolution: Sendable, Equatable {
+        case denied
+        case allowOnce
+        case allowForRun
+        case alwaysAllow
+    }
+
+    /// Re-evaluated immediately before an entry is presented. A non-nil value
+    /// resolves the entry without showing a panel — e.g. a sibling spawn
+    /// prompt already persisted "Always Allow" while this one was queued.
+    typealias Revalidation = @Sendable () async -> PromptResolution?
+
+    // MARK: - Queue state
+
+    struct PromptRequest {
+        let toolName: String
+        let description: String
+        let argumentsJSON: String
+        let knowledgeWritePreview: KnowledgeWritePreview?
+        let perCallApprovalOnly: Bool
+        /// Whether the card offers "Allow for This Task". Only the generic
+        /// registry prompt has a run lease to grant into.
+        let offersRunLease: Bool
+        /// Where the approved call will run (VM / this Mac / remote MCP
+        /// server), shown on the card so consent is informed
+        /// (osaurus#2651). Nil for prompts that are not about executing a
+        /// tool on a machine (billing, spawn policy), which show no badge.
+        let executionSurface: ToolExecutionSurface?
+    }
+
+    private struct PendingPrompt {
+        let id: UUID
+        let request: PromptRequest
+        let revalidate: Revalidation?
+        /// Captured from the requesting task so a test presenter follows its
+        /// own requests through the queue regardless of which task pumps.
+        let presenter: TestPresenter?
+    }
+
+    /// AppKit handles owned by the presented entry. Nil under the test
+    /// presenter override, which never constructs a window.
+    private struct PanelHandles {
+        let panel: NSPanel
+        let closeObserver: NSObjectProtocol
+        let keyMonitor: Any?
+    }
+
+    private enum PresenterSlot {
+        /// The head entry is running its `revalidate` hook. The slot is held
+        /// so no other entry can present in the meantime.
+        case revalidating(UUID)
+        case presented(UUID, PanelHandles?)
+
+        var id: UUID {
+            switch self {
+            case .revalidating(let id), .presented(let id, _): return id
+            }
+        }
+    }
+
+    private static var queue: [PendingPrompt] = []
+    private static var continuations: [UUID: CheckedContinuation<PromptResolution, Never>] = [:]
+    private static var slot: PresenterSlot?
+    /// The request behind the presented `slot`, kept for test introspection.
+    private static var presentedRequest: PromptRequest?
+    /// Card size reported by `onGeometryChange` during the sizing layout
+    /// pass, applied once the panel is registered.
+    private static var lastRenderedCardSize: CGSize?
+
+    // MARK: - Headless / test seams
+
+    /// A test process has nobody to press the button.
+    ///
+    /// Every approval entry point blocks on a `withCheckedContinuation` that
+    /// is only ever resumed by a panel button, so a test that reaches one
+    /// hangs — and because the bundle runs in a single process, every test
+    /// behind it hangs too. Observed 2026-08-22: the whole OsaurusCore suite
+    /// sat for 40+ minutes with a 0-byte log while a live
+    /// `swiftpm-testing-helper` held a 460x478 "Tool Permission" panel on
+    /// screen. Denying is the deterministic answer and matches the registry's
+    /// "external-surface / headless denials" semantics.
+    ///
+    /// Tests that exercise the queue itself bind `presentationOverrideForTests`
+    /// around their requests, which replaces the AppKit panel with a callback
+    /// and lifts this guard for exactly those requests.
+    private static var isHeadlessTestProcess: Bool {
+        RuntimeEnvironment.isUnderTests && presentationOverrideForTests == nil
+    }
+
+    /// Replaces panel construction. Receives the presented entry's id, tool
+    /// name, and how many entries are queued behind it; the test resolves the
+    /// entry with `resolveForTesting`. Task-local so concurrently running
+    /// suites that do not bind it keep the headless denial.
+    typealias TestPresenter = @Sendable (_ id: UUID, _ toolName: String, _ queuedBehind: Int) -> Void
+
+    @TaskLocal
+    static var presentationOverrideForTests: TestPresenter?
+
+    static func resolveForTesting(id: UUID, outcome: PromptResolution) {
+        resolve(id: id, outcome: outcome)
+    }
+
+    /// Whether a real AppKit permission panel is currently presented. Exists
+    /// so a test can assert that no window outlives an approval call — the
+    /// window left behind is the thing that could neither be clicked nor
+    /// quit. Test stand-ins (presenter override) are not windows; see
+    /// `presentedPromptIDForTesting`.
+    static var hasOpenPermissionWindowForTesting: Bool {
+        if case .presented(_, let handles?) = slot { return handles.panel.isVisible }
+        return false
+    }
+
+    static var presentedPromptIDForTesting: UUID? { slot?.id }
+    static var queuedPromptCountForTesting: Int { queue.count }
+    /// The surface the presented card is showing, so a test can prove the
+    /// gate's routing answer reached the prompt.
+    static var presentedExecutionSurfaceForTesting: ToolExecutionSurface? {
+        presentedRequest?.executionSurface
+    }
+
+    /// Deny everything outstanding.
+    static func resetForTesting() {
+        let outstanding = queue.map(\.id) + Array(continuations.keys)
+        for id in Set(outstanding) { resolve(id: id, outcome: .denied) }
+        if let slot { tearDown(slot) }
+        slot = nil
+        presentedRequest = nil
+        queue.removeAll()
+    }
+
+    // MARK: - Entry points
+
     static func requestApproval(
         toolName: String,
         description: String,
         argumentsJSON: String,
         knowledgeWritePreview: KnowledgeWritePreview? = nil,
-        perCallApprovalOnly: Bool = false
+        perCallApprovalOnly: Bool = false,
+        executionSurface: ToolExecutionSurface? = nil
     ) async -> Bool {
         switch await requestApprovalOutcome(
             toolName: toolName,
             description: description,
             argumentsJSON: argumentsJSON,
             knowledgeWritePreview: knowledgeWritePreview,
-            perCallApprovalOnly: perCallApprovalOnly
+            perCallApprovalOnly: perCallApprovalOnly,
+            executionSurface: executionSurface
         ) {
         case .denied: return false
         case .allowOnce, .allowForRun, .alwaysAllow: return true
@@ -89,65 +200,43 @@ enum ToolPermissionPromptService {
     ///
     /// `perCallApprovalOnly` suppresses "Allow for This Task" and "Always
     /// Allow" so the call cannot be pre-granted. See `PerCallApprovalTool`.
+    ///
+    /// `executionSurface` names the machine the call runs on (VM / this Mac /
+    /// remote MCP server). The registry gate resolves it from the tool's
+    /// live routing; other callers leave it nil and the card shows no badge.
     static func requestApprovalOutcome(
         toolName: String,
         description: String,
         argumentsJSON: String,
         knowledgeWritePreview: KnowledgeWritePreview? = nil,
-        perCallApprovalOnly: Bool = false
+        perCallApprovalOnly: Bool = false,
+        executionSurface: ToolExecutionSurface? = nil
     ) async -> ApprovalOutcome {
         if isHeadlessTestProcess { return .denied }
         if Task.isCancelled { return .denied }
 
-        let requestID = UUID()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                var hasResumed = false
-
-                let finish: (ApprovalOutcome) -> Void = { outcome in
-                    guard !hasResumed else { return }
-                    hasResumed = true
-                    if pendingApprovalPrompt?.id == requestID {
-                        pendingApprovalPrompt = nil
-                    }
-                    if outcome == .alwaysAllow {
-                        ToolRegistry.shared.setPolicy(.auto, for: toolName)
-                    }
-                    dismissWindow()
-                    continuation.resume(returning: outcome)
-                }
-                let onAllow = { finish(.allowOnce) }
-                let onAllowForRun = { finish(.allowForRun) }
-                let onDeny = { finish(.denied) }
-                let onAlwaysAllow = { finish(.alwaysAllow) }
-
-                pendingApprovalPrompt = (id: requestID, cancel: onDeny)
-                let themeManager = ThemeManager.shared
-                let permissionView = ToolPermissionView(
-                    toolName: toolName,
-                    description:
-                        description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? "This action requires your approval."
-                        : description,
-                    argumentsJSON: argumentsJSON,
-                    onAllow: onAllow,
-                    onDeny: onDeny,
-                    onAlwaysAllow: onAlwaysAllow,
-                    onAllowForRun: perCallApprovalOnly ? nil : onAllowForRun,
-                    knowledgeWritePreview: knowledgeWritePreview,
-                    perCallApprovalOnly: perCallApprovalOnly
-                )
-                .environment(\.theme, themeManager.currentTheme)
-                presentPanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)
-
-                if Task.isCancelled {
-                    onDeny()
-                }
-            }
-        } onCancel: {
-            Task { @MainActor in
-                cancelApprovalPrompt(id: requestID)
-            }
+        let resolution = await enqueue(
+            PromptRequest(
+                toolName: toolName,
+                description: description,
+                argumentsJSON: argumentsJSON,
+                knowledgeWritePreview: knowledgeWritePreview,
+                perCallApprovalOnly: perCallApprovalOnly,
+                offersRunLease: !perCallApprovalOnly,
+                executionSurface: executionSurface
+            ),
+            revalidate: nil
+        )
+        switch resolution {
+        case .denied:
+            return .denied
+        case .allowOnce:
+            return .allowOnce
+        case .allowForRun:
+            return .allowForRun
+        case .alwaysAllow:
+            ToolRegistry.shared.setPolicy(.auto, for: toolName)
+            return .alwaysAllow
         }
     }
 
@@ -157,135 +246,213 @@ enum ToolPermissionPromptService {
     ///
     /// Cancellation is terminal and denial-shaped. This is required by spawn
     /// preparation, where the feed's Stop control can fire while the panel is
-    /// open; the continuation must be resumed and the modal dismissed rather
-    /// than stranding the tool call.
+    /// open (or while the request is still queued behind another prompt); the
+    /// continuation must be resumed and the modal dismissed rather than
+    /// stranding the tool call.
+    ///
+    /// `revalidate` runs right before this request would be presented. Return
+    /// a resolution to settle it silently (the caller's policy changed while it
+    /// waited in the queue), or nil to show the panel.
     static func requestPolicyApproval(
         toolName: String,
         description: String,
-        argumentsJSON: String
+        argumentsJSON: String,
+        revalidate: (@Sendable () async -> PolicyApprovalOutcome?)? = nil
     ) async -> PolicyApprovalOutcome {
         if isHeadlessTestProcess { return .denied }
         if Task.isCancelled { return .denied }
 
-        let requestID = UUID()
+        var mappedRevalidate: Revalidation?
+        if let hook = revalidate {
+            mappedRevalidate = { () async -> PromptResolution? in
+                guard let outcome = await hook() else { return nil }
+                return Self.resolution(for: outcome)
+            }
+        }
+        let resolution = await enqueue(
+            PromptRequest(
+                toolName: toolName,
+                description: description,
+                argumentsJSON: argumentsJSON,
+                knowledgeWritePreview: nil,
+                perCallApprovalOnly: false,
+                offersRunLease: false,
+                executionSurface: nil
+            ),
+            revalidate: mappedRevalidate
+        )
+        switch resolution {
+        case .denied: return .denied
+        case .allowOnce, .allowForRun: return .allowOnce
+        case .alwaysAllow: return .alwaysAllow
+        }
+    }
+
+    nonisolated private static func resolution(
+        for outcome: PolicyApprovalOutcome
+    ) -> PromptResolution {
+        switch outcome {
+        case .denied: return .denied
+        case .allowOnce: return .allowOnce
+        case .alwaysAllow: return .alwaysAllow
+        }
+    }
+
+    // MARK: - Queue core
+
+    private static func enqueue(
+        _ request: PromptRequest,
+        revalidate: Revalidation?
+    ) async -> PromptResolution {
+        let id = UUID()
+        let presenter = presentationOverrideForTests
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                var hasResumed = false
-
-                let finish: (PolicyApprovalOutcome) -> Void = { outcome in
-                    guard !hasResumed else { return }
-                    hasResumed = true
-                    if pendingPolicyPrompt?.id == requestID {
-                        pendingPolicyPrompt = nil
-                    }
-                    dismissWindow()
-                    continuation.resume(returning: outcome)
-                }
-                let onAllow = { finish(.allowOnce) }
-                let onDeny = { finish(.denied) }
-                let onAlwaysAllow = { finish(.alwaysAllow) }
-
-                pendingPolicyPrompt = (id: requestID, cancel: onDeny)
-
-                let themeManager = ThemeManager.shared
-                let permissionView = ToolPermissionView(
-                    toolName: toolName,
-                    description:
-                        description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? "This action requires your approval."
-                        : description,
-                    argumentsJSON: argumentsJSON,
-                    onAllow: onAllow,
-                    onDeny: onDeny,
-                    onAlwaysAllow: onAlwaysAllow
+                continuations[id] = continuation
+                queue.append(
+                    PendingPrompt(
+                        id: id,
+                        request: request,
+                        revalidate: revalidate,
+                        presenter: presenter
+                    )
                 )
-                .environment(\.theme, themeManager.currentTheme)
-
-                presentPanel(
-                    view: permissionView,
-                    onAllow: onAllow,
-                    onDeny: onDeny
-                )
-
                 // Cancellation can race the MainActor hop into this
-                // continuation. Re-check after the cancellation hook exists.
+                // continuation. Re-check after the entry is registered so the
+                // hook below (or this check) always finds something to deny.
                 if Task.isCancelled {
-                    onDeny()
+                    resolve(id: id, outcome: .denied)
+                    return
                 }
+                pump()
             }
         } onCancel: {
             Task { @MainActor in
-                cancelPolicyPrompt(id: requestID)
+                resolve(id: id, outcome: .denied)
             }
         }
     }
 
-    /// Outcome of the first-use spawn permission prompt: the decision plus the
-    /// spawn model the user picked (nil when no picker was shown).
-    enum SpawnApprovalOutcome: Sendable {
-        case denied
-        case allowed(model: String?, always: Bool)
-    }
+    /// Present the head of the queue if nothing is presented. Re-entrant safe:
+    /// a resolution that happens synchronously inside presentation (headless
+    /// guard, immediate cancellation) simply pumps again.
+    private static func pump() {
+        guard slot == nil else { return }
+        while !queue.isEmpty {
+            let next = queue.removeFirst()
+            // Resolved (cancelled) while it was still queued.
+            guard continuations[next.id] != nil else { continue }
 
-    /// First-use permission prompt for a spawn job that ALSO lets the user pick
-    /// the spawn model (image or text) in the same dialog. Returns the decision
-    /// and the chosen model so the caller can persist both. Presented with the
-    /// same panel chrome as `requestApproval`.
-    static func requestSpawnApproval(
-        toolName: String,
-        description: String,
-        argumentsJSON: String,
-        modelPickerTitle: String,
-        modelOptions: [SpawnModelChoice],
-        currentModel: String?
-    ) async -> SpawnApprovalOutcome {
-        if isHeadlessTestProcess { return .denied }
-        return await withCheckedContinuation { continuation in
-            var hasResumed = false
-            var chosenModel: String? = currentModel ?? modelOptions.first?.id
-
-            let finish: (SpawnApprovalOutcome) -> Void = { outcome in
-                guard !hasResumed else { return }
-                hasResumed = true
-                dismissWindow()
-                continuation.resume(returning: outcome)
+            if let revalidate = next.revalidate {
+                slot = .revalidating(next.id)
+                Task { @MainActor in
+                    let early = await revalidate()
+                    // Resolved during the re-check: `resolve` already
+                    // released the slot and pumped.
+                    guard case .revalidating(let heldId)? = slot, heldId == next.id else { return }
+                    if let early {
+                        resolve(id: next.id, outcome: early)
+                    } else {
+                        present(next)
+                    }
+                }
+                return
             }
-            let onAllow = { finish(.allowed(model: chosenModel, always: false)) }
-            let onDeny = { finish(.denied) }
-            let onAlwaysAllow = {
-                ToolRegistry.shared.setPolicy(.auto, for: toolName)
-                finish(.allowed(model: chosenModel, always: true))
-            }
-            let onModelSelected: (String) -> Void = { chosenModel = $0 }
 
-            let themeManager = ThemeManager.shared
-            let view = ToolPermissionView(
-                toolName: toolName,
-                description: description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? "This action requires your approval." : description,
-                argumentsJSON: argumentsJSON,
-                onAllow: onAllow,
-                onDeny: onDeny,
-                onAlwaysAllow: onAlwaysAllow,
-                spawnModelTitle: modelPickerTitle,
-                spawnModelOptions: modelOptions,
-                initialSpawnModel: chosenModel,
-                onModelSelected: onModelSelected
-            )
-            .environment(\.theme, themeManager.currentTheme)
-
-            presentPanel(view: view, onAllow: onAllow, onDeny: onDeny)
+            present(next)
+            return
         }
     }
 
-    /// Shared panel presentation used by `requestSpawnApproval` (and reusable by
-    /// future prompts). Centers a borderless modal panel hosting `view`, wires
+    private static func resolve(id: UUID, outcome: PromptResolution) {
+        queue.removeAll { $0.id == id }
+        if let current = slot, current.id == id {
+            tearDown(current)
+            slot = nil
+            presentedRequest = nil
+        }
+        if let continuation = continuations.removeValue(forKey: id) {
+            continuation.resume(returning: outcome)
+        }
+        pump()
+    }
+
+    private static func tearDown(_ slot: PresenterSlot) {
+        guard case .presented(_, let handles?) = slot else { return }
+        NotificationCenter.default.removeObserver(handles.closeObserver)
+        if let monitor = handles.keyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        handles.panel.orderOut(nil)
+        lastRenderedCardSize = nil
+    }
+
+    // MARK: - Presentation
+
+    private static func present(_ entry: PendingPrompt) {
+        let id = entry.id
+        let request = entry.request
+        let queuedBehind = queue.count
+        presentedRequest = request
+
+        if let override = entry.presenter {
+            slot = .presented(id, nil)
+            override(id, request.toolName, queuedBehind)
+            return
+        }
+
+        let onAllow = { resolve(id: id, outcome: .allowOnce) }
+        let onDeny = { resolve(id: id, outcome: .denied) }
+        let onAlwaysAllow = { resolve(id: id, outcome: .alwaysAllow) }
+        let onAllowForRun: (() -> Void)? =
+            request.offersRunLease && !request.perCallApprovalOnly
+            ? { resolve(id: id, outcome: .allowForRun) }
+            : nil
+
+        let themeManager = ThemeManager.shared
+        let permissionView = ToolPermissionView(
+            toolName: request.toolName,
+            description:
+                request.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "This action requires your approval."
+                : request.description,
+            argumentsJSON: request.argumentsJSON,
+            onAllow: onAllow,
+            onDeny: onDeny,
+            onAlwaysAllow: onAlwaysAllow,
+            onAllowForRun: onAllowForRun,
+            knowledgeWritePreview: request.knowledgeWritePreview,
+            perCallApprovalOnly: request.perCallApprovalOnly,
+            queuedBehind: queuedBehind,
+            executionSurface: request.executionSurface
+        )
+        .environment(\.theme, themeManager.currentTheme)
+
+        let handles = makePanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)
+        slot = .presented(id, handles)
+        // Apply the card size reported during the sizing layout pass, when
+        // the panel was not yet registered and the callback could not act.
+        if let renderedSize = lastRenderedCardSize {
+            resizePanelToRenderedContent(renderedSize)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        handles.panel.makeKeyAndOrderFront(nil)
+        let panel = handles.panel
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            panel.makeKey()
+            if let contentView = panel.contentView { panel.makeFirstResponder(contentView) }
+        }
+    }
+
+    /// Builds a centered borderless modal panel hosting `view`, wires
     /// Enter→allow / Esc→deny key handling, and a close-safety-net that denies.
-    private static func presentPanel<V: View>(
+    /// Every handle is returned to the caller; nothing is stored in a shared
+    /// static, so a second panel can never orphan the first.
+    private static func makePanel<V: View>(
         view: V,
         onAllow: @escaping () -> Void,
         onDeny: @escaping () -> Void
-    ) {
+    ) -> PanelHandles {
         // `fittingSize` measures the card at its ideal size, but the
         // description/arguments ScrollViews report their full content height
         // as ideal while rendering capped. Sizing the window from that
@@ -371,15 +538,9 @@ enum ToolPermissionPromptService {
             panel.setContentSize(windowSize)
             panel.center()
         }
-        permissionWindow = panel
-        // Apply the card size reported during the sizing layout pass, when
-        // the panel was not yet registered and the callback could not act.
-        if let renderedSize = lastRenderedCardSize {
-            resizePanelToRenderedContent(renderedSize)
-        }
 
         nonisolated(unsafe) let onDenyForClose = onDeny
-        closeObserver = NotificationCenter.default.addObserver(
+        let closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: panel,
             queue: .main
@@ -390,22 +551,23 @@ enum ToolPermissionPromptService {
             if event.keyCode == 53 { onDeny(); return true }
             return false
         }
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        weak var weakPanel = panel
+        let keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard shouldAcceptKeyboardShortcut(
-                isVisible: permissionWindow?.isVisible == true,
-                isKeyWindow: permissionWindow?.isKeyWindow == true,
+                isVisible: weakPanel?.isVisible == true,
+                isKeyWindow: weakPanel?.isKeyWindow == true,
                 isAppActive: NSApp.isActive
             ) else {
                 return event
             }
             return handleKeyEvent(event) ? nil : event
         }
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            panel.makeKey()
-            if let contentView = panel.contentView { panel.makeFirstResponder(contentView) }
-        }
+        return PanelHandles(panel: panel, closeObserver: closeObserver, keyMonitor: keyMonitor)
+    }
+
+    private static var presentedPanel: NSPanel? {
+        guard case .presented(_, let handles?) = slot else { return nil }
+        return handles.panel
     }
 
     /// Snaps the panel to the card's actually rendered size, recentered on
@@ -413,7 +575,7 @@ enum ToolPermissionPromptService {
     /// stay reachable. Called from `onGeometryChange`, so the window follows
     /// the card if its layout settles differently than first measured.
     private static func resizePanelToRenderedContent(_ size: CGSize) {
-        guard let panel = permissionWindow, size.width > 1, size.height > 1 else { return }
+        guard let panel = presentedPanel, size.width > 1, size.height > 1 else { return }
         var target = NSSize(width: size.width, height: size.height)
         let vf = (panel.screen ?? NSScreen.main)?.visibleFrame
         if let vf { target = clampedWindowSize(target, to: vf.size) }
@@ -432,6 +594,8 @@ enum ToolPermissionPromptService {
         panel.setFrame(NSRect(origin: origin, size: target), display: true)
         panel.invalidateShadow()
     }
+
+    // MARK: - Pure seams
 
     /// Pure seams keep the security-sensitive screen and key-event policy
     /// deterministic in tests without constructing AppKit windows.
@@ -457,29 +621,5 @@ enum ToolPermissionPromptService {
         isAppActive: Bool
     ) -> Bool {
         isVisible && isKeyWindow && isAppActive
-    }
-
-    private static func dismissWindow() {
-        if let observer = closeObserver {
-            NotificationCenter.default.removeObserver(observer)
-            closeObserver = nil
-        }
-        if let monitor = localKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            localKeyMonitor = nil
-        }
-        permissionWindow?.orderOut(nil)
-        permissionWindow = nil
-        lastRenderedCardSize = nil
-    }
-
-    private static func cancelPolicyPrompt(id: UUID) {
-        guard pendingPolicyPrompt?.id == id else { return }
-        pendingPolicyPrompt?.cancel()
-    }
-
-    private static func cancelApprovalPrompt(id: UUID) {
-        guard pendingApprovalPrompt?.id == id else { return }
-        pendingApprovalPrompt?.cancel()
     }
 }

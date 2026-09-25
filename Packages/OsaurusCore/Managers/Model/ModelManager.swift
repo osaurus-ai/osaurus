@@ -40,7 +40,12 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
 /// Download orchestration is handled by ModelDownloadService.
 @MainActor
 public final class ModelManager: NSObject, ObservableObject {
-    static let shared = ModelManager()
+    static let shared: ModelManager = {
+        let manager = ModelManager()
+        manager.ownsModelUpdatePolling = true
+        if !RuntimeEnvironment.isUnderTests { manager.restartModelUpdatePolling() }
+        return manager
+    }()
 
     /// Diagnostics logger usable from the `nonisolated static` discovery paths.
     nonisolated static let discoveryLog = Logger(
@@ -211,6 +216,20 @@ public final class ModelManager: NSObject, ObservableObject {
     @Published var availableModels: [MLXModel] = []
     @Published var isLoadingModels: Bool = false
     @Published var suggestedModels: [MLXModel] = ModelManager.curatedSuggestedModels
+    @Published var manifestChecks: [String: ModelManifestCheck] = [:]
+    @Published var manifestChecksInFlight: Set<String> = []
+    var pendingManifestChecks: [String: MLXModel] = [:]
+    @Published var automaticallyChecksModelUpdates =
+        UserDefaults.standard.object(forKey: "AutomaticallyCheckModelUpdates") as? Bool ?? true
+    {
+        didSet {
+            UserDefaults.standard.set(automaticallyChecksModelUpdates, forKey: "AutomaticallyCheckModelUpdates")
+            restartModelUpdatePolling()
+        }
+    }
+    var ownsModelUpdatePolling = false
+    var modelUpdatePollingTask: Task<Void, Never>?
+    let automaticModelUpdateSweep = ModelUpdateSweep()
     @Published var deprecationNotices: [DeprecationNotice] = []
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
@@ -241,6 +260,10 @@ public final class ModelManager: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshDownloadStates()
+                Task {
+                    await self?.refreshCachedManifestLocalState()
+                    await self?.refreshAutomaticModelUpdates()
+                }
             }
             .store(in: &cancellables)
 
@@ -363,7 +386,7 @@ public final class ModelManager: NSObject, ObservableObject {
 
         // If user pasted a direct HF URL or "org/repo", immediately surface it without requiring SDK allowlist
         if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty,
-            !findExistingModel(id: directId).found
+            !Self.isGGUFRepo(id: directId), !findExistingModel(id: directId).found
         {
             let probe = MLXModel(id: directId, name: "", description: "", downloadURL: "")
             let model = MLXModel(
@@ -414,7 +437,9 @@ public final class ModelManager: NSObject, ObservableObject {
 
             let allow = Self.sdkSupportedModelIds()
             let allowedMapped: [MLXModel] = byId.values.compactMap { hf in
-                guard allow.contains(hf.id.lowercased()) else { return nil }
+                guard allow.contains(hf.id.lowercased()), !Self.isGGUFRepo(id: hf.id, tags: hf.tags) else {
+                    return nil
+                }
                 return MLXModel(
                     id: hf.id,
                     name: ModelMetadataParser.friendlyName(from: hf.id),
@@ -485,18 +510,36 @@ public final class ModelManager: NSObject, ObservableObject {
     ///     Private repos may use their actual file layout instead of a public
     ///     naming/tag convention.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
-        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        if case .model(let model) = await resolveModelForDeepLink(byRepoId: repoId) { return model }
+        return nil
+    }
 
-        if let existing = findExistingModel(id: trimmed).model { return existing }
+    /// Outcome of resolving a repo id that arrived from outside the catalog
+    /// (a `huggingface://` / `osaurus://open_from_hf` link or a pasted id).
+    enum DeepLinkResolution {
+        case model(MLXModel)
+        /// The Hub or the bundle rejected the repo; see the failure for why.
+        case unsupported(HuggingFaceService.MLXCompatibility.Failure)
+        /// A public OsaurusAI repo that is not in the curated registry. Other
+        /// product bundles live in that org and must not enter this catalog.
+        case registryGated
+    }
+
+    /// Resolves a repo id for the import flow, inserting it into the catalog
+    /// when the Hub says it is an MLX bundle the user can read.
+    func resolveModelForDeepLink(byRepoId repoId: String) async -> DeepLinkResolution {
+        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .unsupported(.notFound) }
+
+        if let existing = findExistingModel(id: trimmed).model { return .model(existing) }
 
         let lower = trimmed.lowercased()
         let compatibility = await HuggingFaceService.shared.mlxCompatibility(repoId: trimmed)
-        guard compatibility.isCompatible else { return nil }
+        guard compatibility.isCompatible else {
+            return .unsupported(compatibility.failure ?? .notMLX)
+        }
         if lower.hasPrefix("osaurusai/"), !compatibility.isPrivate {
-            // Unknown public OsaurusAI repos remain registry-gated so other
-            // product bundles do not leak into the language-model catalog.
-            return nil
+            return .registryGated
         }
 
         let model = MLXModel(
@@ -506,7 +549,7 @@ public final class ModelManager: NSObject, ObservableObject {
             downloadURL: "https://huggingface.co/\(trimmed)"
         )
         insertModel(model)
-        return model
+        return .model(model)
     }
 
     // MARK: - Model Lookup
@@ -714,23 +757,27 @@ extension ModelManager {
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
         // MARK: Gemma 4 — multimodal
         //
-        // Onboarding recommendation spine (2026-08-31). Top Pick membership
+        // Onboarding recommendation spine (2026-09-15). Top Pick membership
         // controls the first-run shortlist; the memory-fit selector below still
         // refuses to auto-default into the `.tight` band:
-        //   • Mainstream RAM → Raptor v0.5 8B-A1B JANG_6M (~1B active) and
-        //                      Gemma 4 12B-it-MXFP8 as RAM allows. LFM2.5 8B
-        //                      and dense Ornith 1.5 9B remain in the catalog,
-        //                      but Raptor is the small-active-set first-run
-        //                      default once it comfortably fits.
-        //   • Larger RAM     → Ornith 1.5 35B-A3B MXFP8 (below).
-        //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
-        //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
-        //                    (the only MXFP8 Gemma the org ships) and the
-        //                    `E4B/E2B-it-8bit` retention builds (no E-series
-        //                    MXFP8 exists on the HF org). Nanbeige 4.2 3B
-        //                    JANG_6M is the text-quality exception in this
-        //                    band (looped transformer; JANG_6M beats the
-        //                    family's MXFP8 on fidelity — see that entry).
+        //   • 8 GB through mainstream RAM → Raptor 0.6 4B JANG_6M (Spark-X2.5
+        //                      dense, ~3.41 GiB). Raptor v0.5 8B-A1B is
+        //                      retired from the catalog (`retiredOsaurusOrgIds`);
+        //                      existing installs keep it via the local scan.
+        //                      LFM2.5 8B and dense Ornith 1.5 9B remain
+        //                      catalog-only.
+        //   • Larger RAM     → Ornith 1.5 35B-A3B MXFP8 (below), or Gemma 4
+        //                      12B-it-MXFP8 when that comfortably fits first.
+        //   • Smaller RAM fallback → official OsaurusAI Gemma 4 at the highest
+        //                    non-QAT, non-MXFP4 precision that exists:
+        //                    `12B-it-MXFP8` (the only MXFP8 Gemma the org
+        //                    ships) and the `E4B/E2B-it-8bit` retention
+        //                    builds (no E-series MXFP8 exists on the HF org).
+        //                    Nanbeige 4.2 3B JANG_6M is the text-quality
+        //                    exception in this band (looped transformer;
+        //                    JANG_6M beats the family's MXFP8 on fidelity —
+        //                    see that entry) but must not steal the 8 GB
+        //                    floor from Raptor 0.6.
         // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
         // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
         // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
@@ -862,18 +909,22 @@ extension ModelManager {
             useCase: .vision
         ),
 
-        // MARK: Raptor v0.5 (Ling 3 / BailingMoeV3 — Top Pick)
+        // MARK: Raptor 0.6 (Spark-X2.5 — onboarding default)
 
         curated(
-            id: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
+            id: "OsaurusAI/Raptor-0.6-4B-JANG_6M",
             description:
-                "Raptor v0.5 8B-A1B text model on the Ling 3 architecture. JANG_6M — fast agentic tool use with ~1B active parameters. 128K context.",
+                "Raptor 0.6 4B text model on Spark-X2.5. JANG_6M — fast agentic tool use in a 3.41 GiB dense bundle. 1M context.",
             isTopSuggestion: true,
-            bootstrapDownloadSizeBytes: 6_783_354_784,
-            modelType: "bailing_hybrid",
-            releasedAt: date("2026-08-25"),
+            bootstrapDownloadSizeBytes: 3_677_829_017,
+            modelType: "spark2_5",
+            releasedAt: date("2026-09-10"),
             useCase: .general
         ),
+
+        // Raptor v0.5 8B-A1B (Ling 3 / BailingMoeV3) was retired from the
+        // catalog once 0.6 shipped — see `retiredOsaurusOrgIds`. Installed
+        // copies still load from the local scan.
 
         // MARK: Ornith 1.5 (Qwen 3.5 hybrid backbone)
         //
@@ -1302,8 +1353,8 @@ extension ModelManager {
         //
         // Kept at the tail of the catalog so LFM rows always render at the
         // bottom of order-following lists (the onboarding chooser keeps
-        // catalog order). Raptor v0.5 now occupies the mainstream-RAM Top Pick
-        // slot; LFM2.5 remains available as an installable alternative.
+        // catalog order). Raptor 0.6 occupies the onboarding default slot;
+        // LFM2.5 remains available as an installable alternative.
 
         curated(
             id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
@@ -1350,6 +1401,10 @@ extension ModelManager {
         // a re-upload or stale org listing cannot re-surface a dead download.
         "osaurusai/ornith-1.0-9b-mxfp8",
         "osaurusai/ornith-1.0-35b-mxfp8",
+        // Raptor v0.5 8B-A1B is superseded by Raptor 0.6 4B (smaller, faster,
+        // better quality). Hidden from the catalog; installed copies still
+        // load from the local scan.
+        "osaurusai/raptor-v0.5-8b-a1b-jang_6m",
     ]
 
     /// HF `pipeline_tag` values that mark a repo as chat-capable (text or
@@ -1377,12 +1432,21 @@ extension ModelManager {
         ]
     }
 
+    /// GGUF repos are published for the Windows build. The Mac app has no
+    /// GGUF inference engine, so they never belong in this catalog, however
+    /// they were found (org listing, search, or a pasted repo id).
+    nonisolated static func isGGUFRepo(id: String, tags: [String]? = nil) -> Bool {
+        if id.lowercased().contains("gguf") { return true }
+        return tags?.contains { $0.lowercased() == "gguf" } ?? false
+    }
+
     /// True when an OsaurusAI org repo may appear in the LLM catalog.
     /// Untagged repos pass (MLX conversions frequently omit `pipeline_tag`,
     /// so `nil` is not evidence of a non-chat repo) unless they are owned by
     /// another Settings panel.
-    nonisolated static func isChatCatalogEligible(id: String, pipelineTag: String?) -> Bool {
+    nonisolated static func isChatCatalogEligible(id: String, pipelineTag: String?, tags: [String]? = nil) -> Bool {
         if panelOwnedOrgIds.contains(id.lowercased()) { return false }
+        if isGGUFRepo(id: id, tags: tags) { return false }
         guard let tag = pipelineTag?.lowercased(), !tag.isEmpty else { return true }
         return chatCapablePipelineTags.contains(tag)
     }
@@ -1424,11 +1488,13 @@ extension ModelManager {
         // refresh). Rebuilding the merged model list and re-splitting every id
         // per call is wasted main-thread work — and under memory pressure it
         // shows up in hang reports. Memoize per name, invalidated when either
-        // the local scan cache or the external registry changes.
+        // the local scan cache or the external catalog changes. Registry
+        // identity alone misses completion of the asynchronous catalog build
+        // and can retain a provisional miss for the lifetime of the app.
         localModelsCacheCondition.lock()
         let localGen = localModelsCacheGen
         localModelsCacheCondition.unlock()
-        let externalGen = ExternalModelLocator.registryGeneration()
+        let externalGen = ExternalModelLocator.catalogGeneration()
 
         matchMemoLock.lock()
         if matchMemoLocalGen == localGen, matchMemoExternalGen == externalGen,
@@ -1455,7 +1521,8 @@ extension ModelManager {
     private static nonisolated let matchMemoLock = NSLock()
     private static nonisolated(unsafe) var matchMemo: [String: MLXModel?] = [:]
     private static nonisolated(unsafe) var matchMemoLocalGen: UInt64 = .max
-    private static nonisolated(unsafe) var matchMemoExternalGen: UInt64 = .max
+    private static nonisolated(unsafe) var matchMemoExternalGen =
+        ExternalModelLocator.CatalogGeneration(registry: .max, snapshot: .max)
 
     nonisolated static func matchInstalledMLXModel(
         named name: String,
@@ -1755,7 +1822,7 @@ extension ModelManager {
         // cards. Curated entries never pass through this gate — they merge
         // from `curatedSuggestedModels` directly.
         let raw = fetched.filter {
-            Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag)
+            Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag, tags: $0.tags)
         }
         guard !raw.isEmpty else { return }
 
@@ -1866,6 +1933,7 @@ extension ModelManager {
     func refreshSuggestedModels() async {
         isLoadingSuggested = true
         await loadOsaurusAIOrgModels()
+        await refreshModelUpdates(force: true)
         isLoadingSuggested = false
     }
 }
@@ -1906,6 +1974,8 @@ extension ModelManager {
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
+    nonisolated(unsafe) static var localModelsScanFinishedForTests: (@Sendable () -> Void)?
+    nonisolated(unsafe) static var localModelsDispatchWaitingForTests: (@Sendable () -> Void)?
 
     public nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -1950,10 +2020,11 @@ extension ModelManager {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 localModelsCacheCondition.lock()
-                if cachedLocalModels == nil && !localModelsScanInFlight {
-                    startLocalModelsScanLocked()
-                }
-                while cachedLocalModels == nil && localModelsScanInFlight {
+                while cachedLocalModels == nil {
+                    if !localModelsScanInFlight {
+                        startLocalModelsScanLocked()
+                    }
+                    localModelsDispatchWaitingForTests?()
                     localModelsCacheCondition.wait()
                 }
                 localModelsCacheCondition.unlock()
@@ -2040,10 +2111,20 @@ extension ModelManager {
     /// `localModelsCacheCondition` with `localModelsScanInFlight == false`.
     private nonisolated static func startLocalModelsScanLocked() {
         localModelsScanInFlight = true
+        // Invalidation starts a new catalog generation without waiting for old
+        // filesystem work. Only the scan that still owns this generation may
+        // publish or clear the current in-flight flag.
+        let scanGeneration = localModelsCacheGen
+        let finishedForTests = localModelsScanFinishedForTests
         DispatchQueue.global(qos: .utility).async {
+            defer { finishedForTests?() }
             let scanned = scanLocalModels()
 
             localModelsCacheCondition.lock()
+            guard localModelsCacheGen == scanGeneration else {
+                localModelsCacheCondition.unlock()
+                return
+            }
             cachedLocalModels = scanned
             localModelsScanInFlight = false
             localModelsCacheGen &+= 1

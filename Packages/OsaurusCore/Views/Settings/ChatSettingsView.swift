@@ -85,6 +85,13 @@ struct ChatSettingsView: View {
     /// excluded from the debounced save baseline.
     @AppStorage(NewChatShortcutSetting.defaultsKey)
     private var cmdNStartsNewChatInCurrentWindow: Bool = true
+    /// Run the macOS spell checker in the chat composer. Default off. Bound
+    /// to `UserDefaults` key `ComposerSpellCheckSetting.defaultsKey`, read
+    /// live by `FloatingInputCard` / `ClarifyPromptOverlay` and pushed into
+    /// the `NSTextView`. Applied immediately, so it's excluded from the
+    /// debounced save baseline.
+    @AppStorage(ComposerSpellCheckSetting.defaultsKey)
+    private var composerSpellCheckEnabled: Bool = ComposerSpellCheckSetting.defaultValue
     /// Model that runs LLM context compaction (summarizing older messages
     /// when a chat outgrows its context window). Same provider/name split
     /// as the Core Model picker; empty = "ask on first use" (the first-run
@@ -297,6 +304,7 @@ struct ChatSettingsView: View {
                         "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
                     isOn: $smoothStreamingEnabled
                 )
+                .settingsLandingAnchor("settings.chat.smoothStreaming")
 
                 SettingsToggle(
                     title: L("Expand Thinking While Streaming"),
@@ -304,6 +312,7 @@ struct ChatSettingsView: View {
                         "Keep the model's reasoning expanded while it is actively thinking, then collapse it automatically once the response begins. Useful for monitoring long-running agent tasks in real time.",
                     isOn: $expandThinkingWhileStreamingEnabled
                 )
+                .settingsLandingAnchor("settings.chat.thinkingDisplay")
 
                 SettingsToggle(
                     title: L("Group Thinking & Tool Activity"),
@@ -311,6 +320,7 @@ struct ChatSettingsView: View {
                         "Group consecutive thinking and tool-call rows into a single expandable summary row, so long agent runs don't push the conversation out of view. Turn off to always show every step as its own row.",
                     isOn: $activityRollupEnabled
                 )
+                .settingsLandingAnchor("settings.chat.activityRollup")
                 .onChange(of: activityRollupEnabled) { _, _ in
                     NotificationCenter.default.post(
                         name: ContentBlock.activityRollupSettingChanged,
@@ -324,6 +334,7 @@ struct ChatSettingsView: View {
                         "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files. Enable only if you trust the tools you have installed. Per-tool Deny policies still apply.",
                     isOn: autoAllowAllToolsBinding
                 )
+                .settingsLandingAnchor("settings.chat.autoAllowAllTools")
 
                 SettingsToggle(
                     title: L("⌘+N Starts a New Chat in the Current Window"),
@@ -334,11 +345,20 @@ struct ChatSettingsView: View {
                 .settingsLandingAnchor("settings.chat.cmdNNewChat")
 
                 SettingsToggle(
+                    title: L("Check Spelling While Typing"),
+                    description:
+                        "Use the macOS spell checker in the chat input: misspelled words are underlined and right-click offers corrections. Uses your System Settings language and dictionary. Autocorrect and smart quotes stay off.",
+                    isOn: $composerSpellCheckEnabled
+                )
+                .settingsLandingAnchor("settings.chat.spellCheck")
+
+                SettingsToggle(
                     title: L("Clipboard Monitoring"),
                     description:
                         "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
                     isOn: $tempEnableClipboardMonitoring
                 )
+                .settingsLandingAnchor("settings.chat.clipboard")
 
                 autoTitleToggleRow
 
@@ -352,7 +372,7 @@ struct ChatSettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         compactionModelPicker
                         Text(
-                            "Model used to summarize older messages when a chat outgrows its context window (context compaction). Remote models pass through your Privacy Filter. If unset, you'll be asked to pick a model the first time compaction runs.",
+                            "Model used to summarize older messages when a chat outgrows its context window (context compaction). Compaction runs automatically near the limit and on demand from the context budget popover. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
@@ -371,6 +391,7 @@ struct ChatSettingsView: View {
     @ViewBuilder private var generationSection: some View {
         SettingsSection(title: "Generation", icon: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: 12) {
+                contextWindowPointerRow
                 SettingsSliderField(
                     label: "Top P Override",
                     help: "Sampling diversity (0–1)",
@@ -512,6 +533,38 @@ struct ChatSettingsView: View {
         ManagementStateManager.shared.selectedTab = .settings
     }
 
+    /// The writable context cap lives on Server → Cache. Chat only points there
+    /// so we never recreate a competing editor.
+    private var contextWindowPointerRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Context Window Cap", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                Text(
+                    "Lower the default chat window under Server → Cache → Context & KV Policy. This Chat tab does not own that cap.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            }
+            Spacer(minLength: 8)
+            Button {
+                navigateToContextWindowCap()
+            } label: {
+                Text("Open setting", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(SettingsButtonStyle())
+        }
+    }
+
+    private func navigateToContextWindowCap() {
+        ManagementStateManager.shared.serverSectionRequest = "cache"
+        SettingsHighlightCoordinator.shared.request("settings.chat.contextLength")
+        ManagementStateManager.shared.selectedTab = .server
+    }
+
     // MARK: - Compaction Model Picker
 
     private var compactionModelIdentifierBinding: Binding<String> {
@@ -551,8 +604,8 @@ struct ChatSettingsView: View {
     }
 
     /// Same trigger + rich `ModelPickerView` popover as the General tab's
-    /// Core Model picker, with "unset" meaning "ask on first compaction run"
-    /// rather than a chat-model fallback.
+    /// Core Model picker, with "unset" meaning "summarize with the chat's
+    /// current model" (see `ContextCompactionService.effectiveModelIdentifier`).
     private var compactionModelPicker: some View {
         let currentId = compactionModelIdentifierBinding.wrappedValue
         let currentItem = compactionModelPickerItems.first { $0.id == currentId }
@@ -565,7 +618,7 @@ struct ChatSettingsView: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(currentId.isEmpty ? theme.tertiaryText : theme.accentColor)
                     if currentId.isEmpty {
-                        Text("Ask on first use (default)", bundle: .module)
+                        Text("Use the current chat model (default)", bundle: .module)
                             .font(.system(size: 13))
                             .foregroundColor(theme.placeholderText)
                     } else if let currentItem {
@@ -616,7 +669,7 @@ struct ChatSettingsView: View {
                         .foregroundColor(theme.tertiaryText)
                 }
                 .buttonStyle(.plain)
-                .localizedHelp("Ask on first use (default)")
+                .localizedHelp("Use the current chat model (default)")
             }
         }
         .frame(maxWidth: 320)

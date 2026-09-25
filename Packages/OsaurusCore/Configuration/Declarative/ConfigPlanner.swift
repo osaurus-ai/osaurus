@@ -29,11 +29,39 @@ enum ConfigRisk {
     static func autoPolicy(_ tool: String) -> String {
         "Sets tool `\(tool)` to auto — it will run without asking."
     }
+    /// A per-call approval tool (send / delete) cannot be made silent: the
+    /// registry forces `ask` at execution, so the stored `auto` is inert.
+    static func autoPolicyIgnoredPerCall(_ tool: String) -> String {
+        "Sets tool `\(tool)` to auto, but it always asks for approval on every call (it sends or deletes as the user) — the setting is stored and has no effect."
+    }
+    /// Argument-aware per-call tools (`mail_compose` / `mail_reply`): `auto`
+    /// covers drafts, never the `send: true` calls.
+    static func autoPolicySendsStillAsk(_ tool: String) -> String {
+        "Sets tool `\(tool)` to auto — drafts will run without asking; calls that send as the user still show an approval card every time."
+    }
     static func computerUse(_ agent: String) -> String {
         "Gives agent `\(agent)` screen control (computer use)."
     }
     static func browserUse(_ agent: String) -> String {
         "Gives agent `\(agent)` browser automation."
+    }
+    /// Apple apps whose tools can act on the user's behalf outside Osaurus
+    /// (send mail / iMessages, run arbitrary Shortcuts). Reads and the
+    /// organiser apps stay risk-free; the model still gets a per-call
+    /// approval prompt for each send.
+    static let riskyAppleApps: Set<AppleApp> = [.mail, .messages, .shortcuts]
+    static func appleApp(_ agent: String, _ app: AppleApp) -> String {
+        switch app {
+        case .mail: return "Lets agent `\(agent)` read and send email as the user (Mail)."
+        case .messages: return "Lets agent `\(agent)` read and send iMessages/SMS as the user (Messages)."
+        case .shortcuts: return "Lets agent `\(agent)` run the user's Shortcuts (arbitrary automations)."
+        default: return "Gives agent `\(agent)` access to \(app.displayName)."
+        }
+    }
+    /// Risk lines for the Apple apps newly turned on (present in `desired`,
+    /// absent from `current`) that are in `riskyAppleApps`.
+    static func appleAppRisks(_ agent: String, current: Set<AppleApp>, desired: Set<AppleApp>) -> [String] {
+        AppleApp.sorted(desired.subtracting(current).intersection(riskyAppleApps)).map { appleApp(agent, $0) }
     }
     static func relayEnabled(_ agent: String) -> String {
         "Exposes agent `\(agent)` through the relay tunnel (reachable from outside this Mac)."
@@ -44,7 +72,7 @@ enum ConfigRisk {
     static let applescriptAutoRun =
         "AppleScript automations auto-run with only a warning (no per-script confirmation)."
     static let ramPreflightDisabled =
-        "Disables the RAM-safety preflight for spawned subagent jobs."
+        "Turns off \"Check memory before delegating\" for subagent tasks."
     static func mcpEndpoint(_ name: String, _ url: String) -> String {
         "Registers external MCP endpoint for `\(name)`: \(url)"
     }
@@ -370,6 +398,14 @@ enum ConfigPlanner {
                 if !seen.insert(key).inserted {
                     issues.append("agents[\(entry.name)]: duplicate agent name in document.")
                 }
+                let existingAgent = AgentManager.shared.agents.first {
+                    !$0.isBuiltIn && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == key
+                }
+                if entry.description != nil || existingAgent == nil,
+                    let violation = AgentDescriptionPolicy.violation(in: entry.description ?? "")
+                {
+                    issues.append("agents[\(entry.name)].description: \(violation.message)")
+                }
                 checkRange(entry.temperature, 0.0...2.0, "agents[\(entry.name)].temperature", &issues)
                 checkRange(entry.maxTokens, 1...10_000_000, "agents[\(entry.name)].max_tokens", &issues)
                 if let ids = entry.capabilities?.knowledgeCollectionIds {
@@ -377,6 +413,14 @@ enum ConfigPlanner {
                         issues.append(
                             "agents[\(entry.name)].capabilities.knowledge_collection_ids: "
                                 + "`\(raw)` is not a UUID.")
+                    }
+                }
+                if let apps = entry.capabilities?.appleApps {
+                    for raw in apps where AppleApp.parse(raw) == nil {
+                        issues.append(
+                            "agents[\(entry.name)].capabilities.apple_apps: `\(raw)` is not a "
+                                + "built-in Apple app. Allowed: "
+                                + AppleApp.allCases.map(\.rawValue).joined(separator: ", ") + ".")
                     }
                 }
                 // A doc name colliding with a built-in (non-default) agent
@@ -395,7 +439,7 @@ enum ConfigPlanner {
             let key = active.lowercased()
             if key != "default" && !effectiveAgentNames(document: document, prune: prune).contains(key) {
                 issues.append(
-                    "active_agent: no agent named `\(active)` exists or is created by this document.")
+                    "new_chat_agent: no agent named `\(active)` exists or is created by this document.")
             }
         }
 
@@ -414,9 +458,6 @@ enum ConfigPlanner {
                 section.applescriptExecutionMode,
                 ConfigAppBehaviorEnums.applescriptExecutionModes,
                 "delegation.applescript_execution_mode", &issues)
-            checkEnum(
-                section.spawnToolAccess, ConfigAppBehaviorEnums.spawnToolAccessValues,
-                "delegation.spawn_tool_access", &issues)
             for (kind, raw) in (section.permissionDefaults ?? [:]).sorted(by: { $0.key < $1.key }) {
                 if !ConfigAppBehaviorEnums.permissionKindIds.contains(kind.lowercased()) {
                     issues.append(
@@ -439,12 +480,13 @@ enum ConfigPlanner {
             checkBudget(section.budgetMaxTokens, SubagentBudgets.tokenBounds, "budget_max_tokens")
             checkBudget(section.budgetMaxTurns, SubagentBudgets.turnBounds, "budget_max_turns")
             checkBudget(
-                section.budgetMaxToolCalls, SubagentBudgets.toolCallBounds, "budget_max_tool_calls")
-            checkBudget(
                 section.budgetMaxSeconds, SubagentBudgets.elapsedBounds, "budget_max_seconds")
             checkBudget(
                 section.budgetMaxParallelSpawns, SubagentBudgets.parallelSpawnBounds,
                 "budget_max_parallel_spawns")
+            checkBudget(
+                section.budgetMaxRemoteParallelSpawns, SubagentBudgets.remoteParallelSpawnBounds,
+                "budget_max_remote_parallel_spawns")
             // Spawn targets may be custom agents (existing or created by this
             // document) or built-in library agents — never the Default agent.
             var spawnTargets = effectiveAgentNames(document: document, prune: prune)
@@ -461,14 +503,14 @@ enum ConfigPlanner {
                             + "created by this document.")
                 }
             }
-            // Workspace targets are durable `<workspace_id>:<address>` keys;
-            // membership is not checked here (the roster may not be loaded),
-            // only the shape — execution probes the real agent at spawn time.
+            // Workspace targets: the durable `<workspace_id>:<address>` key is
+            // accepted by shape alone (the roster may not be loaded yet);
+            // `Name@Workspace`, a bare name or a `0x…` address must resolve
+            // against the live roster, and an ambiguous name lists the exact
+            // forms that disambiguate.
             for key in section.spawnableWorkspaceAgents ?? [] {
-                if WorkspaceAgentRef(key: key.trimmingCharacters(in: .whitespacesAndNewlines)) == nil {
-                    issues.append(
-                        "delegation.spawnable_workspace_agents: `\(key)` must be a "
-                            + "`<workspace_id>:<0x-agent-address>` key.")
+                if case .failure(let message) = ConfigApplier.resolveWorkspaceAgentKey(key) {
+                    issues.append("delegation.spawnable_workspace_agents: " + message)
                 }
             }
         }
@@ -1087,8 +1129,8 @@ enum ConfigPlanner {
         guard desired.lowercased() != current.lowercased() else { return }
         actions.append(
             ConfigPlanAction(
-                section: "active_agent", target: desired, kind: .update,
-                changes: ["active agent: \(current) -> \(desired)"]))
+                section: ConfigSectionID.activeAgent.rawValue, target: desired, kind: .update,
+                changes: ["new-chat agent: \(current) -> \(desired)"]))
     }
 
     // MARK: - Agents
@@ -1134,12 +1176,20 @@ enum ConfigPlanner {
                 }
             } else {
                 var changes: [String] = ["create custom agent `\(entry.name)`"]
+                if let description = entry.description {
+                    changes.append("description: \(description)")
+                }
                 var risks: [String] = []
                 if let model = entry.model.valueOrNil { changes.append("model: \(model)") }
                 if let caps = entry.capabilities {
                     if caps.computerUseEnabled == true { risks.append(ConfigRisk.computerUse(entry.name)) }
                     if caps.browserUseEnabled == true { risks.append(ConfigRisk.browserUse(entry.name)) }
                     if caps.relayEnabled == true { risks.append(ConfigRisk.relayEnabled(entry.name)) }
+                    if let apps = Self.appleApps(from: caps), !apps.isEmpty {
+                        changes.append(
+                            "apple_apps: enable " + AppleApp.sorted(apps).map(\.displayName).joined(separator: ", "))
+                        risks.append(contentsOf: ConfigRisk.appleAppRisks(entry.name, current: [], desired: apps))
+                    }
                 }
                 actions.append(
                     ConfigPlanAction(
@@ -1194,6 +1244,12 @@ enum ConfigPlanner {
             "browser_use_enabled", desired: caps.browserUseEnabled,
             current: agent.settings.browserUseEnabled, into: &changes)
         diff(
+            "image_enabled", desired: caps.imageEnabled,
+            current: agent.settings.imageEnabled, into: &changes)
+        diff(
+            "applescript_enabled", desired: caps.applescriptEnabled,
+            current: agent.settings.appleScriptEnabled, into: &changes)
+        diff(
             "speak_enabled", desired: caps.speakEnabled,
             current: agent.settings.speakEnabled, into: &changes)
         diff(
@@ -1201,6 +1257,13 @@ enum ConfigPlanner {
             current: agent.settings.renderChartEnabled, into: &changes)
         let currentRelay = RelayConfigurationStore.load().isEnabled(for: agent.id)
         diff("relay_enabled", desired: caps.relayEnabled, current: currentRelay, into: &changes)
+        if let desiredApps = Self.appleApps(from: caps) {
+            let current = agent.settings.enabledAppleApps
+            if desiredApps != current {
+                changes.append(contentsOf: appleAppsChangeLines(current: current, desired: desiredApps))
+                risks.append(contentsOf: ConfigRisk.appleAppRisks(agent.name, current: current, desired: desiredApps))
+            }
+        }
         if caps.computerUseEnabled == true && !agent.settings.computerUseEnabled {
             risks.append(ConfigRisk.computerUse(agent.name))
         }
@@ -1210,6 +1273,28 @@ enum ConfigPlanner {
         if caps.relayEnabled == true && !currentRelay {
             risks.append(ConfigRisk.relayEnabled(agent.name))
         }
+    }
+
+    /// Resolve `capabilities.apple_apps` into the enum set (nil when the
+    /// key is absent; unknown names were already rejected by `validate`).
+    static func appleApps(from caps: AgentCapabilitiesEntry) -> Set<AppleApp>? {
+        guard let raw = caps.appleApps else { return nil }
+        return Set(raw.compactMap(AppleApp.parse))
+    }
+
+    /// Plan-card rows for an Apple apps change: one "enable …" and/or one
+    /// "disable …" line naming the apps by display name.
+    static func appleAppsChangeLines(current: Set<AppleApp>, desired: Set<AppleApp>) -> [String] {
+        var lines: [String] = []
+        let added = AppleApp.sorted(desired.subtracting(current))
+        let removed = AppleApp.sorted(current.subtracting(desired))
+        if !added.isEmpty {
+            lines.append("apple_apps: enable " + added.map(\.displayName).joined(separator: ", "))
+        }
+        if !removed.isEmpty {
+            lines.append("apple_apps: disable " + removed.map(\.displayName).joined(separator: ", "))
+        }
+        return lines
     }
 
     // MARK: - Tools
@@ -1238,7 +1323,15 @@ enum ConfigPlanner {
             let current = registry.configuredPolicy(for: tool) ?? .ask
             if current != policy {
                 changes.append("\(tool): policy \(current.rawValue) -> \(policy.rawValue)")
-                if policy == .auto { risks.append(ConfigRisk.autoPolicy(tool)) }
+                if policy == .auto {
+                    if registry.requiresPerCallApproval(tool) {
+                        risks.append(ConfigRisk.autoPolicyIgnoredPerCall(tool))
+                    } else if registry.mayRequirePerCallApproval(tool) {
+                        risks.append(ConfigRisk.autoPolicySendsStillAsk(tool))
+                    } else {
+                        risks.append(ConfigRisk.autoPolicy(tool))
+                    }
+                }
             }
         }
         guard !changes.isEmpty else { return }
@@ -1259,11 +1352,7 @@ enum ConfigPlanner {
         diff(
             "local_text_enabled", desired: desired.localTextEnabled,
             current: current.localTextEnabled, into: &changes)
-        diff("image_enabled", desired: desired.imageEnabled, current: current.imageEnabled, into: &changes)
         diff("video_enabled", desired: desired.videoEnabled, current: current.videoEnabled, into: &changes)
-        diff(
-            "applescript_enabled", desired: desired.applescriptEnabled,
-            current: current.applescriptEnabled, into: &changes)
         diff(
             "applescript_execution_mode", desired: desired.applescriptExecutionMode?.lowercased(),
             current: current.applescriptExecutionMode, into: &changes)
@@ -1271,15 +1360,16 @@ enum ConfigPlanner {
             "spawnable_agents", desired: desired.spawnableAgents,
             current: current.spawnableAgents, into: &changes)
         diffList(
-            "spawnable_models", desired: desired.spawnableModels,
-            current: current.spawnableModels, into: &changes)
-        diffList(
             "spawnable_workspace_agents",
             desired: desired.spawnableWorkspaceAgents?.map { $0.lowercased() },
             current: current.spawnableWorkspaceAgents?.map { $0.lowercased() }, into: &changes)
-        diff(
-            "spawn_tool_access", desired: desired.spawnToolAccess?.lowercased(),
-            current: current.spawnToolAccess, into: &changes)
+        for (key, autoJoin) in (desired.workspaceAutoJoin ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let currentValue = current.workspaceAutoJoin?[key] ?? true
+            if autoJoin != currentValue {
+                changes.append("workspace_auto_join[\(key)]: \(currentValue) → \(autoJoin)")
+            }
+        }
+        for hint in desired.removedKeyHints { changes.append("(ignored) " + hint) }
         let normalizedDefaults = desired.permissionDefaults.map { map in
             Dictionary(
                 map.map { ($0.key.lowercased(), $0.value.lowercased()) },
@@ -1295,14 +1385,14 @@ enum ConfigPlanner {
             "budget_max_turns", desired: desired.budgetMaxTurns,
             current: current.budgetMaxTurns, into: &changes)
         diff(
-            "budget_max_tool_calls", desired: desired.budgetMaxToolCalls,
-            current: current.budgetMaxToolCalls, into: &changes)
-        diff(
             "budget_max_seconds", desired: desired.budgetMaxSeconds,
             current: current.budgetMaxSeconds, into: &changes)
         diff(
             "budget_max_parallel_spawns", desired: desired.budgetMaxParallelSpawns,
             current: current.budgetMaxParallelSpawns, into: &changes)
+        diff(
+            "budget_max_remote_parallel_spawns", desired: desired.budgetMaxRemoteParallelSpawns,
+            current: current.budgetMaxRemoteParallelSpawns, into: &changes)
         diff(
             "ram_safety_preflight", desired: desired.ramSafetyPreflight,
             current: current.ramSafetyPreflight, into: &changes)

@@ -566,6 +566,18 @@ enum RedactionFileAccess {
                     tool: tool
                 ))
         }
+        // Documents scan as text only after extraction: point at file_read
+        // rather than failing on the binary bytes.
+        if let rejected = WorkspaceWriteSafety.documentEditRejection(
+            path: relativePath,
+            fileExtension: fileURL.pathExtension.lowercased(),
+            toolName: tool,
+            regenerateHint:
+                "run `detect_pii` on that extracted text (write it to a `.txt`/`.md` first) and regenerate a redacted copy with `file_write` as `.docx`/`.pdf`.",
+            verb: "scan"
+        ) {
+            return .failureEnvelope(rejected)
+        }
         switch WorkspaceWriteSafety.existingText(
             at: fileURL, relativePath: relativePath, toolName: tool)
         {
@@ -598,10 +610,12 @@ enum RedactionFileAccess {
             return .failureEnvelope(
                 FolderToolHelpers.secretWriteRefusalEnvelope(relativePath: relativePath, tool: tool))
         }
-        if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
+        if let rejected = WorkspaceWriteSafety.documentEditRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
-            toolName: tool
+            toolName: tool,
+            regenerateHint:
+                "redact the extracted text and regenerate it with `file_write` as `.docx` or `.pdf` (or `.xlsx` for spreadsheets)."
         ) {
             return .failureEnvelope(rejected)
         }

@@ -1097,12 +1097,13 @@ public actor MemoryService {
                 )
                 debounceTasks[conversationId] = nil
                 return .skipped(reason: reason)
-            case .timedOut:
-                // A persistently-too-slow session DOES count toward the cap so
-                // it eventually dead-letters instead of timing out forever.
+            case .timedOut, .unresponsive:
+                // A persistently-too-slow (or wedged-before-first-token) session
+                // DOES count toward the cap so it eventually dead-letters
+                // instead of timing out forever.
                 MemoryLogger.service.error("distill: timed out for \(conversationId)")
                 return recordRetryableDistillFailure(
-                    message: "timed_out",
+                    message: coreErr == .timedOut ? "timed_out" : "unresponsive",
                     agentId: agentId,
                     conversationId: conversationId,
                     coreModelId: coreModelId,

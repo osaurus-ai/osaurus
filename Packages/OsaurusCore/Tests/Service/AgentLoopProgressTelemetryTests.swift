@@ -6,6 +6,35 @@ import Testing
 @Suite("Agent-loop progress and throughput attribution")
 struct AgentLoopProgressTelemetryTests {
 
+    @Test("only generated output starts first-token timing")
+    func metadataDoesNotStartFirstTokenTiming() {
+        let metadata = [
+            "",
+            StreamingInputTokenHint.encode(2558),
+            StreamingStatsHint.encode(tokenCount: 0, tokensPerSecond: 0),
+            "\u{FFFE}future_metric:42",
+            StreamingToolHint.encode(""),
+            StreamingToolHint.encodeArgs(""),
+            StreamingReasoningHint.encode(""),
+            StreamingToolCallProgressHint.encode(""),
+            StreamingToolHint.encodeDone(callId: "a", name: "lookup", arguments: "{}", result: "ok"),
+        ]
+        for delta in metadata {
+            #expect(!AgentLoopStepProgressTracker.isGeneratedOutput(delta))
+        }
+        let generated = [
+            "The image shows a red square.",
+            " ",
+            StreamingReasoningHint.encode("Inspect the image"),
+            StreamingToolHint.encode("file_read"),
+            StreamingToolHint.encodeArgs("{"),
+            StreamingToolCallProgressHint.encode("<tool_call>"),
+        ]
+        for delta in generated {
+            #expect(AgentLoopStepProgressTracker.isGeneratedOutput(delta))
+        }
+    }
+
     @Test("reasoning deltas emit first and periodic count-only progress")
     func periodicReasoningProgress() {
         let startedAt = Date(timeIntervalSince1970: 1_000)

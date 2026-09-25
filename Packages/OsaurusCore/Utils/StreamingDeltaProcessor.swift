@@ -72,13 +72,11 @@ final class StreamingDeltaProcessor {
     /// notice. Nil until `hasDetectedRepetitionLoop` is true.
     var repeatedPhrase: String? { repetitionDetector.repeatedPhrase }
 
-    /// Continuation resumed by `pacingTick` the first time it observes
-    /// an empty `deltaBuffer` after `finalize()` started awaiting. Lets
-    /// the caller's `await processor.finalize()` block until the smooth
-    /// streaming tail has fully typed out — without this, the processor
-    /// deallocates the moment `send()` returns and the residual buffer
-    /// is silently dropped.
-    private var pacingDoneContinuation: CheckedContinuation<Void, Never>?
+    /// Both the engine-completion relay and the stream consumer can finalize
+    /// the same tail. MainActor methods are reentrant across the await, so
+    /// retain every waiter: replacing a single continuation strands the
+    /// earlier caller and leaves Chat's Stop control active after generation.
+    private var pacingDoneContinuations: [CheckedContinuation<Void, Never>] = []
 
     /// Paced-reveal state. When `smoothStreamingEnabled` is on, incoming
     /// deltas accumulate in `deltaBuffer` but are revealed to the UI at a
@@ -137,6 +135,7 @@ final class StreamingDeltaProcessor {
         pacingTimer = nil
         flushTimer?.invalidate()
         flushTimer = nil
+        for continuation in pacingDoneContinuations { continuation.resume() }
     }
 
     // MARK: - Public API
@@ -226,7 +225,7 @@ final class StreamingDeltaProcessor {
                 // resumes us. The processor stays alive for the duration
                 // because the surrounding `send(...)` is awaiting.
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    self.pacingDoneContinuation = continuation
+                    self.pacingDoneContinuations.append(continuation)
                 }
             }
         } else if pendingCount > 0 {
@@ -241,6 +240,7 @@ final class StreamingDeltaProcessor {
     func reset(turn: ChatTurn) {
         invalidateTimer()
         stopPacingTimer()
+        resumePacingDoneIfNeeded()
         self.turn = turn
         clearBuffer()
         contentLength = 0
@@ -279,9 +279,9 @@ final class StreamingDeltaProcessor {
     }
 
     private func resumePacingDoneIfNeeded() {
-        guard let cont = pacingDoneContinuation else { return }
-        pacingDoneContinuation = nil
-        cont.resume()
+        let continuations = pacingDoneContinuations
+        pacingDoneContinuations.removeAll()
+        for continuation in continuations { continuation.resume() }
     }
 
     /// Drain a chunk from the head of `deltaBuffer` into the turn + push

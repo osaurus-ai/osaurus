@@ -20,6 +20,17 @@ public enum FileOperationType: String, Codable, Sendable {
     case dirCreate  // New directory created
 }
 
+// MARK: - Previous content encoding
+
+/// How `FileOperation.previousContent` is stored. `utf8` is the plain
+/// text body (historical default); `base64` carries arbitrary bytes so a
+/// binary document (`.docx`, `.xlsx`, `.pdf`, image) overwritten by
+/// `file_write` / `file_copy` restores exactly on undo.
+public enum FileOperationContentEncoding: String, Codable, Sendable {
+    case utf8
+    case base64
+}
+
 // MARK: - File Operation
 
 /// A recorded file operation that can be undone.
@@ -29,6 +40,9 @@ public struct FileOperation: Codable, Sendable, Identifiable {
     public let path: String  // Relative path from root
     public let destinationPath: String?  // For move/copy operations
     public let previousContent: String?  // For write/delete (to restore)
+    /// Encoding of `previousContent`. Absent in entries logged before
+    /// binary-safe undo existed, which decodes as `.utf8`.
+    public let previousContentEncoding: FileOperationContentEncoding?
     public let timestamp: Date
     /// Owning chat session id (used to scope undo per conversation).
     public let sessionId: String
@@ -45,6 +59,7 @@ public struct FileOperation: Codable, Sendable, Identifiable {
         path: String,
         destinationPath: String? = nil,
         previousContent: String? = nil,
+        previousContentEncoding: FileOperationContentEncoding? = nil,
         timestamp: Date = Date(),
         sessionId: String,
         batchId: UUID? = nil,
@@ -55,6 +70,7 @@ public struct FileOperation: Codable, Sendable, Identifiable {
         self.path = path
         self.destinationPath = destinationPath
         self.previousContent = previousContent
+        self.previousContentEncoding = previousContentEncoding
         self.timestamp = timestamp
         self.sessionId = sessionId
         self.batchId = batchId
@@ -96,6 +112,33 @@ extension FileOperation {
     /// Display filename (last path component)
     public var filename: String {
         (path as NSString).lastPathComponent
+    }
+
+    /// Build the `previousContent` fields for arbitrary bytes: UTF-8 text
+    /// stays readable in history; anything else is base64.
+    public static func encodePreviousContent(_ data: Data?) -> (
+        content: String?, encoding: FileOperationContentEncoding?
+    ) {
+        guard let data else { return (nil, nil) }
+        if let text = String(data: data, encoding: .utf8) {
+            return (text, .utf8)
+        }
+        return (data.base64EncodedString(), .base64)
+    }
+
+    /// Bytes to restore on undo, honouring the stored encoding.
+    public var previousContentData: Data? {
+        guard let previousContent else { return nil }
+        switch previousContentEncoding ?? .utf8 {
+        case .utf8: return previousContent.data(using: .utf8)
+        case .base64: return Data(base64Encoded: previousContent)
+        }
+    }
+
+    /// `text` or `binary`, for history entries.
+    public var contentKind: String? {
+        guard previousContent != nil else { return nil }
+        return (previousContentEncoding ?? .utf8) == .base64 ? "binary" : "text"
     }
 
     /// Display path for destination (for move/copy)

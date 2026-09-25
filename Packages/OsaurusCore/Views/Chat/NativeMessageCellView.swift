@@ -148,6 +148,10 @@ final class NativeHeaderView: NSView {
     /// Assistant turn that answered this message; backs the overflow menu's
     /// "Inspect response". Nil when there's no reply yet.
     private var responseTurnId: UUID?
+    /// False for enveloped user turns (channel / delegated / scheduled /
+    /// watcher), whose stored content is a dispatch contract rather than
+    /// text the user typed — hand-editing it is never meaningful.
+    private var allowsEdit = true
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
     private var onEdit: ((UUID) -> Void)?
@@ -238,6 +242,7 @@ final class NativeHeaderView: NSView {
         isHovered: Bool,
         timestamp: Date = Date(),
         responseTurnId: UUID? = nil,
+        allowsEdit: Bool = true,
         theme: any ThemeProtocol,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
@@ -248,6 +253,7 @@ final class NativeHeaderView: NSView {
         self.turnId = turnId
         self.messageTimestamp = timestamp
         self.responseTurnId = responseTurnId
+        self.allowsEdit = allowsEdit
         self.isEditing = isEditing
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
@@ -417,9 +423,11 @@ final class NativeHeaderView: NSView {
             guard let self else { return }
             self.onCopy?(self.turnId)
         }
-        addBtn(icon: "pencil", help: L("Edit"), theme: theme, tint: nil) { [weak self] in
-            guard let self else { return }
-            self.onEdit?(self.turnId)
+        if allowsEdit {
+            addBtn(icon: "pencil", help: L("Edit"), theme: theme, tint: nil) { [weak self] in
+                guard let self else { return }
+                self.onEdit?(self.turnId)
+            }
         }
         addBtn(icon: "trash", help: L("Delete"), theme: theme, tint: nil) { [weak self] in
             guard let self else { return }
@@ -1498,8 +1506,34 @@ final class NativeStatsView: NSView {
         tokenCount: Int?,
         unclosedReasoning: Bool = false,
         modelLoad: TimeInterval? = nil,
+        cachedInputTokens: Int? = nil,
         theme: any ThemeProtocol
     ) {
+        label.stringValue = Self.statsText(
+            ttft: ttft,
+            tokensPerSecond: tokensPerSecond,
+            tokenCount: tokenCount,
+            unclosedReasoning: unclosedReasoning,
+            modelLoad: modelLoad,
+            cachedInputTokens: cachedInputTokens
+        )
+        label.font = NSFont.monospacedDigitSystemFont(
+            ofSize: CGFloat(theme.captionSize) - 1,
+            weight: .regular
+        )
+        label.textColor = NSColor(theme.tertiaryText)
+    }
+
+    /// Pure footer text so the chip composition is unit-testable without a
+    /// view hierarchy.
+    static func statsText(
+        ttft: TimeInterval?,
+        tokensPerSecond: Double?,
+        tokenCount: Int?,
+        unclosedReasoning: Bool = false,
+        modelLoad: TimeInterval? = nil,
+        cachedInputTokens: Int? = nil
+    ) -> String {
         var parts: [String] = []
         if let ttft {
             if ttft < 0.01 {
@@ -1521,6 +1555,12 @@ final class NativeStatsView: NSView {
         if let count = tokenCount {
             parts.append(count == 1 ? L("1 token") : L("\(count) tokens"))
         }
+        // Prompt-cache hits: input the provider served from its cache (and,
+        // through Router or direct BYOK, billed at the discounted rate).
+        // Suppressed at zero so uncached turns look exactly as before.
+        if let cachedInputTokens, cachedInputTokens > 0 {
+            parts.append(String(format: L("%@ cached"), cachedInputTokens.formatted()))
+        }
         // Trailing diagnostic chip — vmlx tells us the model never emitted
         // `</think>` (or the family's close tag) before EOS / max_tokens.
         // Three observed scenarios all benefit from the same hint:
@@ -1538,12 +1578,7 @@ final class NativeStatsView: NSView {
         if unclosedReasoning {
             parts.append(L("⚠ thinking didn't close — answer may be in reasoning above"))
         }
-        label.stringValue = parts.joined(separator: " \u{2022} ")
-        label.font = NSFont.monospacedDigitSystemFont(
-            ofSize: CGFloat(theme.captionSize) - 1,
-            weight: .regular
-        )
-        label.textColor = NSColor(theme.tertiaryText)
+        return parts.joined(separator: " \u{2022} ")
     }
 
     /// Seconds below a minute, m/s above it. A cold 27 GB bundle can take
@@ -1691,6 +1726,12 @@ final class NativeMessageCellView: NSTableCellView {
     private var userInlineEditView: UserMessageInlineEditView?
     private var userImageStack: NSStackView?
     private var userDocumentStack: NSStackView?
+    /// Provenance chips above an enveloped user bubble (channel / delegated /
+    /// scheduled / watcher). Nil for ordinary typed messages.
+    private var userBadgeRow: NativeDispatchBadgeRow?
+    /// Signature of the badge set the current user-message layout was built
+    /// for; a change forces a rebuild, anything else reuses the views.
+    private var userEnvelopeSignature: String?
     private var nativePendingView: NativePendingToolCallView?
     private var nativeTypingView: NativeTypingIndicatorView?
     private var nativeArtifactView: NativeArtifactCardView?
@@ -1864,13 +1905,14 @@ final class NativeMessageCellView: NSTableCellView {
         case let .activityGroup(children):
             configureAsActivityGroup(block: block, children: children, context: context, sameKind: sameKind)
 
-        case let .userMessage(text, attachments, timestamp, responseTurnId):
+        case let .userMessage(text, attachments, timestamp, responseTurnId, envelope):
             configureAsUserMessage(
                 block: block,
                 text: text,
                 attachments: attachments,
                 timestamp: timestamp,
                 responseTurnId: responseTurnId,
+                envelope: envelope,
                 context: context,
                 sameKind: sameKind
             )
@@ -1885,8 +1927,8 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
-        case .typingIndicator:
-            configureAsTypingIndicator(context: context, sameKind: sameKind)
+        case let .typingIndicator(phase):
+            configureAsTypingIndicator(phase: phase, context: context, sameKind: sameKind)
 
         case let .sharedArtifact(artifact):
             configureAsArtifact(block: block, artifact: artifact, context: context, sameKind: sameKind)
@@ -1897,13 +1939,14 @@ final class NativeMessageCellView: NSTableCellView {
         case let .fileDiff(diff):
             configureAsFileDiff(block: block, diff: diff, context: context, sameKind: sameKind)
 
-        case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning, modelLoad):
+        case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning, modelLoad, cachedInputTokens):
             configureAsStats(
                 ttft: ttft,
                 tokensPerSecond: tokensPerSecond,
                 tokenCount: tokenCount,
                 unclosedReasoning: unclosedReasoning,
                 modelLoad: modelLoad,
+                cachedInputTokens: cachedInputTokens,
                 context: context,
                 sameKind: sameKind
             )
@@ -2385,10 +2428,11 @@ final class NativeMessageCellView: NSTableCellView {
 
     private func configureAsUserMessage(
         block: ContentBlock,
-        text: String,
+        text rawText: String,
         attachments: [Attachment],
         timestamp: Date,
         responseTurnId: UUID?,
+        envelope: DispatchEnvelope?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2396,6 +2440,13 @@ final class NativeMessageCellView: NSTableCellView {
         let documents = attachments.filter(\.isDocument)
         let theme = context.theme
         let innerWidth = max(context.width - 32, 100)
+
+        // An enveloped turn (channel message, delegated task, …) paints the
+        // human-authored text; the raw envelope stays in `rawText` for the
+        // inline-edit fallback only.
+        let text = envelope?.displayText ?? rawText
+        let badges = envelope?.badges ?? []
+        let badgeSignature = badges.isEmpty ? nil : NativeDispatchBadgeRow.signature(for: badges)
 
         let wantsInlineEdit =
             context.editingTurnId == block.turnId
@@ -2436,21 +2487,44 @@ final class NativeMessageCellView: NSTableCellView {
             !sameKind
             || userMessageContainer == nil
             || userMessageInlineEditActive != wantsInlineEdit
+            || userEnvelopeSignature != badgeSignature
 
         if needsUserMessageRebuild {
             removeAllContentViews()
 
-            // Compute attachment heights (needed for fittingSize measurement later).
-            let docGap: CGFloat = 6
-            let imgGap: CGFloat = 6
+            // Compute the heights stacked above the bubble (needed for
+            // fittingSize measurement later): badge row, documents, images,
+            // and the 6pt gaps between them. Mirrors
+            // `NativeCellHeightEstimator.estimatedHeight(.userMessage)`.
+            let innerGap: CGFloat = 6
             let outerTopGap: CGFloat = 8
             var attachH: CGFloat = 0
-            if !documents.isEmpty { attachH += 26 }
-            if !images.isEmpty { attachH += (documents.isEmpty ? 0 : imgGap) + 96 }
+            if !badges.isEmpty { attachH += NativeDispatchBadgeRow.rowHeight }
+            if !documents.isEmpty { attachH += (attachH > 0 ? innerGap : 0) + 26 }
+            if !images.isEmpty { attachH += (attachH > 0 ? innerGap : 0) + 96 }
             userAttachmentsHeight = attachH
+            userEnvelopeSignature = badgeSignature
 
-            // Attachments sit at cell level (right-aligned), above the bubble.
+            // Provenance row, attachments, then the bubble — all right-aligned
+            // at cell level. `nextGap` is the outer top inset for the first
+            // element and the inner gap for every element after it.
             var cellTopAnchor = topAnchor
+            var nextGap = outerTopGap
+
+            if !badges.isEmpty {
+                let row = NativeDispatchBadgeRow()
+                addSubview(row)
+                NSLayoutConstraint.activate([
+                    row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                    row.topAnchor.constraint(equalTo: cellTopAnchor, constant: nextGap),
+                    row.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+                ])
+                userBadgeRow = row
+                cellTopAnchor = row.bottomAnchor
+                nextGap = innerGap
+            } else {
+                userBadgeRow = nil
+            }
 
             if !documents.isEmpty {
                 let stack = NSStackView()
@@ -2460,12 +2534,13 @@ final class NativeMessageCellView: NSTableCellView {
                 addSubview(stack)
                 NSLayoutConstraint.activate([
                     stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-                    stack.topAnchor.constraint(equalTo: cellTopAnchor, constant: outerTopGap),
+                    stack.topAnchor.constraint(equalTo: cellTopAnchor, constant: nextGap),
                     stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
                 ])
                 stack.alignment = .centerY
                 userDocumentStack = stack
                 cellTopAnchor = stack.bottomAnchor
+                nextGap = innerGap
             } else {
                 userDocumentStack = nil
             }
@@ -2478,16 +2553,14 @@ final class NativeMessageCellView: NSTableCellView {
                 addSubview(stack)
                 NSLayoutConstraint.activate([
                     stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-                    stack.topAnchor.constraint(
-                        equalTo: cellTopAnchor,
-                        constant: documents.isEmpty ? outerTopGap : docGap
-                    ),
+                    stack.topAnchor.constraint(equalTo: cellTopAnchor, constant: nextGap),
                     stack.heightAnchor.constraint(equalToConstant: 96),
                     stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
                 ])
                 stack.alignment = .top
                 userImageStack = stack
                 cellTopAnchor = stack.bottomAnchor
+                nextGap = innerGap
             } else {
                 userImageStack = nil
             }
@@ -2499,11 +2572,10 @@ final class NativeMessageCellView: NSTableCellView {
                 container.wantsLayer = true
                 container.layer?.masksToBounds = false
                 addSubview(container)
-                let hasAbove = !documents.isEmpty || !images.isEmpty
                 let wc = container.widthAnchor.constraint(equalToConstant: bubbleWidth)
                 NSLayoutConstraint.activate([
                     container.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-                    container.topAnchor.constraint(equalTo: cellTopAnchor, constant: hasAbove ? imgGap : outerTopGap),
+                    container.topAnchor.constraint(equalTo: cellTopAnchor, constant: nextGap),
                     wc,
                 ])
                 userBubbleWidthConstraint = wc
@@ -2550,7 +2622,7 @@ final class NativeMessageCellView: NSTableCellView {
 
             // The hover action buttons anchor off the bubble when present,
             // or the first attachment stack otherwise — sitting just below it.
-            let anchorView = userMessageContainer ?? userImageStack ?? userDocumentStack
+            let anchorView = userMessageContainer ?? userImageStack ?? userDocumentStack ?? userBadgeRow
             if let anchorView {
                 let hv = NativeHeaderView()
                 hv.translatesAutoresizingMaskIntoConstraints = false
@@ -2698,7 +2770,15 @@ final class NativeMessageCellView: NSTableCellView {
             }
         }
 
-        // Configure hover action buttons (no name label for user messages)
+        // Provenance chips: cheap to re-push (theme colors may have changed);
+        // the chip content itself is skipped when the signature is unchanged.
+        if !badges.isEmpty {
+            userBadgeRow?.configure(badges: badges, theme: theme)
+        }
+
+        // Configure hover action buttons (no name label for user messages).
+        // An enveloped turn hides Edit: hand-editing the wire envelope would
+        // replace the dispatch contract with free text.
         nativeHeaderView?.configure(
             turnId: block.turnId,
             role: .user,
@@ -2709,6 +2789,7 @@ final class NativeMessageCellView: NSTableCellView {
             isHovered: context.isTurnHovered,
             timestamp: timestamp,
             responseTurnId: responseTurnId,
+            allowsEdit: envelope == nil,
             theme: context.theme,
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
@@ -2750,7 +2831,11 @@ final class NativeMessageCellView: NSTableCellView {
 
     // MARK: - TypingIndicator
 
-    private func configureAsTypingIndicator(context: CellRenderingContext, sameKind: Bool) {
+    private func configureAsTypingIndicator(
+        phase: TypingIndicatorPhase,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
         if !sameKind || nativeTypingView == nil {
             removeAllContentViews()
             let tv = NativeTypingIndicatorView()
@@ -2764,7 +2849,7 @@ final class NativeMessageCellView: NSTableCellView {
             ])
             nativeTypingView = tv
         }
-        nativeTypingView?.configure(theme: context.theme)
+        nativeTypingView?.configure(theme: context.theme, phase: phase)
     }
 
     // MARK: - GenerationStats
@@ -2775,6 +2860,7 @@ final class NativeMessageCellView: NSTableCellView {
         tokenCount: Int?,
         unclosedReasoning: Bool,
         modelLoad: TimeInterval?,
+        cachedInputTokens: Int?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2798,6 +2884,7 @@ final class NativeMessageCellView: NSTableCellView {
             tokenCount: tokenCount,
             unclosedReasoning: unclosedReasoning,
             modelLoad: modelLoad,
+            cachedInputTokens: cachedInputTokens,
             theme: context.theme
         )
     }
@@ -3150,6 +3237,8 @@ final class NativeMessageCellView: NSTableCellView {
         // subviews on the next reuse.
         userImageStack?.removeFromSuperview(); userImageStack = nil
         userDocumentStack?.removeFromSuperview(); userDocumentStack = nil
+        userBadgeRow?.removeFromSuperview(); userBadgeRow = nil
+        userEnvelopeSignature = nil
         userBubbleWidthConstraint = nil
         userAttachmentsHeight = 0
         userMessageInlineEditActive = false
@@ -3495,16 +3584,23 @@ enum NativeCellHeightEstimator {
             let lines = max(1, (text.count + chars - 1) / chars)
             return CGFloat(lines) * 22 + 24
 
-        case let .userMessage(text, attachments, _, _):
+        case let .userMessage(rawText, attachments, _, _, envelope):
+            // Enveloped turns paint the human-authored text under a badge row.
+            let text = envelope?.displayText ?? rawText
+            let hasBadges = !(envelope?.badges.isEmpty ?? true)
             var h: CGFloat = 8  // outerTopGap
             let innerW = max(width - 32, 100)
 
-            // Attachments above bubble (fixed heights)
+            // Stacked above the bubble (fixed heights, 6pt gaps), mirroring
+            // `configureAsUserMessage`: badge row, documents, images.
             let docCount = attachments.filter(\.isDocument).count
             let imageCount = attachments.filter(\.isImage).count
-            if docCount > 0 { h += 26 }
-            if imageCount > 0 { h += (docCount > 0 ? 6 : 0) + 96 }
-            if (docCount > 0 || imageCount > 0) && !text.isEmpty { h += 6 }  // gap to bubble
+            var above: CGFloat = 0
+            if hasBadges { above += NativeDispatchBadgeRow.rowHeight }
+            if docCount > 0 { above += (above > 0 ? 6 : 0) + 26 }
+            if imageCount > 0 { above += (above > 0 ? 6 : 0) + 96 }
+            h += above
+            if above > 0 && !text.isEmpty { h += 6 }  // gap to bubble
 
             // Text bubble (10pt top + text + 10pt bottom)
             if !text.isEmpty {
@@ -3524,7 +3620,7 @@ enum NativeCellHeightEstimator {
 
             // Actions footer (copy / edit / delete) reserved below the bubble,
             // matching the constraints in `configureAsUserMessage`.
-            if !text.isEmpty || docCount > 0 || imageCount > 0 {
+            if !text.isEmpty || above > 0 {
                 h += userActionsFooterHeight
             }
 

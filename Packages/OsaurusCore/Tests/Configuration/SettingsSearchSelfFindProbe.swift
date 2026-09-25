@@ -12,6 +12,15 @@ import Testing
 @Suite("settings search self-findability")
 struct SettingsSearchSelfFindProbe {
 
+    @Test("delegation RAM safety is shared config, not a UI-only control")
+    func ramSafetyCatalogNamesWritableSection() throws {
+        let entry = try #require(SettingsSearchIndex.entries.first {
+            $0.id == "settings.orchestrator.delegation.ramSafety"
+        })
+        #expect(entry.declarativeSection == "delegation")
+        #expect(!entry.isSettingsUIOnly)
+    }
+
     @Test("every entry is findable by its own title")
     func everyEntryFindsItselfByTitle() {
         let unfindable = SettingsSearchIndex.entries
@@ -50,15 +59,37 @@ struct SettingsSearchSelfFindProbe {
     @Test("controls are findable by the label they display")
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
+            ("Automatically Check Model Updates", "models.automaticUpdates"),
+            ("Descriptions required", "agents.description"),
+            ("Agent description (required)", "agents.description"),
+            ("Suggest from system prompt", "agents.description"),
+            ("agent description", "agents.description"),
+            ("Swap local models for subagents", "settings.orchestrator.delegation.swapModels"),
+            ("native mtp", "server.speculative"),
+            ("speculative depth", "server.speculative"),
+            ("keep model loaded", "server.residency"),
+            ("unload after", "server.residency"),
+            ("eviction policy", "server.residency"),
             ("disk cache", "server.cache"),
             ("ssd cache", "server.cache"),
             ("disk cache size", "server.cache"),
+            ("Prefix Cache", "settings.server.prefixCache"),
+            ("Enable GPU Cache", "settings.server.gpuCache"),
+            ("Block Size (tokens)", "settings.server.gpuCacheBlockSize"),
+            ("Max Blocks", "settings.server.gpuCacheMaxBlocks"),
+            ("Disk Cache", "settings.server.diskCache"),
+            ("Clear SSD Cache", "settings.server.clearDiskCache"),
+            ("Disk Cache Directory", "settings.server.diskCacheDirectory"),
+            ("Re-derive SSM State After Generation", "settings.server.ssmReDerive"),
+            ("Disk Cache Size (% of disk)", "settings.server.diskCacheSize"),
+            ("Increase Cache Size", "settings.server.diskCacheSize"),
+            ("Use Automatic Cache Size", "settings.server.diskCacheAutomatic"),
             ("clear ssd cache", "server.cache"),
             ("gpu cache", "server.cache"),
             ("context window cap", "settings.chat.contextLength"),
             ("max context", "settings.chat.contextLength"),
-            ("kv retention", "settings.chat.contextLength"),
-            ("metadata fallback", "settings.chat.contextLength"),
+            ("kv retention", "settings.server.kvRetention"),
+            ("metadata fallback", "settings.server.contextMetadataFallback"),
             // Reasoning was unfindable by every one of its own words while
             // three real controls existed: Reasoning Parser Override, Expand
             // Thinking While Streaming, Group Thinking & Tool Activity.
@@ -74,6 +105,83 @@ struct SettingsSearchSelfFindProbe {
             ("allow all tools", "settings.chat.autoAllowAllTools"),
             ("always allow", "settings.chat.autoAllowAllTools"),
             ("approve tools", "settings.chat.autoAllowAllTools"),
+            ("smooth streaming", "settings.chat.smoothStreaming"),
+            ("clipboard monitoring", "settings.chat.clipboard"),
+            ("keep mac awake", "settings.chat.keepAwakeForAgentRuns"),
+            ("group thinking", "settings.chat.activityRollup"),
+            ("hide dock icon", "settings.general.dock"),
+            ("max visible toasts", "settings.notifications.maxVisible"),
+            ("max concurrent tasks", "settings.notifications.maxConcurrent"),
+            ("enable memory", "memory.settings.enabled"),
+            ("consolidation interval", "memory.settings.consolidation"),
+            ("share my models", "server.peerInference"),
+            ("use with codex", "server.codexCLI"),
+            ("codex cli", "server.codexCLI"),
+            ("schedules", "schedules.overview"),
+            ("sandbox", "sandbox.overview"),
+            ("macos permissions", "permissions.tools"),
+            ("pair with n8n", "agentChannels.n8n.pairingCode"),
+            ("pairing code", "agentChannels.n8n.pairingCode"),
+            // n8n sheet rail: Name it → Where is your n8n? → Who answers? → Pair → Prove it.
+            ("name it", "agentChannels.n8n"),
+            ("where is your n8n", "agentChannels.n8n.callerLocation"),
+            ("docker desktop on this mac", "agentChannels.n8n.callerLocation"),
+            ("another machine on my network", "agentChannels.n8n.callerLocation"),
+            ("remote", "agentChannels.n8n.callerLocation"),
+            ("who answers", "agentChannels.n8n"),
+            ("prove it", "agentChannels.n8n"),
+            ("allow plaintext http from other machines", "agentChannels.n8n.plaintextAllowed"),
+            ("relay for", "agentChannels.n8n.relay"),
+            ("enable relay", "agentChannels.n8n.relay"),
+            ("outbound webhook url", "agentChannels.n8n.outboundWebhookURL"),
+            ("push replies to n8n", "agentChannels.n8n.outboundWebhookURL"),
+            ("channel secret", "agentChannels.n8n.channelSecret"),
+            ("who may speak", "agentChannels.n8n.pendingApprovals"),
+            ("waiting for approval", "agentChannels.n8n.pendingApprovals"),
+            ("allowed conversations", "agentChannels.n8n.pendingApprovals"),
+            ("allowed senders", "agentChannels.n8n.pendingApprovals"),
+            ("edit allowlists by hand", "agentChannels.n8n.pendingApprovals"),
+            ("channel enabled", "agentChannels.n8n.enabled"),
+            // Settings → Channels → Incoming.
+            ("focus chat on incoming messages", "agentChannels.focusOnInbound"),
+            ("bring to front", "agentChannels.focusOnInbound"),
+            ("steal focus", "agentChannels.focusOnInbound"),
+            // Settings → Orchestrator controls.
+            ("model readiness", "settings.orchestrator.modelReadiness"),
+            ("working folder", "settings.orchestrator.workingFolder"),
+            ("allowed subagents", "settings.orchestrator.delegation.mainChat"),
+            ("allowed agents", "settings.orchestrator.delegation.mainChat"),
+            ("shared workspace agents", "settings.orchestrator.delegation.mainChat"),
+            ("create starter agents", "settings.orchestrator.delegation.starterAgents"),
+            ("permission for shared", "settings.orchestrator.delegation.permission"),
+            ("max output tokens per subagent", "settings.orchestrator.delegation.limits"),
+            ("max turns per subagent", "settings.orchestrator.delegation.limits"),
+            ("max local subagents at once", "settings.orchestrator.delegation.limits"),
+            ("max remote subagents at once", "settings.orchestrator.delegation.limits"),
+            ("time limit per subagent", "settings.orchestrator.delegation.limits"),
+            ("agent-target model override", "settings.orchestrator.delegation.advanced"),
+            ("swap local models", "settings.orchestrator.delegation.handoff"),
+            ("check memory before delegating", "settings.orchestrator.delegation.handoff"),
+            ("check memory before delegating", "settings.orchestrator.delegation.ramSafety"),
+            ("stable_memory_refusal", "settings.orchestrator.delegation.ramSafety"),
+            ("delegations", "settings.orchestrator.delegations"),
+            // Workspaces → Shared agents: the per-workspace auto-join switch.
+            ("let the orchestrator delegate to shared agents", "workspaces.agents.orchestratorAutoJoin"),
+            ("auto-join", "workspaces.agents.orchestratorAutoJoin"),
+            // Agents → Abilities → Tools: the Apple Apps group row and one picker group per app,
+            // by the exact title each picker group shows.
+            ("apple apps", "agents.appleApps"),
+            ("Calendar", "agents.appleApps.calendar"),
+            ("Reminders", "agents.appleApps.reminders"),
+            ("Contacts", "agents.appleApps.contacts"),
+            ("Notes", "agents.appleApps.notes"),
+            ("Mail", "agents.appleApps.mail"),
+            ("Messages", "agents.appleApps.messages"),
+            ("Maps & Location", "agents.appleApps.maps"),
+            ("Music", "agents.appleApps.music"),
+            ("Shortcuts", "agents.appleApps.shortcuts"),
+            ("imessage", "agents.appleApps.messages"),
+            ("apple_apps", "agents.appleApps"),
         ]
 
         let missed = labels.filter { label in

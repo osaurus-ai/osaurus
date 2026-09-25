@@ -1034,21 +1034,63 @@ struct BuiltinSandboxToolsTests {
         #expect(!commands.contains { $0.contains("python3 -c") })
     }
 
+    /// `.docx`/`.xlsx`/`.pdf` are generated host-side into the VirtioFS
+    /// share: a real package lands under the agent's host home and the
+    /// text bridge (shell `printf`) is never used for the bytes.
     @Test @MainActor
-    func sandboxWriteFile_rejectsTextWrittenToBinaryDocumentExtension() async throws {
+    func sandboxWriteFile_generatesDocumentHostSideWithoutShellWrite() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("sandbox-doc-write-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+            DocumentAdaptersBootstrap.registerBuiltIns()
+
+            let output = try await withRegisteredSandboxTools(runner: runner) {
+                try await ToolRegistry.shared.execute(
+                    name: "sandbox_write_file",
+                    argumentsJSON: ##"{"path":"report.docx","content":"# Report\n\nQuarterly total: 42."}"##
+                )
+            }
+
+            let payload = try successPayload(output)
+            #expect(payload["kind"] as? String == "document_write_result")
+            #expect(payload["format"] as? String == "docx")
+            #expect(payload["path"] as? String == "/workspace/agents/test-agent/report.docx")
+            let written = OsaurusPaths.containerAgentDir("test-agent").appendingPathComponent("report.docx")
+            let bytes = try Data(contentsOf: written)
+            #expect(bytes.prefix(2) == Data([0x50, 0x4B]), "expected an OOXML zip package")
+            let calls = await runner.calls
+            #expect(calls.isEmpty, "document bytes must not travel through the shell bridge")
+        }
+    }
+
+    /// Formats with no writer at all (`.pptx`) are refused with a pivot that
+    /// names what the tool does produce, before any shell command runs.
+    @Test @MainActor
+    func sandboxWriteFile_rejectsUnsupportedDocumentExtension() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_write_file",
-                argumentsJSON: #"{"path":"report.docx","content":"not a real package"}"#
+                argumentsJSON: #"{"path":"deck.pptx","content":"not a real package"}"#
             )
         }
 
         let payload = try failurePayload(output)
         #expect(payload["kind"] as? String == "rejected")
         #expect(payload["field"] as? String == "path")
-        #expect((payload["message"] as? String)?.contains("only writes UTF-8 text") == true)
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("presentation format"))
+        #expect(message.contains(".docx"))
         let calls = await runner.calls
         #expect(calls.isEmpty)
     }
@@ -1185,8 +1227,10 @@ struct BuiltinSandboxToolsTests {
     }
 
     /// osaurus#2680: a raw sandbox read of a PDF decoded to nothing and the
-    /// model abandoned the document. The read must be refused before any
-    /// exec, with a pointer to `read_knowledge` / `sandbox_exec` extraction.
+    /// model abandoned the document. When the host share cannot serve the
+    /// file (no share root in this harness) the read must be refused before
+    /// any exec, naming the `/workspace` share, `read_knowledge`, and shell
+    /// extraction as the working paths.
     @Test @MainActor
     func sandboxReadFile_refusesBinaryDocumentWithExtractionHint() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
@@ -1203,8 +1247,9 @@ struct BuiltinSandboxToolsTests {
         #expect(payload["kind"] as? String == "invalid_args")
         let message = payload["message"] as? String ?? ""
         #expect(message.contains("PDF"))
+        #expect(message.contains("/workspace/"))
         #expect(message.contains("read_knowledge"))
-        #expect(message.contains("sandbox_exec"))
+        #expect(message.contains("pdftotext"))
 
         let calls = await runner.calls
         #expect(calls.isEmpty, "no read call should be made for a binary document")

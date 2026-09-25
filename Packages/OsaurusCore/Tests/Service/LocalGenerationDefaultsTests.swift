@@ -14,6 +14,72 @@ struct LocalGenerationDefaultsTests {
         LocalGenerationDefaults.parse(data: Data(json.utf8))
     }
 
+    @Test("Invalidation during an in-flight read retries instead of returning or caching stale defaults")
+    func invalidatedReadCannotPublish() {
+        let cache = LocalGenerationDefaults.Cache()
+        var loads = 0
+        let resolved = cache.resolve(key: "model", load: {
+            loads += 1
+            if loads == 1 {
+                // Deterministic interleaving: metadata changes after the old read
+                // started but before it publishes, exactly as a concurrent repair.
+                cache.invalidate()
+                return .init(maxTokens: 128, temperature: 0.2)
+            }
+            return .init(maxTokens: 256, temperature: 0.7)
+        }, shouldCache: { _ in true })
+        #expect(loads == 2)
+        #expect(resolved.maxTokens == 256)
+        #expect(resolved.temperature == 0.7)
+        let hit = cache.resolve(key: "model", load: { Issue.record("Expected fresh cache hit"); return .empty },
+            shouldCache: { _ in true })
+        #expect(hit == resolved)
+    }
+
+    @Test("Cold-scan misses do not survive discovery and invalidation reloads cached values")
+    func provisionalMissAndReload() {
+        let cache = LocalGenerationDefaults.Cache()
+        #expect(cache.resolve(key: "model", load: { .empty }, shouldCache: { _ in false }) == .empty)
+        let fresh = LocalGenerationDefaults.Defaults(maxTokens: 64)
+        #expect(cache.resolve(key: "model", load: { fresh }, shouldCache: { _ in true }) == fresh)
+        cache.invalidate()
+        let updated = LocalGenerationDefaults.Defaults(maxTokens: 96)
+        #expect(cache.resolve(key: "model", load: { updated }, shouldCache: { _ in true }) == updated)
+    }
+
+    @Test("Output aliases accept only positive integers and prefer max_new_tokens")
+    func outputTokenAliases() throws {
+        let rows: [(String, Int?)] = [
+            (#"{"max_tokens":1048576}"#, 1048576),
+            (#"{"max_tokens":12,"max_new_tokens":24}"#, 24),
+            (#"{"max_tokens":12,"max_new_tokens":null}"#, 12),
+            (#"{"max_tokens":12,"max_new_tokens":0}"#, 12),
+            (#"{"max_tokens":12,"max_new_tokens":-4}"#, 12),
+            (#"{"max_tokens":12,"max_new_tokens":true}"#, 12),
+            (#"{"max_tokens":12,"max_new_tokens":1.5}"#, 12),
+            (#"{"max_tokens":12,"max_new_tokens":"24"}"#, 12),
+            (#"{"max_tokens":1.0}"#, 1),
+            (#"{"max_tokens":0}"#, nil),
+            (#"{"max_tokens":-1}"#, nil),
+            (#"{"max_tokens":true}"#, nil),
+            (#"{"max_tokens":1.5}"#, nil),
+            (#"{"max_tokens":"12"}"#, nil),
+            (#"{"max_tokens":9223372036854775808}"#, nil),
+            (#"{"max_length":42}"#, nil),
+            (#"{}"#, nil),
+        ]
+        for (json, expected) in rows {
+            let data = Data(json.utf8)
+            #expect(LocalGenerationDefaults.parse(data: data).maxTokens == expected, "\(json)")
+            let sampling = try JSONSerialization.jsonObject(with: data)
+            let jang = try JSONSerialization.data(withJSONObject: ["chat": ["sampling_defaults": sampling]])
+            #expect(LocalGenerationDefaults.parseJangConfig(data: jang).maxTokens == expected, "\(json)")
+        }
+        let parsed = Self.defaults(fromJSON: #"{"max_tokens":true,"temperature":0.7,"top_k":32}"#)
+        #expect(parsed.temperature == 0.7)
+        #expect(parsed.topK == 32)
+    }
+
     @Test("Gemma-4 26B-A4B-it: temperature=1.0, top_k=64, top_p=0.95")
     func gemma4() {
         // Copied verbatim from

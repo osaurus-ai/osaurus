@@ -230,7 +230,7 @@ struct ChatTurnGenerationControlsTests {
         let controls = await ChatTurnGenerationControls.captureForSend(
             modelId: "codex/gpt-current",
             activeModelOptions: [:],
-            storedExplicitOptions: ["reasoningEffort": .string("high")]
+            storedExplicitOptions: ["customFlag": .string("kept")]
         ) { _ in
             await probe.record()
         }
@@ -253,6 +253,7 @@ struct ChatTurnGenerationControlsTests {
 
             #expect(controls.enableThinking == nil)
             #expect(requests.allSatisfy { $0.enable_thinking == nil })
+            #expect(requests.allSatisfy { $0.reasoning_effort == effort })
             #expect(
                 requests.allSatisfy {
                     $0.modelOptions?["reasoningEffort"]?.stringValue == effort

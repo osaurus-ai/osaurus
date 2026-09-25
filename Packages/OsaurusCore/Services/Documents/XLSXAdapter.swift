@@ -99,6 +99,47 @@ public struct XLSXAdapter: DocumentFormatAdapter {
         )
     }
 
+    /// Synchronous workbook decode from package bytes — the same parts
+    /// pipeline `parse(url:)` runs, for callers that already hold the data
+    /// inside a non-async context (e.g. `db_import`).
+    static func workbook(from data: Data, filename: String) throws -> Workbook {
+        let archive: XLSXPackageArchive
+        do {
+            archive = try XLSXPackageArchive(data: data)
+        } catch let error as DocumentAdapterError {
+            throw error
+        } catch {
+            throw DocumentAdapterError.readFailed(underlying: error.localizedDescription)
+        }
+        let workbookPath = try workbookPath(in: archive)
+        let workbookIndex = try parseWorkbookIndex(data: archive.xmlData(for: workbookPath))
+        let workbookRelationships = try parseRelationships(
+            data: archive.optionalXMLData(for: relationshipPath(for: workbookPath)) ?? Data()
+        )
+        let sharedStrings = try parseSharedStrings(in: archive)
+        var parsedSheets: [ParsedSheet] = []
+        for (index, sheet) in workbookIndex.sheets.enumerated() {
+            let worksheetPath = try worksheetPath(
+                for: sheet,
+                sheetIndex: index,
+                workbookPath: workbookPath,
+                relationships: workbookRelationships
+            )
+            parsedSheets.append(
+                try parseWorksheet(
+                    data: archive.xmlData(for: worksheetPath),
+                    sheetName: sheet.name,
+                    sheetIndex: index,
+                    sharedStrings: sharedStrings
+                )
+            )
+        }
+        guard parsedSheets.contains(where: { !$0.rows.isEmpty }) else {
+            throw DocumentAdapterError.emptyContent
+        }
+        return renderWorkbook(parsedSheets: parsedSheets, sharedStrings: sharedStrings, filename: filename).workbook
+    }
+
     // MARK: - Package parts
 
     fileprivate static let maxXMLPartBytes = 25 * 1024 * 1024

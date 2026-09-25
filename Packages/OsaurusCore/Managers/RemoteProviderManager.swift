@@ -1375,7 +1375,7 @@ public final class RemoteProviderManager: ObservableObject {
     func connectedSpawnModelTargets() -> [ConnectedSpawnModelTarget] {
         guard !isOffline else { return [] }
         // Providers minted by pairing a teammate's WORKSPACE agent are Mode 2
-        // endpoints (the host runs its own agent), not a `spawn_model`
+        // endpoints (the host runs its own agent), not a bare-model
         // catalog. They also connect/disconnect with the teammate's presence,
         // and this index feeds the composed prompt + spawn schema — so
         // including them would reset the prefix cache every time a teammate's

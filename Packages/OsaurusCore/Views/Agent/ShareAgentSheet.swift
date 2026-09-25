@@ -161,6 +161,13 @@ struct ShareAgentSheet: View {
                     Text("Enable Relay", bundle: .module)
                 }
                 .buttonStyle(PrimaryButtonStyle())
+            } else if case .servedElsewhere = relayStatus {
+                Button {
+                    relayManager.reclaimTunnel(for: agent.id)
+                } label: {
+                    Text("Serve From This Mac", bundle: .module)
+                }
+                .buttonStyle(PrimaryButtonStyle())
             }
         }
         .padding(12)
@@ -181,6 +188,7 @@ struct ShareAgentSheet: View {
             case .connecting: return (theme.accentColor, "arrow.triangle.2.circlepath")
             case .disconnected: return (theme.tertiaryText, "moon.zzz.fill")
             case .error: return (theme.errorColor, "exclamationmark.triangle.fill")
+            case .servedElsewhere: return (theme.warningColor, "laptopcomputer.and.iphone")
             }
         }()
         return Image(systemName: icon)
@@ -196,6 +204,7 @@ struct ShareAgentSheet: View {
         case .connecting: return L("Connecting…")
         case .disconnected: return L("Relay Off")
         case .error(let msg): return L("Relay Error: \(msg)")
+        case .servedElsewhere: return L("Served From Another Device")
         }
     }
 
@@ -209,6 +218,10 @@ struct ShareAgentSheet: View {
             return L("Enable the relay tunnel so others can reach this agent.")
         case .error:
             return L("Open the Sandbox tab to retry the relay connection.")
+        case .servedElsewhere:
+            return L(
+                "Another device using your identity is serving this agent's address. Turn the relay on again here to serve it from this Mac instead."
+            )
         }
     }
 

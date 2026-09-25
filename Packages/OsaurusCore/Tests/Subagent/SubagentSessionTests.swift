@@ -96,6 +96,20 @@ private func decode(_ envelope: String) -> [String: Any] {
 @Suite("SubagentSession host")
 struct SubagentSessionTests {
 
+    @Test("the prepared child host retains its explicit effort across scope reconstruction")
+    func subagentHostCarriesEffortChoice() async {
+        let kind = ScriptedKind(body: { scope, _, _, _ in
+            #expect(scope.reasoningEffort == "none")
+            #expect(ChatExecutionContext.currentReasoningEffort == "none")
+            #expect(SubagentScope.current().reasoningEffort == "none")
+            return SubagentResult(payload: ["summary": "done"], summary: "done")
+        })
+        await ChatExecutionContext.$currentReasoningEffort.withValue("none") {
+            let envelope = await SubagentSession.run(kind, tool: "scripted")
+            #expect(ToolEnvelope.isSuccess(envelope))
+        }
+    }
+
     @Test("subagent scope carries explicit Thinking on, off, and unset")
     func subagentScopeCarriesParentThinkingChoice() async {
         await ChatExecutionContext.$currentEnableThinking.withValue(true) {

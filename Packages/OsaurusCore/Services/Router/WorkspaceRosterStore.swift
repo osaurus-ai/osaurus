@@ -69,7 +69,13 @@ final class WorkspaceRosterStore: ObservableObject {
     /// Address (lowercased) → last roster display name; survives unshare.
     private var verifiedAt: [String: Date] = [:]
     @Published private(set) var hostReachableAt: [String: Date] = [:]
-    nonisolated static let verificationLifetime: TimeInterval = 35
+    /// How long a `verified` / `snapshot` frame from `/workspaces/sync` keeps
+    /// a roster trusted. The router's steady-state tick is 15 s ± 20 % (up to
+    /// 18 s between frames; see osaurus-router `workspaces/sync.ts`), so the
+    /// lease must survive two consecutive late ticks: 40 s. This is also the
+    /// stream lease in `WorkspaceSyncService` — the two must agree, or the
+    /// client tears down a healthy stream and reconnects in a loop.
+    nonisolated static let verificationLifetime: TimeInterval = 40
     private var lastKnownNames: [String: String] = [:]
 
     /// Minimum spacing between activation-driven refreshes.
@@ -194,15 +200,19 @@ final class WorkspaceRosterStore: ObservableObject {
         return Self.presence(for: agent)
     }
 
-    /// Whether `address` is one of THIS instance's agents (shared by the
-    /// user), by matching the local agent's identity address.
-    nonisolated static func isOwnAgent(address: String, localAgents: [Agent]) -> Bool {
+    /// Whether `address` is HOSTED ON THIS MAC, by matching a local agent's
+    /// identity address. This is a hosting check, not an ownership check:
+    /// an agent the same identity shared from another device is not "own"
+    /// here and is reached through the relay like a teammate's. Callers use
+    /// it to decide "run locally instead" and to hide local agents from the
+    /// remote-target pickers.
+    nonisolated static func isHostedHere(address: String, localAgents: [Agent]) -> Bool {
         let lowered = address.lowercased()
         return localAgents.contains { $0.agentAddress?.lowercased() == lowered }
     }
 
-    func isOwnAgent(address: String) -> Bool {
-        Self.isOwnAgent(address: address, localAgents: AgentManager.shared.agents)
+    func isHostedHere(address: String) -> Bool {
+        Self.isHostedHere(address: address, localAgents: AgentManager.shared.agents)
     }
 
     // MARK: - Pure presence mapping
@@ -362,6 +372,7 @@ final class WorkspaceRosterStore: ObservableObject {
     func apply(rosters next: [WorkspaceRoster], verifiedWorkspaceIds: Set<String>? = nil) {
         stateGeneration = UUID()
         dropHostReachable(supersededBy: next)
+        let previousWorkspaceIds = Set(rosters.map { $0.id.lowercased() })
         let verified = verifiedWorkspaceIds ?? Set(next.map(\.id))
         verifiedAt = Dictionary(uniqueKeysWithValues: verified.map { ($0, now()) })
         objectWillChange.send()
@@ -398,14 +409,91 @@ final class WorkspaceRosterStore: ObservableObject {
         connectService.pruneFailures(keeping: listed)
         if next != rosters { rosters = next }
         lastRefreshedAt = now()
+        reconcileSpawnPool(verified: verified, previousWorkspaceIds: previousWorkspaceIds)
     }
 
+    // MARK: - Orchestrator spawn-pool auto-join
+
+    /// Receives, after every roster apply, the teammates' shared agents
+    /// (every roster entry not hosted here) and the workspaces whose
+    /// membership is now KNOWN: the ones just verified plus any workspace
+    /// that vanished from the list (left / deleted). Production installs
+    /// `SubagentConfigurationStore.reconcileWorkspaceAgents` through
+    /// `installSpawnPoolAutoJoin()` at launch so shared agents join the
+    /// Orchestrator's pool (respecting removal tombstones and the
+    /// per-workspace auto-join switch) and unshared ones are pruned. Tests
+    /// leave it nil: roster fixtures never touch the delegation store.
+    typealias SpawnPoolReconciler = @Sendable (
+        _ rosterRefs: [WorkspaceAgentRef],
+        _ loadedWorkspaceIds: Set<String>
+    ) -> Void
+
+    static var spawnPoolReconciler: SpawnPoolReconciler?
+
+    /// Wire the roster to the Orchestrator's delegation pool. Idempotent.
+    static func installSpawnPoolAutoJoin() {
+        spawnPoolReconciler = { refs, loaded in
+            SubagentConfigurationStore.reconcileWorkspaceAgents(
+                rosterRefs: refs,
+                loadedWorkspaceIds: loaded
+            )
+        }
+    }
+
+    /// The shared agents the Orchestrator may delegate to: every roster
+    /// entry across the loaded workspaces that is not one of this
+    /// instance's own agents, once per (workspace, address).
+    func sharedAgentRefs() -> [WorkspaceAgentRef] {
+        var out: [WorkspaceAgentRef] = []
+        var seen = Set<WorkspaceAgentRef>()
+        for roster in rosters {
+            for agent in roster.agents where !isHostedHere(address: agent.agentAddress) {
+                let ref = WorkspaceAgentRef(workspaceId: roster.id, agentAddress: agent.agentAddress)
+                if seen.insert(ref).inserted { out.append(ref) }
+            }
+        }
+        return out
+    }
+
+    /// Re-run the join/prune step against the rosters already loaded (after
+    /// the per-workspace auto-join switch changes). Every loaded workspace
+    /// counts as known.
+    func reconcileSpawnPoolNow() {
+        reconcileSpawnPool(verified: Set(rosters.map(\.id)), previousWorkspaceIds: [])
+    }
+
+    private func reconcileSpawnPool(verified: Set<String>, previousWorkspaceIds: Set<String>) {
+        guard let reconciler = Self.spawnPoolReconciler else { return }
+        // A workspace that was on the list and no longer is has been left or
+        // deleted: its refs are stale even though nothing "loaded" for it.
+        let currentIds = Set(rosters.map { $0.id.lowercased() })
+        var loaded = Set(verified.map { $0.lowercased() })
+        loaded.formUnion(previousWorkspaceIds.subtracting(currentIds))
+        reconciler(sharedAgentRefs(), loaded)
+    }
+
+    /// A `verified` heartbeat from `/workspaces/sync`: the server re-confirmed
+    /// the snapshot we already hold. The lease bookkeeping updates silently;
+    /// observers are only notified when something they can see changed — a
+    /// workspace flipping from unverified (expired / never verified) back to
+    /// verified, or host-reachable evidence being superseded. The router
+    /// heartbeats every few seconds, and an unconditional publish here made
+    /// every roster observer re-render on each one.
     func renewVerification() {
         // The server has just verified its current snapshot; it supersedes
         // a successful response observed before this frame.
-        dropHostReachable(supersededBy: rosters)
-        verifiedAt = Dictionary(uniqueKeysWithValues: rosters.map { ($0.id, now()) })
-        objectWillChange.send()
+        // Dropping evidence reassigns the `@Published` map, which publishes
+        // on its own; only the (unpublished) lease flip needs an explicit send.
+        let droppedEvidence = dropHostReachable(supersededBy: rosters)
+        let current = now()
+        let previouslyVerified = Set(
+            verifiedAt.filter { current.timeIntervalSince($0.value) < Self.verificationLifetime }.map(\.key)
+        )
+        let nowVerified = Set(rosters.map(\.id))
+        if !droppedEvidence, previouslyVerified != nowVerified {
+            objectWillChange.send()
+        }
+        verifiedAt = Dictionary(uniqueKeysWithValues: rosters.map { ($0.id, current) })
     }
 
     /// Forget our own "the host answered" evidence only where the router's
@@ -413,15 +501,21 @@ final class WorkspaceRosterStore: ObservableObject {
     /// `online == nil` means the router has no presence for that agent; if
     /// it also wiped our evidence, presence would read `.unknown` forever
     /// and the composer would stay locked on "Checking access…" even though
-    /// the relay handshake just succeeded.
-    private func dropHostReachable(supersededBy rosters: [WorkspaceRoster]) {
-        guard !hostReachableAt.isEmpty else { return }
+    /// the relay handshake just succeeded. Returns whether anything was
+    /// dropped; the `@Published` map is only reassigned in that case so a
+    /// no-op heartbeat doesn't re-render observers.
+    @discardableResult
+    private func dropHostReachable(supersededBy rosters: [WorkspaceRoster]) -> Bool {
+        guard !hostReachableAt.isEmpty else { return false }
         let decided = Set(
             rosters.flatMap(\.agents)
                 .filter { $0.online != nil }
                 .map { $0.agentAddress.lowercased() }
         )
-        hostReachableAt = hostReachableAt.filter { !decided.contains($0.key) }
+        let remaining = hostReachableAt.filter { !decided.contains($0.key) }
+        guard remaining.count != hostReachableAt.count else { return false }
+        hostReachableAt = remaining
+        return true
     }
 
     func expireVerification() {

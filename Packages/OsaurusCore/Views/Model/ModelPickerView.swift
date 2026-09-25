@@ -28,6 +28,10 @@ struct ModelPickerView: View {
     /// falls back to opening the Cloud Providers management tab.
     var onAddProvider: ((ModelPickerAddProviderChoice) -> Void)? = nil
     let onDismiss: () -> Void
+    /// Host hook for the "Add Model" action. When nil the picker opens the
+    /// Models management tab directly; hosts that stand to lose unsaved state
+    /// (e.g. the agent create/edit sheet) supply this to warn first.
+    var onAddModel: (() -> Void)? = nil
 
     @State private var searchText = ""
     /// Tracks IME composition so the placeholder hides while composing.
@@ -592,7 +596,11 @@ struct ModelPickerView: View {
             }
         } else if group.isLocal {
             headerPillButton(icon: "plus", title: Text("Add Model", bundle: .module)) {
-                openManagement(tab: .models)
+                if let onAddModel {
+                    onAddModel()
+                } else {
+                    openManagement(tab: .models)
+                }
             }
         } else if group.isFavorites, !group.models.isEmpty {
             Text("⌘D toggles a favorite", bundle: .module)

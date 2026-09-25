@@ -230,6 +230,38 @@ public enum AgentStore {
         return restored
     }
 
+    /// What `loadPersisted(id:)` found wrong with the on-disk record.
+    public enum PersistenceError: Error, CustomStringConvertible {
+        case missing(UUID)
+        case unreadable(UUID, underlying: Error)
+
+        public var description: String {
+            switch self {
+            case .missing(let id): return "no agent file on disk for \(id)"
+            case .unreadable(let id, let underlying): return "agent file for \(id) did not decode: \(underlying)"
+            }
+        }
+    }
+
+    /// Drain queued writes, then decode the agent record from **disk**,
+    /// bypassing the in-memory memo. `save` swallows write errors on its
+    /// background queue, so a caller that needs proof a save landed (the
+    /// Apple apps migration, which must not write its "done" marker over a
+    /// failed write) reads the file back and compares the fields it changed.
+    public static func loadPersisted(id: UUID) throws -> Agent {
+        flushPendingWrites()
+        let url = agentFileURL(for: id)
+        guard FileManager.default.fileExists(atPath: url.path) else { throw PersistenceError.missing(id) }
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(Agent.self, from: data)
+        } catch {
+            throw PersistenceError.unreadable(id, underlying: error)
+        }
+    }
+
     /// Load a specific agent by ID
     public static func load(id: UUID) -> Agent? {
         if let builtIn = Agent.builtInAgents.first(where: { $0.id == id }) {
@@ -414,7 +446,12 @@ public enum AgentStore {
         let candidateAddress = agent.agentAddress?.lowercased()
         return loadAll().contains { existing in
             guard !existing.isBuiltIn else { return false }
-            if let index = agent.agentIndex, existing.agentIndex == index {
+            // Same derivation slot = same address, so it's a conflict only
+            // when the device scope matches too (v2 agents from another
+            // device legitimately reuse index numbers).
+            if let index = agent.agentIndex, existing.agentIndex == index,
+                existing.agentDeviceScope == agent.agentDeviceScope
+            {
                 return true
             }
             if let candidateAddress,

@@ -82,7 +82,7 @@ struct GenerationEventMapperTests {
         return out
     }
 
-    @Test func toolBridge_dispatchesImmediatelyAndDrainsUpstream() async throws {
+    @Test func toolBridge_dispatchesAtLogicalCompletionAndDrainsUpstream() async throws {
         let probe = TerminationProbe()
         let (upstream, upstreamContinuation) =
             AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
@@ -105,11 +105,6 @@ struct GenerationEventMapperTests {
         upstreamContinuation.yield(
             .toolInvocation(name: "read_file", argsJSON: #"{"path":"a.txt"}"#)
         )
-        #expect(await consumer.value == "read_file")
-        // Tool dispatch must not cancel the engine stream: its terminal drain
-        // owns KV/prefix persistence for the following agent-loop step.
-        #expect(probe.snapshot() == nil)
-
         upstreamContinuation.yield(
             .completionInfo(
                 tokenCount: 4,
@@ -120,6 +115,11 @@ struct GenerationEventMapperTests {
                 mtp: nil
             )
         )
+        #expect(await consumer.value == "read_file")
+        // Logical completion dispatches without waiting for wrapper EOF and
+        // must not cancel the cache-owning tail. A first closed envelope alone
+        // cannot safely dispatch: another call may follow it before completion.
+        #expect(probe.snapshot() == nil)
         upstreamContinuation.finish()
 
         for _ in 0 ..< 100 where probe.snapshot() == nil {
@@ -139,6 +139,24 @@ struct GenerationEventMapperTests {
             if case .tokens(let s) = ev { assembled += s }
         }
         #expect(assembled == "Hello, world!")
+    }
+
+    @Test func nativeBridgeKeepsTheMappedEngineBatch() async throws {
+        let calls = ["east", "west"].map { zone in
+            MLXLMCommon.ToolCall(function: .init(name: "lookup_zone", arguments: ["zone": .string(zone)]))
+        }
+        let mapped = GenerationEventMapper.map(events: makeStream([
+            .toolCall(calls[0]), .toolCall(calls[1]),
+            .info(GenerateCompletionInfo(promptTokenCount: 64, generationTokenCount: 42,
+                                         promptTime: 0.25, generationTime: 2, stopReason: .stop)),
+        ]))
+        do {
+            for try await _ in ModelRuntime.bridgeToolEventStream(mapped) {}
+            Issue.record("Expected the full native batch")
+        } catch let batch as ServiceToolInvocations {
+            #expect(batch.invocations.map(\.toolName) == ["lookup_zone", "lookup_zone"])
+            #expect(batch.invocations.map(\.jsonArguments) == [#"{"zone":"east"}"#, #"{"zone":"west"}"#])
+        }
     }
 
     @Test func toolCall_emits_serialized_arguments() async throws {

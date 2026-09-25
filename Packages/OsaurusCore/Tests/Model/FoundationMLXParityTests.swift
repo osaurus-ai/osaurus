@@ -71,7 +71,7 @@ struct FoundationMLXParityTests {
     @Test func bothBackendsPreserveToolNames() throws {
         let history = Self.sampleHistory()
         let foundationPrompt = OpenAIPromptBuilder.buildPrompt(from: history)
-        let mlxMapped = ModelRuntime.mapOpenAIChatToMLX(history)
+        let mlxMapped = try ModelRuntime.mapOpenAIChatToMLX(history)
         let mlxToolCallNames =
             mlxMapped
             .flatMap { $0.toolCalls ?? [] }
@@ -96,7 +96,7 @@ struct FoundationMLXParityTests {
     @Test func toolResultsAreCorrelatedToTheirCalls() throws {
         let history = Self.sampleHistory()
         let foundationPrompt = OpenAIPromptBuilder.buildPrompt(from: history)
-        let mlxMapped = ModelRuntime.mapOpenAIChatToMLX(history)
+        let mlxMapped = try ModelRuntime.mapOpenAIChatToMLX(history)
 
         // Foundation surface: textual label in the prompt.
         #expect(foundationPrompt.contains("Tool(get_weather) result:"))
@@ -115,7 +115,7 @@ struct FoundationMLXParityTests {
     @Test func assistantProseAndToolCallsCoexist() throws {
         let history = Self.sampleHistory()
         let foundationPrompt = OpenAIPromptBuilder.buildPrompt(from: history)
-        let mlxMapped = ModelRuntime.mapOpenAIChatToMLX(history)
+        let mlxMapped = try ModelRuntime.mapOpenAIChatToMLX(history)
 
         #expect(foundationPrompt.contains("Let me check the weather first."))
         #expect(foundationPrompt.contains("Now the time."))
@@ -134,7 +134,7 @@ struct FoundationMLXParityTests {
     /// Round-trip count: MLX mapping must not drop any role
     /// (system, user, assistant turns, tool turns, final user).
     @Test func mlxMappingRoundTripsAllRoles() throws {
-        let mapped = ModelRuntime.mapOpenAIChatToMLX(Self.sampleHistory())
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX(Self.sampleHistory())
         #expect(mapped.count == 7)
         #expect(mapped[0].role == .system)
         #expect(mapped[1].role == .user)

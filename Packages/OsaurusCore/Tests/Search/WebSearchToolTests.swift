@@ -60,8 +60,8 @@ struct WebSearchToolTests {
     @Test func searchAndExtractContractProvidesPageContent() {
         let tool = SearchAndExtractTool()
         let description = tool.description
-        #expect(description.contains("actual page text or data"))
-        #expect(description.contains("pass the selected result's URL"))
+        #expect(description.contains("page text or data"))
+        #expect(description.contains("pass the chosen result's URL"))
         guard case .object(let root)? = tool.parameters,
             case .object(let properties)? = root["properties"]
         else {

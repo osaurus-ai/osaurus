@@ -24,6 +24,7 @@ private enum AgentChannelSheetTarget: Identifiable {
     case addChannel
     case native(AgentChannelKind)
     case editCustom(AgentChannelConnection)
+    case editN8n(AgentChannelConnection)
     case addDestination
     case editDestination(AgentChannelBinding)
 
@@ -32,6 +33,7 @@ private enum AgentChannelSheetTarget: Identifiable {
         case .addChannel: return "add-channel"
         case .native(let kind): return "native-\(kind.rawValue)"
         case .editCustom(let connection): return "custom-\(connection.id)"
+        case .editN8n(let connection): return "n8n-\(connection.id)"
         case .addDestination: return "destination-new"
         case .editDestination(let binding): return "destination-\(binding.id)"
         }
@@ -48,8 +50,13 @@ struct AgentChannelConnectionCenterView: View {
     @State private var nativeBadges: [AgentChannelKind: AgentChannelStatusPresentation] = [:]
     @State private var nativeRoutingDetails: [AgentChannelKind: String] = [:]
     @State private var nativeConfigured: [AgentChannelKind: Bool] = [:]
+    /// True once the first native-credential probe has reported back, so the
+    /// sidebar badge is only published from a complete picture.
+    @State private var nativeBadgesResolved = false
     @State private var anyNativeConfigured = false
     @State private var connections: [AgentChannelConnection] = []
+    /// n8n workflows waiting for approve-on-first-contact, per connection id.
+    @State private var n8nPendingCounts: [String: Int] = [:]
     /// Effective posting rooms: stored bindings plus automatic ones derived
     /// from the channel setup (writable rooms × assigned agents).
     @State private var destinationBindings: [AgentChannelBinding] = []
@@ -65,10 +72,12 @@ struct AgentChannelConnectionCenterView: View {
     @State private var auditLoadID = UUID()
 
     @State private var globalWritesEnabled = true
+    @State private var focusChatOnInboundEnabled = false
 
     private let manager = AgentChannelConnectionManager.shared
     private let auditWorkbench = AgentChannelAuditWorkbenchService()
     private let writeKillSwitch = ChannelWriteKillSwitch.shared
+    private let focusPreference = AgentChannelInboundFocusPreference.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -94,6 +103,7 @@ struct AgentChannelConnectionCenterView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             reloadWriteGate()
+            focusChatOnInboundEnabled = focusPreference.isEnabled
             reloadConnections()
             refreshNativeBadges()
             reloadAuditWorkbench()
@@ -118,6 +128,13 @@ struct AgentChannelConnectionCenterView: View {
         ) { _ in
             reloadPendingOutboxCount()
         }
+        .onReceive(
+            NotificationCenter.default
+                .publisher(for: .agentChannelN8nPendingContactsChanged)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            reloadN8nPendingCounts()
+        }
         .task {
             routeForLandingTarget(landingPending)
         }
@@ -137,11 +154,16 @@ struct AgentChannelConnectionCenterView: View {
                 IMessageSettingsView()
             case .native(.whatsapp):
                 WhatsAppSettingsView()
-            case .native(.customHTTP):
-                // Custom HTTP is never presented as a native channel.
+            case .native(.customHTTP), .native(.n8n):
+                // Custom HTTP and n8n connections are stored rows, never
+                // presented as a fixed native channel.
                 EmptyView()
             case .editCustom(let connection):
                 AgentChannelCustomConnectionSheet(connection: connection) {
+                    reloadConnections()
+                }
+            case .editN8n(let connection):
+                N8nSettingsView(connection: connection) {
                     reloadConnections()
                 }
             case .addDestination:
@@ -254,12 +276,75 @@ struct AgentChannelConnectionCenterView: View {
                     )
                 }
 
+                incomingSection
+
                 sendingSection
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// What happens on this Mac when a channel message arrives. Today: an
+    /// opt-in to bring the conversation forward (for dedicated / monitoring
+    /// machines); ordinary use keeps it off so inbound messages never steal
+    /// focus.
+    private var incomingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel(L("Incoming"))
+            focusOnInboundRow
+        }
+    }
+
+    private var focusOnInboundRow: some View {
+        HStack(spacing: 12) {
+            Image(systemName: focusChatOnInboundEnabled ? "macwindow.badge.plus" : "macwindow")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(focusChatOnInboundEnabled ? theme.accentColor : theme.tertiaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle().fill(
+                        (focusChatOnInboundEnabled ? theme.accentColor : theme.tertiaryText).opacity(0.12)
+                    )
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Focus Chat on Incoming Messages", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    focusChatOnInboundEnabled
+                        ? L("Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed).")
+                        : L("Channel messages run quietly in the background; watch them in Activity or open the tab yourself. Turn on for a dedicated machine you keep an eye on.")
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            }
+
+            Spacer()
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { focusChatOnInboundEnabled },
+                    set: { setFocusChatOnInboundEnabled($0) }
+                )
+            )
+            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+            .labelsHidden()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+        .settingsLandingAnchor("agentChannels.focusOnInbound")
     }
 
     /// The master send control gets its own labeled section so it reads as
@@ -334,15 +419,35 @@ struct AgentChannelConnectionCenterView: View {
 
                 VStack(spacing: 10) {
                     ForEach(connections) { connection in
+                        let pendingCount = connection.kind == .n8n ? (n8nPendingCounts[connection.id] ?? 0) : 0
                         AgentChannelCard(
                             icon: connection.kind.icon,
                             gradient: connection.kind.brandGradient,
                             title: connection.name.isEmpty ? connection.id : connection.name,
-                            subtitle: connection.id,
-                            subtitleIsMonospaced: true,
-                            badge: Self.customBadge(for: connection)
+                            subtitle: connection.kind == .n8n
+                                ? L("n8n HTTP Request in, poll or webhook out")
+                                : connection.id,
+                            subtitleIsMonospaced: connection.kind != .n8n,
+                            badge: Self.customBadge(
+                                for: connection,
+                                writesEnabled: globalWritesEnabled,
+                                pendingApprovals: pendingCount
+                            ),
+                            detail: pendingCount > 0
+                                ? (pendingCount == 1
+                                    ? L("1 workflow is waiting for your approval")
+                                    : L("\(pendingCount) workflows are waiting for your approval"))
+                                : nil,
+                            anchorId: connection.kind == .n8n ? "agentChannels.n8n" : nil,
+                            enabledToggle: connection.kind == .n8n
+                                ? AgentChannelCardEnabledToggle(
+                                    isOn: connection.enabled,
+                                    anchorId: "agentChannels.n8n.enabled",
+                                    onChange: { setConnectionEnabled($0, for: connection) }
+                                )
+                                : nil
                         ) {
-                            activeSheet = .editCustom(connection)
+                            activeSheet = connection.kind == .n8n ? .editN8n(connection) : .editCustom(connection)
                         }
                     }
                 }
@@ -665,6 +770,7 @@ struct AgentChannelConnectionCenterView: View {
         case .telegram: return L("Bot access to allowlisted chats and groups")
         case .imessage: return L("This Mac's Messages app, allowlisted chats only")
         case .whatsapp: return L("QR-linked WhatsApp Web bridge, allowlisted chats only")
+        case .n8n: return L("n8n HTTP Request in, poll or webhook out")
         case .customHTTP: return L("JSON-defined HTTP channel")
         }
     }
@@ -734,6 +840,8 @@ struct AgentChannelConnectionCenterView: View {
         nativeConfigured[.telegram] = telegramConfigured
         nativeConfigured[.imessage] = imessageConfigured
         nativeConfigured[.whatsapp] = whatsappConfigured
+        nativeBadgesResolved = true
+        publishSidebarBadgeCount()
         // Reply state only makes sense on configured channels; the
         // "Available" list would otherwise show a noisy "Replies off".
         nativeRoutingDetails[.discord] =
@@ -820,9 +928,16 @@ struct AgentChannelConnectionCenterView: View {
 
     /// Honest custom-channel badge: enabled alone is not usable — a custom
     /// channel needs defined HTTP actions before agents can do anything.
-    static func customBadge(for connection: AgentChannelConnection) -> AgentChannelStatusPresentation {
+    static func customBadge(
+        for connection: AgentChannelConnection,
+        writesEnabled: Bool = true,
+        pendingApprovals: Int = 0
+    ) -> AgentChannelStatusPresentation {
         guard connection.enabled else {
             return AgentChannelStatusPresentation(label: L("Disabled"), tone: .neutral)
+        }
+        if connection.kind == .n8n {
+            return n8nBadge(for: connection, writesEnabled: writesEnabled, pendingApprovals: pendingApprovals)
         }
         let actionCount = connection.customHTTP?.actions.count ?? 0
         guard actionCount > 0 else {
@@ -832,6 +947,50 @@ struct AgentChannelConnectionCenterView: View {
             return AgentChannelStatusPresentation(label: L("Enabled"), tone: .success)
         }
         return AgentChannelStatusPresentation(label: L("Enabled (read-only)"), tone: .success)
+    }
+
+    /// n8n rows are inbound-first: usable once a dispatch target exists and
+    /// at least one workflow identity has been approved (both allowlists are
+    /// fail-closed; approve-on-first-contact fills them).
+    static func n8nBadge(
+        for connection: AgentChannelConnection,
+        writesEnabled: Bool = true,
+        pendingApprovals: Int = 0
+    ) -> AgentChannelStatusPresentation {
+        if pendingApprovals > 0 {
+            return AgentChannelStatusPresentation(
+                label: pendingApprovals == 1 ? L("1 waiting for approval") : L("\(pendingApprovals) waiting for approval"),
+                tone: .warning
+            )
+        }
+        guard connection.n8n?.inboundDispatch.isConfigured == true else {
+            return AgentChannelStatusPresentation(label: L("No agent assigned"), tone: .warning)
+        }
+        let authorization = connection.inboundAuthorization
+        guard !authorization.senderAllowlist.isEmpty, !authorization.roomAllowlist.isEmpty else {
+            return AgentChannelStatusPresentation(label: L("Waiting for first workflow"), tone: .neutral)
+        }
+        let mode = N8nSetupRecipe.verifyModeChip(
+            for: connection.n8n?.inboundVerification.method ?? .hmacSHA256
+        )
+        let wantsPush = connection.n8n?.outbound.isConfigured == true
+            || connection.writeEnabled
+        if wantsPush && !writesEnabled {
+            return AgentChannelStatusPresentation(
+                label: "\(mode) · \(L("Push blocked"))",
+                tone: .warning
+            )
+        }
+        if wantsPush {
+            return AgentChannelStatusPresentation(
+                label: "\(mode) · \(L("Enabled (push + poll)"))",
+                tone: .success
+            )
+        }
+        return AgentChannelStatusPresentation(
+            label: "\(mode) · \(L("Enabled (poll replies)"))",
+            tone: .success
+        )
     }
 
     /// A saved token must not read as "Configured" while a receive transport
@@ -855,8 +1014,32 @@ struct AgentChannelConnectionCenterView: View {
         return .diagnostics(status: "configured")
     }
 
+    private func reloadN8nPendingCounts() {
+        Task {
+            let counts = await AgentChannelN8nPendingContactCenter.shared.pendingCounts()
+            await MainActor.run { n8nPendingCounts = counts }
+        }
+    }
+
+    /// Card-level on/off for stored connections. Persists through the
+    /// manager so validation and the n8n projection run as on Save.
+    private func setConnectionEnabled(_ enabled: Bool, for connection: AgentChannelConnection) {
+        var updated = connection
+        updated.enabled = enabled
+        do {
+            try manager.upsertConnection(updated, replacingOriginalId: connection.id)
+            reloadConnections()
+            _ = ToastManager.shared.success(
+                enabled ? L("\(updated.name) enabled") : L("\(updated.name) disabled")
+            )
+        } catch {
+            _ = ToastManager.shared.error(error.localizedDescription)
+        }
+    }
+
     private func reloadConnections() {
         connections = manager.editableConnections()
+        reloadN8nPendingCounts()
         storedDestinationIds = Set(manager.bindings().map(\.id))
         destinationBindings = AgentChannelAutoDestinationResolver.effectiveConfiguration()
             .bindings
@@ -865,6 +1048,18 @@ struct AgentChannelConnectionCenterView: View {
                     == .orderedAscending
             }
         reloadPendingOutboxCount()
+        publishSidebarBadgeCount()
+    }
+
+    /// The Settings sidebar shows the same connected-channel count as this
+    /// page's header. The badge store never probes the Keychain itself, so
+    /// this page (which does, off-main) hands it the number whenever the
+    /// native-credential or custom-connection picture changes.
+    private func publishSidebarBadgeCount() {
+        // Before the first Keychain probe lands, `nativeConfigured` is empty
+        // and the count would briefly undershoot; wait for a real reading.
+        guard nativeBadgesResolved else { return }
+        ManagementBadgeStore.shared.setObservedCount(connectedChannelCount, for: .agentChannels)
     }
 
     private func reloadPendingOutboxCount() {
@@ -884,13 +1079,20 @@ struct AgentChannelConnectionCenterView: View {
         guard let pending else { return }
         if pending == "agentChannels.outbox", page != .outbox {
             page = .outbox
-        } else if pending == "agentChannels.destinations", page != .connections {
+        } else if pending == "agentChannels.destinations" || pending == "agentChannels.focusOnInbound"
+            || pending == "agentChannels.globalWrites", page != .connections
+        {
             page = .connections
         }
     }
 
     private func reloadWriteGate() {
         globalWritesEnabled = writeKillSwitch.snapshot().writeEnabled
+    }
+
+    private func setFocusChatOnInboundEnabled(_ enabled: Bool) {
+        focusChatOnInboundEnabled = enabled
+        focusPreference.setEnabled(enabled)
     }
 
     private func setGlobalWritesEnabled(_ enabled: Bool) {

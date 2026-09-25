@@ -395,24 +395,24 @@ actor WorkspaceAgentAccessHost {
         // The redeemed agent must exist locally (this is the sharer's box).
         let addressLower = payload.agentAddress.lowercased()
         let resolved:
-            (index: UInt32, address: String, name: String, description: String, model: String?)? =
+            (keyPath: AgentKeyPath, address: String, name: String, description: String, model: String?)? =
                 await MainActor.run {
                     guard
                         let agent = AgentManager.shared.agents.first(where: {
                             ($0.agentAddress?.lowercased() ?? "") == addressLower
                         }),
-                        let index = agent.agentIndex,
+                        let keyPath = agent.agentKeyPath,
                         let address = agent.agentAddress
                     else { return nil }
                     return (
-                        index, address, agent.name, agent.description,
+                        keyPath, address, agent.name, agent.description,
                         AgentManager.shared.effectiveModel(for: agent.id)
                     )
                 }
         guard let resolved else {
             return .rejected(.agentNotFound)
         }
-        let agentIndex = resolved.index
+        let agentKeyPath = resolved.keyPath
         let agentAddress = resolved.address
 
         // MUST from the spec: check the agent is still actively shared with
@@ -438,7 +438,7 @@ actor WorkspaceAgentAccessHost {
             (fullKey, keyInfo) = try APIKeyManager.shared.generate(
                 label: "Workspace – \(memberLabel)",
                 expiration: .days30,
-                agentIndex: agentIndex,
+                agentKeyPath: agentKeyPath,
                 overrideExpiresAt: attestation.expiresAt
             )
         } catch {
@@ -505,7 +505,9 @@ actor WorkspaceAgentAccessHost {
             RedeemGrant(
                 agentAddress: agentAddress,
                 agentName: resolved.name,
-                agentDescription: resolved.description.isEmpty ? nil : resolved.description,
+                // Explicit empty metadata clears a paired client's stale
+                // description; nil is reserved for older hosts omitting it.
+                agentDescription: resolved.description,
                 agentModel: resolved.model,
                 apiKeyForWire: apiKeyForWire,
                 sealedApiKey: sealed

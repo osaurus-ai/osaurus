@@ -620,12 +620,14 @@ struct CompletionRequest: Decodable, Sendable {
     let topK: Int?
     let stop: [String]
     let stream: Bool?
+    let streamOptions: StreamOptions?
 
     private enum CodingKeys: String, CodingKey {
         case model, prompt, prefix, suffix, middle, temperature, stop, stream
         case maxTokens = "max_tokens"
         case topP = "top_p"
         case topK = "top_k"
+        case streamOptions = "stream_options"
     }
 
     init(from decoder: Decoder) throws {
@@ -653,6 +655,7 @@ struct CompletionRequest: Decodable, Sendable {
             stop = []
         }
         stream = try? c.decodeIfPresent(Bool.self, forKey: .stream)
+        streamOptions = try c.decodeIfPresent(StreamOptions.self, forKey: .streamOptions)
     }
 
     private static func decodeStringOrFirstArray(
@@ -810,6 +813,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// already been rendered; it is not decoded from OpenAI JSON and is not
     /// forwarded to remote providers.
     var cacheStableSystemPrefix: String? = nil
+    /// Local admission contract, checked against exact prepared tokens before prefill.
+    var admissionPositionLimit: Int? = nil
+    /// Internal delegation ceiling, not a user output reservation. Never decoded from API JSON.
+    var admissionOutputTokensAreImplicit: Bool = false
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on
@@ -1011,17 +1018,42 @@ struct Usage: Codable, Sendable {
     let completion_tokens: Int
     let total_tokens: Int
     let tokens_per_second: Double?
+    /// OpenAI Chat Completions prompt-cache split (`cached_tokens` is the
+    /// subset of `prompt_tokens` served from the prompt cache at the
+    /// discounted rate). Also emitted by Azure, OpenRouter, xAI, DeepSeek
+    /// (`prompt_cache_hit_tokens` is NOT mapped here). Optional and omitted
+    /// when nil so the server-side writers keep their exact wire bytes.
+    var prompt_tokens_details: PromptTokensDetails? = nil
+
+    struct PromptTokensDetails: Codable, Sendable, Equatable {
+        var cached_tokens: Int? = nil
+        var audio_tokens: Int? = nil
+
+        init(cached_tokens: Int? = nil, audio_tokens: Int? = nil) {
+            self.cached_tokens = cached_tokens
+            self.audio_tokens = audio_tokens
+        }
+    }
 
     init(
         prompt_tokens: Int,
         completion_tokens: Int,
         total_tokens: Int,
-        tokens_per_second: Double? = nil
+        tokens_per_second: Double? = nil,
+        prompt_tokens_details: PromptTokensDetails? = nil
     ) {
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.total_tokens = total_tokens
         self.tokens_per_second = tokens_per_second
+        self.prompt_tokens_details = prompt_tokens_details
+    }
+
+    /// Provider-reported prompt-cache hits, clamped to `[0, prompt_tokens]`.
+    /// `nil` when the provider sent no `prompt_tokens_details.cached_tokens`.
+    var cachedPromptTokens: Int? {
+        guard let cached = prompt_tokens_details?.cached_tokens else { return nil }
+        return min(max(0, cached), max(0, prompt_tokens))
     }
 }
 
@@ -1161,6 +1193,10 @@ struct ChatCompletionChunk: Codable, Sendable {
     /// Osaurus extension chunk for determinate local prefill progress. Emitted
     /// with empty choices before the first token when the runtime reports it.
     var osaurus_prefill: PrefillProgressState? = nil
+    /// Osaurus extension chunk on a hosted `/agents/{id}/run`: the small
+    /// files the agent shared with `share_artifact`, emitted once with empty
+    /// choices right before the finish chunk (see `RemoteRunArtifacts`).
+    var osaurus_artifacts: [RemoteRunArtifact]? = nil
 }
 
 // MARK: - Error Response
@@ -1244,7 +1280,9 @@ struct ToolFunction: Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(description, forKey: .description)
-        let params = parameters ?? .object(["type": .string("object"), "properties": .object([:])])
+        let params =
+            parameters?.withEmptyPropertiesIfMissing
+            ?? .object(["type": .string("object"), "properties": .object([:])])
         try container.encode(params, forKey: .parameters)
     }
 
@@ -1396,6 +1434,23 @@ public enum JSONValue: Codable, Sendable, Equatable {
 // MARK: - JSONValue Conversions
 
 extension JSONValue {
+    /// MCP allows an object schema to omit `properties` (common for no-arg
+    /// tools), but OpenAI-style validators reject a tool whose
+    /// `parameters.properties` is missing. Fills in `properties: {}` on a
+    /// top-level object schema; every other shape is returned unchanged.
+    var withEmptyPropertiesIfMissing: JSONValue {
+        guard case .object(var schema) = self,
+            case .string("object")? = schema["type"]
+        else { return self }
+        switch schema["properties"] {
+        case nil, .null?:
+            schema["properties"] = .object([:])
+            return .object(schema)
+        default:
+            return self
+        }
+    }
+
     /// Convert JSON Schema into the shape expected by local chat templates.
     ///
     /// Some local templates, notably Gemma-4's native tool template, treat

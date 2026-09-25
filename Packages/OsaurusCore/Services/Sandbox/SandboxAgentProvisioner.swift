@@ -60,6 +60,54 @@ public struct SandboxAgentCleanupResult: Sendable {
     }
 }
 
+/// Typed failure from `SandboxAgentProvisioner.ensureProvisioned` that names
+/// the step which failed. Without this every throw from the provision path
+/// collapsed into one `agent_provision_failed` telemetry bucket, hiding
+/// whether the container silently went away (`startReentry`), the guest
+/// exec transport failed (`bootstrapExec`), the bootstrap script itself
+/// exited non-zero (`bootstrapScript`), or the exec idled past its timeout
+/// (`bootstrapTimeout`). `SandboxToolRegistrar` maps `step` to a closed
+/// telemetry phase token and re-routes `startReentry` to the startup-failure
+/// path so it is attributed as a runtime start failure.
+public struct SandboxProvisionStepError: Error, LocalizedError, Sendable {
+    public enum Step: String, Sendable, Equatable, CaseIterable {
+        /// `startContainer()` re-entered from the provision path threw. The
+        /// registrar believed the container was running when it got here.
+        case startReentry = "start_reentry"
+        /// The bootstrap exec never produced an exit status: vsock/gRPC
+        /// transport error, `containerNotRunning`, or any non-`SandboxError`.
+        case bootstrapExec = "bootstrap_exec"
+        /// The batched guest bootstrap script ran and exited non-zero
+        /// (`adduser`, `install`, `chown`, token write, SOUL seed).
+        case bootstrapScript = "bootstrap_script"
+        /// The bootstrap exec produced no output for the inactivity window.
+        case bootstrapTimeout = "bootstrap_timeout"
+    }
+
+    public let step: Step
+    public let underlying: Error
+
+    public init(step: Step, underlying: Error) {
+        self.step = step
+        self.underlying = underlying
+    }
+
+    public var errorDescription: String? { underlying.localizedDescription }
+
+    /// Classify a throw from `SandboxManager.bootstrapAgent` into a step.
+    /// Pure so tests can pin the mapping without a container.
+    public static func classifyBootstrapError(_ error: Error) -> Step {
+        if let sandboxError = error as? SandboxError {
+            switch sandboxError {
+            case .userCreationFailed: return .bootstrapScript
+            case .timeout: return .bootstrapTimeout
+            default: return .bootstrapExec
+            }
+        }
+        return .bootstrapExec
+    }
+}
+
 @MainActor
 public final class SandboxAgentProvisioner {
     public static let shared = SandboxAgentProvisioner()
@@ -96,7 +144,11 @@ public final class SandboxAgentProvisioner {
             let agentName = Self.linuxName(for: agentId)
             let linuxName = "agent-\(agentName)"
             Self.ensureHostWorkspace(for: agentName)
-            try await SandboxManager.shared.startContainer()
+            do {
+                try await SandboxManager.shared.startContainer()
+            } catch {
+                throw SandboxProvisionStepError(step: .startReentry, underlying: error)
+            }
             // One idempotent guest script covers what used to be four to
             // six sequential vsock execs: agent user + home, plugins dir,
             // bridge-token dir + token file (the shim reads it to
@@ -104,11 +156,18 @@ public final class SandboxAgentProvisioner {
             // fail closed), and the first-run `~/SOUL.md` seed (guarded
             // by `test -f` so accumulated agent edits are never
             // overwritten).
-            try await SandboxManager.shared.bootstrapAgent(
-                agentName: agentName,
-                agentId: UUID(uuidString: agentId),
-                soulSeedBody: Self.soulSeedBody
-            )
+            do {
+                try await SandboxManager.shared.bootstrapAgent(
+                    agentName: agentName,
+                    agentId: UUID(uuidString: agentId),
+                    soulSeedBody: Self.soulSeedBody
+                )
+            } catch {
+                throw SandboxProvisionStepError(
+                    step: SandboxProvisionStepError.classifyBootstrapError(error),
+                    underlying: error
+                )
+            }
             SandboxAgentMap.register(linuxName: linuxName, agentId: agentId)
             // Lazy reconcile: one cheap pip/npm listing per provision so the
             // installed-packages prompt line reflects real container state
@@ -139,7 +198,7 @@ public final class SandboxAgentProvisioner {
 
         let removedMapping = SandboxAgentMap.unregister(agentId: agentId)
         let removedPluginState = SandboxPluginManager.shared.removeAgentState(for: agentId)
-        let removedHostWorkspace = removeHostWorkspace(at: hostWorkspace)
+        let removedHostWorkspace = await removeHostWorkspace(at: hostWorkspace)
         // Drop any tracked background-job pids — `removeAgentUser`
         // pkill's the user's processes a few lines below, so the pids
         // we still hold in memory are immediately invalid. Clearing
@@ -286,10 +345,20 @@ public final class SandboxAgentProvisioner {
         SandboxPackageManifest.shared.reconcile(agentId: agentId, apk: nil, pip: pip, npm: npm)
     }
 
-    private func removeHostWorkspace(at url: URL) -> Bool {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: url.path) else { return false }
-        try? fm.removeItem(at: url)
-        return true
+    /// Delete an agent's host workspace off the main actor.
+    ///
+    /// This type is `@MainActor`, so the removal used to walk and unlink the
+    /// whole workspace tree on the main thread. An agent workspace can hold a
+    /// populated virtual environment or node_modules, and that tree walk is
+    /// long enough to trip the app-hang watchdog. The existence check and the
+    /// delete both run on a detached task now; the caller still learns whether
+    /// there was anything to remove.
+    private func removeHostWorkspace(at url: URL) async -> Bool {
+        await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: url.path) else { return false }
+            try? fm.removeItem(at: url)
+            return true
+        }.value
     }
 }

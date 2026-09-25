@@ -124,6 +124,8 @@ struct CreditsActivityRow: Identifiable, Equatable {
     let detail: String?
     let inputTokens: Int
     let outputTokens: Int
+    /// Router-echoed prompt-cache hits for this request (subset of `inputTokens`).
+    let cachedInputTokens: Int
     let costMicro: String
     let stateLabel: String
     /// Secondary nuance shown only for locally-matched rows (e.g. "Tools only").
@@ -147,6 +149,7 @@ extension CreditsActivityRow {
         self.detail = item.provider
         self.inputTokens = item.inputTokens
         self.outputTokens = item.outputTokens
+        self.cachedInputTokens = item.cachedInputTokens
         self.costMicro = item.costMicro
         if let match {
             let ledgerEntry = match.entry
@@ -234,8 +237,14 @@ extension CreditsActivityRow {
         return parts.joined(separator: " · ")
     }
 
+    /// `"1,200 in / 340 out"`, with `" (900 cached)"` appended when the router
+    /// echoed a non-zero prompt-cache split for the request.
     var tokensLine: String {
-        "\(inputTokens.formatted()) in / \(outputTokens.formatted()) out"
+        var line = "\(inputTokens.formatted()) in / \(outputTokens.formatted()) out"
+        if let cached = OsaurusRouter.formatCachedInputLabel(cachedTokens: cachedInputTokens) {
+            line += " (\(cached))"
+        }
+        return line
     }
 }
 

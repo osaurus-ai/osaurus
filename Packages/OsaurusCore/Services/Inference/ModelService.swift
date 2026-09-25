@@ -14,6 +14,7 @@ struct GenerationParameters: Sendable {
     /// local MLX services may replace the hardcoded app fallback with the
     /// model bundle's `generation_config.json.max_new_tokens`.
     let maxTokensExplicit: Bool
+    let admissionOutputTokensAreImplicit: Bool
     /// Optional per-request top_p override (falls back to server configuration when nil)
     let topPOverride: Float?
     /// Optional per-request top_k override (falls back to model/server configuration when nil).
@@ -86,12 +87,17 @@ struct GenerationParameters: Sendable {
     /// user/API control and is consumed only by local MLX as a validated SSD
     /// prefix-boundary hint.
     let cacheStableSystemPrefix: String?
+    let admissionPositionLimit: Int?
     /// Where the request originated (chat UI, HTTP API, plugin, P2P).
     /// `ModelRuntime` records this per model so chat-window close can
     /// accelerate idle unload of chat-sourced models without touching models
     /// kept warm by API clients. Defaults to `.httpAPI` — the conservative
     /// choice (never accelerated) for paths that don't set it explicitly.
     let requestSource: RequestSource
+    /// How the Privacy Filter confirms fresh detections for this request.
+    /// `.autoScrub` is set only by delegated loops (Computer Use,
+    /// AppleScript) so their model steps never wait on a review sheet.
+    let privacyReviewMode: PrivacyReviewMode
     /// Whether this generation's model load may disturb a model someone else is
     /// using. `.interactive` (the default) keeps today's behaviour: a human is
     /// waiting, so the load may evict a resident model or cancel an in-flight
@@ -136,8 +142,9 @@ struct GenerationParameters: Sendable {
     /// Rides on `GenerationParameters` for the same reason `loadIntent` does.
     let auxiliaryCacheIntent: Bool
 
-    /// Plain completion APIs need every tool call and terminal decode stats.
-    /// Interactive agent loops keep immediate dispatch plus background cache drain.
+    /// Plain completion APIs retain the full EOF/error and content contract.
+    /// Native loops preview calls immediately and dispatch the whole batch at
+    /// logical completion. Both modes preserve every call and terminal stats.
     /// Internal transport policy only; never forwarded to a model or provider.
     let collectCompleteToolResponse: Bool
 
@@ -145,6 +152,7 @@ struct GenerationParameters: Sendable {
         temperature: Float?,
         maxTokens: Int,
         maxTokensExplicit: Bool = true,
+        admissionOutputTokensAreImplicit: Bool = false,
         topPOverride: Float? = nil,
         topKOverride: Int? = nil,
         minPOverride: Float? = nil,
@@ -164,7 +172,9 @@ struct GenerationParameters: Sendable {
         suppressProgressUI: Bool = false,
         warmupPrefill: Bool = false,
         cacheStableSystemPrefix: String? = nil,
+        admissionPositionLimit: Int? = nil,
         requestSource: RequestSource = .httpAPI,
+        privacyReviewMode: PrivacyReviewMode = .interactive,
         loadIntent: ModelLoadIntent = .interactive,
         alignmentRepairModel: String? = nil,
         claudeCode: ClaudeCodeRunOptions? = nil,
@@ -176,6 +186,7 @@ struct GenerationParameters: Sendable {
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.maxTokensExplicit = maxTokensExplicit
+        self.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
         self.topPOverride = topPOverride
         self.topKOverride = topKOverride
         self.minPOverride = minPOverride
@@ -195,7 +206,9 @@ struct GenerationParameters: Sendable {
         self.suppressProgressUI = suppressProgressUI
         self.warmupPrefill = warmupPrefill
         self.cacheStableSystemPrefix = cacheStableSystemPrefix
+        self.admissionPositionLimit = admissionPositionLimit
         self.requestSource = requestSource
+        self.privacyReviewMode = privacyReviewMode
         self.loadIntent = loadIntent
         self.alignmentRepairModel = alignmentRepairModel
         self.claudeCode = claudeCode
@@ -228,10 +241,10 @@ struct ServiceToolInvocation: Error, Sendable {
 /// vmlx-swift's `BatchEngine.generate` surfaces each as its own
 /// `Generation.toolCall(ToolCall)` event; `GenerationEventMapper`
 /// translates them to `ModelRuntimeEvent.toolInvocation(...)`, and
-/// `ModelRuntime.streamWithTools` collects them for whole-completion HTTP
-/// requests. Interactive local agent streams instead dispatch the first call
-/// immediately and drain the engine tail for cache persistence. Remote
-/// providers may also return this batch form.
+/// `ModelRuntime.streamWithTools` collects them for both HTTP completions and
+/// native Chat/agent requests. Native previews can arrive before the full batch;
+/// execution starts only once the response is complete. Remote providers may
+/// also return this batch form.
 ///
 /// `invocations` is guaranteed non-empty. Consumers should `catch let invs as
 /// ServiceToolInvocations` BEFORE `catch let inv as ServiceToolInvocation`
@@ -239,6 +252,17 @@ struct ServiceToolInvocation: Error, Sendable {
 /// one-at-a-time streams (OpenAI server-side tool calls).
 struct ServiceToolInvocations: Error, Sendable {
     let invocations: [ServiceToolInvocation]
+}
+
+/// Parsed calls remain provisional when the response exhausts its output
+/// budget. Never signal an executable batch from an incomplete response.
+struct ServiceToolResponseExhausted: Error, LocalizedError, Sendable {
+    let toolCallCount: Int
+
+    var errorDescription: String? {
+        "The model reached its output token limit before finishing the tool response. "
+            + "The queued tools were not run."
+    }
 }
 
 /// In-band signaling for tool name and argument detection during streaming.
@@ -616,6 +640,22 @@ enum StreamingStatsHint: Sendable {
     }
 }
 
+/// Prepared input accounting is independent of terminal completion stats.
+/// In particular, receiving this hint must not disarm stream cancellation or
+/// invent an output-token count for a tool call dispatched before EOS.
+enum StreamingInputTokenHint: Sendable {
+    private static let prefix = "\u{FFFE}input_tokens:"
+
+    static func encode(_ count: Int) -> String { prefix + String(count) }
+
+    static func decode(_ delta: String) -> Int? {
+        guard delta.hasPrefix(prefix), let count = Int(delta.dropFirst(prefix.count)), count >= 0 else {
+            return nil
+        }
+        return count
+    }
+}
+
 /// In-band signaling for an Osaurus Router billing event (cost, token counts,
 /// status). Shares the `\u{FFFE}` sentinel so the generic filters in HTTP
 /// handlers and `ChatEngine` drop it from visible output and skip it for token
@@ -664,6 +704,21 @@ protocol ModelService: Sendable {
         requestedModel: String?,
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error>
+
+    /// Seconds `CoreModelService` may wait for the *first* streamed token
+    /// from this service before declaring a primary core-model call hung and
+    /// moving to the chat-model fallback. `nil` (the default) disables the
+    /// deadline. Only a service whose first token is not preceded by a
+    /// local load / process startup, and whose `streamDeltas` yields plain
+    /// text with no inline hint sentinels, should opt in: on MLX the wait can
+    /// legitimately be a weights load, on Claude Code a CLI startup, and the
+    /// remote stream carries billing / reasoning sentinels that `generateOneShot`
+    /// filters. Apple Foundation is always resident and streams plain text.
+    var firstTokenDeadline: TimeInterval? { get }
+}
+
+extension ModelService {
+    var firstTokenDeadline: TimeInterval? { nil }
 }
 
 /// Optional capability for services that can natively handle OpenAI-style tools (message-based only).

@@ -1,0 +1,29 @@
+{
+  "id": "computer_use_loop.confirm-unavailable-fails-fast",
+  "domain": "computer_use_loop",
+  "label": "CU loop • no surface for the confirm card ends the run with the reason",
+  "query": "Save the draft.",
+  "notes": "Deterministic (scripted-model) case for the headless-confirm contract: under `balanced` the Save commit needs approval, but the harness reports that no chat window can render the card (a delegated child with the chat closed, a background dispatch). The loop must not park on the card until the wall clock; it fails fast as gaveUp naming the reason, and the gated action must not run.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Notes",
+      "maxSteps": 4,
+      "preset": "balanced",
+      "confirmUnavailable": true,
+      "elements": [
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Unsaved" },
+        { "id": "save", "role": "button", "label": "Save", "onClick": { "setValues": [{ "id": "status", "value": "Saved" }] } }
+      ],
+      "expectOutcome": ["gaveUp"],
+      "failIfClicked": ["save"],
+      "successValues": [{ "id": "status", "equals": "Unsaved" }],
+      "finalSummaryContains": ["no chat window is open"],
+      "feedTitleContains": ["Cannot ask for approval"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":2},\"note\":\"save the draft\"}",
+        "{\"verb\":\"done\",\"reason\":\"saved\"}"
+      ]
+    }
+  }
+}

@@ -42,7 +42,7 @@ public struct OsaurusIdentity: Sendable {
         let mnemonic = try MasterKeyMnemonic.mnemonic(forKey: seed)
         try MasterMnemonicStore.store(mnemonic)
 
-        let deviceId = try await DeviceKey.attest()
+        let deviceId = try await ensureDeviceAttested()
         let recovery = RecoveryManager.configure(address: result.osaurusId)
 
         // A brand-new master key just came into existence (this branch only runs
@@ -60,12 +60,15 @@ public struct OsaurusIdentity: Sendable {
     }
 
     /// Build an `IdentityInfo` from the already-installed master key. Triggers a
-    /// biometric prompt to read the master and re-attest the device.
+    /// biometric prompt to read the master. Attests the device if this one
+    /// has never been attested — the master may have arrived through iCloud
+    /// Keychain sync from another device, in which case the master exists
+    /// here but no device key does yet.
     private static func loadExistingIdentity() async throws -> IdentityInfo {
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
         let osaurusId = try MasterKey.getOsaurusId(context: context)
-        let deviceId = try DeviceKey.currentDeviceId()
+        let deviceId = try await ensureDeviceAttested()
         return IdentityInfo(
             osaurusId: osaurusId,
             deviceId: deviceId,
@@ -76,6 +79,23 @@ public struct OsaurusIdentity: Sendable {
     /// Whether an identity already exists (no biometric prompt).
     public static func exists() -> Bool {
         MasterKey.exists()
+    }
+
+    // MARK: - Device
+
+    /// Make sure THIS device has a device ID, attesting it if it never was.
+    ///
+    /// Device identity is deliberately decoupled from master creation: the
+    /// master syncs across devices (iCloud Keychain) or is re-entered from
+    /// the recovery phrase, while the device key is minted once per physical
+    /// device. Every path that establishes a usable identity on a device —
+    /// fresh setup, loading a synced master, mnemonic restore — funnels
+    /// through here so a second device never sits in the half-state of
+    /// "master present, device unattested". Returns the (existing or new)
+    /// device ID; never replaces an existing one.
+    @discardableResult
+    public static func ensureDeviceAttested() async throws -> String {
+        try await DeviceKey.ensureAttested()
     }
 
     /// Non-blocking, eventually-consistent variant of `exists()` for hot UI
@@ -116,8 +136,13 @@ public struct OsaurusIdentity: Sendable {
     /// Posts `.osaurusIdentityChanged` so identity-gated services (the
     /// managed Osaurus Router, model picker) reconnect under the restored
     /// identity without a manual refresh.
+    ///
+    /// Also attests this device when it has no device ID yet: a restore is
+    /// the canonical "bring my identity to a new device" path, and the
+    /// re-minted agents below must be device-scoped so they can't collide
+    /// with agents the same master already minted on the original device.
     @MainActor
-    public static func restore(words: [String]) throws -> RestoreResult {
+    public static func restore(words: [String]) async throws -> RestoreResult {
         var seed = try MasterKeyMnemonic.key(fromMnemonic: words)
         defer { seed.zeroOut() }
 
@@ -127,12 +152,30 @@ public struct OsaurusIdentity: Sendable {
         // re-deriving from the seed.
         try? MasterMnemonicStore.store(words)
 
+        // Best-effort: `attest()` already falls back to a software ID when
+        // App Attest is unavailable, so a failure here is unusual and must
+        // not undo the master install that just succeeded. Without a device
+        // ID the re-mint below degrades to the legacy layout.
+        let deviceScope = try? await ensureDeviceAttested()
+
         APIKeyManager.shared.reload()
-        let drift = IdentityHealthCheck.diagnose(
+        var drift = IdentityHealthCheck.diagnose(
             masterKey: seed,
             agents: AgentManager.shared.agents,
-            accessKeys: APIKeyManager.shared.listKeys()
+            accessKeys: APIKeyManager.shared.listKeys(),
+            currentDeviceScope: deviceScope
         )
+        // Scope dropped by an older build: restore it in place before the
+        // re-mint pass so those agents keep their addresses and keys.
+        if let deviceScope, !drift.recoverableScopeAgents.isEmpty {
+            AgentManager.shared.repairDeviceScope(for: drift.recoverableScopeAgents, scope: deviceScope)
+            drift = IdentityHealthCheck.diagnose(
+                masterKey: seed,
+                agents: AgentManager.shared.agents,
+                accessKeys: APIKeyManager.shared.listKeys(),
+                currentDeviceScope: deviceScope
+            )
+        }
 
         var failures: [String] = []
         var rederivedAgentCount = 0
@@ -142,6 +185,7 @@ public struct OsaurusIdentity: Sendable {
                 // index off the restored master.
                 var cleared = agent
                 cleared.agentIndex = nil
+                cleared.agentDeviceScope = nil
                 cleared.agentAddress = nil
                 AgentManager.shared.update(cleared)
                 if let refreshed = AgentManager.shared.agent(for: agent.id) {
@@ -188,6 +232,7 @@ public struct OsaurusIdentity: Sendable {
             guard agent.agentIndex != nil || agent.agentAddress != nil else { continue }
             var cleared = agent
             cleared.agentIndex = nil
+            cleared.agentDeviceScope = nil
             cleared.agentAddress = nil
             AgentManager.shared.update(cleared)
         }
@@ -229,7 +274,7 @@ public struct OsaurusIdentity: Sendable {
         audience: String,
         context: LAContext
     ) async throws -> URLRequest {
-        let deviceId = try DeviceKey.currentDeviceId()
+        let deviceId = try await ensureDeviceAttested()
         let counter = CounterStore.shared.next()
         let now = Int(Date().timeIntervalSince1970)
 

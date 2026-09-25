@@ -204,6 +204,7 @@ struct ConfigurationView: View {
                     SettingsToggle(
                         title: L("Hide Dock Icon"),
                         description: "Run in menu bar only (requires restart)",
+                        anchorId: "settings.general.dock",
                         isOn: $tempHideDockIcon
                     )
 
@@ -385,7 +386,8 @@ struct ConfigurationView: View {
                                             label: "Max Visible Toasts",
                                             text: $tempToastMaxVisible,
                                             placeholder: "5",
-                                            help: "Maximum toasts shown at once. Empty uses default 5"
+                                            help: "Maximum toasts shown at once. Empty uses default 5",
+                                            anchorId: "settings.notifications.maxVisible"
                                         )
                                         .onChange(of: tempToastMaxVisible) { _, _ in
                                             saveToastConfig()
@@ -396,7 +398,8 @@ struct ConfigurationView: View {
                                             label: "Max Concurrent Tasks",
                                             text: $tempToastMaxConcurrent,
                                             placeholder: "5",
-                                            help: "Maximum background tasks running at once. Empty uses default 5"
+                                            help: "Maximum background tasks running at once. Empty uses default 5",
+                                            anchorId: "settings.notifications.maxConcurrent"
                                         )
                                         .onChange(of: tempToastMaxConcurrent) { _, _ in
                                             saveToastConfig()
@@ -879,7 +882,46 @@ struct ConfigurationView: View {
     private var coreModelPicker: some View {
         let currentId = coreModelIdentifierBinding.wrappedValue
         let currentItem = coreModelPickerItems.first { $0.id == currentId }
-        return HStack(spacing: 8) {
+        // A persisted core model the router can't serve right now. For
+        // Foundation this is the framework's own reason (Apple Intelligence
+        // off, model still downloading); for remote models, the provider is
+        // disconnected. Shown under the picker so "set but nothing works" has
+        // a fix attached; utilities meanwhile run on the active chat model.
+        let unavailableReason: String? =
+            (currentId.isEmpty || currentItem != nil)
+            ? nil
+            : CoreModelService.unavailableReason(modelId: currentId)
+        return VStack(alignment: .leading, spacing: 6) {
+            coreModelPickerRow(currentId: currentId, currentItem: currentItem)
+            if let unavailableReason {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                    Text(
+                        "\(unavailableReason) Until then, your active chat model handles these tasks.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: 320, alignment: .leading)
+            }
+        }
+    }
+
+    /// Display name for a core model id that isn't in the picker catalog
+    /// (so no `ModelPickerItem.displayName` is available).
+    private static func coreModelDisplayName(_ id: String) -> String {
+        if id.caseInsensitiveCompare(FoundationModelService.serviceId) == .orderedSame {
+            return "Foundation"
+        }
+        return id
+    }
+
+    private func coreModelPickerRow(currentId: String, currentItem: ModelPickerItem?) -> some View {
+        HStack(spacing: 8) {
             Button {
                 showCoreModelPicker.toggle()
             } label: {
@@ -899,13 +941,17 @@ struct ConfigurationView: View {
                             .foregroundColor(theme.primaryText)
                             .lineLimit(1)
                     } else {
-                        // Persisted-but-uninstalled values (e.g. "foundation"
-                        // on macOS < 26, a disconnected remote model) keep an
-                        // "(unavailable)" hint so the row isn't an orphan.
-                        Text("\(currentId) (unavailable)", bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(1)
+                        // Persisted-but-unserviceable values (e.g. "foundation"
+                        // with Apple Intelligence off, a disconnected remote
+                        // model) keep an "(unavailable)" hint so the row isn't
+                        // an orphan; the reason renders under the picker.
+                        Text(
+                            "\(Self.coreModelDisplayName(currentId)) (unavailable)",
+                            bundle: .module
+                        )
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
                     }
                     Spacer()
                     Image(systemName: "chevron.up.chevron.down")

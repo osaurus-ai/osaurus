@@ -107,23 +107,15 @@ private struct SystemPermissionRow: View {
     let permission: SystemPermission
 
     @State private var isTesting = false
-    @State private var testResult: String? = nil
+    @State private var testResult: PermissionProbeResult? = nil
     @State private var isHovered = false
 
     private var isGranted: Bool {
         permissionService.permissionStates[permission] ?? false
     }
 
-    // Permissions that support the diagnostic test button
-    private var canTest: Bool {
-        switch permission {
-        case .automation, .automationCalendar, .automationMail, .automationMessages, .notes,
-            .contacts, .calendar, .reminders, .location, .accessibility:
-            return true
-        default:
-            return false
-        }
-    }
+    // Every permission has a diagnostic probe (`SystemPermissionService.probe`).
+    private var canTest: Bool { true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -266,7 +258,9 @@ private struct SystemPermissionRow: View {
 
             // Inline Test Result
             if let result = testResult {
-                let isSuccess = result.hasPrefix("SUCCESS")
+                // Branch on the probe's decision, not its localized text
+                // (`SUCCESS:` is `ERFOLG:` in German — #2858).
+                let isSuccess = result.isGranted
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .font(.system(size: 12))
@@ -276,7 +270,7 @@ private struct SystemPermissionRow: View {
                         .padding(.top, 1)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(result)
+                        Text(result.message)
                             .font(.system(size: 11, design: .monospaced))
                             .lineLimit(4)
                             .textSelection(.enabled)
@@ -335,40 +329,19 @@ private struct SystemPermissionRow: View {
         testResult = nil
 
         Task.detached(priority: .userInitiated) {
-            let result: String
-            switch permission {
-            case .automation:
-                result = SystemPermissionService.debugTestAutomationAccess()
-            case .automationCalendar:
-                result = await SystemPermissionService.debugTestCalendarAccess()
-            case .automationMail:
-                result = SystemPermissionService.debugTestMailAccess()
-            case .automationMessages:
-                result = SystemPermissionService.debugTestMessagesAccess()
-            case .calendar:
-                result = SystemPermissionService.debugTestCalendarEventKitAccess()
-            case .reminders:
-                result = SystemPermissionService.debugTestRemindersAccess()
-            case .location:
-                result = SystemPermissionService.debugTestLocationAccess()
-            case .notes:
-                result = SystemPermissionService.debugTestNotesAccess()
-            case .contacts:
-                result = SystemPermissionService.debugTestContactsAccess()
-            case .accessibility:
-                result = SystemPermissionService.debugTestAccessibilityAccess()
-            default:
-                result = "Test not available"
+            // Automation probes launch the target app in the background
+            // first so the Apple Event does not bring it to the front.
+            if let bundleId = SystemPermissionService.automationProbeBundleIdentifier(for: permission) {
+                _ = await AppleScriptBridge.ensureRunning(bundleIdentifier: bundleId, appName: permission.displayName)
             }
+            let result = await SystemPermissionService.probe(permission)
 
             await MainActor.run {
                 testResult = result
                 isTesting = false
-
-                // Update permission state if test succeeded
-                if result.hasPrefix("SUCCESS") {
-                    permissionService.updatePermissionState(permission, isGranted: true)
-                }
+                // The probe is the live truth for this permission: a success
+                // proves the grant, a failure means the cached state is stale.
+                permissionService.updatePermissionState(permission, isGranted: result.isGranted)
             }
         }
     }

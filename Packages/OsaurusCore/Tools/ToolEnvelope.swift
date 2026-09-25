@@ -51,6 +51,11 @@ public enum ToolEnvelope {
         /// User clicked "Deny" on an interactive approval prompt.
         /// Distinct from `rejected` (configured policy refusal).
         case userDenied = "user_denied"
+        /// A macOS privacy permission (Calendar, Contacts, Automation, Full
+        /// Disk Access, …) the tool needs is not granted. Not retryable
+        /// until the user changes it in System Settings; the message names
+        /// the exact permission and pane.
+        case permissionDenied = "permission_denied"
     }
 
     // MARK: - Construction
@@ -270,23 +275,40 @@ public enum ToolEnvelope {
                 // Without this the model dead-ends on binaries (observed
                 // live: a PDF-to-PNG request flailed for turns).
                 let combinedMode = ChatExecutionContext.hostReadOnlyScope != nil
-                let pivot =
-                    combinedMode
-                    ? "copy it into the sandbox with `file_copy` (a `/workspace/...` destination), then process it there with `sandbox_exec` (e.g. `unzip`, `pdftotext`, `file`)"
-                    : "pivot to shell_run with an appropriate tool (e.g. `unzip`, `pdftotext`, `file`)"
-                var pivotTail = detail.pivotHint.map { " \($0)" } ?? ""
-                if combinedMode {
-                    pivotTail = pivotTail.replacingOccurrences(
-                        of: "shell_run",
-                        with: "`file_copy` + `sandbox_exec`"
-                    )
+                var message = detail.explanation(path: path, extLabel: extLabel)
+                if detail.suggestsShellPivot {
+                    let pivot =
+                        combinedMode
+                        ? "copy it into the sandbox with `file_copy` (a `/workspace/...` destination) and process it there with `sandbox_exec` (e.g. `unzip`, `pdftotext`, `file`)"
+                        : "process it with shell_run and an appropriate tool (e.g. `unzip`, `pdftotext`, `file`)"
+                    let connector: String
+                    if case .unsupportedFormat = detail {
+                        connector = ", or "
+                    } else {
+                        connector = " Instead of retrying, "
+                    }
+                    message += "\(connector)\(pivot)."
+                } else {
+                    message += "."
                 }
+                if var pivotTail = detail.pivotHint {
+                    if combinedMode {
+                        pivotTail = pivotTail.replacingOccurrences(
+                            of: "shell_run",
+                            with: "`file_copy` + `sandbox_exec`"
+                        )
+                    }
+                    message += " \(pivotTail)"
+                }
+                var metadata: [String: String] = ["readable_formats": WorkspaceFileFormatPolicy.readableFormatsSummary]
+                if let ext { metadata["extension"] = ext }
+                if let family = detail.family { metadata["document_family"] = family.rawValue }
                 return failure(
                     kind: .executionError,
-                    message:
-                        "file_read only supports text. '\(path)' looks like a binary file\(extLabel) — \(pivot) instead of retrying.\(pivotTail)",
+                    message: message,
                     tool: tool,
-                    retryable: false
+                    retryable: false,
+                    metadata: metadata
                 )
             }
         }
@@ -380,11 +402,18 @@ public enum ToolEnvelope {
                     retryable: false
                 )
             case 7:  // missing system permissions
+                var metadata: [String: Any] = [:]
+                if let permission = nserr.userInfo[ToolRegistry.missingPermissionUserInfoKey] as? String {
+                    metadata["permission"] = permission
+                    metadata["system_settings_url"] =
+                        (nserr.userInfo[ToolRegistry.missingPermissionSettingsURLUserInfoKey] as? String) ?? ""
+                }
                 return failure(
-                    kind: .unavailable,
+                    kind: .permissionDenied,
                     message: nserr.localizedDescription,
                     tool: tool,
-                    retryable: false
+                    retryable: false,
+                    metadata: metadata.isEmpty ? nil : metadata
                 )
             default:
                 break
@@ -495,7 +524,7 @@ public enum ToolEnvelope {
 
     private static func defaultRetryable(for kind: Kind) -> Bool {
         switch kind {
-        case .rejected, .toolNotFound, .userDenied, .notFound: return false
+        case .rejected, .toolNotFound, .userDenied, .notFound, .permissionDenied: return false
         case .invalidArgs, .timeout, .executionError, .unavailable: return true
         }
     }

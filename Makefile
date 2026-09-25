@@ -268,6 +268,16 @@ evals: evals-prep
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
 
+# Discover installed bundles using the same Core scanner as the app; each
+# image-capable bundle runs the strict real-media suite in an isolated process.
+VISION_EVALS_OUT ?= build/evals/vision-$(shell date -u +%Y%m%dT%H%M%SZ)
+VISION_EVALS_OUT := $(VISION_EVALS_OUT)
+.PHONY: evals-vision-installed
+evals-vision-installed: evals-prep
+	swift build --package-path Packages/OsaurusEvals --product osaurus-evals
+	bash scripts/live-proof/run-installed-vision-evals.sh \
+		Packages/OsaurusEvals/.build/debug/osaurus-evals "$(VISION_EVALS_OUT)"
+
 evals-verbose: evals-prep
 	@echo "Running OsaurusEvals (verbose) against $(EVALS_SUITE)…"
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
@@ -365,10 +375,17 @@ EVALS_DETERMINISTIC_SUITES := $(shell jq -r '.suitePassRates | keys_unsorted[]' 
 print-evals-deterministic-suites:
 	@echo $(EVALS_DETERMINISTIC_SUITES)
 
+#
+# Model-free by construction: `OSAURUS_EVALS_SCRIPTED_ONLY=1` makes mixed
+# suites (ComputerUseLoop) SKIP their live model-driven cases and score only
+# the scripted rows, and `OSAURUS_EVALS_DISABLE_WARMUP=1` stops the runner from
+# warming whatever model the local ChatConfiguration happens to point at —
+# neither lane may load a local model.
 evals-deterministic:
 	@rc=0; for name in $(EVALS_DETERMINISTIC_SUITES); do \
 		echo ""; \
 		echo "── $(EVALS_ROOT)/$$name ──"; \
+		OSAURUS_EVALS_SCRIPTED_ONLY=1 OSAURUS_EVALS_DISABLE_WARMUP=1 \
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $(EVALS_ROOT)/$$name \
 			--fail-on-floor \

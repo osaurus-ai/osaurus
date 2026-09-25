@@ -492,6 +492,36 @@ struct ConfigPlannerTests {
     }
 
     @Test
+    func autoToolPolicy_onPerCallSendOrDeleteTool_saysTheSettingIsInert() throws {
+        // `messages_send` / `calendar_delete_event` ask on every call no
+        // matter what is configured, so the plan must not promise "it will
+        // run without asking" — it says the stored `auto` has no effect.
+        // `mail_compose` is argument-aware: drafts go auto, sends still ask.
+        let registry = ToolRegistry.shared
+        let perCall = ["messages_send", "calendar_delete_event"].filter { registry.isRegistered($0) }
+        let argumentAware = ["mail_compose"].filter { registry.isRegistered($0) }
+        try #require(!perCall.isEmpty, "Apple tools must be registered for this probe")
+
+        for tool in perCall + argumentAware { registry.setPolicy(.ask, for: tool) }
+        defer { for tool in perCall + argumentAware { registry.setPolicy(.ask, for: tool) } }
+
+        var document = OsaurusConfigDocument()
+        var tools = ToolsSection()
+        tools.policies = Dictionary(uniqueKeysWithValues: (perCall + argumentAware).map { ($0, "auto") })
+        document.tools = tools
+
+        let plan = try ConfigPlanner.plan(document: document, prune: false)
+        for tool in perCall {
+            #expect(plan.risks.contains(ConfigRisk.autoPolicyIgnoredPerCall(tool)), "\(tool)")
+            #expect(!plan.risks.contains(ConfigRisk.autoPolicy(tool)), "\(tool)")
+        }
+        for tool in argumentAware {
+            #expect(plan.risks.contains(ConfigRisk.autoPolicySendsStillAsk(tool)), "\(tool)")
+            #expect(!plan.risks.contains(ConfigRisk.autoPolicy(tool)), "\(tool)")
+        }
+    }
+
+    @Test
     func newMCPServer_isFlaggedHighRiskAndNeverCarriesSecrets() throws {
         var document = OsaurusConfigDocument()
         var entry = MCPServerEntry(name: "Planner Probe MCP")
@@ -509,6 +539,7 @@ struct ConfigPlannerTests {
     func newAgentWithComputerUse_isFlaggedHighRisk() throws {
         var document = OsaurusConfigDocument()
         var agent = AgentEntry(name: "Planner Probe Agent \(UUID().uuidString.prefix(6))")
+        agent.description = "Performs requested screen-control tasks."
         var caps = AgentCapabilitiesEntry()
         caps.computerUseEnabled = true
         agent.capabilities = caps
@@ -629,9 +660,9 @@ struct ConfigPlannerPruneIntegrityTests {
     private func withSeededAgent(
         _ body: (Agent) async throws -> Void
     ) async throws {
-        let agent = AgentManager.shared.create(
+        let agent = try AgentManager.shared.create(
             name: "Prune Probe Agent \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         do {
             try await body(agent)
         } catch {
@@ -785,9 +816,9 @@ struct ConfigPlanFidelityTests {
 
     @Test
     func equivalentFrequencySpellings_doNotPlanAnUpdate() async throws {
-        let agent = AgentManager.shared.create(
+        let agent = try AgentManager.shared.create(
             name: "Fidelity Probe Agent \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         let schedule = ScheduleManager.shared.create(
             name: "Fidelity Probe Schedule \(UUID().uuidString.prefix(6))",
             instructions: "do things",
@@ -823,9 +854,9 @@ struct ConfigPlanFidelityTests {
     func floatStoredTemperature_doesNotDiffAgainstYAMLDouble() async throws {
         // Live agent temperatures are Float; 0.7 as YAML Double differs in
         // the last bits. The planner must treat them as equal.
-        var agent = AgentManager.shared.create(
+        var agent = try AgentManager.shared.create(
             name: "Fidelity Probe Agent \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         agent.temperature = Float(0.7)
         AgentManager.shared.update(agent)
 

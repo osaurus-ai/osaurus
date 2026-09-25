@@ -200,6 +200,7 @@ struct AgentsView: View {
             }
             consumeDeeplinkIfPossible()
             applyPendingRemoteAgentDetail()
+            routeSettingsLanding(highlightCoordinator.pending)
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
@@ -225,14 +226,7 @@ struct AgentsView: View {
             isCreating = true
         }
         .onChange(of: highlightCoordinator.pending) { _, pending in
-            // Settings-search landings target the grid (header / agent
-            // cards); pop any open detail so the anchored control is
-            // actually on screen to glow.
-            guard let pending, pending.hasPrefix("agents.") else { return }
-            withAnimation(Self.navTransition) {
-                selectedAgent = nil
-                selectedRemoteAgentId = nil
-            }
+            routeSettingsLanding(pending)
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
@@ -259,6 +253,74 @@ struct AgentsView: View {
                 selectedAgent = target
             }
         }
+    }
+
+    /// Settings-search landing router. Also invoked from `onAppear`: the
+    /// coordinator publishes the id BEFORE the Management tab switches, so a
+    /// cold-mounted Agents tab never sees the `onChange`.
+    private func routeSettingsLanding(_ pending: String?) {
+        guard let pending, pending.hasPrefix("agents.") else { return }
+        if pending == "agents.description",
+            let target = customAgents.first(where: \.requiresDescriptionRepair) ?? detailAgent ?? customAgents.first
+        {
+            selectedRemoteAgentId = nil
+            deeplinkTab = (target.id, "configure")
+            selectedAgent = target
+            NotificationCenter.default.post(
+                name: .agentDetailDeeplink, object: nil,
+                userInfo: ["agentId": target.id, "tab": "configure"]
+            )
+            return
+        }
+        if pending.hasPrefix("agents.appleApps") {
+            // The Apple app groups live inside a custom agent's
+            // Abilities → Tools picker, not on the grid: route into the
+            // first custom agent's Tools tab (or keep the currently open
+            // custom agent) so the anchored group can scroll and glow.
+            // With no custom agent yet there is nothing to land on; the
+            // grid's onboarding CTA is the right place to be.
+            guard let target = Self.appleAppsLandingAgent(open: detailAgent, all: agentManager.agents) else {
+                withAnimation(Self.navTransition) {
+                    selectedAgent = nil
+                    selectedRemoteAgentId = nil
+                }
+                return
+            }
+            deeplinkTab = (target.id, Self.appleAppsLandingTabRaw)
+            if detailAgent?.id == target.id {
+                // Already mounted: the detail view flips its own tab via
+                // the deeplink notification, same as the What's New CTA.
+                NotificationCenter.default.post(
+                    name: .agentDetailDeeplink, object: nil,
+                    userInfo: ["agentId": target.id, "tab": Self.appleAppsLandingTabRaw]
+                )
+            } else {
+                withAnimation(Self.navTransition) {
+                    selectedRemoteAgentId = nil
+                    selectedAgent = target
+                }
+            }
+            return
+        }
+        // Other settings-search landings target the grid (header /
+        // agent cards); pop any open detail so the anchored control is
+        // actually on screen to glow.
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            selectedRemoteAgentId = nil
+        }
+    }
+
+    /// Detail tab raw value the `agents.appleApps*` landings open.
+    static let appleAppsLandingTabRaw = "capabilities"
+
+    /// Which custom agent an `agents.appleApps*` settings-search landing
+    /// should open: the custom agent already on screen, else the first
+    /// custom (non-built-in) agent in display order. `nil` when there is no
+    /// custom agent (the Default agent has no Apple app groups).
+    static func appleAppsLandingAgent(open: Agent?, all: [Agent]) -> Agent? {
+        if let open, !open.isBuiltIn { return open }
+        return all.first { !$0.isBuiltIn }
     }
 
     // MARK: - Grid Content
@@ -312,6 +374,24 @@ struct AgentsView: View {
                 .opacity(hasAppeared ? 1 : 0)
             } else {
                 ScrollView {
+                    if customAgents.contains(where: \.requiresDescriptionRepair) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Descriptions required", bundle: .module)
+                                .font(.headline)
+                            Text("Add what each agent does and when to use it. Your chats and settings are preserved; delegation is unavailable until its description is complete.", bundle: .module)
+                                .font(.callout)
+                            ForEach(customAgents.filter(\.requiresDescriptionRepair)) { agent in
+                                Button {
+                                    selectedAgent = agent
+                                    deeplinkTab = (agent.id, "configure")
+                                } label: {
+                                    Text("Add description for \(agent.name)", bundle: .module)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(20)
+                    }
                     LazyVGrid(columns: Self.gridColumns, spacing: 20) {
                         ForEach(Array(customAgents.enumerated()), id: \.element.id) { index, agent in
                             AgentCard(
@@ -516,6 +596,21 @@ struct AgentsView: View {
     }
 
     private func duplicateAgent(_ agent: Agent) {
+        // A legacy record may legitimately need repair, but duplicating it
+        // must not author another agent without a valid routing purpose.
+        // Open the existing repair flow (including prompt-backed Suggest)
+        // before copying any record or registering a new spawn target.
+        guard !agent.requiresDescriptionRepair else {
+            deeplinkTab = (agent.id, "configure")
+            withAnimation(Self.navTransition) {
+                selectedAgent = agent
+            }
+            ToastManager.shared.warning(
+                L("Description required"),
+                message: L("Add a valid description before duplicating this agent.")
+            )
+            return
+        }
         let baseName = "\(agent.name) Copy"
         let existingNames = Set(customAgents.map { $0.name })
         var newName = baseName
@@ -641,13 +736,13 @@ private struct AgentCard: View {
                         // Always render the description line so card heights line
                         // up across the grid — placeholder when the agent has none.
                         Text(
-                            agent.description.isEmpty
-                                ? L("No description")
+                            agent.requiresDescriptionRepair
+                                ? L("Description required — open Configure")
                                 : agent.description
                         )
                         .font(.system(size: 11))
                         .foregroundColor(
-                            agent.description.isEmpty ? theme.tertiaryText : theme.secondaryText
+                            agent.requiresDescriptionRepair ? Color.orange : theme.secondaryText
                         )
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1011,7 +1106,7 @@ private enum DetailTab: String, CaseIterable {
             return L("Pick which tools this agent can use. Skills come from the shared library and are always available.")
         case .subagents:
             return L(
-                "Let this agent delegate work — control your Mac, hand tasks to other agents, or generate images."
+                "Let this agent delegate work — control your Mac, delegate tasks to other agents or models, or generate images."
             )
         case .customization: return L("Avatar, empty state, and visual theme.")
         case .network: return L("Bonjour discovery and relay tunnel.")
@@ -1100,6 +1195,7 @@ struct AgentDetailView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var recentFolders = RecentFoldersStore.shared
     private let scheduleManager = ScheduleManager.shared
     private let watcherManager = WatcherManager.shared
     /// Reference held for the "Enable Relay" alert callback only.
@@ -1221,13 +1317,6 @@ struct AgentDetailView: View {
     /// Per-agent shared workspace agents this agent may delegate to. Mirrored
     /// from / into `AgentSettings.spawnableWorkspaceAgents`.
     @State private var spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
-    /// Per-agent `spawn_model` allow-list (raw model ids this agent may spawn).
-    /// Mirrored from / into `AgentSettings.spawnableModelNames`; empty hides the
-    /// `spawn_model` tool.
-    @State private var spawnableModelNames: [String] = []
-    /// Per-agent "when/how to use" notes keyed by spawnable model id. Mirrored
-    /// from / into `AgentSettings.spawnableModelNotes`; pruned to the pool on save.
-    @State private var spawnableModelNotes: [String: String] = [:]
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
@@ -1261,7 +1350,6 @@ struct AgentDetailView: View {
     @State private var loadedSubagentPermissions: SubagentPermissionDefaults =
         SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
-    @State private var spawnToolAccess: SpawnToolAccess = .none
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
     /// spawn). Empty/absent = inherit the kind's default model.
     /// Mirrored from / into `AgentSettings.subagentModelOverrides`.
@@ -1323,6 +1411,8 @@ struct AgentDetailView: View {
     @State private var abilityContextDeltaDismissTask: Task<Void, Never>?
     @State private var abilityPreviewToolMode: ToolSelectionMode?
     @State private var abilityPreviewToolNames: Set<String>?
+    @State private var abilityPreviewAppleApps: Set<AppleApp>?
+    @Environment(\.settingsLandingPending) private var settingsLandingPending
     @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
     @State private var abilityPreviewRegistryRevision = 0
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
@@ -1513,6 +1603,17 @@ struct AgentDetailView: View {
         return hasConfig || hasInstructions || hasSecrets
     }
 
+    /// The Tools picker hosts every Apple app group, so it is the landing
+    /// target for the group row and for each per-app catalog row. One anchor
+    /// id at a time (stacked `.id()`s would shadow each other): whichever
+    /// `agents.appleApps*` id is pending, else the group id.
+    private var appleAppsLandingAnchorId: String {
+        if let pending = settingsLandingPending, pending.hasPrefix("agents.appleApps") {
+            return pending
+        }
+        return "agents.appleApps"
+    }
+
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
@@ -1520,12 +1621,16 @@ struct AgentDetailView: View {
             AgentCapabilityManagerView(
                 agentId: agent.id,
                 onDismiss: nil,
-                onSelectionChanged: { mode, names in
+                onSelectionChanged: { mode, names, appleApps in
                     abilityPreviewToolMode = mode
                     abilityPreviewToolNames = names
+                    abilityPreviewAppleApps = appleApps
                 }
             )
                 .environment(\.theme, themeManager.currentTheme)
+                // Built-in Apple apps live in this picker (one group per
+                // app); the `agents.appleApps[.<app>]` catalog rows land here.
+                .settingsLandingAnchor(appleAppsLandingAnchorId)
                 .id(selectedTab)
         case .builtIn(.database):
             DatabaseWorkspaceView(
@@ -1645,7 +1750,7 @@ struct AgentDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: .watchersChanged)) { _ in
             refreshDetailCaches()
         }
-        // The Spawn editor reads Local Orchestrator Handoff from the shared
+        // The subagent editor reads "Swap local models for subagents" from the shared
         // global store. Keep an already-open custom agent in sync when the
         // setting changes elsewhere, matching ConfigurationView's
         // notification-driven refresh instead of requiring the user to close
@@ -2262,11 +2367,13 @@ struct AgentDetailView: View {
                     icon: "textformat"
                 )
 
-                StyledTextField(
-                    placeholder: L("Brief description (optional)"),
-                    text: $description,
-                    icon: "text.alignleft"
-                )
+                AgentDescriptionField(text: $description, systemPrompt: systemPrompt)
+                    .id(agent.id)
+                if AgentDescriptionPolicy.violation(in: description) != nil {
+                    Text("Description changes are not saved until valid. This agent cannot be delegated to while its saved description needs repair.", bundle: .module)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 HStack(spacing: 6) {
                     Image(systemName: "calendar")
@@ -3262,6 +3369,12 @@ struct AgentDetailView: View {
         let toolNames =
             abilityPreviewToolNames
             ?? Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        // Apple apps are written by the Tools picker straight through
+        // `AgentManager` (like `manualToolNames`); mirror the picker's
+        // in-flight value first, then the persisted set.
+        let enabledAppleApps =
+            agent.id == Agent.defaultId
+            ? [] : (abilityPreviewAppleApps ?? currentAgent.settings.enabledAppleApps)
         let autonomous =
             abilityPreviewAutonomousConfig
             ?? agentManager.effectiveAutonomousExec(for: agent.id)
@@ -3272,13 +3385,10 @@ struct AgentDetailView: View {
             .map(\.grantDescriptor)
         let spawnConfiguration = AgentSpawnConfigSnapshot(
             agentIDs: spawnableAgentIDs.filter { $0 != agent.id },
-            modelNames: spawnableModelNames,
-            modelNotes: spawnableModelNotes,
             budgets: SpawnBatchConcurrencyContract.applyingSharedLimit(
                 from: globalSubagentConfig,
                 to: subagentBudgets
             ),
-            toolAccess: spawnToolAccess,
             launcherModelOverride:
                 subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
             workspaceAgents: spawnableWorkspaceAgents
@@ -3306,9 +3416,8 @@ struct AgentDetailView: View {
             videoEnabled: videoEnabled,
             appleScriptEnabled: appleScriptEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
-            spawnableModelNames: spawnableModelNames,
-            spawnableModelNotes: spawnableModelNotes,
             spawnConfiguration: spawnConfiguration,
+            enabledAppleApps: enabledAppleApps,
             autonomousConfig: autonomous,
             knowledgeCollections: collections,
             registryRevision: abilityPreviewRegistryRevision
@@ -3347,6 +3456,9 @@ struct AgentDetailView: View {
 
     /// On/off values behind the hero's "N of M abilities on" counter, in
     /// card order. Working Folder counts as on when the agent has a folder.
+    /// Apple apps are deliberately NOT counted: they have no Overview card
+    /// (they are groups in the Tools tab), so counting them made the
+    /// denominator disagree with the cards on screen.
     private var abilityFlagValues: [Bool] {
         var flags = [toolsEnabled]
         if agent.id != Agent.defaultId {
@@ -3854,6 +3966,9 @@ struct AgentDetailView: View {
                 .foregroundColor(theme.primaryText)
             if let preview = bundleImportPreview {
                 bundleManifestSummary(preview.manifest)
+                if let note = preview.identityNote {
+                    bundleIdentityNote(note)
+                }
             }
             Text(
                 "Activate copies the agent into ~/.osaurus/agents/<id>/, rekeys its database to your local key, and registers the agent for use. Discard wipes the unpacked scratch directory and changes nothing on disk.",
@@ -3906,6 +4021,45 @@ struct AgentDetailView: View {
         .background(
             RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground)
         )
+    }
+
+    /// What activating will do to the bundled agent's address. Moving an
+    /// agent between your own devices keeps its address (pairings and
+    /// shares survive); a clash with a local agent re-mints it.
+    @ViewBuilder
+    private func bundleIdentityNote(_ note: AgentBundleService.IdentityNote) -> some View {
+        let (symbol, text): (String, String) = {
+            switch note {
+            case .mintedOnAnotherDevice:
+                return (
+                    "laptopcomputer.and.iphone",
+                    L(
+                        "This agent's address was created on another device. It keeps that address, so existing pairings and workspace shares keep working — but if the other device is still serving it, the relay will route to whichever device connected last."
+                    )
+                )
+            case .collidesWithLocalAgent(let name):
+                return (
+                    "exclamationmark.triangle",
+                    L(
+                        "Its address is already used by your agent “\(name)”. The imported copy gets a new address on activation; clients paired to the old one must pair again."
+                    )
+                )
+            case .legacyV1:
+                return (
+                    "key",
+                    L("This agent uses a legacy (non device-scoped) address. It is kept as-is; rotate the key later to move it to the current layout.")
+                )
+            }
+        }()
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 11))
+                .foregroundColor(theme.warningColor)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func beginBundleExport() {
@@ -4073,9 +4227,9 @@ struct AgentDetailView: View {
             case .spawn:
                 return PerAgentFeature(
                     flag: .spawn,
-                    title: "Spawn",
+                    title: "Delegate to subagents",
                     subtitle:
-                        "Let this agent hand a bounded task to another agent or model you allow below — the subagent runs it and returns just the result."
+                        "Let this agent delegate a bounded task to an agent or model you allow below. The subagent runs it and returns only the result."
                 )
             case .image:
                 return PerAgentFeature(
@@ -4147,23 +4301,18 @@ struct AgentDetailView: View {
         if flag == .spawn {
             let configuredAgentIDs = spawnableAgentIDs.filter { $0 != agent.id }
             configuredSpawnTargetCount =
-                configuredAgentIDs.count + spawnableModelNames.count
-                + spawnableWorkspaceAgents.count
+                configuredAgentIDs.count + spawnableWorkspaceAgents.count
             let availability = SpawnDescriptors.resolveForPreview(
                 agentIDs: configuredAgentIDs,
-                modelNames: spawnableModelNames,
-                modelNotes: spawnableModelNotes,
                 launcherModelOverride:
                     subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
                 workspaceAgents: spawnableWorkspaceAgents
             )
             runnableSpawnTargetCount =
                 availability.runnableAgentIDs.count
-                + availability.runnableModelIds.count
                 + availability.runnableWorkspaceAgents.count
             checkingSpawnTargets =
                 availability.agentTargets.contains { $0.state == .checking }
-                || availability.modelTargets.contains { $0.state == .checking }
         }
 
         let permissionKindId: String = {
@@ -4189,7 +4338,12 @@ struct AgentDetailView: View {
             hasReadyImageModel: ModelPickerItemCache.shared.hasReadyImageModel,
             hasReadyVideoModel: ModelPickerItemCache.shared.hasReadyVideoGenerationModel,
             hasReadyAppleScriptModel: ModelPickerItemCache.shared.hasReadyAppleScriptModel,
-            permission: permission
+            permission: permission,
+            // Computer Use's runtime floor is Accessibility (the registry
+            // permission gate fails the first call without it). Only that
+            // flag consults TCC; `AXIsProcessTrusted` is a cheap local read.
+            hasRequiredSystemPermissions: flag != .computerUse
+                || SystemPermissionService.shared.isGranted(.accessibility)
         )
     }
 
@@ -4414,15 +4568,12 @@ struct AgentDetailView: View {
                 modelOverride: spawnModelOverrideBinding,
                 spawnableAgentIDs: $spawnableAgentIDs,
                 spawnableWorkspaceAgents: $spawnableWorkspaceAgents,
-                spawnableModelNames: $spawnableModelNames,
-                spawnableModelNotes: $spawnableModelNotes,
                 permissionDefaults: $subagentPermissions,
                 budgets: sharedSpawnBudgetsBinding,
-                toolAccess: $spawnToolAccess,
                 onChange: debouncedSave
             )
             subagentFootnote(
-                "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Subagents."
+                "Local model swapping and memory checks for subagents are system settings in Settings → Orchestrator."
             )
         case .image:
             imageModelPickerRows
@@ -5634,6 +5785,13 @@ struct AgentDetailView: View {
                     .accessibilityIdentifier("agentEditor.clearWorkingFolder")
                 }
             }
+            if !recentFolders.entries.isEmpty {
+                RecentFoldersList(activePath: workingFolderPath, showsPath: true, horizontalInset: 0) { entry in
+                    applyRecentWorkingFolder(entry)
+                }
+                .environment(\.theme, theme)
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -5658,7 +5816,33 @@ struct AgentDetailView: View {
             }
             let path = url.standardizedFileURL.path
             agentManager.updateWorkingFolder(for: agent.id, bookmark: bookmark, path: path)
+            RecentFoldersStore.shared.record(path: path, bookmark: bookmark)
             workingFolderPath = path
+        }
+    }
+
+    /// Apply a remembered folder as the agent's working folder. Resolves the
+    /// entry off the main actor and mints a fresh bookmark, then persists it
+    /// exactly as a panel pick does. A folder that no longer resolves is
+    /// dropped from the list and reported.
+    private func applyRecentWorkingFolder(_ entry: RecentFoldersStore.Entry) {
+        Task { @MainActor in
+            guard let url = await RecentFoldersStore.resolveURL(for: entry) else {
+                recentFolders.remove(path: entry.path)
+                ToastManager.shared.error(L("Folder no longer available"), message: entry.path)
+                return
+            }
+            let bookmark = await Task.detached(priority: .userInitiated) {
+                FolderContextService.makeSecurityScopedBookmark(for: url)
+            }.value
+            guard let bookmark else {
+                ToastManager.shared.error(L("Failed to grant folder access"))
+                return
+            }
+            let path = url.standardizedFileURL.path
+            agentManager.updateWorkingFolder(for: agent.id, bookmark: bookmark, path: path)
+            workingFolderPath = path
+            recentFolders.record(path: path, bookmark: bookmark)
         }
     }
 
@@ -6830,8 +7014,6 @@ struct AgentDetailView: View {
         screenContextEnabled = agent.settings.screenContextEnabled
         spawnableAgentIDs = agent.settings.spawnableAgentIDs
         spawnableWorkspaceAgents = agent.settings.spawnableWorkspaceAgents
-        spawnableModelNames = agent.settings.spawnableModelNames
-        spawnableModelNotes = agent.settings.spawnableModelNotes
         imageGenerationTarget = agent.settings.imageGenerationTarget
         imageEditModelId = agent.settings.imageEditModelId
         textToVideoTarget = agent.settings.textToVideoTarget
@@ -6845,7 +7027,6 @@ struct AgentDetailView: View {
             to: agent.settings.subagentBudgets
         )
         subagentModelOverrides = agent.settings.subagentModelOverrides
-        spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = globalSpawnConfiguration
         workingFolderPath = agent.workingFolderPath
@@ -7000,7 +7181,7 @@ struct AgentDetailView: View {
         let updated = Agent(
             id: agent.id,
             name: trimmedName,
-            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: (try? AgentDescriptionPolicy.validated(description)) ?? current.description,
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             themeId: selectedThemeId,
             defaultModel: selectedModel,
@@ -7020,6 +7201,7 @@ struct AgentDetailView: View {
             updatedAt: Date(),
             agentIndex: current.agentIndex,
             agentAddress: current.agentAddress,
+            agentDeviceScope: current.agentDeviceScope,
             autonomousExec: current.autonomousExec,
             claudeCode: current.claudeCode,
             pluginInstructions: effectivePluginInstructions,
@@ -7058,20 +7240,11 @@ struct AgentDetailView: View {
                 appleScriptEnabled: appleScriptEnabled,
                 appleScriptModelId: appleScriptModelId,
                 appleScriptExecutionMode: appleScriptExecutionMode,
-                // Persist the configured pools even while Spawn is off. The
-                // capability flag still hides/refuses the tools, while a later
-                // re-enable restores the user's deliberate agents, models, and
-                // routing notes instead of silently destroying them.
+                // Persist the configured pool even while Spawn is off. The
+                // capability flag still hides/refuses the tool, while a later
+                // re-enable restores the user's deliberate agents instead of
+                // silently destroying them.
                 spawnableAgentIDs: spawnableAgentIDs,
-                spawnableModelNames: SubagentConfiguration.normalizedSpawnableModelNames(
-                    spawnableModelNames
-                ),
-                spawnableModelNotes: SubagentConfiguration.normalizedSpawnableModelNotes(
-                    spawnableModelNotes,
-                    names: SubagentConfiguration.normalizedSpawnableModelNames(
-                        spawnableModelNames
-                    )
-                ),
                 // Image models / permissions / budgets persist unconditionally —
                 // a stored model id is ignored while the capability is off, so a
                 // toggle round-trip keeps the user's choices (unlike the spawn
@@ -7090,8 +7263,12 @@ struct AgentDetailView: View {
                 knowledgeEnabled: knowledgeEnabled,
                 knowledgeCollectionIds: knowledgeCollectionIds,
                 knowledgeCuratorEnabled: knowledgeCuratorEnabled,
-                spawnToolAccess: spawnToolAccess,
-                spawnableWorkspaceAgents: spawnableWorkspaceAgents
+                spawnableWorkspaceAgents: spawnableWorkspaceAgents,
+                // Apple app families are written by the Tools picker through
+                // `AgentManager.updateEnabledAppleApps` (instant save, like
+                // `manualToolNames`), so pass the persisted value through.
+                // The Default agent never carries any.
+                enabledAppleApps: agent.id == Agent.defaultId ? [] : current.settings.enabledAppleApps
             ),
             order: current.order
         )
@@ -7518,6 +7695,10 @@ private struct AgentDetailRelaySection: View {
             Circle()
                 .fill(theme.errorColor)
                 .frame(width: 8, height: 8)
+        case .servedElsewhere:
+            Circle()
+                .fill(theme.warningColor.opacity(0.6))
+                .frame(width: 8, height: 8)
         }
     }
 
@@ -7528,6 +7709,7 @@ private struct AgentDetailRelaySection: View {
             case .connecting: return ("Connecting", theme.warningColor)
             case .connected: return ("Connected", theme.successColor)
             case .error: return ("Error", theme.errorColor)
+            case .servedElsewhere: return (L("On another device"), theme.warningColor)
             }
         }()
         return Text(label)
@@ -8001,11 +8183,15 @@ private struct AgentEditorSheet: View {
     /// the suggested name in sync. Once the user types their own value, the
     /// name is theirs and presets stop touching it.
     @State private var nameUserEdited: Bool = false
+    @State private var description: String = ""
     @State private var selectedAvatar: String? = nil
     @State private var systemPrompt: String = ""
+    @State private var descriptionResolutionTask: Task<Void, Never>?
+    @State private var descriptionResolutionError: String?
     @State private var selectedModel: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
+    @State private var showAddModelWarning: Bool = false
     @State private var hasAppeared: Bool = false
 
     /// When true, the form column is replaced in place by an embedded
@@ -8022,6 +8208,11 @@ private struct AgentEditorSheet: View {
     @State private var draftMode: ToolSelectionMode = .auto
     @State private var draftToolNames: Set<String> = []
     @State private var draftSeeded: Bool = false
+    /// Optional Apple app families to provision at creation, picked in the
+    /// same Customize… tool picker (one group per app; Abilities → Tools
+    /// after the fact). Empty by default — macOS is asked for permission
+    /// only once an app is on and the agent exists.
+    @State private var draftAppleApps: Set<AppleApp> = []
 
     @FocusState private var nameFocused: Bool
 
@@ -8029,6 +8220,8 @@ private struct AgentEditorSheet: View {
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && descriptionResolutionTask == nil
+            && AgentDescriptionResolver.canResolve(description: description, systemPrompt: systemPrompt)
     }
 
     var body: some View {
@@ -8084,7 +8277,49 @@ private struct AgentEditorSheet: View {
                 nameFocused = true
             }
         }
+        .onDisappear { descriptionResolutionTask?.cancel() }
         .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
+        .themedAlert(
+            L("Leave without creating this agent?"),
+            isPresented: $showAddModelWarning,
+            message: L(
+                "Adding a model switches to the Models tab and closes this window. Create the agent first to keep what you entered."
+            ),
+            buttons: [
+                .cancel(L("Keep Editing")),
+                .destructive(L("Discard and Add Model")) { openModelsTab() },
+            ],
+            width: 380,
+            presentationStyle: .contained
+        )
+    }
+
+    /// True once the user has put anything into the form that closing the
+    /// sheet would throw away.
+    private var hasUnsavedDraft: Bool {
+        nameUserEdited
+            || !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || selectedTemplate != .blank
+            || selectedAvatar != nil
+    }
+
+    /// "Add Model" in the picker switches the Management window to the Models
+    /// tab, which tears down `AgentsView` and this sheet with it. Warn first
+    /// when there is a draft to lose.
+    private func handleAddModel() {
+        showModelPicker = false
+        Task { @MainActor in
+            try? await Task.sleepForPopoverDismiss()
+            if hasUnsavedDraft {
+                showAddModelWarning = true
+            } else {
+                openModelsTab()
+            }
+        }
+    }
+
+    private func openModelsTab() {
+        AppDelegate.shared?.showManagementWindow(initialTab: .models)
     }
 
     /// Embedded picker pane shown when the user clicks "Customize…". Operates
@@ -8097,6 +8332,7 @@ private struct AgentEditorSheet: View {
         AgentCapabilityManagerView(
             draftMode: $draftMode,
             draftTools: $draftToolNames,
+            draftAppleApps: $draftAppleApps,
             onDismiss: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                     inlineCustomize = false
@@ -8123,12 +8359,20 @@ private struct AgentEditorSheet: View {
             VStack(alignment: .leading, spacing: 18) {
                 templatesStrip
                 nameField
+                AgentDescriptionField(text: $description, systemPrompt: systemPrompt, generatesOnCreate: true)
+                if descriptionResolutionTask != nil {
+                    ProgressView(L("Generating agent description…"))
+                }
+                if let descriptionResolutionError {
+                    Text(descriptionResolutionError).font(.caption).foregroundStyle(.red)
+                }
                 avatarField
                 modelField
                 capabilitiesField
                 promptField
             }
             .padding(20)
+            .disabled(descriptionResolutionTask != nil)
         }
     }
 
@@ -8274,7 +8518,8 @@ private struct AgentEditorSheet: View {
                     options: pickerItems,
                     selectedModel: $selectedModel,
                     agentId: nil,
-                    onDismiss: { showModelPicker = false }
+                    onDismiss: { showModelPicker = false },
+                    onAddModel: handleAddModel
                 )
             }
         }
@@ -8382,7 +8627,11 @@ private struct AgentEditorSheet: View {
             ? L("Loaded on demand from your assigned set.")
             : L("All assigned tools are sent every turn.")
         let countLabel = toolCount == 1 ? L("1 tool assigned") : L("\(toolCount) tools assigned")
-        return "\(countLabel) · \(modeBlurb)"
+        if draftAppleApps.isEmpty {
+            return "\(countLabel) · \(modeBlurb)"
+        }
+        let apps = AppleApp.sorted(draftAppleApps).map(\.displayName).joined(separator: ", ")
+        return "\(countLabel) · \(L("Apple apps: \(apps)")) · \(modeBlurb)"
     }
 
     private var promptField: some View {
@@ -8466,7 +8715,8 @@ private struct AgentEditorSheet: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)
-                    Text("No description", bundle: .module)
+                    Text(AgentDescriptionPolicy.normalized(description).isEmpty
+                        ? L("Description required") : AgentDescriptionPolicy.normalized(description))
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)
@@ -8519,7 +8769,7 @@ private struct AgentEditorSheet: View {
             icon: "person.crop.circle.badge.plus",
             title: "Create Agent",
             subtitle: "Pick a starter, name it, write a prompt",
-            onClose: onCancel
+            onClose: cancelCreation
         )
     }
 
@@ -8532,7 +8782,7 @@ private struct AgentEditorSheet: View {
             ),
             secondary: AgentSheetFooter.Action(
                 label: "Cancel",
-                handler: onCancel
+                handler: cancelCreation
             ),
             hint: "+ Enter to create"
         )
@@ -8553,10 +8803,49 @@ private struct AgentEditorSheet: View {
         }
     }
 
+    private func cancelCreation() {
+        descriptionResolutionTask?.cancel()
+        descriptionResolutionTask = nil
+        onCancel()
+    }
+
     @MainActor
     private func saveAgent() {
+        guard descriptionResolutionTask == nil else { return }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if AgentDescriptionPolicy.normalized(description).isEmpty,
+            !AgentDescriptionPolicy.normalized(systemPrompt).isEmpty
+        {
+            let prompt = systemPrompt
+            let originalDescription = description
+            descriptionResolutionError = nil
+            descriptionResolutionTask = Task { @MainActor in
+                do {
+                    let resolved = try await AgentDescriptionGenerator.resolve(
+                        description: originalDescription, systemPrompt: prompt)
+                    try Task.checkCancellation()
+                    guard systemPrompt == prompt, description == originalDescription else {
+                        descriptionResolutionTask = nil
+                        return
+                    }
+                    description = resolved
+                    descriptionResolutionTask = nil
+                    saveAgent()
+                } catch is CancellationError {
+                    descriptionResolutionTask = nil
+                } catch {
+                    descriptionResolutionTask = nil
+                    descriptionResolutionError = (error as? AgentDescriptionPolicy.Violation)?.message
+                        ?? L("Could not suggest a description. Try again or enter one manually.")
+                }
+            }
+            return
+        }
+
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return }
+        guard !trimmedName.isEmpty,
+            let validDescription = try? AgentDescriptionPolicy.validated(description)
+        else { return }
 
         // Bake the (possibly user-edited) draft sets directly into the new
         // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first
@@ -8564,7 +8853,7 @@ private struct AgentEditorSheet: View {
         // when new plugins are installed later.
         var agent = AgentManager.newCustomAgentRecord(
             name: trimmedName,
-            description: "",
+            description: validDescription,
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             themeId: nil,
             defaultModel: selectedModel
@@ -8572,6 +8861,7 @@ private struct AgentEditorSheet: View {
         agent.toolSelectionMode = draftMode
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar
+        agent.settings.enabledAppleApps = draftAppleApps
 
         onSave(agent)
     }

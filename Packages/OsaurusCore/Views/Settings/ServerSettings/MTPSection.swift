@@ -24,8 +24,7 @@ struct MTPSection: View {
     /// shows during warmup instead of only after it resolves. Populated
     /// off-main from `MTPBundleInspector.inspect` (weights, not config —
     /// configs lie: JANG_1L has no `mtp` field; a 27B index omitted its 31
-    /// mtp.* tensors). Scoped to the Flash-Next/27B families the MTP controls
-    /// target.
+    /// mtp.* tensors). The engine launch policy determines architecture support.
     @State private var loadingMTP: [ModelRuntime.LoadingModelMTPStatus] = []
     /// Memo so a loading bundle's headers are read once, not every 2s poll.
     @State private var mtpInspectCache: [String: ModelRuntime.LoadingModelMTPStatus] = [:]
@@ -65,7 +64,7 @@ struct MTPSection: View {
             SettingsField(
                 label: "Mode",
                 hint:
-                    "Off disables the model's native MTP head. Auto uses it only when the model ships a verified head; Force-On requires it. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
+                    "Native MTP starts Off. Off disables the model's native MTP head. Auto requires verified bundle tuning. Force On requires verified tuning unless you select an eligible manual depth in Chat. A refused request reports the reason. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
             ) {
                 Picker("", selection: $draft.mtp.mode) {
                     ForEach(VMLXMTPServerMode.allCases, id: \.self) { mode in
@@ -168,7 +167,7 @@ struct MTPSection: View {
                 // Early, by-WEIGHT MTP detection for in-flight loads so the
                 // detector appears during warmup. File-only inspection runs
                 // off-main (a heavy load never stalls the UI) and is memoized
-                // per bundle. Restricted to the Flash-Next/27B families.
+                // per bundle. Architecture support comes from the engine policy.
                 let loadingNames = await ModelRuntime.shared.loadingModelNames()
                 let cache = mtpInspectCache
                 let inspected: [ModelRuntime.LoadingModelMTPStatus] =

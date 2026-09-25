@@ -149,16 +149,15 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(reason == .insufficientMemory)
     }
 
-    /// A bounded estimate can only SHRINK the charge: if a caller ever
-    /// supplies a bounded value above the cap-priced envelope, the
-    /// conservative value wins.
-    @Test("bounded estimate never exceeds the cap-priced envelope")
-    func boundedEstimateClampedToCap() {
+    /// A request can exceed a soft default or fallback envelope. Its actual
+    /// enforced price must not be discounted to the smaller fallback.
+    @Test("request pricing cannot be discounted by a smaller fallback envelope")
+    func boundedEstimateIsNotDiscountedByFallback() {
         let facts = sixteenGBFacts(
             capPricedChildBytes: 2 * gib,
             boundedChildBytes: 10 * gib
         )
-        #expect(facts.effectiveChildHeadroomBytes == 2 * gib)
+        #expect(facts.effectiveChildHeadroomBytes == 10 * gib)
     }
 
     /// Identical normalized model keys receive identical admission
@@ -258,23 +257,22 @@ struct SubagentAdmission16GBRegressionTests {
 
     /// The bounded-position budget math itself: a 2,048-output child with a
     /// short instruction stays at the 4,096 floor, far below a 64K policy
-    /// cap; a huge seed clamps to the cap, never above it; token math
-    /// rounds UP (ceiling), never truncates.
-    @Test("bounded position budget: floor, clamp, ceiling")
+    /// cap; a huge request keeps its full price; token math rounds up.
+    @Test("bounded position budget: floor, full request price, rounding")
     func boundedPositionBudgetMath() {
         let small = SubagentChildRequestEstimate(
             seedCharacters: 800, maxOutputTokens: 2048)
-        #expect(small.boundedPositionBudget(policyCap: 65536) == 4096)
+        #expect(small.boundedPositionBudget() == 4096)
 
         let huge = SubagentChildRequestEstimate(
             seedCharacters: 1_000_000, maxOutputTokens: 2048)
-        #expect(huge.boundedPositionBudget(policyCap: 65536) == 65536)
+        #expect(huge.boundedPositionBudget() == 377_048)
 
         // Ceiling: 13,001 chars × 3 = 39,003; /8 truncating would give
         // 4,875 — the estimator must round UP to 4,876.
         let ceiling = SubagentChildRequestEstimate(
             seedCharacters: 13_001, maxOutputTokens: 10_000)
-        #expect(ceiling.boundedPositionBudget(policyCap: 65536) == 4876 + 10_000)
+        #expect(ceiling.boundedPositionBudget() == 4876 + 10_000)
     }
 
     /// An INCOMPLETE contract is not a bound: a missing seed OR a missing
@@ -284,16 +282,16 @@ struct SubagentAdmission16GBRegressionTests {
     func incompleteBoundsFallBack() {
         #expect(
             SubagentChildRequestEstimate(seedCharacters: nil, maxOutputTokens: 2048)
-                .boundedPositionBudget(policyCap: 65536) == nil)
+                .boundedPositionBudget() == nil)
         #expect(
             SubagentChildRequestEstimate(seedCharacters: 800, maxOutputTokens: nil)
-                .boundedPositionBudget(policyCap: 65536) == nil)
+                .boundedPositionBudget() == nil)
         #expect(
             SubagentChildRequestEstimate(seedCharacters: 800, maxOutputTokens: 0)
-                .boundedPositionBudget(policyCap: 65536) == nil)
+                .boundedPositionBudget() == nil)
         #expect(
             SubagentChildRequestEstimate(seedCharacters: nil, maxOutputTokens: nil)
-                .boundedPositionBudget(policyCap: 65536) == nil)
+                .boundedPositionBudget() == nil)
     }
 
     /// CAUSAL: a delegated agent target prices ONLY ceilings its execution
@@ -318,20 +316,20 @@ struct SubagentAdmission16GBRegressionTests {
         let windowOnly = SubagentChildRequestEstimate(
             seedCharacters: nil, maxOutputTokens: nil,
             enforcedPositionCeiling: 8192)
-        #expect(windowOnly.boundedPositionBudget(policyCap: 65536) == 8192)
+        #expect(windowOnly.boundedPositionBudget() == 8192)
 
         // A measured ceiling prices verbatim — no hidden floor (the 4096
         // floor applies only to the unmeasured seed+output form).
         let tiny = SubagentChildRequestEstimate(
             seedCharacters: nil, maxOutputTokens: nil,
             enforcedPositionCeiling: 2048)
-        #expect(tiny.boundedPositionBudget(policyCap: 65536) == 2048)
+        #expect(tiny.boundedPositionBudget() == 2048)
 
-        // Policy cap clamps a huge window down.
+        // A soft KV default cannot shrink a hard request contract.
         let huge = SubagentChildRequestEstimate(
             seedCharacters: nil, maxOutputTokens: nil,
             enforcedPositionCeiling: 262_144)
-        #expect(huge.boundedPositionBudget(policyCap: 65536) == 65536)
+        #expect(huge.boundedPositionBudget() == 262_144)
     }
 
     /// When BOTH bounds are present (tool-less delegated target: launcher
@@ -343,13 +341,13 @@ struct SubagentAdmission16GBRegressionTests {
         let budgetTighter = SubagentChildRequestEstimate(
             seedCharacters: 800, maxOutputTokens: 4096,
             enforcedPositionCeiling: 32_768)
-        #expect(budgetTighter.boundedPositionBudget(policyCap: 65536) == 4396)
+        #expect(budgetTighter.boundedPositionBudget() == 4396)
 
         // window (8K) tighter than seed+output (22,500 + 10,000) wins.
         let windowTighter = SubagentChildRequestEstimate(
             seedCharacters: 60_000, maxOutputTokens: 10_000,
             enforcedPositionCeiling: 8192)
-        #expect(windowTighter.boundedPositionBudget(policyCap: 65536) == 8192)
+        #expect(windowTighter.boundedPositionBudget() == 8192)
     }
 
     /// CAUSAL, the reported 16 GiB Gemma flip: the same machine/model facts
@@ -407,35 +405,23 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(reason == .insufficientMemory)
     }
 
-    /// CAUSAL: the bare `spawn_model` path IS governed by launcher budgets
-    /// (per-generation `maxDelegateTokens` × at most `maxDelegateTurns`
-    /// iterations, no tool access) — it produces a bounded estimate whose
-    /// output ceiling reflects turns × per-turn, not a single turn.
-    @Test("bare model target produces a turns-aware bounded estimate")
-    func bareModelTargetBoundedEstimate() {
-        let bare = TextSubagentKind(model: "some/model", input: "summarize this")
-        let estimate = bare.admissionRequestEstimate()
-        #expect(estimate != nil)
-        #expect(estimate?.seedCharacters == "summarize this".count)
-        // Defaults: maxDelegateTokens 2048 × maxDelegateTurns 2.
-        #expect(estimate?.maxOutputTokens == 2048 * 2)
-    }
-
     /// The enforced delegated contract, derived for the REPORTED shape: a
-    /// tool-enabled target agent (SysAdmin has tools) with the default
-    /// launcher budgets (2,048 tokens × 2 turns) against a 64K window.
+    /// tool-enabled target agent (SysAdmin has tools) with small launcher
+    /// budgets (2,048 tokens × 2 turns, the pre-2026 defaults) against a
+    /// 64K window.
     /// The ceiling must land far below the window — seed + 4,096 overhead
     /// + 2 × (2,048 response + 4,096 tool allowance) — because THIS is the
     /// number both the session enforces and admission prices. Without it,
     /// a tool-enabled delegated child collapsed back to cap pricing.
     @Test("tool-enabled delegated contract stays far below the window")
     func toolEnabledDelegatedContractBounded() throws {
+        let small = SubagentBudgets(maxDelegateTokens: 2048, maxDelegateTurns: 2)
         let contract = try #require(
             DelegatedRunContract.derive(
                 seedCharacters: 800,
                 systemPromptCharacters: 2_000,
                 toolSchemaTokens: 375,
-                budgets: SubagentBudgets(),  // defaults: 2048 tokens × 2 turns
+                budgets: small,
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
             ))
@@ -453,7 +439,7 @@ struct SubagentAdmission16GBRegressionTests {
             seedCharacters: 800,
             systemPromptCharacters: 2_000,
             toolSchemaTokens: 375,
-            budgets: SubagentBudgets(),
+            budgets: small,
             toolEnabled: false,
             resolvedContextWindow: 65_536
         )
@@ -465,7 +451,7 @@ struct SubagentAdmission16GBRegressionTests {
             seedCharacters: 800,
             systemPromptCharacters: 40_000,
             toolSchemaTokens: 375,
-            budgets: SubagentBudgets(),
+            budgets: small,
             toolEnabled: true,
             resolvedContextWindow: 65_536
         )
@@ -477,7 +463,7 @@ struct SubagentAdmission16GBRegressionTests {
             seedCharacters: 800,
             systemPromptCharacters: 2_000,
             toolSchemaTokens: 375,
-            budgets: SubagentBudgets(),
+            budgets: small,
             toolEnabled: true,
             resolvedContextWindow: 8_192
         )
@@ -492,10 +478,11 @@ struct SubagentAdmission16GBRegressionTests {
             toolEnabled: false,
             resolvedContextWindow: 1_000_000
         )
-        // tokens clamp to 32,768, turns to 8 → 8×32,768 = 262,144.
-        #expect(wild?.contextPositions == 262_144)
-        #expect(wild?.responseTokens == 32_768)
-        #expect(wild?.assistantTurns == 8)
+        // tokens clamp to the upper bound (65,536); 99 turns is within
+        // bounds, so 99×65,536 overflows the window and clamps to it.
+        #expect(wild?.contextPositions == 1_000_000)
+        #expect(wild?.responseTokens == SubagentBudgets.tokenBounds.upperBound)
+        #expect(wild?.assistantTurns == 99)
     }
 
     /// Overflow and degenerate inputs FAIL CLOSED (nil — cap pricing, no
@@ -590,7 +577,7 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(estimate?.enforcedPositionCeiling == 16_684)
         #expect(estimate?.seedCharacters == nil)
         #expect(estimate?.maxOutputTokens == nil)
-        #expect(estimate?.boundedPositionBudget(policyCap: 65_536) == 16_684)
+        #expect(estimate?.boundedPositionBudget() == 16_684)
     }
 
     /// PROPAGATION, production path: `BackgroundTaskManager.createContext`
@@ -679,8 +666,8 @@ struct SubagentAdmission16GBRegressionTests {
             seedCharacters: 1_000, maxOutputTokens: 4_096)
         let long = SubagentChildRequestEstimate(
             seedCharacters: 60_000, maxOutputTokens: 4_096)
-        let shortBudget = short.boundedPositionBudget(policyCap: 65536)!
-        let longBudget = long.boundedPositionBudget(policyCap: 65536)!
+        let shortBudget = short.boundedPositionBudget()!
+        let longBudget = long.boundedPositionBudget()!
         #expect(longBudget > shortBudget)
         // 60,000 chars → ceil(60000×3/8)=22,500 tokens + 4,096 = 26,596.
         #expect(longBudget == 22_500 + 4_096)

@@ -195,13 +195,19 @@ public enum AgentTargetResolver {
     }
 
     /// Resolve `identifier` against live state. Matching order: local UUID,
-    /// local address, workspace ref key, shared-agent address, then display
-    /// name (local first, then shared; exact, case-insensitive).
+    /// local address, workspace ref key, shared-agent address,
+    /// `Name@Workspace` (shared agent qualified by workspace name or id),
+    /// then display name (local first, then shared; exact, case-insensitive).
+    ///
+    /// `workspaceNames` maps lowercased workspace id → display name and is
+    /// only consulted for the `Name@Workspace` form and for the exact forms
+    /// listed in an `.ambiguous` failure.
     public static func resolve(
         _ identifier: String,
         scope: Scope,
         localAgents: [Agent] = AgentManager.shared.agents,
-        sharedAgents: [(ref: WorkspaceAgentRef, name: String?)] = liveSharedAgents()
+        sharedAgents: [(ref: WorkspaceAgentRef, name: String?)] = liveSharedAgents(),
+        workspaceNames: [String: String] = liveWorkspaceNames()
     ) -> Result<AgentDispatchTarget, Failure> {
         let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .failure(.notFound) }
@@ -219,13 +225,41 @@ public enum AgentTargetResolver {
             switch hits.count {
             case 0: return .failure(.notFound)
             case 1: return .success(.workspace(hits[0].ref))
-            default: return .failure(.ambiguous(hits.map(\.ref.key)))
+            default:
+                return .failure(
+                    .ambiguous(hits.map { qualifiedName(for: $0, workspaceNames: workspaceNames) })
+                )
             }
         }
         if scope == .localAndWorkspace, let ref = WorkspaceAgentRef(key: trimmed),
             sharedAgents.contains(where: { $0.ref == ref })
         {
             return .success(.workspace(ref))
+        }
+
+        // `Name@Workspace`: a shared agent qualified by its workspace's name
+        // or id. Only tried when the bare name is not itself a match, so an
+        // agent literally named "a@b" still resolves by display name.
+        if scope == .localAndWorkspace,
+            let (name, workspace) = splitQualifiedName(trimmed)
+        {
+            let foldedName = name.lowercased()
+            let foldedWorkspace = workspace.lowercased()
+            let hits = sharedAgents.filter { entry in
+                guard
+                    (entry.name ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+                        == foldedName
+                else { return false }
+                let wsId = entry.ref.workspaceId.lowercased()
+                return wsId == foldedWorkspace
+                    || workspaceNames[wsId]?.trimmingCharacters(in: .whitespaces).lowercased()
+                        == foldedWorkspace
+            }
+            switch hits.count {
+            case 0: break
+            case 1: return .success(.workspace(hits[0].ref))
+            default: return .failure(.ambiguous(hits.map(\.ref.key)))
+            }
         }
 
         let folded = trimmed.lowercased()
@@ -242,10 +276,62 @@ public enum AgentTargetResolver {
             if let local = localNameHits.first { return .success(.local(local.id)) }
             return .success(.workspace(sharedNameHits[0].ref))
         default:
+            // Did-you-mean: list the exact forms that disambiguate — the
+            // UUID for a local agent, `Name@Workspace` for a shared agent.
             return .failure(
-                .ambiguous(localNameHits.map { $0.id.uuidString } + sharedNameHits.map(\.ref.key))
+                .ambiguous(
+                    localNameHits.map { $0.id.uuidString }
+                        + sharedNameHits.map {
+                            qualifiedName(for: $0, workspaceNames: workspaceNames)
+                        }
+                )
             )
         }
+    }
+
+    /// Split `Name@Workspace` at the LAST `@`; nil when either side is empty
+    /// or there is no `@`.
+    static func splitQualifiedName(_ raw: String) -> (name: String, workspace: String)? {
+        guard let at = raw.lastIndex(of: "@") else { return nil }
+        let name = raw[..<at].trimmingCharacters(in: .whitespaces)
+        let workspace = raw[raw.index(after: at)...].trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, !workspace.isEmpty else { return nil }
+        return (name, workspace)
+    }
+
+    /// `Name@Workspace` for a shared agent when its workspace name is known,
+    /// else the durable `workspaceId:0xaddress` key.
+    static func qualifiedName(
+        for entry: (ref: WorkspaceAgentRef, name: String?),
+        workspaceNames: [String: String]
+    ) -> String {
+        guard let name = entry.name?.trimmingCharacters(in: .whitespaces), !name.isEmpty,
+            let workspace = workspaceNames[entry.ref.workspaceId.lowercased()]?
+                .trimmingCharacters(in: .whitespaces),
+            !workspace.isEmpty
+        else { return entry.ref.key }
+        return "\(name)@\(workspace)"
+    }
+
+    /// Lowercased workspace id → display name for every loaded roster.
+    public static func liveWorkspaceNames() -> [String: String] {
+        var out: [String: String] = [:]
+        for entry in WorkspaceRosterStore.shared.rosters {
+            let name = entry.workspace.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            out[entry.id.lowercased()] = name
+        }
+        return out
+    }
+
+    /// `Name@Workspace` for a ref from live roster state (falls back to the
+    /// display name when the workspace name is unknown).
+    public static func qualifiedDisplayName(for ref: WorkspaceAgentRef) -> String {
+        let name = displayName(for: ref)
+        guard let workspace = workspaceName(for: ref)?.trimmingCharacters(in: .whitespaces),
+            !workspace.isEmpty
+        else { return name }
+        return "\(name)@\(workspace)"
     }
 
     /// Shared agents the user can run: every roster entry that is not one
@@ -255,7 +341,7 @@ public enum AgentTargetResolver {
         var out: [(ref: WorkspaceAgentRef, name: String?)] = []
         var seen = Set<WorkspaceAgentRef>()
         for entry in roster.rosters {
-            for agent in entry.agents where !roster.isOwnAgent(address: agent.agentAddress) {
+            for agent in entry.agents where !roster.isHostedHere(address: agent.agentAddress) {
                 let ref = WorkspaceAgentRef(workspaceId: entry.id, agentAddress: agent.agentAddress)
                 guard seen.insert(ref).inserted else { continue }
                 let name = agent.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)

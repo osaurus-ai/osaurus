@@ -1,5 +1,5 @@
 {
-  "originHash": "339894846d7b32ea588f8d0835e2a96b0a1dd8b13b9fbb814baa6c2eb077d13d",
+  "originHash": "50518b668fcded00caff00afecf6120a1b59d31a98f05c7aa01074f7b7839308",
   "pins": [
     {
       "identity": "aachartkit-swift",
@@ -312,8 +312,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/21-DOT-DEV/swift-secp256k1",
       "state": {
-        "revision": "8c62aba8a3011c9bcea232e5ee007fb0b34a15e2",
-        "version": "0.21.1"
+        "revision": "e70a10e036a55fffea31568f0af92d69b6d449cd",
+        "version": "0.23.2"
       }
     },
     {
@@ -374,7 +374,7 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/osaurus-ai/vmlx-swift",
       "state": {
-        "revision": "9460dcc133b3509899265afd21deffaffc3eb9e9"
+        "revision": "6827ef1153efa434f04ebeff801d9d6b0ce3e6bd"
       }
     },
     {

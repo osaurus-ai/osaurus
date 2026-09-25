@@ -156,7 +156,9 @@ enum ConfigApplier {
             config: SubagentConfigurationStore.snapshot(),
             perAgentEnabled: caps.spawnDelegationEnabled,
             perAgentTargets: caps.spawnableAgentIDs
-        ).filter { $0 != agentId }
+        ).filter {
+            $0 != agentId && AgentManager.shared.agent(for: $0)?.requiresDescriptionRepair == false
+        }
     }
 
     /// An apply that grows the launching conversation's spawn pool (an agent
@@ -187,11 +189,15 @@ enum ConfigApplier {
             let allowedAgentNames = allowedAgentIDs.compactMap {
                 AgentManager.shared.agent(for: $0)?.name
             }
+            let descriptions = allowedAgentIDs.compactMap { id -> SpawnAgentDescriptor? in
+                guard let agent = AgentManager.shared.agent(for: id), !agent.requiresDescriptionRepair else { return nil }
+                return SpawnAgentDescriptor(
+                    id: agent.id, name: agent.name, description: agent.description,
+                    modelId: agent.defaultModel, isLocal: nil, providerName: nil
+                )
+            }
             let baseSpecs = ToolRegistry.shared.specs(
-                forTools: [
-                    SubagentCapabilityRegistry.spawnAgentToolName,
-                    SubagentCapabilityRegistry.spawnBatchToolName,
-                ]
+                forTools: [SubagentCapabilityRegistry.spawnAgentToolName]
             )
             let byName = Dictionary(
                 uniqueKeysWithValues: baseSpecs.map { ($0.function.name, $0) }
@@ -207,45 +213,21 @@ enum ConfigApplier {
                 perAgentEnabled: workspaceCaps.spawnDelegationEnabled,
                 perAgentTargets: workspaceCaps.spawnableWorkspaceAgents
             )
-            let allowedWorkspaceAddresses = allowedWorkspaceAgents.map(\.agentAddress)
+            let workspaceDescriptions = SpawnDescriptors.resolveForPreview(
+                agentIDs: [], launcherModelOverride: nil, workspaceAgents: allowedWorkspaceAgents
+            ).workspaceAgents
+            let allowedWorkspaceAddresses = workspaceDescriptions.map(\.ref.agentAddress)
             let allNames =
-                allowedAgentNames + allowedWorkspaceAgents.map { AgentTargetResolver.displayName(for: $0) }
+                allowedAgentNames + workspaceDescriptions.map(\.name)
             if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
                 specs.append(
                     SpawnAgentTool.constrainedSpec(
                         spawnAgent,
                         allowedAgentIDs: allowedAgentIDs,
                         allowedAgentNames: allNames,
-                        allowedWorkspaceAddresses: allowedWorkspaceAddresses
-                    )
-                )
-            }
-            if let spawnBatch = byName[SubagentCapabilityRegistry.spawnBatchToolName] {
-                let isDefault = launchingAgentId == Agent.defaultId
-                let config = SubagentConfigurationStore.snapshot()
-                let caps = AgentManager.shared.effectiveCapabilities(for: launchingAgentId)
-                let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
-                    isDefault: isDefault,
-                    config: config,
-                    perAgentEnabled: caps.spawnDelegationEnabled,
-                    perAgentModelTargets: caps.spawnableModelNames
-                )
-                let maxParallel = SubagentToolVisibility.effectiveBudgets(
-                    isDefault: isDefault,
-                    config: config,
-                    settings: AgentManager.shared.agent(for: launchingAgentId)?.settings,
-                    sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
-                        for: ServerRuntimeSettingsStore.snapshot()
-                    )
-                ).normalized.maxParallelSpawns
-                specs.append(
-                    SpawnBatchTool.constrainedSpec(
-                        spawnBatch,
-                        allowedAgentIDs: allowedAgentIDs,
-                        allowedAgentNames: allNames,
-                        allowedModelIds: allowedModelIds,
                         allowedWorkspaceAddresses: allowedWorkspaceAddresses,
-                        maxParallel: maxParallel
+                        agents: descriptions,
+                        workspaceAgents: workspaceDescriptions
                     )
                 )
             }
@@ -329,7 +311,7 @@ enum ConfigApplier {
     private static func applyActiveAgent(_ name: String) -> ConfigApplyResult {
         if name.lowercased() == "default" {
             AgentManager.shared.setActiveAgent(Agent.defaultId)
-            return ConfigApplyResult(section: "active_agent", target: "default", status: .done)
+            return ConfigApplyResult(section: ConfigSectionID.activeAgent.rawValue, target: "default", status: .done)
         }
         guard
             let agent = AgentManager.shared.agents.first(where: {
@@ -337,11 +319,11 @@ enum ConfigApplier {
             })
         else {
             return ConfigApplyResult(
-                section: "active_agent", target: name, status: .failed,
+                section: ConfigSectionID.activeAgent.rawValue, target: name, status: .failed,
                 message: "No agent named `\(name)` found.")
         }
         AgentManager.shared.setActiveAgent(agent.id)
-        return ConfigApplyResult(section: "active_agent", target: agent.name, status: .done)
+        return ConfigApplyResult(section: ConfigSectionID.activeAgent.rawValue, target: agent.name, status: .done)
     }
 
     // MARK: - Agents
@@ -356,11 +338,40 @@ enum ConfigApplier {
             let result: ConfigApplyResult = await MainActor.run {
                 var entry = entry
                 let existing = AgentManager.shared.agents.first {
-                    !$0.isBuiltIn && $0.name.lowercased() == entry.name.lowercased()
+                    !$0.isBuiltIn && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        == entry.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 }
-                // Mark the match BEFORE model resolution so a failed entry
-                // never exposes its existing agent to prune deletion.
+                // Every validation failure must preserve an existing match
+                // during prune, including invalid templates/descriptions.
                 if let agent = existing { matchedIds.insert(agent.id) }
+                if let snapshot = entry.generatedDescriptionSnapshot, !snapshot.matches(existing) {
+                    return ConfigApplyResult(
+                        section: "agents", target: entry.name, status: .failed,
+                        message: "The agent changed after its description was generated. Review a new plan before applying.")
+                }
+                // A template seeds behavior, never the required user-authored
+                // routing description. Existing descriptions survive patches.
+                if let rawTemplate = entry.template?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !rawTemplate.isEmpty
+                {
+                    guard let template = AgentStarterTemplate(rawValue: rawTemplate.lowercased()),
+                        template != .blank
+                    else {
+                        return ConfigApplyResult(
+                            section: "agents", target: entry.name, status: .failed,
+                            message: "template: `\(rawTemplate)` is not a starter template. Valid: "
+                                + AgentStarterTemplate.configTemplateIds.joined(separator: ", ") + ".")
+                    }
+                    if entry.systemPrompt?.isEmpty ?? true { entry.systemPrompt = template.systemPrompt }
+                }
+                if entry.description != nil || existing == nil {
+                    if let violation = AgentDescriptionPolicy.violation(in: entry.description ?? "") {
+                        return ConfigApplyResult(
+                            section: "agents", target: entry.name, status: .failed,
+                            message: "description: \(violation.message)")
+                    }
+                    entry.description = AgentDescriptionPolicy.normalized(entry.description ?? "")
+                }
                 let rawModel = entry.model.valueOrNil?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if let raw = rawModel, !raw.isEmpty {
@@ -390,14 +401,34 @@ enum ConfigApplier {
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
                     return ConfigApplyResult(section: "agents", target: agent.name, status: .done)
                 } else {
-                    var agent = AgentManager.shared.create(
-                        name: entry.name,
-                        description: entry.description ?? "",
-                        systemPrompt: entry.systemPrompt ?? "",
-                        defaultModel: entry.model.valueOrNil,
-                        temperature: entry.temperature.valueOrNil.map(Float.init),
-                        maxTokens: entry.maxTokens.valueOrNil
-                    )
+                    // The live chat can have a selected model without any
+                    // persisted default (for example on first launch). Carry
+                    // that model into the worker instead of creating a target
+                    // that disappears from the next turn's runnable pool.
+                    let chatModel = ChatExecutionContext.currentChatSessionBox?.session?
+                        .selectedModel?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let createdAgent: Agent
+                    do {
+                        createdAgent = try AgentManager.shared.create(
+                            name: entry.name,
+                            description: entry.description ?? "",
+                            systemPrompt: entry.systemPrompt ?? "",
+                            defaultModel: entry.model.valueOrNil
+                                ?? (chatModel?.isEmpty == false ? chatModel : nil)
+                                ?? AgentManager.shared.orchestratorModelForNewAgents(),
+                            temperature: entry.temperature.valueOrNil.map(Float.init),
+                            maxTokens: entry.maxTokens.valueOrNil
+                        )
+                    } catch let violation as AgentDescriptionPolicy.Violation {
+                        return ConfigApplyResult(
+                            section: "agents", target: entry.name, status: .failed,
+                            message: "description: \(violation.message)")
+                    } catch {
+                        return ConfigApplyResult(
+                            section: "agents", target: entry.name, status: .failed,
+                            message: error.localizedDescription)
+                    }
+                    var agent = createdAgent
                     matchedIds.insert(agent.id)
                     if entry.capabilities != nil {
                         patch(&agent, from: entry)
@@ -453,6 +484,9 @@ enum ConfigApplier {
         if let v = caps.selfSchedulingEnabled { agent.settings.selfSchedulingEnabled = v }
         if let v = caps.computerUseEnabled { agent.settings.computerUseEnabled = v }
         if let v = caps.browserUseEnabled { agent.settings.browserUseEnabled = v }
+        if let apps = ConfigPlanner.appleApps(from: caps) { agent.settings.enabledAppleApps = apps }
+        if let v = caps.imageEnabled { agent.settings.imageEnabled = v }
+        if let v = caps.applescriptEnabled { agent.settings.appleScriptEnabled = v }
         if let v = caps.speakEnabled { agent.settings.speakEnabled = v }
         if let v = caps.renderChartEnabled { agent.settings.renderChartEnabled = v }
     }
@@ -535,34 +569,46 @@ enum ConfigApplier {
         if let keys = desired.spawnableWorkspaceAgents {
             var refs: [WorkspaceAgentRef] = []
             for key in keys {
-                guard let ref = WorkspaceAgentRef(key: key.trimmingCharacters(in: .whitespacesAndNewlines))
-                else {
+                switch resolveWorkspaceAgentKey(key) {
+                case .success(let ref):
+                    refs.append(ref)
+                case .failure(let message):
                     return ConfigApplyResult(
                         section: "delegation", target: "delegation", status: .failed,
-                        message:
-                            "spawnable_workspace_agents: `\(key)` is not a `<workspace_id>:<0x-address>` key.")
+                        message: "spawnable_workspace_agents: " + message)
                 }
-                refs.append(ref)
             }
             resolvedWorkspaceRefs = refs
         }
+        // Per-workspace auto-join: accept the workspace id or its name.
+        var workspaceAutoJoin: [(id: String, enabled: Bool)] = []
+        for (key, enabled) in desired.workspaceAutoJoin ?? [:] {
+            guard let id = resolveWorkspaceId(key) else {
+                return ConfigApplyResult(
+                    section: "delegation", target: "delegation", status: .failed,
+                    message: "workspace_auto_join: no workspace named or identified by `\(key)`.")
+            }
+            workspaceAutoJoin.append((id, enabled))
+        }
+        let hints = desired.removedKeyHints
         _ = SubagentConfigurationStore.mutate { config in
             if let v = desired.localTextEnabled { config.localTextDelegationEnabled = v }
-            if let v = desired.imageEnabled { config.imageDelegationEnabled = v }
             if let v = desired.videoEnabled { config.videoDelegationEnabled = v }
-            if let v = desired.applescriptEnabled { config.appleScriptDelegationEnabled = v }
             if let raw = desired.applescriptExecutionMode,
                 let mode = ConfigAppBehaviorEnums.applescriptMode(forKey: raw)
             {
                 config.defaultAppleScriptExecutionMode = mode
             }
             if let ids = resolvedAgentIDs { config.spawnableAgentIDs = ids }
-            if let models = desired.spawnableModels { config.spawnableModelNames = models }
-            if let refs = resolvedWorkspaceRefs { config.spawnableWorkspaceAgents = refs }
-            if let raw = desired.spawnToolAccess,
-                let access = SpawnToolAccess(rawValue: raw.lowercased())
-            {
-                config.spawnToolAccess = access
+            if let refs = resolvedWorkspaceRefs {
+                config.spawnableWorkspaceAgents = refs
+                // Listing a shared agent explicitly clears its removal
+                // tombstone; the remaining pool members that were dropped
+                // stay removed (and stop auto-joining).
+                for ref in refs { config.removedWorkspaceAgents.removeAll { $0 == ref } }
+            }
+            for (id, enabled) in workspaceAutoJoin {
+                config.setWorkspaceAutoJoin(enabled, workspaceId: id)
             }
             for (kind, raw) in desired.permissionDefaults ?? [:] {
                 guard let policy = SubagentPermissionPolicy(rawValue: raw.lowercased()) else {
@@ -572,13 +618,63 @@ enum ConfigApplier {
             }
             if let v = desired.budgetMaxTokens { config.budgets.maxDelegateTokens = v }
             if let v = desired.budgetMaxTurns { config.budgets.maxDelegateTurns = v }
-            if let v = desired.budgetMaxToolCalls { config.budgets.maxToolCalls = v }
             if let v = desired.budgetMaxSeconds { config.budgets.maxElapsedSeconds = v }
             if let v = desired.budgetMaxParallelSpawns { config.budgets.maxParallelSpawns = v }
+            if let v = desired.budgetMaxRemoteParallelSpawns {
+                config.budgets.maxRemoteParallelSpawns = v
+            }
             if let v = desired.ramSafetyPreflight { config.ramSafetyPreflightEnabled = v }
             if let v = desired.coexistenceEnabled { config.subagentCoexistenceEnabled = v }
         }
-        return ConfigApplyResult(section: "delegation", target: "delegation", status: .done)
+        return ConfigApplyResult(
+            section: "delegation", target: "delegation", status: .done,
+            message: hints.isEmpty ? nil : hints.joined(separator: " "))
+    }
+
+    /// Resolve one `spawnable_workspace_agents` entry: the durable
+    /// `<workspace_id>:<0x-address>` key, a `Name@Workspace` form, a bare
+    /// `0x…` address, or a unique shared-agent display name.
+    enum WorkspaceKeyResolution {
+        case success(WorkspaceAgentRef)
+        case failure(String)
+    }
+
+    @MainActor
+    static func resolveWorkspaceAgentKey(_ raw: String) -> WorkspaceKeyResolution {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let ref = WorkspaceAgentRef(key: trimmed) { return .success(ref) }
+        switch AgentTargetResolver.resolve(trimmed, scope: .localAndWorkspace) {
+        case .success(.workspace(let ref)):
+            return .success(ref)
+        case .success(.local):
+            return .failure(
+                "`\(raw)` is one of this Osaurus's own agents; list it under spawnable_agents.")
+        case .failure(.ambiguous(let forms)):
+            return .failure(
+                "`\(raw)` matches more than one shared agent; use one of: "
+                    + forms.map { "`\($0)`" }.joined(separator: ", ") + ".")
+        case .failure(.notFound):
+            return .failure(
+                "`\(raw)` is not a shared agent on any workspace you belong to. Use "
+                    + "`Name@Workspace` or `<workspace_id>:<0x-address>`.")
+        }
+    }
+
+    /// Workspace id for a `delegation.workspace_auto_join` key (id or display name).
+    @MainActor
+    static func resolveWorkspaceId(_ raw: String) -> String? {
+        let folded = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !folded.isEmpty else { return nil }
+        for roster in WorkspaceRosterStore.shared.rosters {
+            if roster.id.lowercased() == folded { return roster.id }
+            if roster.workspace.name.trimmingCharacters(in: .whitespaces).lowercased() == folded {
+                return roster.id
+            }
+        }
+        // Unknown to the roster right now (cold start / offline): accept an
+        // id-shaped key verbatim so a document applied before the first
+        // roster poll still records the user's choice.
+        return folded.contains(" ") ? nil : folded
     }
 
     // MARK: - Commands (Wave 3c)
@@ -1127,7 +1223,7 @@ enum ConfigApplier {
                 results.append(
                     ConfigApplyResult(
                         section: "plugins", target: pluginId, status: .needsUserAction,
-                        message: "Installed. Needs secrets in Settings → Plugins → Secrets: "
+                        message: "Installed. Needs secrets in Settings… (⌘,) → Tools → Native Plugins (Configure Secrets on the plugin card): "
                             + missingSecretLabels.joined(separator: ", ")))
             }
         }

@@ -4,34 +4,28 @@
 //
 //  Rich, render-ready descriptions of an agent's spawnable targets, used to
 //  build the dynamic `spawn` system-prompt block. The composer resolves the
-//  launching agent's spawnable AGENT UUIDs + MODEL ids (from
-//  `SubagentToolVisibility`) into these descriptors so the prompt can enumerate
-//  what `spawn_agent` / `spawn_model` can actually reach — with locality
-//  (local/remote), provider, size/quant, vision, the agent's description, and
-//  the user's per-model note — instead of bare names. Pure value types; the
-//  `@MainActor` resolver is the only piece that touches live caches.
+//  launching agent's spawnable AGENT UUIDs + workspace refs (from
+//  `SubagentToolVisibility`) into these descriptors so the prompt can
+//  enumerate what `spawn_agent` can actually reach — with locality
+//  (local/remote), provider, the agent's description, and its working folder
+//  — instead of bare names. Pure value types; the `@MainActor` resolver is
+//  the only piece that touches live caches.
 //
 
 import Foundation
 
-/// Shared schema contract for every text-worker spawn surface.
+/// Shared schema contract for the delegation tool.
 ///
-/// Text workers are context-isolated: a bare model has no parent transcript,
-/// and an agent receives only its own prompt plus this input. Keeping one
-/// description prevents the single and batch tools from drifting into
-/// incompatible guidance.
+/// Workers are context-isolated: an agent receives only its own prompt plus
+/// this input, never the parent transcript.
 enum SpawnInputContract {
     static let schemaDescription =
-        "The complete standalone task for the worker. Include every instruction, input value, "
-        + "constraint, and required output format the worker needs; it cannot see the parent chat "
-        + "or infer what an opaque label means. Never refer to a previous/earlier message, content "
-        + "above, or prior conversation; copy the exact required information into this input."
+        "The complete standalone task. The agent cannot see this chat, so include every "
+        + "instruction, input value, constraint, and the required output format here."
 
     static let backgroundParameterDescription =
-        "Optional; default false. When true, the tool returns immediately and the helper keeps "
-        + "running in the background; its result arrives later as a follow-up message in this "
-        + "conversation. Use for long-running work. Do not wait, poll, or re-dispatch the same "
-        + "task — acknowledge to the user that the helper will report back."
+        "Default false. True returns immediately; the result arrives later as a follow-up "
+        + "message. Do not poll or re-send."
 
     /// Enforce only the structural part of the standalone-input contract.
     ///
@@ -75,13 +69,12 @@ public struct SpawnAgentDescriptor: Sendable, Equatable {
     public let isLocal: Bool?
     /// Remote provider name when the model is remote (nil otherwise).
     public let providerName: String?
-    /// The agent's configured Working Folder (`Agent.workingFolderPath`),
+    /// The agent's own configured Working Folder (`Agent.workingFolderPath`),
     /// nil when none is set. A delegated child runs as a real chat session
-    /// of the target agent in THIS folder (`BackgroundTaskManager.
-    /// resolveDispatchFolder`), so it is the only place the child can read
-    /// and write host files — surfaced in the spawn guidance so the
-    /// orchestrator can route "save X to disk" tasks to an agent that can
-    /// actually do it.
+    /// of the target agent; when the agent has its own folder the child
+    /// works there, otherwise it inherits the launcher's folder
+    /// (`AgentDelegationDispatcher`). Surfaced in the spawn guidance so the
+    /// orchestrator knows where a worker's files land.
     public let workingFolderPath: String?
 
     public init(
@@ -100,40 +93,6 @@ public struct SpawnAgentDescriptor: Sendable, Equatable {
         self.isLocal = isLocal
         self.providerName = providerName
         self.workingFolderPath = workingFolderPath?.isEmpty == false ? workingFolderPath : nil
-    }
-}
-
-/// One spawnable model (`spawn_model` target), resolved for the prompt.
-public struct SpawnModelDescriptor: Sendable, Equatable {
-    public let id: String
-    public let displayName: String
-    /// `true` local, `false` remote, nil when unknown.
-    public let isLocal: Bool?
-    public let providerName: String?
-    public let parameterCount: String?
-    public let quantization: String?
-    public let isVLM: Bool
-    /// The user's "when/how to use" note for this model (trimmed; nil when none).
-    public let note: String?
-
-    public init(
-        id: String,
-        displayName: String,
-        isLocal: Bool?,
-        providerName: String?,
-        parameterCount: String?,
-        quantization: String?,
-        isVLM: Bool,
-        note: String?
-    ) {
-        self.id = id
-        self.displayName = displayName
-        self.isLocal = isLocal
-        self.providerName = providerName
-        self.parameterCount = parameterCount
-        self.quantization = quantization
-        self.isVLM = isVLM
-        self.note = note
     }
 }
 
@@ -170,6 +129,12 @@ public struct SpawnWorkspaceAgentDescriptor: Sendable, Equatable {
         self.workspaceName = workspaceName
         self.ownerName = ownerName
     }
+
+    /// `Name@Workspace` when the workspace name is known, else the name.
+    public var qualifiedName: String {
+        guard let workspaceName, !workspaceName.isEmpty else { return name }
+        return "\(name)@\(workspaceName)"
+    }
 }
 
 /// Request-local execution truth for one configured spawn target. Durable
@@ -177,6 +142,7 @@ public struct SpawnWorkspaceAgentDescriptor: Sendable, Equatable {
 /// or removed in Settings.
 enum SpawnTargetState: Sendable, Equatable {
     case runnable
+    case descriptionRequired
     case checking
     case disconnected
     case missing
@@ -187,12 +153,7 @@ struct SpawnAgentTarget: Sendable, Equatable {
     let state: SpawnTargetState
 }
 
-struct SpawnModelTarget: Sendable, Equatable {
-    let descriptor: SpawnModelDescriptor
-    let state: SpawnTargetState
-}
-
-/// A workspace target is `runnable` or `missing` ONLY (never `checking` /
+/// A workspace target is `runnable`, `descriptionRequired`, or `missing` (never `checking` /
 /// `disconnected`): membership is durable state that changes by user action
 /// (unshare, leave workspace, router off), like deleting a local agent.
 struct SpawnWorkspaceAgentTarget: Sendable, Equatable {
@@ -200,23 +161,20 @@ struct SpawnWorkspaceAgentTarget: Sendable, Equatable {
     let state: SpawnTargetState
 }
 
-/// One immutable target view shared by prompt prose and every spawn schema for
+/// One immutable target view shared by prompt prose and the spawn schema for
 /// a request. This prevents provider/model changes between composition phases
 /// from producing zombie options or prompt/schema drift.
 struct SpawnTargetAvailabilitySnapshot: Sendable, Equatable {
-    static let empty = SpawnTargetAvailabilitySnapshot(agentTargets: [], modelTargets: [])
+    static let empty = SpawnTargetAvailabilitySnapshot(agentTargets: [])
 
     let agentTargets: [SpawnAgentTarget]
-    let modelTargets: [SpawnModelTarget]
     let workspaceAgentTargets: [SpawnWorkspaceAgentTarget]
 
     init(
         agentTargets: [SpawnAgentTarget],
-        modelTargets: [SpawnModelTarget],
         workspaceAgentTargets: [SpawnWorkspaceAgentTarget] = []
     ) {
         self.agentTargets = agentTargets
-        self.modelTargets = modelTargets
         self.workspaceAgentTargets = workspaceAgentTargets
     }
 
@@ -224,16 +182,11 @@ struct SpawnTargetAvailabilitySnapshot: Sendable, Equatable {
         agentTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
     }
 
-    var models: [SpawnModelDescriptor] {
-        modelTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
-    }
-
     var workspaceAgents: [SpawnWorkspaceAgentDescriptor] {
         workspaceAgentTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
     }
 
     var runnableAgentIDs: [UUID] { agents.map(\.id) }
-    var runnableModelIds: [String] { models.map(\.id) }
     var runnableWorkspaceAgents: [WorkspaceAgentRef] { workspaceAgents.map(\.ref) }
     /// Whether `spawn_agent` has anything to reach (local or workspace).
     var hasRunnableAgentTargets: Bool {
@@ -270,14 +223,11 @@ public enum SpawnDescriptors {
     @MainActor
     static func resolveForRequest(
         agentIDs: [UUID],
-        modelNames: [String],
-        modelNotes: [String: String],
         launcherModelOverride: String?,
         workspaceAgents: [WorkspaceAgentRef] = []
     ) async -> SpawnTargetAvailabilitySnapshot {
         let shouldDiscoverLocalModels = requiresLocalDiscovery(
             agentIDs: agentIDs,
-            modelNames: modelNames,
             launcherModelOverride: launcherModelOverride
         )
         let localModels =
@@ -286,8 +236,6 @@ public enum SpawnDescriptors {
             : []
         return resolve(
             agentIDs: agentIDs,
-            modelNames: modelNames,
-            modelNotes: modelNotes,
             agentSources: liveAgentSources(),
             localModels: localModels,
             localCatalogIsAuthoritative: !shouldDiscoverLocalModels
@@ -309,16 +257,13 @@ public enum SpawnDescriptors {
     }
 
     /// Whether request composition needs authoritative local-install truth.
-    /// Agent-only pools still need discovery because each target agent's own
-    /// effective model can be local; a launcher override needs the same check
-    /// even when no bare-model targets are configured.
+    /// Each target agent's own effective model can be local; a launcher
+    /// override needs the same check.
     static func requiresLocalDiscovery(
         agentIDs: [UUID],
-        modelNames: [String],
         launcherModelOverride: String?
     ) -> Bool {
         !agentIDs.isEmpty
-            || !modelNames.isEmpty
             || !(launcherModelOverride?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .isEmpty ?? true)
@@ -329,16 +274,12 @@ public enum SpawnDescriptors {
     @MainActor
     static func resolveForPreview(
         agentIDs: [UUID],
-        modelNames: [String],
-        modelNotes: [String: String],
         launcherModelOverride: String?,
         workspaceAgents: [WorkspaceAgentRef] = []
     ) -> SpawnTargetAvailabilitySnapshot {
         let authoritative = ModelManager.isLocalModelsCacheWarm
         return resolve(
             agentIDs: agentIDs,
-            modelNames: modelNames,
-            modelNotes: modelNotes,
             agentSources: liveAgentSources(),
             localModels: ModelManager.localModelsSnapshotNonBlocking(),
             localCatalogIsAuthoritative: authoritative,
@@ -362,29 +303,14 @@ public enum SpawnDescriptors {
     /// descriptors. Production request composition uses `resolveForRequest`
     /// so cold local discovery is completed before the schema is frozen.
     @MainActor
-    public static func resolve(
-        agentIDs: [UUID],
-        modelNames: [String],
-        modelNotes: [String: String]
-    ) -> (agents: [SpawnAgentDescriptor], models: [SpawnModelDescriptor]) {
-        let snapshot = resolveForPreview(
-            agentIDs: agentIDs,
-            modelNames: modelNames,
-            modelNotes: modelNotes,
-            launcherModelOverride: nil
-        )
-        return (
-            snapshot.agents,
-            snapshot.models
-        )
+    public static func resolve(agentIDs: [UUID]) -> [SpawnAgentDescriptor] {
+        resolveForPreview(agentIDs: agentIDs, launcherModelOverride: nil).agents
     }
 
     /// Pure classification seam used by focused lifecycle tests.
     @MainActor
     static func resolve(
         agentIDs: [UUID],
-        modelNames: [String],
-        modelNotes: [String: String],
         agentSources: [AgentSource],
         localModels: [MLXModel],
         localCatalogIsAuthoritative: Bool,
@@ -413,13 +339,11 @@ public enum SpawnDescriptors {
                 )
             }
             let effectiveModel = launcherModelOverride ?? source.modelId
-            let effectiveTarget = effectiveModel.map {
-                resolveModelTarget(
+            let modelState = effectiveModel.map {
+                resolveModelState(
                     id: $0,
-                    note: nil,
                     localModels: localModels,
                     localCatalogIsAuthoritative: localCatalogIsAuthoritative,
-                    pickerItems: pickerItems,
                     connectedRemoteTargets: connectedRemoteTargets,
                     remoteProviderNames: remoteProviderNames,
                     foundationAvailable: foundationAvailable
@@ -446,20 +370,8 @@ public enum SpawnDescriptors {
                     providerName: locality.providerName,
                     workingFolderPath: source.workingFolderPath
                 ),
-                state: effectiveTarget?.state ?? .missing
-            )
-        }
-
-        let modelTargets = modelNames.map { configuredId -> SpawnModelTarget in
-            resolveModelTarget(
-                id: configuredId,
-                note: noteFor(configuredId, in: modelNotes),
-                localModels: localModels,
-                localCatalogIsAuthoritative: localCatalogIsAuthoritative,
-                pickerItems: pickerItems,
-                connectedRemoteTargets: connectedRemoteTargets,
-                remoteProviderNames: remoteProviderNames,
-                foundationAvailable: foundationAvailable
+                state: AgentDescriptionPolicy.violation(in: description) == nil
+                    ? (modelState ?? .missing) : .descriptionRequired
             )
         }
 
@@ -470,7 +382,6 @@ public enum SpawnDescriptors {
 
         return SpawnTargetAvailabilitySnapshot(
             agentTargets: agentTargets,
-            modelTargets: modelTargets,
             workspaceAgentTargets: workspaceTargets
         )
     }
@@ -504,7 +415,8 @@ public enum SpawnDescriptors {
                     workspaceName: source.workspaceName,
                     ownerName: source.ownerName
                 ),
-                state: .runnable
+                state: AgentDescriptionPolicy.violation(in: description) == nil
+                    ? .runnable : .descriptionRequired
             )
         }
     }
@@ -538,7 +450,7 @@ public enum SpawnDescriptors {
                 if roster.lastRefreshedAt != nil { return nil }
             }
             // Never advertise one of this instance's own agents as a target.
-            if roster.isOwnAgent(address: ref.agentAddress) { return nil }
+            if roster.isHostedHere(address: ref.agentAddress) { return nil }
             let paired = remoteAgents.remoteAgent(
                 forAddress: ref.agentAddress, workspaceId: ref.workspaceId
             )
@@ -551,104 +463,56 @@ public enum SpawnDescriptors {
             return WorkspaceAgentSource(
                 ref: ref,
                 name: name,
-                description: listed?.description ?? paired?.description ?? "",
+                description: workspaceRoutingDescription(listed: listed?.description, paired: paired?.description),
                 workspaceName: workspaceRoster?.workspace.name,
                 ownerName: listed?.owner?.friendlyName
             )
         }
     }
 
-    private static func resolveModelTarget(
+    /// The optional public roster blurb can predate required descriptions.
+    /// Prefer it when usable, otherwise use the paired host's description.
+    /// An unusable blurb must not hide a valid description supplied by the host.
+    static func workspaceRoutingDescription(listed: String?, paired: String?) -> String {
+        for candidate in [listed, paired].compactMap({ $0 }) {
+            if let valid = try? AgentDescriptionPolicy.validated(candidate) { return valid }
+        }
+        return ""
+    }
+
+    /// Execution truth for one model id (an agent's effective model): is it
+    /// installed / connected right now, disconnected, missing, or still
+    /// being discovered?
+    private static func resolveModelState(
         id: String,
-        note: String?,
         localModels: [MLXModel],
         localCatalogIsAuthoritative: Bool,
-        pickerItems: [ModelPickerItem],
         connectedRemoteTargets: RemoteProviderManager.ConnectedSpawnModelTargetIndex,
         remoteProviderNames: [UUID: String],
         foundationAvailable: Bool
-    ) -> SpawnModelTarget {
+    ) -> SpawnTargetState {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed == ModelPickerItem.foundation().id {
-            return SpawnModelTarget(
-                descriptor: descriptor(id: trimmed, item: .foundation(), note: note),
-                state: foundationAvailable ? .runnable : .missing
-            )
+            return foundationAvailable ? .runnable : .missing
         }
-
         // Match execution order: an installed local id wins before a legacy
         // remote picker id with the same spelling.
-        if let local = ModelManager.matchInstalledMLXModel(named: trimmed, in: localModels) {
-            return SpawnModelTarget(
-                descriptor: descriptor(id: trimmed, item: .fromMLXModel(local), note: note),
-                state: .runnable
-            )
+        if ModelManager.matchInstalledMLXModel(named: trimmed, in: localModels) != nil {
+            return .runnable
         }
-
-        if let remote = connectedRemoteTargets.target(forStoredId: trimmed) {
-            let item = pickerItems.first { candidate in
-                guard case .remote(_, let providerId) = candidate.source else { return false }
-                return providerId == remote.providerId
-                    && candidate.id == remote.pickerModelId
-            }
-            return SpawnModelTarget(
-                // Preserve the configured id: allow-list authorization is
-                // exact, and execution normalizes a connected legacy id only
-                // after that check succeeds.
-                descriptor: SpawnModelDescriptor(
-                    id: trimmed,
-                    displayName: item?.displayName ?? shortName(fromModelId: remote.modelId),
-                    isLocal: false,
-                    providerName: remote.providerName,
-                    parameterCount: item?.parameterCount,
-                    quantization: item?.quantization,
-                    isVLM: item?.isVLM ?? false,
-                    note: note
-                ),
-                state: .runnable
-            )
+        if connectedRemoteTargets.target(forStoredId: trimmed) != nil {
+            return .runnable
         }
-
         if let parsed = SpawnRemoteModelIdentity.parse(trimmed) {
-            let providerName = remoteProviderNames[parsed.providerId]
-            return SpawnModelTarget(
-                descriptor: SpawnModelDescriptor(
-                    id: trimmed,
-                    displayName: shortName(fromModelId: parsed.modelId),
-                    isLocal: false,
-                    providerName: providerName,
-                    parameterCount: nil,
-                    quantization: nil,
-                    isVLM: false,
-                    note: note
-                ),
-                state: providerName == nil ? .missing : .disconnected
-            )
+            return remoteProviderNames[parsed.providerId] == nil ? .missing : .disconnected
         }
-
         // Legacy remote ids used the provider's picker prefix. Preserve them
         // while disconnected, but never advertise them as runnable.
         let legacyProviders = remoteProviderNames.filter { _, name in
             trimmed.hasPrefix(RemoteProviderManager.pickerPrefix(for: name) + "/")
         }
-        let state: SpawnTargetState =
-            !legacyProviders.isEmpty
-            ? .disconnected
-            : (localCatalogIsAuthoritative ? .missing : .checking)
-        return SpawnModelTarget(
-            descriptor: SpawnModelDescriptor(
-                id: trimmed,
-                displayName: shortName(fromModelId: trimmed),
-                isLocal: nil,
-                providerName: legacyProviders.count == 1
-                    ? legacyProviders.first?.value : nil,
-                parameterCount: nil,
-                quantization: nil,
-                isVLM: false,
-                note: note
-            ),
-            state: state
-        )
+        if !legacyProviders.isEmpty { return .disconnected }
+        return localCatalogIsAuthoritative ? .missing : .checking
     }
 
     @MainActor
@@ -665,24 +529,6 @@ public enum SpawnDescriptors {
                 workingFolderPath: AgentManager.shared.workingFolder(for: agent.id)?.path
             )
         }
-    }
-
-    private static func descriptor(
-        id: String,
-        item: ModelPickerItem,
-        note: String?
-    ) -> SpawnModelDescriptor {
-        let locality = classify(item: item)
-        return SpawnModelDescriptor(
-            id: id,
-            displayName: item.displayName,
-            isLocal: locality.isLocal,
-            providerName: locality.providerName,
-            parameterCount: item.parameterCount,
-            quantization: item.quantization,
-            isVLM: item.isVLM,
-            note: note
-        )
     }
 
     private static func classify(
@@ -727,18 +573,5 @@ public enum SpawnDescriptors {
         case .local, .foundation, .imageGeneration:
             return (true, nil)
         }
-    }
-
-    private static func shortName(fromModelId id: String) -> String {
-        guard let slashIndex = id.lastIndex(of: "/") else { return id }
-        return String(id[id.index(after: slashIndex)...])
-    }
-
-    private static func noteFor(_ id: String, in notes: [String: String]) -> String? {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let note = notes[trimmed]?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !note.isEmpty
-        else { return nil }
-        return note
     }
 }

@@ -276,6 +276,70 @@ secondary to the in-app flows above.
 - `osaurus://workspaces/join?code=<code>` — an invite link minted by an owner
   or admin; calls `POST /workspaces/join`.
 
+## Owned vs. hosted: your own agents from another device
+
+Workspace membership is **wallet** (master identity) based, so every device
+that holds the same identity is the same member and sees the same roster.
+Shared agents are keyed by `(workspaceId, agentAddress, relay_url)`, and with
+device-scoped (v2) agent addresses each device's agents have distinct
+addresses even under one identity. The client therefore keeps two separate
+facts on `SharedAgentIdentity` and never conflates them:
+
+- `isOwnedByMe` — the share's `owner.walletAddress` is my wallet.
+- `isHostedHere` — `AgentManager` has a local agent with that address; the
+  agent physically runs on *this* Mac.
+- `isOwnedElsewhere` — owned by me but not hosted here: one of my agents
+  running on another of my devices. (`isMine` is a compatibility alias for
+  `isHostedHere`.)
+
+Behaviour follows the hosting fact, not the ownership fact:
+
+| Surface | Hosted here | Owned elsewhere | Teammate's |
+| --- | --- | --- | --- |
+| Sidebar / detail action | Open Settings (runs locally) | **Chat** via relay, badge "Yours · other device" | Chat via relay |
+| `WorkspaceAgentConnectService.autoConnect` | skipped (`hostedAddresses`) | connects like any remote | connects |
+| `WorkspaceAgentRunClient.prepare` | `.ownAgent` ("hosted on this Mac") | remote run | remote run |
+| Delegation pickers / spawn editor | excluded | selectable | selectable |
+| Bill the workspace pool toggle | shown | hidden (belongs to the hosting device) | hidden |
+| Unshare | yes | yes (`isOwnedByMe`) | only with manage role |
+| "no longer on this Mac" warning | when the local agent is gone | never | never |
+
+Access redeem (`WorkspaceAgentAccessHost`, `/pair-invite`) does not compare
+the attested wallet to the host's own wallet, so device B redeeming access to
+an agent that device A shares under the same identity is granted like any
+member. Regression: `stepTwo_ownWalletFromAnotherDevice_clearsEveryGateBeforeMint`.
+
+Not covered here: the router share contract has no `host_device` field, so two
+same-named agents from two of your devices are told apart only by address.
+
+### Key rotation migrates shares
+
+Shares pin an agent **address**, so *Rotate Key* on a shared agent would
+otherwise leave every workspace pointing at a dead address. After
+`AgentManager.rotateAddress(of:)` the Identity view calls
+`WorkspacesService.migrateShares(from: previousAddress, to: agent)`, which for
+every workspace whose roster lists the old address:
+
+1. `shareAgent` with the new address and a fresh proof signed along the new
+   `agentKeyPath` (the share carries the same `relay_url`), then
+2. `unshareAgent` for the old address — in that order, so a failed re-share
+   never leaves the workspace with neither, and
+3. re-keys the per-agent pool-billing preference to the new address.
+
+Access keys the workspace redeem host minted for the old address are already
+dead — rotation revokes every key whose audience was the old address — so
+teammates' clients get a `401` and re-redeem against the new address on their
+next run (the roster now carries it). The result lists workspaces where the
+re-share failed so the UI can ask for a manual re-share. Regression:
+`migrateShares_*` in `OsaurusWorkspacesTests`.
+
+Same-identity devices that obtained access through the router-free **owner
+redeem** (`{"owner_redeem": …}` on `/pair-invite`, see
+[`IDENTITY.md`](IDENTITY.md#relay-tunnel-trust-model) and
+[`MOBILE_PROTOCOL.md`](MOBILE_PROTOCOL.md)) are outside the workspace contract:
+their key records are dropped on rotation and the device simply redeems again
+against the new address.
+
 ## Per-agent pool billing preference
 
 Membership alone does not route an agent's calls to the pool. Each shared

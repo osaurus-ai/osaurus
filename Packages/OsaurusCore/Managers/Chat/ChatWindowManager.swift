@@ -33,6 +33,23 @@ public enum NewChatShortcutSetting {
     public static let defaultsKey = "chatCmdNStartsNewChatInCurrentWindow"
 }
 
+/// Settings ▸ Chat ▸ "Check Spelling While Typing": run the macOS spell
+/// checker (red underline + right-click suggestions) in the chat composer
+/// and the clarify-prompt input. Default off, matching the raw-input feel
+/// the composer has always had; autocorrect and smart substitutions stay
+/// off regardless so text is never rewritten under the user.
+public enum ComposerSpellCheckSetting {
+    public static let defaultsKey = "chatComposerSpellCheckEnabled"
+    public static let defaultValue = false
+
+    /// Current value for callers outside SwiftUI.
+    public static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: defaultsKey) == nil
+            ? defaultValue
+            : UserDefaults.standard.bool(forKey: defaultsKey)
+    }
+}
+
 /// Manages multiple chat windows in the application
 @MainActor
 public final class ChatWindowManager: NSObject, ObservableObject {
@@ -143,8 +160,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         nsWindows[windowId] = window
         ensureTaskRegistrationObserver()
+        ensureScreenParametersObserver()
         if let state = windowStates[windowId] {
+            // Remembered tabs first (so a hibernated stand-in never shadows
+            // a live run: `restoreTabs` skips registry-owned ids), then the
+            // registry's own runs.
+            restoreRememberedTabs(into: state)
             attachRegistryRuns(to: state)
+            observeTabLayout(of: state)
         }
 
         // Show the window if requested
@@ -215,6 +238,17 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// Stop all active sessions (chat and work) across all windows.
     /// Called during app termination to prevent crashes from in-flight inference.
     public func stopAllSessions() {
+        // Quit path: record every window's tabs BEFORE the teardown below
+        // drops the inactive ones, and stop listening so the teardown's own
+        // change signals cannot overwrite that record with the lone
+        // survivor. Termination is deferred, so the windows stay on screen
+        // while this runs; order them out so the user does not watch the
+        // tabs disappear.
+        persistTabLayoutNow()
+        for (id, state) in windowStates {
+            state.onTabLayoutChanged = nil
+            nsWindows[id]?.orderOut(nil)
+        }
         for (_, state) in windowStates {
             state.cleanup()
         }
@@ -268,6 +302,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // actually on screen, and still fires on a later launch if the user
         // quit before the post-onboarding window opened.
         FeatureTelemetry.firstTimeChatShown()
+        SparkleChatGate.markChatVisible()
     }
 
     /// Hide a window by ID
@@ -314,6 +349,24 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         guard let targetId, let state = windowStates[targetId] else { return false }
         showWindow(id: targetId)
         state.startNewChatInCurrentProject()
+        return true
+    }
+
+    /// Start a new chat on `agentId` in the frontmost chat window, the same
+    /// way picking that agent in the sidebar does: the agent's existing tabs
+    /// are shown, a blank active tab is repurposed, otherwise a new tab
+    /// opens. Returns false when no chat window exists.
+    @discardableResult
+    public func startNewChatInLastFocusedWindow(agentId: UUID) -> Bool {
+        let targetId: UUID? =
+            if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
+                lastId
+            } else {
+                windowStates.keys.first
+            }
+        guard let targetId, let state = windowStates[targetId] else { return false }
+        showWindow(id: targetId)
+        state.startNewChat(with: agentId)
         return true
     }
 
@@ -365,7 +418,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let localAgents = state.agents
         for roster in WorkspaceRosterStore.shared.rosters {
             for agent in roster.agents
-            where !WorkspaceRosterStore.isOwnAgent(address: agent.agentAddress, localAgents: localAgents)
+            where !WorkspaceRosterStore.isHostedHere(address: agent.agentAddress, localAgents: localAgents)
             {
                 let entry = Entry.workspace(agent.agentAddress.lowercased(), roster.id)
                 if !entries.contains(entry) { entries.append(entry) }
@@ -396,7 +449,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             targetId = createWindow()
         }
         guard let state = windowStates[targetId] else { return }
-        state.openProjectId = nil
         state.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
     }
 
@@ -414,7 +466,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             targetId = createWindow()
         }
         guard let state = windowStates[targetId] else { return }
-        state.openProjectId = nil
         state.switchAgent(to: agentId)
     }
 
@@ -423,7 +474,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     public func openNewChatWindow(withWorkspaceAgentAddress address: String, workspaceId: String? = nil) {
         let id = createWindow()
         guard let state = windowStates[id] else { return }
-        state.openProjectId = nil
         state.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
     }
 
@@ -455,7 +505,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         guard let relay = state.pairedRelayAgents.first(where: { $0.providerId == providerId })
         else { return }
 
-        state.openProjectId = nil
         state.switchToWorkspaceAgent(address: relay.remoteAgentAddress,
             workspaceId: RemoteAgentManager.shared.remoteAgent(forProviderId: providerId)?.workspaceId ?? ""
         )
@@ -694,6 +743,86 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates[id]?.isFullScreen = isFullScreen
     }
 
+    // MARK: - Screen fit
+
+    /// The largest content area `screen` can show for `panel`: the visible
+    /// frame (menu bar and Dock excluded) minus the window's own titlebar /
+    /// toolbar chrome. `.zero` when no screen is known, which
+    /// `updateMinimumContentSize` treats as "keep the design minimum".
+    private static func availableContentSize(for panel: NSWindow, on screen: NSScreen?) -> CGSize {
+        guard let vf = screen?.visibleFrame else { return .zero }
+        // With `.fullSizeContentView` the content view runs under the
+        // toolbar, but the SwiftUI root lays out inside the safe area, so
+        // the hosting controller's minimum includes that strip on top of the
+        // root's `.frame(minHeight:)`. Leave room for it.
+        let chrome = max(0, panel.frame.height - panel.contentLayoutRect.height)
+        return CGSize(width: vf.width, height: vf.height - chrome)
+    }
+
+    /// Clamp `windowState`'s minimum content size to what `screen` can show.
+    private func pushMinimumContentSize(for panel: NSWindow, on screen: NSScreen?, windowState: ChatWindowState) {
+        windowState.updateMinimumContentSize(
+            availableContentSize: Self.availableContentSize(for: panel, on: screen)
+        )
+    }
+
+    /// Keep `panel` inside its screen's visible frame: clamp the floor the
+    /// SwiftUI root enforces, then shrink the frame if it is larger than the
+    /// screen and move it back on screen. Runs after creation (the restored
+    /// autosave frame may come from a larger display) and whenever the
+    /// window lands on another screen. A window taller than its screen could
+    /// otherwise only be shown with its top under the menu bar and its
+    /// bottom, where the composer lives, cut off (#2728).
+    ///
+    /// `repositions` also pulls a window that FITS but sits partly off
+    /// screen back into view; only creation wants that. A window the user
+    /// dragged partly off screen on purpose is left alone, and nothing moves
+    /// while a mouse button is down (a drag between displays is in
+    /// progress; snapping mid-drag would fight the user). Full screen is
+    /// left to AppKit.
+    private func fitToScreen(_ panel: NSWindow, windowState: ChatWindowState, repositions: Bool) {
+        guard !panel.styleMask.contains(.fullScreen),
+            let screen = panel.screen ?? NSScreen.main
+        else { return }
+        pushMinimumContentSize(for: panel, on: screen, windowState: windowState)
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        let vf = screen.visibleFrame
+        var frame = panel.frame
+        frame.size.width = min(frame.width, vf.width)
+        frame.size.height = min(frame.height, vf.height)
+        if repositions || frame.size != panel.frame.size {
+            frame.origin.x = min(max(frame.minX, vf.minX), vf.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, vf.minY), vf.maxY - frame.height)
+        }
+        guard frame != panel.frame else { return }
+        panel.setFrame(frame, display: true)
+    }
+
+    fileprivate func windowDidChangeScreen(id: UUID) {
+        guard let panel = nsWindows[id], let state = windowStates[id] else { return }
+        fitToScreen(panel, windowState: state, repositions: false)
+    }
+
+    private var screenParametersCancellable: AnyCancellable?
+
+    /// Re-fit every window when a display's resolution or arrangement
+    /// changes (e.g. switching to "Larger Text" scaling, or unplugging the
+    /// external display the window was on). Armed on first window creation
+    /// like `ensureTaskRegistrationObserver`.
+    private func ensureScreenParametersObserver() {
+        guard screenParametersCancellable == nil else { return }
+        screenParametersCancellable = NotificationCenter.default
+            .publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                for (id, panel) in self.nsWindows {
+                    guard let state = self.windowStates[id] else { continue }
+                    self.fitToScreen(panel, windowState: state, repositions: false)
+                }
+            }
+    }
+
     /// Set window pinned (float on top) state
     public func setWindowPinned(id: UUID, pinned: Bool) {
         guard let window = nsWindows[id] else { return }
@@ -724,6 +853,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         print("[ChatWindowManager] Focused all \(windows.count) windows")
+        // `windows` can be non-empty while `nsWindows` is empty (stale
+        // info, no NSWindow on screen). Only arm the Sparkle chat gate
+        // when a real chat window was brought forward.
+        if !nsWindows.isEmpty {
+            SparkleChatGate.markChatVisible()
+        }
     }
 
     // MARK: - Background Task Window Support
@@ -748,12 +883,72 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         nsWindows[windowId] = window
         windowStates[windowId] = windowState
         ensureTaskRegistrationObserver()
+        ensureScreenParametersObserver()
+        // A window opened for a run ("View" on a toast) also brings the
+        // remembered tabs back: it is the window the user has now.
+        restoreRememberedTabs(into: windowState)
         attachRegistryRuns(to: windowState)
+        observeTabLayout(of: windowState)
 
         if showImmediately { showWindow(id: windowId) }
 
         print("[ChatWindowManager] Created window \(windowId) for context \(context.id)")
         return windowId
+    }
+
+    // MARK: - Remembered Tabs
+
+    /// Coalesces the per-window change signals into one write per run-loop
+    /// turn: `tabs` / `activeTabId` mutate several times inside a single
+    /// tab operation.
+    private var tabLayoutPersistScheduled = false
+
+    private func observeTabLayout(of state: ChatWindowState) {
+        state.onTabLayoutChanged = { [weak self] in
+            self?.scheduleTabLayoutPersist()
+        }
+    }
+
+    private func scheduleTabLayoutPersist() {
+        guard !tabLayoutPersistScheduled else { return }
+        tabLayoutPersistScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.tabLayoutPersistScheduled = false
+            self.persistTabLayoutNow()
+        }
+    }
+
+    /// Write every open window's tabs to `ChatTabLayoutStore`. Records of
+    /// windows that are no longer open are left as they are: they are what
+    /// the next window restores.
+    func persistTabLayoutNow() {
+        let store = ChatTabLayoutStore.shared
+        var layout = store.load()
+        for (id, state) in windowStates {
+            layout.windows[id] = state.tabLayoutSnapshot()
+        }
+        store.save(layout)
+    }
+
+    /// Adopt the tabs of every window that is not open any more (the
+    /// previous launch's windows, or one closed earlier in this run) into a
+    /// freshly created window, then forget those records so nothing is
+    /// restored twice.
+    private func restoreRememberedTabs(into state: ChatWindowState) {
+        let store = ChatTabLayoutStore.shared
+        let orphans = store.orphanRecords(openWindowIds: Set(windowStates.keys))
+        guard !orphans.isEmpty else { return }
+        // Oldest record first; the first record whose active chat comes
+        // back is the one the merged window opens on.
+        var restored = 0
+        for orphan in orphans {
+            restored += state.restoreTabs(from: orphan.record)
+        }
+        store.remove(windowIds: orphans.map(\.id))
+        if restored > 0 {
+            print("[ChatWindowManager] Restored \(restored) remembered tab(s) into window \(state.windowId)")
+        }
     }
 
     // MARK: - Background Runs as Tabs
@@ -795,6 +990,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// that already shows it (in whichever window), else attach it to the
     /// frontmost window and select it, else open a window for it. Mirrors
     /// have no chat of their own and are ignored.
+    /// Open a persisted session (e.g. a finished delegated worker chat from
+    /// Settings → Orchestrator → Delegations) as a tab: focuses the tab that
+    /// already shows it, else opens it in the preferred window, creating a
+    /// window only when none is open.
+    public func openHistorySession(_ session: ChatSessionData) {
+        if let shownIn = findWindow(bySessionId: session.id), let host = windowStates[shownIn.id] {
+            host.focusTab(forSessionId: session.id)
+            showWindow(id: shownIn.id)
+            return
+        }
+        if let targetId = preferredWindowId(), let target = windowStates[targetId] {
+            target.openSessionInNewTab(session)
+            showWindow(id: targetId)
+            return
+        }
+        let windowId = createWindow(agentId: session.agentId, showImmediately: true)
+        windowStates[windowId]?.openSessionInNewTab(session)
+    }
+
     public func revealTask(_ taskId: UUID) {
         guard let state = BackgroundTaskManager.shared.taskState(for: taskId), !state.isSubagentMirror
         else { return }
@@ -827,6 +1041,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         attach(hostingController, to: panel)
 
         applyWindowFramePersistence(panel: panel)
+        fitToScreen(panel, windowState: windowState, repositions: true)
 
         return panel
     }
@@ -854,6 +1069,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         attach(hostingController, to: panel)
 
         applyWindowFramePersistence(panel: panel)
+        fitToScreen(panel, windowState: windowState, repositions: true)
 
         return panel
     }
@@ -869,22 +1085,27 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return vf.size
     }
 
-    /// Install the SwiftUI root without letting it dictate the window size.
+    /// Install the SwiftUI root without letting it dictate the window size,
+    /// while still letting it enforce the minimum.
     ///
     /// AppKit owns chat window size via the default size and frame autosave.
     /// With the hosting controller's default `sizingOptions`, attaching it
     /// pushes the root view's measured size onto the window, which resolved
-    /// to the view's *minimum* (680pt) and shrank every new window. The
-    /// management window disables this for the same reason. The SwiftUI
-    /// minimum is re-applied as the panel's `contentMinSize` so the user
-    /// still can't drag the window below what the layout supports.
+    /// to the view's *minimum* (800pt) and shrank every new window, so
+    /// `.intrinsicContentSize` stays off. `.minSize` must stay ON, though:
+    /// a window with a content view controller mirrors that controller's
+    /// `preferredMinimumSize` into `contentMinSize` whenever it changes, and
+    /// a hosting controller without `.minSize` reports zero. Setting
+    /// `contentMinSize` by hand here was therefore overwritten on the next
+    /// layout pass and the window could be dragged down to nothing. With
+    /// `.minSize` on, the root view's `.frame(minWidth:minHeight:)` is the
+    /// single source of truth for the floor.
     private func attach(_ hostingController: NSHostingController<some View>, to panel: ChatPanel) {
         if #available(macOS 13.0, *) {
-            hostingController.sizingOptions = []
+            hostingController.sizingOptions = [.minSize]
         }
         let contentSize = panel.contentRect(forFrameRect: panel.frame).size
         panel.contentViewController = hostingController
-        panel.contentMinSize = NSSize(width: 680, height: 575)
         panel.setContentSize(contentSize)
     }
 
@@ -972,6 +1193,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowDelegates[windowId] = delegate
         panel.delegate = delegate
 
+        // The root view's floor must already fit the target screen when the
+        // hosting controller attaches: its first layout pass mirrors that
+        // floor into `contentMinSize`, and a too-tall floor at that point
+        // would grow the window past the screen before `fitToScreen` runs.
+        pushMinimumContentSize(for: panel, on: screen, windowState: windowState)
+
         return panel
     }
 
@@ -1019,10 +1246,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // Once-per-user layout tour for users updating from the pre-tabs
         // layout; a no-op after it has run or been skipped.
         ChatLayoutTour.shared.autoStartIfEligible(windowId: id)
-        // Idle residency may have unloaded this window's selected model while
-        // the user was away. Re-arm the existing speculative warm-up when the
-        // user returns; its RAM and competing-residency gates still decide
-        // whether background loading is safe.
+        // Refresh the residency-backed dot. Focus never loads a model or
+        // cancels its idle deadline; the next Send loads on demand.
         windowStates[id]?.session.notifySessionBecameActive()
         // Distinguishes "user was in a chat window" from a management tab when
         // localizing a layout-engine app hang (no first-party frame in stack).
@@ -1040,6 +1265,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     // Called by delegate when window will close
     fileprivate func windowWillClose(id: UUID) {
         print("[ChatWindowManager] Window \(id) will close")
+
+        // Snapshot the tabs while they are all still here: the teardown
+        // below drops the inactive ones, and this record is what the next
+        // window (or the next launch) brings back.
+        persistTabLayoutNow()
+        windowStates[id]?.onTabLayoutChanged = nil
 
         // A window closing over a live run automatically detaches the
         // session into the registry (execution continues; the run comes back
@@ -1180,9 +1411,9 @@ private struct ChatFullScreenHeaderView: View {
     var body: some View {
         HStack(spacing: 8) {
             ChatToolbarSidebarView(windowState: windowState)
-            // Leading-aligned like Chrome: tabs grow left to right.
+            // Leading-aligned like Chrome: tabs grow left to right, filling the
+            // row up to the trailing buttons like the toolbar item does.
             ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
-            Spacer()
             ChatToolbarActionView(windowState: windowState)
             ChatToolbarTrailingView(windowState: windowState)
         }
@@ -1205,13 +1436,14 @@ private final class ChatPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
-    /// ⌘W (the Close menu item) closes the active TAB while the current
-    /// agent has more than one open, exactly like a browser; the agent's
-    /// last tab closes the window (other agents' tabs are saved; mid-run
-    /// ones keep executing in the registry).
+    /// ⌘W (the Close menu item) closes the active TAB, like a browser: the
+    /// agent's last conversation tab is replaced by a blank chat so the
+    /// window stays up (Osaurus is a menu-bar app, so closing its only
+    /// window reads as quitting). Only a lone blank tab closes the window;
+    /// the other agents' tabs are remembered and come back with the next
+    /// window, and mid-run ones keep executing in the registry.
     override func performClose(_ sender: Any?) {
-        if let state = chatWindowState, state.scopedTabs.count > 1 {
-            state.closeTab(id: state.activeTabId)
+        if let state = chatWindowState, state.closeActiveTabIfPossible() {
             return
         }
         super.performClose(sender)
@@ -1279,9 +1511,10 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // (project page). Named `pin` for backward identity continuity.
     fileprivate static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
-    /// Layout: sidebar on the leading edge, agent pill centered (via the
-    /// toolbar's `centeredItemIdentifier`), action + pin on the trailing edge.
-    /// The flexible spaces let the trailing items hug the right edge.
+    /// Layout: sidebar on the leading edge, the tab strip filling the middle,
+    /// action + pin on the trailing edge. The strip item is flexible (see
+    /// `makeTabStripItem`), so it doubles as the space that pushes the
+    /// trailing items to the right edge.
     /// Any stale identifiers AppKit may have persisted in user defaults
     /// fall through to `default: nil` in `itemForItemIdentifier`, which
     /// renders them as no-ops rather than crashing.
@@ -1291,7 +1524,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // item that AppKit still reserved spacing for, so every chat had a dead
     // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, tabsItem, .flexibleSpace, actionItem, pinItem,
+        sidebarItem, tabsItem, actionItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -1325,10 +1558,9 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
             )
 
         case Self.tabsItem:
-            return makeHostingItem(
+            return makeTabStripItem(
                 identifier: itemIdentifier,
-                rootView:
-                    ChatTabStripView(windowState: windowState)
+                rootView: ChatTabStripView(windowState: windowState)
             )
 
         case Self.actionItem:
@@ -1367,6 +1599,38 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         if #available(macOS 13.0, *) {
             item.isBordered = false
         }
+        return item
+    }
+
+    /// The tab strip's item takes whatever width the toolbar has left, like
+    /// a flexible space. AppKit sizes it in the same layout pass as the window
+    /// resize, so the strip never waits on a measurement of its own: sizing it
+    /// from its content made the whole toolbar squeeze, jump and draw tabs
+    /// over the sidebar on a fast resize.
+    private func makeTabStripItem<Content: View>(
+        identifier: NSToolbarItem.Identifier,
+        rootView: Content
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.sizingOptions = []
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        // A min/max RANGE is what makes a toolbar item flexible: AppKit
+        // stretches it into the free space. Do not pin a large preferred
+        // width instead: the toolbar measures the item's fitting size, reads
+        // that width as the space it needs, and hides the item as too wide.
+        NSLayoutConstraint.activate([
+            hostingView.widthAnchor.constraint(
+                greaterThanOrEqualToConstant: ChatTabStripView.minimumItemWidth),
+            hostingView.widthAnchor.constraint(lessThanOrEqualToConstant: 10_000),
+            hostingView.heightAnchor.constraint(equalToConstant: ChatTabStripView.stripHeight),
+        ])
+        hostingView.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        hostingView.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        item.view = hostingView
+        item.isBordered = false
+        // Fold the action and pin into the overflow menu before the tabs.
+        item.visibilityPriority = .high
         return item
     }
 }
@@ -1568,14 +1832,10 @@ private final class ChatWindowDelegate: NSObject, NSWindowDelegate {
         manager?.windowDidBecomeKey(id: windowId)
     }
 
-    /// Push the live content width into the window state on every resize so
-    /// the tab strip re-sizes even while its toolbar item is folded into the
-    /// overflow menu (see `ChatWindowState.windowContentWidth`).
-    func windowDidResize(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow,
-            let contentView = window.contentView
-        else { return }
-        manager?.windowState(id: windowId)?.updateWindowContentWidth(contentView.bounds.width)
+    /// Dragged onto another display: re-clamp the minimum size to that
+    /// screen and keep the frame inside it.
+    func windowDidChangeScreen(_ notification: Notification) {
+        manager?.windowDidChangeScreen(id: windowId)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

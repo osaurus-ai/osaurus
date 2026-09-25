@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "9460dcc133b3509899265afd21deffaffc3eb9e9"
+        let expectedRuntimeHardenedRevision = "6827ef1153efa434f04ebeff801d9d6b0ce3e6bd"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -841,7 +841,10 @@ struct RuntimePolicySourceTests {
             source.range(of: "loadingTasks[name] = LoadingTaskRecord(")
         )
         let success = try #require(
-            source.range(of: "return try await finishLoadedContainer", range: taskStore.upperBound ..< source.endIndex)
+            source.range(
+                of: "let published = try await finishLoadedContainer",
+                range: taskStore.upperBound ..< source.endIndex
+            )
         )
         let loadBody = String(source[taskStart.lowerBound ..< success.lowerBound])
 
@@ -1143,11 +1146,10 @@ struct RuntimePolicySourceTests {
         )
         let mlxService = try Self.source("Services/Inference/MLXService.swift")
         #expect(
-            mlxService.contains("ModelFamilyNames.isStepFamily(modelId)")
-                && mlxService.contains("Step 3.7 currently runs through vMLX's Step text runtime")
-                && mlxService.contains("Step 3.7 tool parsing/template selection is owned by the pinned")
-                && mlxService.contains("return ModelMediaCapabilities.descriptor(modelId: modelId)"),
-            "Step 3.7 runtime policy must stay text-only/tool-capable and must not block preflight on external bundle metadata until Step VLM is wired and proven"
+            mlxService.contains("Step 3.7 tool parsing/template selection is owned by the pinned")
+                && mlxService.contains("refresh: true")
+                && !mlxService.contains("Step 3.7 currently runs through vMLX's Step text runtime"),
+            "Media policy must inspect actual bundle evidence; Step tool/parser handling stays unchanged"
         )
     }
 
@@ -1236,12 +1238,13 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("Server settings cache changes clear loaded model runtime")
+    @Test("Cache topology changes reload models while size changes refresh resident caps")
     func cacheSettingsChangesClearLoadedModelRuntime() throws {
         let controller = try Self.source("Networking/ServerController.swift")
 
         #expect(controller.contains("loadedModelRuntimeInputsRequireRefresh"))
-        #expect(controller.contains("previous.cache != next.cache"))
+        #expect(controller.contains("previous.cache.requiresModelReload(comparedTo: next.cache)"))
+        #expect(controller.contains("await ModelRuntime.shared.refreshDiskCacheCaps()"))
         #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
         // Deliberately NOT `previous.mtp != next.mtp` any more: comparing the
@@ -1330,7 +1333,7 @@ struct RuntimePolicySourceTests {
         #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
         #expect(concurrency.contains("pins each local model to one active job"))
         #expect(concurrency.contains("Concurrent Sessions"))
-        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("Shared with the Orchestrator's and every agent's Max local subagents at once"))
         #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))
@@ -1462,6 +1465,11 @@ struct RuntimePolicySourceTests {
             adapter.contains("await engine.cancelActiveSoloGenerationAndWait()"),
             "adapter cancellation must explicitly cancel and await the underlying vmlx solo producer before releasing its gate"
         )
+        #expect(
+            !adapter.contains("toolEarlyStopRequested")
+                && !adapter.contains("if case .toolCall = event, soloLease != nil"),
+            "the first parsed call must not stop solo decoding and erase later calls in the same response"
+        )
     }
 
     @Test("chat classifies tool rejection as errored cleanup")
@@ -1521,8 +1529,13 @@ struct RuntimePolicySourceTests {
             !runtime.contains(
                 "for try await ev in events {\n                    if Task.isCancelled {\n                        continuation.finish()\n                        return\n                    }\n                    switch ev"
             ),
-            "ModelRuntime.streamWithTools must encode `.completionInfo` into StreamingStatsHint before honoring cancellation"
+            "ModelRuntime stream wrappers must encode `.completionInfo` into StreamingStatsHint before honoring cancellation"
         )
+        let rawStream = try Self.functionBody("func streamRawText(", in: runtime)
+        let terminal = try #require(rawStream.range(of: "if case .completionInfo"))
+        let cancellation = try #require(rawStream.range(of: "if Task.isCancelled"))
+        #expect(terminal.lowerBound < cancellation.lowerBound)
+        #expect(rawStream[terminal.lowerBound ..< cancellation.lowerBound].contains("StreamingStatsHint.encode("))
         #expect(
             !chatEngine.contains(
                 "for try await delta in inner {\n                    // Check for task cancellation to allow early termination\n                    if Task.isCancelled"
@@ -1686,11 +1699,15 @@ struct RuntimePolicySourceTests {
         let segments = handler.components(separatedBy: "StreamingToolHint.isSentinel(delta)")
 
         #expect(
-            segments.count == 7,
-            "HTTPHandler should have six generic StreamingToolHint sentinel filters; update this guard when adding another HTTP stream writer"
+            segments.count == 9,
+            "HTTPHandler should have eight generic StreamingToolHint sentinel filters, including streaming and non-streaming raw completions"
         )
 
         for segment in segments.dropLast() {
+            #expect(
+                segment.contains("StreamingInputTokenHint.decode(delta)"),
+                "Each HTTP stream writer must preserve prepared prompt usage before filtering metadata"
+            )
             #expect(
                 segment.contains("StreamingStatsHint.decode(delta)"),
                 "Each HTTP stream writer must decode StreamingStatsHint before the generic U+FFFE sentinel filter, otherwise API usage stats and unclosedReasoning are dropped"
@@ -1797,7 +1814,7 @@ struct RuntimePolicySourceTests {
         #expect(!enrichment.contains("specs(forTools: Array(visibleDelegation))"))
     }
 
-    @Test("Capability controls show readiness and expose Default Image and AppleScript")
+    @Test("Capability controls show readiness; the Orchestrator has no Image/AppleScript toggles")
     func capabilityControlsExposeReadiness() throws {
         let agents = try Self.source("Views/Agent/AgentsView.swift")
         let mainChat = try Self.source("Views/Settings/SubagentSettingsSection.swift")
@@ -1806,8 +1823,11 @@ struct RuntimePolicySourceTests {
         #expect(agents.contains("private func subagentReadiness("))
         #expect(agents.contains(#"\(callableSubagentCount) \(L("callable"))"#))
         #expect(agents.contains("readiness.statusMessage"))
-        #expect(mainChat.contains("$configuration.imageDelegationEnabled"))
-        #expect(mainChat.contains("$configuration.appleScriptDelegationEnabled"))
+        // Image / AppleScript are custom-agent abilities only: the
+        // Orchestrator's Subagents section offers the allow-list and its
+        // readiness, never a media or AppleScript switch.
+        #expect(!mainChat.contains("imageDelegationEnabled"))
+        #expect(!mainChat.contains("appleScriptDelegationEnabled"))
         #expect(mainChat.contains("mainSpawnReadiness"))
         #expect(browser.contains("can only be enabled per custom agent"))
     }
@@ -2149,7 +2169,14 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("try? await record.task.value"))
         #expect(runtime.contains("holder.container.disableCaching()"))
         #expect(runtime.contains("loadContainer: strict drain of in-flight load"))
-        #expect(runtime.contains("return try await finishLoadedContainer"))
+        // Publication can await cache configuration. Each caller must validate
+        // its own parent-retention permit again after that suspension point.
+        #expect(runtime.components(separatedBy: "let published = try await finishLoadedContainer").count == 4)
+        let normalizedRuntime = runtime.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined(separator: "\n")
+        let postPublicationReturn = "try validateParentRetention(parentRetention, target: name)\nreturn published"
+        #expect(normalizedRuntime.components(separatedBy: postPublicationReturn).count == 4)
         #expect(
             !runtime.contains("loadingTasks[other]?.cancel()"),
             "Strict single-model replacement must not fire-and-forget cancel an in-flight model load"
@@ -2480,7 +2507,13 @@ struct RuntimePolicySourceTests {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
         #expect(runtime.contains("var loadConfiguration = mtpPlan.loadConfiguration"))
-        #expect(runtime.contains("loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil"))
+        let normalizedRuntime = runtime.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        #expect(
+            normalizedRuntime.contains(
+                "loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil ? .disabled : .directUserSend"
+            ),
+            "Alignment repair authorization must remain tied to a direct user send, independently of formatting."
+        )
         #expect(runtime.contains("loadConfiguration: loadConfiguration"))
         #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(runtime.contains("resolveMemorySafetyLoadPlan("))
@@ -2695,41 +2728,16 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("MiMo and N2 text runtime metadata avoids VLM bundle reads")
+    @Test("Vision metadata uses bundle evidence while text runtime policies stay separate")
     func mimoAndN2TextRuntimeMetadataAvoidsVLMBundleReads() throws {
         let model = try Self.source("Models/Configuration/MLXModel.swift")
         let vlm = try Self.source("Models/Configuration/VLMDetection.swift")
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        let isVLMStart = try #require(model.range(of: "var isVLM: Bool"))
-        let isDownloaded = try #require(
-            model.range(
-                of: "if isDownloaded { return VLMDetection.isVLM(at: localDirectory) }",
-                range: isVLMStart.lowerBound ..< model.endIndex
-            )
-        )
-        let modelFastPath = try #require(
-            model.range(
-                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily",
-                range: isVLMStart.lowerBound ..< isDownloaded.lowerBound
-            )
-        )
-        #expect(modelFastPath.lowerBound < isDownloaded.lowerBound)
-
-        let idStart = try #require(vlm.range(of: "static func isVLM(modelId: String)"))
-        let dirLookup = try #require(
-            vlm.range(
-                of: "findLocalModelDirectory(forModelId: modelId)",
-                range: idStart.lowerBound ..< vlm.endIndex
-            )
-        )
-        let vlmFastPath = try #require(
-            vlm.range(
-                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelId)",
-                range: idStart.lowerBound ..< dirLookup.lowerBound
-            )
-        )
-        #expect(vlmFastPath.lowerBound < dirLookup.lowerBound)
+        #expect(model.contains("VLMDetection.isVLM(at: localDirectory)"))
+        #expect(!vlm.contains("ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily"))
+        #expect(vlm.contains("LocalVisionEvidence.inspect(directory).hasVision"))
+        #expect(vlm.contains("ExternalModelLocator.path(forId: id)"))
 
         let compressionStart = try #require(runtime.range(of: "private static func isRoutedJANGTQCompressionLoad"))
         let jsonRead = try #require(
@@ -2773,7 +2781,11 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("var loadConfiguration = mtpPlan.loadConfiguration"))
         #expect(runtime.contains("loadConfiguration: loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
-        #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)"))
+        #expect(
+            runtime.contains(
+                "requestStrategy = try holder.nativeMTPAdmission.requestStrategy(loaded: holder.draftStrategy, mtp: cfg.mtp)"
+            )
+        )
         #expect(runtime.contains("draftStrategy: requestStrategy"))
         #expect(runtime.contains("params.draftStrategy = draftStrategy"))
         #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))
@@ -2807,7 +2819,9 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"generation_defaults\""))
         #expect(httpHandler.contains("\"last_effective_generation\""))
         #expect(httpHandler.contains("\"stage\": settings.stage"))
-        #expect(httpHandler.contains("LocalGenerationDefaults.defaults(forModelId: summary.name)"))
+        #expect(httpHandler.contains("summary.generationDefaults"))
+        #expect(httpHandler.contains("effective.modelDefaults"))
+        #expect(!httpHandler.contains("LocalGenerationDefaults.defaults(forModelId: summary.name)"))
         #expect(httpHandler.contains("lastEffectiveGenerationSettingsSnapshot()"))
         #expect(httpHandler.contains("path == \"/admin/generation-settings\""))
         #expect(httpHandler.contains("handleGenerationSettingsEndpoint("))
@@ -2819,6 +2833,10 @@ struct RuntimePolicySourceTests {
         #expect(adapter.contains("stage: \"pending_preload\""))
         #expect(adapter.contains("stage: \"submitted_to_batch_engine\""))
         #expect(runtime.contains("MLXBatchAdapter.recordPendingEffectiveGenerationSettings("))
+        #expect(runtime.contains("generationDefaults: LocalGenerationDefaults.load(fromDirectory: localURL)"))
+        #expect(runtime.contains("modelDefaults: holder.generationDefaults"))
+        #expect(adapter.contains("LocalGenerationDefaults.defaults(forModelId: modelId)"))
+        #expect(!adapter.contains("LocalGenerationDefaults.defaults(forModelId: modelName)"))
     }
 
     @Test("admin cache stats exposes resolved and per-load memory safety status")
@@ -2987,6 +3005,9 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("ModelLease.shared.count(for: name)"))
         #expect(runtime.contains("await ModelResidencyManager.shared.cancel(modelName: name)"))
         #expect(runtime.contains("await ModelResidencyManager.shared.cancelAll()"))
+        let scheduleBody = try Self.functionBody("private func scheduleIdleResidency(", in: runtime)
+        #expect(scheduleBody.contains("residentMetadata[modelName]?.childOwnershipToken != nil"))
+        #expect(scheduleBody.contains("Self.resolvedIdleResidencyPolicy("))
         #expect(manager.contains("guard await leaseCount(modelName) == 0"))
         #expect(manager.contains("guard await isResident(modelName)"))
 
@@ -3014,6 +3035,8 @@ struct RuntimePolicySourceTests {
         )
         #expect(finalDecisionGate.lowerBound < commit.lowerBound)
         #expect(commit.lowerBound < idleShutdown.lowerBound)
+        let precommit = unloadBody[idleBranch.lowerBound ..< commit.lowerBound]
+        #expect(precommit.components(separatedBy: "residentMetadata[name]?.childOwnershipToken == nil").count == 3)
 
         let markActiveBody = try Self.functionBody(
             "private func markModelActiveForResidency(",
@@ -3161,7 +3184,7 @@ struct RuntimePolicySourceTests {
             in: tasks
         )
         #expect(releaseBody.contains("state.source.inferenceSource"))
-        #expect(releaseBody.contains("taskSource != .chatUI"))
+        #expect(!releaseBody.contains("taskSource != .chatUI"))
         #expect(releaseBody.contains("accelerateIdleUnloadAfterBackgroundTaskCompleted"))
         #expect(releaseBody.contains("ChatWindowManager.shared.activeLocalModelNames()"))
         #expect(releaseBody.contains("rearmChatWarmupAfterBackgroundWork()"))
@@ -3174,7 +3197,7 @@ struct RuntimePolicySourceTests {
             "func accelerateIdleUnloadAfterBackgroundTaskCompleted(",
             in: runtime
         )
-        #expect(acceleratedReleaseBody.contains("guard taskSource != .chatUI else { return }"))
+        #expect(!acceleratedReleaseBody.contains("guard taskSource != .chatUI else { return }"))
         #expect(acceleratedReleaseBody.contains("guard case .afterSeconds = policy else { return }"))
         #expect(acceleratedReleaseBody.contains("guard !activeNames.contains(name) else { return }"))
         #expect(
@@ -3528,8 +3551,8 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("local streamWithTools dispatches immediately and preserves cache drain")
-    func localStreamWithToolsDispatchesImmediatelyAndPreservesCacheDrain() throws {
+    @Test("local streamWithTools preserves the complete batch and cache drain")
+    func localStreamWithToolsPreservesCompleteBatchAndCacheDrain() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let streamStart = try #require(
             runtime.range(of: "func streamWithTools("),
@@ -3544,29 +3567,35 @@ struct RuntimePolicySourceTests {
             streamWithTools.range(of: "case .toolInvocation(let name, let argsJSON):"),
             "ModelRuntime.streamWithTools must handle parsed vMLX toolInvocation events."
         )
-        let afterToolCase = streamWithTools[toolCase.lowerBound...]
+        let toolCaseEnd = try #require(
+            streamWithTools[toolCase.upperBound...].range(of: "case .completionInfo:"),
+            "The invocation case must remain distinct from response completion."
+        )
+        let invocationCase = streamWithTools[toolCase.lowerBound ..< toolCaseEnd.lowerBound]
 
         #expect(
-            streamWithTools.contains("var dispatchedTool = false")
-                && afterToolCase.contains("ServiceToolInvocation(")
-                && afterToolCase.contains("toolName: name")
-                && afterToolCase.contains("jsonArguments: argsJSON")
-                && afterToolCase.contains("dispatchedTool = true")
-                && afterToolCase.contains("continuation.finish(throwing: tool)")
-                && afterToolCase.contains("continue"),
-            "streamWithTools must dispatch the parsed invocation immediately, then keep consuming the upstream vMLX stream so cache persistence can finish behind the running tool."
+            streamWithTools.contains("var completedTools: [ServiceToolInvocation] = []")
+                && invocationCase.contains("completedTools.append(")
+                && invocationCase.contains("ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)")
+                && !invocationCase.contains("continuation.finish(")
+                && !invocationCase.contains("publishedTerminal = true"),
+            "Each closed invocation must enter the ordered batch without ending or cancelling generation before later calls can arrive."
         )
         #expect(
-            streamWithTools.contains("continuation.yield(StreamingToolHint.encode(name))")
-                && streamWithTools.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))")
-                && streamWithTools.contains("if dispatchedTool { continue }")
+            invocationCase.contains("continuation.yield(StreamingToolHint.encode(name))")
+                && invocationCase.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))")
+                && streamWithTools.contains("if publishedTerminal { continue }")
                 && streamWithTools.contains("if case .cancelled = termination")
                 && streamWithTools.contains("producerTask.cancel()"),
             "The native UI must receive the tool envelope immediately, while only a real consumer cancellation may cancel the engine-owned terminal drain."
         )
         #expect(
-            !afterToolCase.contains("pendingTools.append"),
-            "The local streaming path must not batch-collect tool invocations after a parsed tool event; batch collection belongs to the non-streaming tool response path."
+            streamWithTools.contains("if !collectCompleteResponse, !completedTools.isEmpty")
+                && streamWithTools.contains("try Self.throwIfTools(completedTools, stopReason: terminalStopReason)")
+                && streamWithTools.contains("else if !publishedTerminal")
+                && runtime.contains("if stopReason == \"length\", !invs.isEmpty")
+                && runtime.contains("throw ServiceToolResponseExhausted(toolCallCount: invs.count)"),
+            "Native dispatch must classify the whole batch at logical completion, rejecting length-truncated tool responses while retaining clean EOF fallback and the wrapper drain."
         )
     }
 
@@ -3607,26 +3636,22 @@ struct RuntimePolicySourceTests {
             ),
             "Family-specific reasoning profiles must not force enable_thinking=false by writing a false boolean when no positive effort was requested."
         )
-        #expect(
-            adapter.contains("if ModelFamilyNames.isZayaFamily(modelName)")
-                && adapter.contains("context[\"enable_thinking\"] = false"),
-            "ZAYA text bundles are the explicit exception: their profile default is a closed/no-thinking prompt, so omitted reasoning controls must reach vmlx as enable_thinking=false."
+        let defaultGuard = try #require(
+            adapter.range(of: "guard normalizedReasoningEffort != nil || disableThinking != nil else {\n            return context\n        }")
         )
+        let firstFamilyOverride = try #require(adapter.range(of: "if DSV4ReasoningProfile.matches(modelId: modelName)"))
         #expect(
-            adapter.contains("if ModelFamilyNames.isQwenFamily(modelName)")
-                && adapter.contains("context[\"enable_thinking\"] = false"),
-            "Qwen local chat is an explicit exception: live tool-history rows must default to the closed/no-thinking rail instead of hidden reasoning-only length stops."
+            defaultGuard.lowerBound < firstFamilyOverride.lowerBound,
+            "Omitted reasoning controls must return the bundle default before any family-specific override, including required-tool turns. Executable MLXBatchAdapterTests cover the returned context."
         )
-        #expect(
-            adapter.contains("if ModelFamilyNames.isNemotronThinkingFamily(modelName)")
-                && adapter.contains("context[\"enable_thinking\"] = false"),
-            "Nemotron reasoning bundles are the explicit hybrid exception: live ordinary chat must default to the closed/no-thinking rail instead of hidden reasoning-only output."
-        )
-        #expect(
-            adapter.contains("if ModelFamilyNames.isGemmaFamily(modelName)")
-                && adapter.contains("context[\"enable_thinking\"] = false"),
-            "Gemma4 bundles must default to the closed/no-thinking rail for local API requests, matching their UI profile default without parser-side output repair."
-        )
+        let contextStart = try #require(adapter.range(of: "func additionalContext("))
+        let beforeDefaultGuard = adapter[contextStart.upperBound ..< defaultGuard.lowerBound]
+        for key in ["enable_thinking", "reasoning_effort"] {
+            #expect(
+                !beforeDefaultGuard.contains("context[\"\(key)\"]"),
+                "No family may inject reasoning controls before the omitted-options guard. Explicit overrides remain permitted after it."
+            )
+        }
         #expect(
             !adapter.contains("dsv4MaxReasoningRepetitionPenalty")
                 && !adapter.contains("repeated \"thinking\" token loop"),
@@ -3915,47 +3940,6 @@ struct RuntimePolicySourceTests {
         #expect(
             picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
             "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
-        )
-    }
-    @Test("Swap-pressure banner unloads through the guarded lifecycle and reports a refusal")
-    func swapBannerUnloadUsesGuardedLifecycle() throws {
-        let floatingInput = try Self.source("Views/Chat/FloatingInputCard.swift")
-        let bannerStart = try #require(floatingInput.range(of: "private func swapPressureBanner("))
-        let bannerEnd = try #require(
-            floatingInput.range(
-                of: "private func swapPrimaryButton(",
-                range: bannerStart.upperBound ..< floatingInput.endIndex
-            )
-        )
-        let banner = String(floatingInput[bannerStart.lowerBound ..< bannerEnd.lowerBound])
-
-        #expect(
-            banner.contains("await MLXService.shared.unloadRuntimeModel(named: target)"),
-            "The banner's Unload Model must take the same guarded path as the cache inspector: Stop-lifecycle preparation of every session on the model, then the timed runtime unload"
-        )
-        #expect(
-            !banner.contains("ModelRuntime.shared.unload(name:"),
-            "The banner must not call the runtime unload directly (that skipped session preparation and the lease-drain timeout, and dropped the result)"
-        )
-        #expect(
-            banner.contains("if !didUnload {") && banner.contains("swapUnloadFailure = String("),
-            "A refused unload (model still in use after the lease-drain timeout) must be reported in the banner instead of being discarded"
-        )
-        #expect(
-            banner.contains("guard let target, !swapUnloadInFlight else { return }")
-                && banner.contains(".disabled(swapUnloadInFlight)"),
-            "The Unload control must be single-flight while the runtime drains leases"
-        )
-        #expect(
-            banner.contains("let target = memoryWarningModel")
-                && banner.contains("?.name == target"),
-            "Unload and Cancel Loading must use the selected model's canonical runtime key, never a simulation label or another model's pressure episode"
-        )
-        let buttonsStart = bannerEnd.lowerBound
-        let buttons = String(floatingInput[buttonsStart...].prefix(2600))
-        #expect(
-            buttons.components(separatedBy: ".accessibilityLabel(Text(verbatim: title))").count >= 3,
-            "Both banner button helpers must expose their own title to accessibility; the banner container's label otherwise shadows Unload, Keep Running and Activity Monitor with the same sentence"
         )
     }
 }

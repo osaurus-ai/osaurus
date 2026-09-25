@@ -37,6 +37,39 @@ struct OsaurusGuideTests {
     }
 
     @Test
+    func settingsTopic_namesServerCacheContextCap() throws {
+        let body = try #require(OsaurusGuide.topic(id: "settings")?.body)
+        #expect(body.contains("Context Window Cap"))
+        #expect(body.contains("Server → Settings → Cache") || body.contains("Server → Settings → Cache → Context"))
+        #expect(!body.contains("Chat behavior: core model for background jobs, context length"))
+        #expect(!body.contains("Warm Models on Load"))
+    }
+
+    @Test
+    func localModelsTopic_doesNotPointAtRetiredWarmModels() throws {
+        let body = try #require(OsaurusGuide.topic(id: "local-models")?.body)
+        #expect(!body.contains("Warm Models on Load"))
+    }
+
+    @Test
+    func topics_quoteTheSettingsShortcutAndCurrentSidebarNames() {
+        let corpus = OsaurusGuide.topics.map(\.body).joined(separator: "\n")
+        #expect(corpus.contains("⌘,"), "guide should tell the user Settings… is ⌘,")
+        #expect(!corpus.contains("⌘⇧M"))
+        #expect(!corpus.contains("Cmd+Shift+M"))
+        #expect(!corpus.contains("Cloud Models"))
+        #expect(!corpus.contains("Tools → Available"))
+        #expect(!corpus.contains("Generation defaults"))
+    }
+
+    @Test
+    func providersOverview_usesTheSidebarTitleAndKeepsTheOldAlias() throws {
+        let entry = try #require(SettingsSearchIndex.entries.first { $0.id == "providers.overview" })
+        #expect(entry.title == "Providers")
+        #expect(SettingsSearchIndex.search("cloud models").contains { $0.id == "providers.overview" })
+    }
+
+    @Test
     func topics_coverTheCoreFeatureAreas() {
         let ids = Set(OsaurusGuide.topics.map { $0.id })
         // The prompt and onboarding rely on these existing. Adding topics is
@@ -47,7 +80,7 @@ struct OsaurusGuideTests {
             "server-api", "settings", "voice", "themes", "channels",
             "automation", "privacy-storage", "troubleshooting",
             "commands", "images", "watchers", "agent-db", "knowledge",
-            "identity",
+            "identity", "orchestrator", "config", "workspaces",
         ] {
             #expect(ids.contains(required), "guide topic `\(required)` missing")
         }
@@ -166,6 +199,36 @@ struct OsaurusHelpToolTests {
         let dict = try parse(envelope)
         #expect(dict["ok"] as? Bool == false)
         #expect(dict["field"] as? String == "topic")
+    }
+
+    @Test
+    func find_returnsContextWindowCapBreadcrumb() async throws {
+        let tool = OsaurusHelpTool()
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await tool.execute(
+                argumentsJSON: #"{"action": "find", "query": "context window"}"#)
+        }
+        let dict = try parse(envelope)
+        #expect(dict["ok"] as? Bool == true)
+        let result = try #require(dict["result"] as? [String: Any])
+        let matches = try #require(result["matches"] as? [[String: Any]])
+        #expect(matches.contains { $0["id"] as? String == "settings.chat.contextLength" })
+        let cap = try #require(matches.first { $0["id"] as? String == "settings.chat.contextLength" })
+        let path = try #require(cap["path"] as? String)
+        #expect(path.contains("Server"))
+        #expect(path.contains("Context Window Cap"))
+        #expect(cap["settings_ui_only"] as? Bool == true)
+    }
+
+    @Test
+    func find_missingQueryFailsTyped() async throws {
+        let tool = OsaurusHelpTool()
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await tool.execute(argumentsJSON: #"{"action": "find"}"#)
+        }
+        let dict = try parse(envelope)
+        #expect(dict["ok"] as? Bool == false)
+        #expect(dict["field"] as? String == "query")
     }
 
     @Test

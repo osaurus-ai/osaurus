@@ -48,6 +48,14 @@ public actor RedactionMap {
     /// `[LABEL_1]` for distinct originals and collide in `reverse`.
     private var counters: [String: Int] = [:]
 
+    /// Originals the user skipped in the review sheet. Detection drops
+    /// these silently on later sends in the same session, so a skip is
+    /// final: no re-prompt, and no carry-over substitution. Without
+    /// this, a skipped original stayed interned and the next outbound
+    /// call (every agent-loop iteration is one) auto-approved it as a
+    /// "prior turn" carry-over and redacted it anyway.
+    private var skipped: Set<String> = []
+
     public init(conversationID: UUID) {
         self.conversationID = conversationID
     }
@@ -133,6 +141,21 @@ public actor RedactionMap {
                 reverse.removeValue(forKey: placeholder.token)
             }
         }
+    }
+
+    /// Record originals the user skipped and drop their interned
+    /// placeholders. Counters stay put: indices in this batch may
+    /// sit alongside approved ones that shipped, so rewinding could
+    /// reuse a token that already left the machine.
+    public func markSkipped(_ originals: Set<String>) {
+        guard !originals.isEmpty else { return }
+        removeOriginals(originals)
+        skipped.formUnion(originals)
+    }
+
+    /// Every original the user has skipped in this session.
+    public var skippedOriginals: Set<String> {
+        skipped
     }
 
     /// Snapshot of the per-prefix counters. Captured pre-detection

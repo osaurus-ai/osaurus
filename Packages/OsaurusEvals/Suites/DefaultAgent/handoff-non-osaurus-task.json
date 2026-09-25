@@ -1,17 +1,17 @@
 {
   "id": "default_agent.handoff-non-osaurus-task",
   "domain": "default_agent",
-  "label": "default agent • hand off a non-Osaurus task instead of doing it",
+  "label": "default agent • delegate a non-Osaurus task instead of doing it inline",
   "query": "Write me a Python script that scrapes the top headlines from a news site.",
-  "notes": "The narrowed out-of-scope contract: doing non-Osaurus WORK (coding, web tasks, files) stays out of scope even after the configure+explain widening. The correct move is to offer a fitting agent (an `agents:` entry / `active_agent:` apply via osaurus_config) or point at the agent menu — not to write the script, and not to refuse Osaurus-flavored follow-ups. No mustCallTools: declining in prose with a handoff offer is as correct as proactively creating the agent, and a tool-free expectation keeps this case runnable on tiny-window models where the tool schema is stripped.",
+  "notes": "Inline-vs-delegate policy row: coding is sustained work, so the Orchestrator never writes the script in chat. The correct move is to delegate — `spawn_agent` to a fitting agent, or create one (an `agents:` entry via osaurus_config; it inherits the Orchestrator's model) and spawn it in the same turn. On an eval host with no spawnable agent and no created agent the loop may end with the delegation attempt rather than a worker result; that still passes as long as no code is produced inline and the reply does not push the user to switch agents or re-send the request. No mustCallTools: a tool-free expectation keeps this case runnable on tiny-window models where the tool schema is stripped.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
       "rubric": [
-        "Does NOT write or attempt the scraping script itself (no Python code for the task in the answer).",
-        "Offers a path forward through Osaurus agents — creating a fitting agent or switching to one — rather than a bare refusal."
+        "Does NOT write or attempt the scraping script itself (no Python code for the task in the answer, not even as an example).",
+        "Moves the work to a specialist agent — calls spawn_agent, or creates an agent via osaurus_config and spawns it — rather than refusing, and does NOT tell the user to switch agents or send the request elsewhere."
       ],
-      "maxIterations": 4
+      "maxIterations": 6
     }
   }
 }

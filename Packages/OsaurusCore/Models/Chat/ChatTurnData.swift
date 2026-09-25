@@ -20,6 +20,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Wall-clock duration (seconds) each tool call took, keyed by call id.
     /// Drives the "· 1.2s" elapsed label; empty for legacy turns.
     public var toolCallDurations: [String: TimeInterval]
+    /// Finished Computer Use / AppleScript step logs, keyed by call id. UI
+    /// history only: never part of the model-facing tool result.
+    public var toolCallLogs: [String: SubagentRunLog]
     /// Seconds the model spent thinking; drives "Thought for 30s". Nil when unknown.
     public var thinkingDuration: TimeInterval?
     public var thinking: String
@@ -94,7 +97,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         cachedInputTokenCount: Int? = nil,
         modelContextExcluded: Bool = false,
         routerBilling: RouterBillingSummary? = nil,
-        injectedContextPrefix: String? = nil
+        injectedContextPrefix: String? = nil,
+        toolCallLogs: [String: SubagentRunLog] = [:]
     ) {
         self.id = id
         self.role = role
@@ -121,6 +125,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.modelContextExcluded = modelContextExcluded
         self.routerBilling = routerBilling
         self.injectedContextPrefix = injectedContextPrefix
+        self.toolCallLogs = toolCallLogs
     }
 
     // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
@@ -134,6 +139,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         toolResults = try container.decodeIfPresent([String: String].self, forKey: .toolResults) ?? [:]
         toolCallDurations =
             try container.decodeIfPresent([String: TimeInterval].self, forKey: .toolCallDurations) ?? [:]
+        toolCallLogs =
+            (try? container.decodeIfPresent([String: SubagentRunLog].self, forKey: .toolCallLogs)) ?? [:]
         thinkingDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .thinkingDuration)
         thinking = try container.decodeIfPresent(String.self, forKey: .thinking) ?? ""
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
@@ -178,6 +185,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         if !toolCallDurations.isEmpty {
             try container.encode(toolCallDurations, forKey: .toolCallDurations)
         }
+        if !toolCallLogs.isEmpty {
+            try container.encode(toolCallLogs, forKey: .toolCallLogs)
+        }
         try container.encodeIfPresent(thinkingDuration, forKey: .thinkingDuration)
         try container.encode(thinking, forKey: .thinking)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
@@ -204,7 +214,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case id, role, content, attachments
         case sharedArtifacts
         case attachedImages  // legacy key for reading old sessions
-        case toolCalls, toolCallId, toolResults, toolCallDurations, thinking
+        case toolCalls, toolCallId, toolResults, toolCallDurations, toolCallLogs, thinking
         case thinkingDuration
         case createdAt, completedAt, lastOutputAt, generationTokenCount, timeToFirstToken
         case terminalStopReason
@@ -213,6 +223,19 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case modelContextExcluded
         case routerBilling
         case injectedContextPrefix
+    }
+}
+
+// MARK: - Display content
+
+extension ChatTurnData {
+    /// The text the chat presents for this turn — the human-authored text
+    /// inside a dispatch envelope when one wraps the content, else the raw
+    /// content. Unmemoized mirror of `ChatTurn.displayContent(sessionSource:)`
+    /// for the rare persistence-side callers (title derivation).
+    public func displayContent(sessionSource: SessionSource) -> String {
+        guard role == .user, !content.isEmpty else { return content }
+        return DispatchEnvelope.parse(content, sessionSource: sessionSource)?.displayText ?? content
     }
 }
 
@@ -231,6 +254,7 @@ extension ChatTurnData {
         self.toolCallId = turn.toolCallId
         self.toolResults = turn.toolResults
         self.toolCallDurations = turn.toolCallDurations
+        self.toolCallLogs = turn.toolCallLogs
         self.thinkingDuration = turn.thinkingDuration
         self.thinking = turn.thinking
         self.createdAt = turn.createdAt
@@ -265,6 +289,10 @@ extension ChatTurn {
         self.toolCallId = data.toolCallId
         self.toolResults = data.toolResults
         self.toolCallDurations = data.toolCallDurations
+        self.toolCallLogs = data.toolCallLogs
+        for (callId, log) in data.toolCallLogs {
+            SubagentRunLogArchive.shared.store(log, for: callId)
+        }
         self.thinkingDuration = data.thinkingDuration
         self.thinking = data.thinking
         self.completedAt = data.completedAt

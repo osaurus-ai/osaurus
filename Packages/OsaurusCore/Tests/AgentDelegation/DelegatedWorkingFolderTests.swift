@@ -225,8 +225,8 @@ struct DelegatedWorkingFolderTests {
         #expect(!remote.contains(folder))
     }
 
-    @Test("the dispatcher looks the folder up from the target agent, never from the launcher")
-    func dispatcherSourceReadsTargetAgentFolder() throws {
+    @Test("the dispatcher mounts the target agent's folder, else the launcher's, never the caller's live root")
+    func dispatcherSourceResolvesTargetThenLauncherFolder() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent()  // AgentDelegation/
@@ -235,12 +235,31 @@ struct DelegatedWorkingFolderTests {
                 .appendingPathComponent("Services/AgentDelegation/AgentDelegationDispatcher.swift"),
             encoding: .utf8
         )
-        #expect(source.contains("AgentManager.shared.workingFolder(for: agentId)?.path"))
-        #expect(source.contains("workingFolderPath: childWorkingFolder"))
-        // The request must stay folder-less so `resolveDispatchFolder`'s
-        // agent fallback (the folder the contract advertises) is what mounts.
-        #expect(!source.contains("folderPath: childWorkingFolder"))
+        // Target agent's own folder is looked up; the launcher's folder is
+        // the explicit fallback (`resolveChildWorkingFolder`), and the
+        // request carries exactly the resolved folder so the contract and
+        // the mount never disagree.
+        #expect(source.contains("AgentManager.shared.workingFolder(for: agentId)"))
+        #expect(source.contains("launcherFolder: launcherWorkingFolder"))
+        #expect(source.contains("workingFolderPath: childFolder.folder?.path"))
+        #expect(source.contains("folderPath: target.isWorkspace ? nil : childFolder.folder?.path"))
+        // Never the caller's live task-local root (that is the Orchestrator's
+        // own read-only view, not a folder the child may write to).
         #expect(!source.contains("ChatExecutionContext.currentFolderRoot"))
+
+        // The pure resolver: target wins, launcher is the fallback, and a
+        // path-less/bookmark-less target does not shadow the launcher.
+        let target = DelegatedWorkingFolder(bookmark: nil, path: "/tmp/target")
+        let launcher = DelegatedWorkingFolder(bookmark: nil, path: "/tmp/launcher")
+        let own = AgentDelegationDispatcher.resolveChildWorkingFolder(targetFolder: target, launcherFolder: launcher)
+        #expect(own.folder?.path == "/tmp/target")
+        #expect(!own.inherited)
+        let inherited = AgentDelegationDispatcher.resolveChildWorkingFolder(targetFolder: nil, launcherFolder: launcher)
+        #expect(inherited.folder?.path == "/tmp/launcher")
+        #expect(inherited.inherited)
+        let empty = AgentDelegationDispatcher.resolveChildWorkingFolder(
+            targetFolder: DelegatedWorkingFolder(bookmark: nil, path: ""), launcherFolder: nil)
+        #expect(empty.folder == nil)
     }
 
     // MARK: - Orchestrator-side guidance
@@ -257,34 +276,31 @@ struct DelegatedWorkingFolderTests {
         )
     }
 
-    @Test("spawn guidance lists each agent's working folder and names who can write to disk")
+    @Test("spawn guidance lists each agent's own folder and names who can write to disk")
     func spawnGuidanceAdvertisesWorkingFolders() {
         let writer = descriptor("Writer", folder: "/Users/probe/Reports")
         let reader = descriptor("Reader", folder: nil)
-        let text = SystemPromptTemplates.spawnGuidance(agents: [writer, reader], models: [])
+        let text = SystemPromptTemplates.spawnGuidance(agents: [writer, reader])
 
-        #expect(text.contains("working folder: /Users/probe/Reports"))
-        #expect(text.contains("An agent that lists a working folder (Writer) can READ and WRITE files"))
-        #expect(text.contains("put the exact relative path in `input`"))
-        #expect(text.contains("Agents without a working folder cannot write to disk"))
-        // The stale "audited subset" contract is gone for agent targets: the
-        // child IS the agent, with its own tools.
-        #expect(text.contains("Agent targets run as a full chat session of that agent"))
+        #expect(text.contains("own folder: /Users/probe/Reports"))
+        #expect(text.contains("Writer work in their own folder"))
+        // The child IS the agent, with its own tools (only spawning and
+        // `clarify` are removed) — no "audited subset" contract.
+        #expect(text.contains("Agents run with their own enabled tools"))
         #expect(!text.contains("Target-agent workers receive only their enabled tools"))
-        // Artifacts remain the path when the file should land in THIS chat.
-        #expect(text.contains("Workers deliver FILES as artifacts when the file should land in THIS"))
+        #expect(text.contains("`share_artifact`"))
 
-        let noneHaveFolders = SystemPromptTemplates.spawnGuidance(agents: [reader], models: [])
-        #expect(noneHaveFolders.contains("None of the listed agents has a working folder"))
-        #expect(!noneHaveFolders.contains("working folder: "))
+        // Without a launcher folder and no agent folder: nobody can write.
+        let noneHaveFolders = SystemPromptTemplates.spawnGuidance(agents: [reader])
+        #expect(noneHaveFolders.contains("cannot write files to disk"))
+        #expect(!noneHaveFolders.contains("own folder: "))
 
-        // Bare-model workers keep their own, unchanged contract per grant.
-        let readOnly = SystemPromptTemplates.spawnGuidance(
-            agents: [reader], models: [], toolAccess: .readOnly)
-        #expect(readOnly.contains("Bare-model workers (`spawn_model`) receive only the added host file_read"))
-        #expect(readOnly.contains("They cannot write files."))
-        let textOnly = SystemPromptTemplates.spawnGuidance(agents: [reader], models: [], toolAccess: .none)
-        #expect(textOnly.contains("Bare-model workers (`spawn_model`) have no tools."))
+        // With a launcher folder, folder-less agents inherit it.
+        let inherited = SystemPromptTemplates.spawnGuidance(
+            agents: [reader], launcherHasFolder: true)
+        #expect(inherited.contains("work in YOUR working folder"))
+        #expect(inherited.contains("save deliverables"))
+        #expect(!inherited.contains("cannot write files to disk"))
     }
 
     @Test("the descriptor's working folder comes from AgentManager.workingFolder, the dispatch fallback's source")
@@ -297,8 +313,6 @@ struct DelegatedWorkingFolderTests {
 
             let snapshot = SpawnDescriptors.resolveForPreview(
                 agentIDs: [agent.id, bare.id],
-                modelNames: [],
-                modelNotes: [:],
                 launcherModelOverride: nil
             )
             let byId = Dictionary(
@@ -310,7 +324,7 @@ struct DelegatedWorkingFolderTests {
             // resolve — prompt and runtime move together.
             AgentManager.shared.clearWorkingFolder(for: agent.id)
             let cleared = SpawnDescriptors.resolveForPreview(
-                agentIDs: [agent.id], modelNames: [], modelNotes: [:], launcherModelOverride: nil)
+                agentIDs: [agent.id], launcherModelOverride: nil)
             #expect(cleared.agentTargets.first?.descriptor.workingFolderPath == nil)
         }
     }

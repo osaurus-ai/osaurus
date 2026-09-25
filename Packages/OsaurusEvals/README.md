@@ -44,6 +44,7 @@ Packages/OsaurusEvals/
     Subagent/           — SubagentSession host: scripted model-free + live spawn/image/computer_use
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
     ToolResultGrounding/ — transcript fixtures checking final-answer grounding against tool results
+    WorkspaceDelegation/ — Orchestrator → teammates' shared agents: scripted roster through the production resolver, offline refusal, one-card wave plan, artifact caps (no LLM, no relay)
 ```
 
 A "suite" is just a directory of `*.json` case files. Add a new case by dropping a JSON file in — no Swift edit required.
@@ -68,6 +69,13 @@ make evals-pr-report-baseline BASELINE_DIR=build/evals/main-report
 make evals-watcher-report EVALS_WATCHER_CHANNEL=main EVALS_REPORT_PRESET=local-frontier
 make evals-scoreboard EVALS_SCOREBOARD_ROOT=build/evals/watcher/main EVALS_MAX_REGRESSIONS=0
 ```
+
+Hugging Face Inference Providers are also available with an existing `HF_TOKEN`
+and `--model huggingface/<model-id>` (for example,
+`huggingface/deepseek-ai/DeepSeek-V4.1-Flash:novita`). The token needs Inference
+Providers permission. Bootstrap keeps it in memory and does not write it to
+provider configuration or Keychain. Set `JUDGE_MODEL` explicitly to a different
+model when independent rubric grading is required.
 
 ### Asset prerequisites (handled automatically)
 
@@ -128,6 +136,16 @@ swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --transcr
 # Build a maintainer-facing PR report bundle.
 swift run osaurus-evals report --local-model foundation --frontier-model openai/gpt-4o-mini
 ```
+
+For a self-hosted OpenAI-compatible provider, set `<PREFIX>_BASE_URL` and
+`<PREFIX>_API_KEY` in the process environment, then select `prefix/model`.
+For example, with `LAB_BASE_URL=https://models.example/v1` and `LAB_API_KEY`
+already set locally, use `--model lab/model-name`. The provider and its key
+remain in memory; the runner does not save them to app settings or Keychain.
+HTTPS is required except for loopback HTTP endpoints. URLs containing user
+credentials, query parameters or fragments are rejected. Known prefixes keep
+their native wire format and credential variable (for example, Anthropic
+still uses `ANTHROPIC_API_KEY` and the Messages API).
 
 ### Context optimization harness (`optimize-context`)
 
@@ -1118,3 +1136,63 @@ cases never breaks them — only deletions or schema drift do.
 Implemented (see "Optimization loop" above): `osaurus-evals diff` (all-domain
 regression check), cross-model scoreboards (`osaurus-evals matrix`), and the
 one-command `make evals-loop` pipeline.
+
+## RAM admission regression lanes
+
+`RAMAdmission` is a deterministic, token-free suite included in the 1.0 floors
+and `make evals-deterministic`. Explicit host facts drive the production memory
+planner, delayed recovery sample and a single reservation actor across all
+steps. It covers the 0.25.2 reporter values, three admissions followed by low
+headroom, repeated recovery, the one-byte reserve boundary, missing/busy
+recovery, explicit load budgets, RAM off, same-model widths, engine occupancy,
+and batching disabled. It does not emulate physical 16 GB hardware or execute
+model children.
+
+`AgentLoopRAMAdmission` runs real parent and worker inference. Its fixtures set
+RAM safety ON, local handoff ON, coexistence OFF, continuous batching ON with
+one concurrent sequence, and per-agent batch limit one. Child budgets are
+2048 output tokens, two turns and 120 seconds, with worker tools disabled.
+`maxToolCalls: 0` retains the default budget of eight; it does not itself disable
+tools. Sampling remains
+bundle-driven. Single and sequential cases each require all four trials; the
+reporter-order case first runs three fresh single-child chats, then a fresh
+sequential pair in the same process without unloading/resetting the runtime.
+The warmups are scored and persisted as separate transcripts. Every actual
+single-child digest must match exactly and in order; parent echoes, previews,
+missing children, failures and deduped results cannot satisfy the contract.
+
+Run against the exact installed reporter model:
+
+```sh
+swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+  --suite Packages/OsaurusEvals/Suites/AgentLoopRAMAdmission \
+  --model gemma-4-e2b-it-8bit --transcripts --out /tmp/ram-live.json
+```
+
+Delegation settings fixtures save and restore the production settings store;
+run these global-setting scenarios serially in the CLI's isolated storage.
+A local 128 GB result does not qualify the reporter's M4 16 GB machine. Retain
+refusals and full `memory_decision` fields instead of lowering safety thresholds
+to make an eval pass.
+
+## Workspace delegation lane (Mode 2, model-free)
+
+`WorkspaceDelegation` is a deterministic, token-free suite in the 1.0 floors
+and `make evals-deterministic`. Each case (`workspace-*.json`, lane
+`workspace`) scripts a roster — local agents by name, teammates' shared agents
+with workspace, address and presence — plus the launcher's `spawn` /
+`spawn_workspace` policies, and replays one `spawn_agent` wave per step
+through `WorkspaceDelegationEvaluator` (OsaurusCore). The observation is what
+production decides: `AgentTargetResolver` resolution (`Name@Workspace`, bare
+name, `0x…` address, durable key; ambiguity → the exact retry forms), the
+typed offline refusal the parent reads (`AgentDelegationDispatcher
+.workspaceRefusal`), `SpawnWaveGate.wavePermissionPlan` (one card per wave,
+workspace Ask + local Always Allow, pool-spend copy, Deny wins) and
+`RemoteRunArtifactRelay.payload` caps (small files back, `too_large` /
+`directory` listed). Cases: `offline-refusal-then-replan`,
+`ambiguous-name-then-qualified`, `mixed-wave-one-card`, `deny-wins`,
+`address-and-key-forms`, `artifacts-back-within-caps`.
+
+It does not stand in for the two-Mac release row (auto-join on roster load,
+the real Ask card, digest + artifact promotion through the relay, `continue`
+on a remote session, Received tab on the host); those stay live proof.

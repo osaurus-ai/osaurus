@@ -73,6 +73,10 @@ struct OsaurusEvalsCLI {
         }
 
         switch command {
+        case "vision-inventory":
+            let code = await runVisionInventory(Array(args.dropFirst()))
+            EvalBootstrap.cleanupIsolatedRootForExit()
+            exit(code)
         case "run":
             await runCommand(Array(args.dropFirst()))
         case "optimize-context":
@@ -1025,6 +1029,7 @@ struct OsaurusEvalsCLI {
             osaurus-evals — run behaviour evals against a chosen model
 
             USAGE:
+                osaurus-evals vision-inventory --out <inventory.json>
                 osaurus-evals run --suite <dir> [--suite <dir> ...] [--model <id>] [--filter <substr[|substr...]>]
                                               [--out <path> | --out-dir <dir> [--out-prefix <p>]]
                                               [--repeat <n>] [--resume] [--transcripts]

@@ -1021,6 +1021,21 @@ private extension SandboxView {
                         .lineLimit(2)
                 }
 
+                // Most recent startup/provisioning failure from the local
+                // ring buffer (`startup-failures.json`). Same closed tokens
+                // the consent-gated telemetry event carries, so a user can
+                // paste this line into a bug report and it matches what we
+                // see in aggregate. Shown for both backends.
+                if let failure = SandboxStartupMetricsStore.loadFailures().last {
+                    Text(SandboxStartupMetricsStore.failureSummary(failure))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .help(L("From ~/.osaurus/container/startup-failures.json"))
+                }
+
                 if let results = diagResults {
                     diagnosticResultsList(results)
                 }

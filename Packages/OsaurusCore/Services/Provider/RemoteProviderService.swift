@@ -515,7 +515,8 @@ public actor RemoteProviderService: ToolCapableService {
                 messages: messages,
                 sessionId: parameters.sessionId,
                 providerId: provider.id,
-                requestSource: parameters.requestSource
+                requestSource: parameters.requestSource,
+                reviewMode: parameters.privacyReviewMode
             )
             // Every remote request funnels through here, so this is the one
             // place attached images get sized for the wire (oversized Retina
@@ -1220,6 +1221,7 @@ public actor RemoteProviderService: ToolCapableService {
         var toolHintDeltas: Int = 0
         var billingHintDeltas: Int = 0
         var prefillHintDeltas: Int = 0
+        var artifactHintDeltas: Int = 0
         var toolCallFinishes: Int = 0
         var errorFinishes: Int = 0
         var finishMarker: String?
@@ -1310,6 +1312,8 @@ public actor RemoteProviderService: ToolCapableService {
                 billingHintDeltas += 1
             } else if StreamingPrefillProgressHint.decode(delta) != nil {
                 prefillHintDeltas += 1
+            } else if StreamingArtifactHint.decode(delta) != nil {
+                artifactHintDeltas += 1
             } else if StreamingReasoningHint.decode(delta) != nil {
                 reasoningDeltas += 1
             } else if StreamingToolHint.isSentinel(delta) {
@@ -1510,6 +1514,12 @@ public actor RemoteProviderService: ToolCapableService {
         mutating func captureProviderUsage(_ usage: Usage?) {
             guard let usage else { return }
             providerUsage = usage
+            // Chat Completions prompt-cache split (OpenAI, Azure, OpenRouter,
+            // xAI). Only adopt a real value: a usage chunk without details
+            // must not erase a count captured by a provider-specific path.
+            if let cached = usage.cachedPromptTokens {
+                providerCachedInputTokens = cached
+            }
         }
     }
 
@@ -1660,6 +1670,21 @@ public actor RemoteProviderService: ToolCapableService {
                     endRun: (trace["end_run"] as? Bool) ?? false
                 )
             )
+            state.routerDiagnostics?.recordYield(hint)
+            continuation.yield(hint)
+            return false
+        }
+
+        // Artifacts a teammate's host shared during a Mode 2 run
+        // (`osaurus_artifacts`, one chunk before finish). Carried as a
+        // sentinel so `ChatSession` can import the files into the session's
+        // store; never visible text.
+        if providerType == .osaurus,
+            dataContent.contains("\"osaurus_artifacts\""),
+            let chunk = try? state.decoder.decode(RemoteRunArtifactsChunk.self, from: jsonData),
+            let artifacts = chunk.osaurus_artifacts, !artifacts.isEmpty
+        {
+            let hint = StreamingArtifactHint.encode(artifacts)
             state.routerDiagnostics?.recordYield(hint)
             continuation.yield(hint)
             return false
@@ -1851,16 +1876,43 @@ public actor RemoteProviderService: ToolCapableService {
     /// a session-scoped routing hint that improves upstream prompt-cache hit
     /// rates for multi-turn conversations (OpenAI already auto-caches
     /// >=1024-token prefixes; the key routes same-session requests to the
-    /// same cache shard). Gated to genuine OpenAI hosts only: third-party
+    /// same cache shard). Allowlisted targets only — third-party
     /// OpenAI-compat schemas can be strict about unknown fields (the same
     /// reason `idempotency_key` is router-only), and Gemini/Anthropic have
-    /// their own caching (implicit / `cache_control`).
+    /// their own caching (implicit / `cache_control`):
+    /// - Osaurus Router (any host): validates the key and forwards it to
+    ///   upstreams with keyed caches (OpenAI, xAI), so a conversation's turns
+    ///   bill at the cached-input rate instead of full price.
+    /// - Genuine OpenAI hosts on the Chat Completions / Responses wires.
+    /// - Azure OpenAI Foundry: same OpenAI request schema.
+    /// - OpenRouter: forwards `prompt_cache_key` to OpenAI-backed models and
+    ///   ignores it elsewhere.
     static func supportsPromptCacheKey(providerType: RemoteProviderType, host: String) -> Bool {
-        guard providerType == .openaiLegacy || providerType == .openResponses else {
+        switch providerType {
+        case .osaurusRouter, .azureOpenAI:
+            return true
+        case .openaiLegacy, .openResponses:
+            let normalizedHost = host.lowercased()
+            return normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com")
+                || Self.isOpenRouterHost(normalizedHost)
+        case .anthropic, .gemini, .openAICodex, .osaurus:
             return false
         }
-        let normalizedHost = host.lowercased()
-        return normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com")
+    }
+
+    /// Wire value for `prompt_cache_key`. Stable per conversation so every
+    /// turn (and every agent-loop tool round) of one session hashes to the
+    /// same upstream cache shard. The Osaurus Router validates this against
+    /// `[A-Za-z0-9._:-]{1,200}`; conversation ids are UUIDs, so it fits.
+    static func promptCacheKey(forSession sessionId: String) -> String {
+        "osaurus-session-\(sessionId)"
+    }
+
+    /// OpenRouter-hosted endpoints (`openrouter.ai` and subdomains).
+    static func isOpenRouterHost(_ host: String) -> Bool {
+        let normalizedHost = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedHost == OpenRouterOAuthService.Attribution.host
+            || normalizedHost.hasSuffix("." + OpenRouterOAuthService.Attribution.host)
     }
 
     /// OpenCode-hosted endpoints (`opencode.ai` and subdomains). Any provider
@@ -1915,6 +1967,7 @@ public actor RemoteProviderService: ToolCapableService {
         yield: (String) -> Void
     ) throws -> StreamEventOutcome {
         let chunk = try state.decoder.decode(GeminiGenerateContentResponse.self, from: jsonData)
+        captureGeminiUsage(chunk.usageMetadata, state: &state)
 
         if let parts = chunk.candidates?.first?.content?.parts {
             for part in parts {
@@ -2013,13 +2066,17 @@ public actor RemoteProviderService: ToolCapableService {
             // Anthropic path never emitted a `StreamingStatsHint`, so
             // completion tokens fell back to estimates and the provider's
             // stop reason never reached the HTTP `finish_reason`.
+            // Anthropic's `input_tokens` EXCLUDES the cache buckets; the
+            // prompt the user is billed for is the sum of all three.
+            let accounting = Self.anthropicInputAccounting(usage)
             state.captureProviderUsage(
                 Usage(
-                    prompt_tokens: usage.input_tokens,
+                    prompt_tokens: accounting.totalInputTokens,
                     completion_tokens: 0,
-                    total_tokens: usage.input_tokens
+                    total_tokens: accounting.totalInputTokens
                 )
             )
+            state.providerCachedInputTokens = accounting.cacheReadTokens
 
         case "content_block_delta":
             let deltaEvent = try state.decoder.decode(ContentBlockDeltaEvent.self, from: jsonData)
@@ -2442,6 +2499,42 @@ public actor RemoteProviderService: ToolCapableService {
             }
         }
         return nil
+    }
+
+    /// Anthropic reports the prompt in three disjoint buckets: `input_tokens`
+    /// (uncached, billed 1x), `cache_read_input_tokens` (0.1x) and
+    /// `cache_creation_input_tokens` (1.25x / 2x). The total prompt size is
+    /// their sum; `input_tokens` alone under-reports once `cache_control` is
+    /// in play. Negative / missing buckets count as zero.
+    static func anthropicInputAccounting(_ usage: AnthropicUsage) -> (
+        totalInputTokens: Int, cacheReadTokens: Int, cacheWriteTokens: Int
+    ) {
+        let uncached = max(0, usage.input_tokens)
+        let read = max(0, usage.cache_read_input_tokens ?? 0)
+        let write = max(0, usage.cache_creation_input_tokens ?? 0)
+        return (uncached + read + write, read, write)
+    }
+
+    /// Gemini streams `usageMetadata` on (most) chunks with cumulative prompt
+    /// counts; `candidatesTokenCount` is final on the last chunk. Adopt the
+    /// latest values so `dispatchFinal` emits a stats hint with the real
+    /// prompt / completion / cached counts. Chunks without usage are ignored.
+    static func captureGeminiUsage(_ metadata: GeminiUsageMetadata?, state: inout StreamingState) {
+        guard let metadata,
+            metadata.promptTokenCount != nil || metadata.candidatesTokenCount != nil
+        else { return }
+        let promptTokens = max(0, metadata.promptTokenCount ?? 0)
+        let completionTokens = max(0, metadata.candidatesTokenCount ?? 0)
+        state.captureProviderUsage(
+            Usage(
+                prompt_tokens: promptTokens,
+                completion_tokens: completionTokens,
+                total_tokens: metadata.totalTokenCount ?? (promptTokens + completionTokens)
+            )
+        )
+        if let cached = metadata.cachedContentTokenCount {
+            state.providerCachedInputTokens = min(max(0, cached), promptTokens)
+        }
     }
 
     private static func captureOpenResponsesUsage(
@@ -3241,15 +3334,25 @@ public actor RemoteProviderService: ToolCapableService {
         {
             request.opencodeSessionKey = sessionId
         }
-        // Session-scoped prompt-cache routing hint for genuine OpenAI hosts.
+        // Session-scoped prompt-cache routing hint for OpenAI-keyed caches
+        // (genuine OpenAI, Azure, OpenRouter) and the Osaurus Router, which
+        // forwards it upstream and bills cached input at the discounted rate.
         // The chat surface already threads a stable per-conversation
         // `session_id`; scoping the key to it keeps one conversation's turns
-        // on one cache shard without coupling unrelated sessions.
+        // (including agent-loop tool rounds) on one cache shard without
+        // coupling unrelated sessions.
         if !isAgentRun,
             let sessionId = parameters.sessionId, !sessionId.isEmpty,
             Self.supportsPromptCacheKey(providerType: provider.providerType, host: provider.host)
         {
-            request.promptCacheKey = "osaurus-session-\(sessionId)"
+            request.promptCacheKey = Self.promptCacheKey(forSession: sessionId)
+        }
+        // OpenRouter sticky routing: pin the conversation to one upstream
+        // replica so its passthrough prompt cache can hit turn-over-turn.
+        if !isAgentRun, provider.providerType == .openaiLegacy, Self.isOpenRouterHost(provider.host),
+            let sessionId = parameters.sessionId, !sessionId.isEmpty
+        {
+            request.openRouterSessionId = sessionId
         }
         // Parameter fidelity: forward the caller's deterministic seed and JSON
         // mode instead of silently dropping them. Standard OpenAI fields on
@@ -3777,12 +3880,14 @@ public actor RemoteProviderService: ToolCapableService {
             let anthropicRequest = request.toAnthropicRequest()
             bodyData = try encoder.encode(anthropicRequest)
         case .openResponses:
-            let openResponsesRequest = try request.toOpenResponsesRequest()
+            var outbound = request
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
+            let openResponsesRequest = try outbound.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
         case .openAICodex:
             var outbound = request
             outbound.messages = codexMessagesForCurrentCapabilities(
-                outbound.messages,
+                ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages),
                 modelId: outbound.model
             )
             bodyData = try outbound.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
@@ -3791,13 +3896,20 @@ public actor RemoteProviderService: ToolCapableService {
             )
         case .gemini:
             try Self.rejectDroppedMediaInputs(in: request.messages, wireName: "Gemini")
-            let geminiRequest = request.toGeminiRequest()
+            var outbound = request
+            // functionResponse parts are text-only; tool images ride in a
+            // following user turn as inline data.
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
+            let geminiRequest = outbound.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
         case .openaiLegacy, .azureOpenAI, .osaurus, .osaurusRouter:
             // OpenAI-compat wire. RemoteReasoningPolicy decides how prior-turn
             // reasoning is re-sent: strip (default), keep `reasoning_content`
             // (DeepSeek), or fold it back into `<think>` content (MiniMax).
             var outbound = request
+            // Chat Completions rejects image parts on the tool role: hoist
+            // tool-result images into a following user message.
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
             outbound.messages = RemoteReasoningPolicy.resolve(
                 providerType: requestProviderType,
                 host: provider.host,
@@ -4651,8 +4763,10 @@ struct RemoteChatRequest: Encodable {
     /// OpenAI `prompt_cache_key`: session-scoped routing hint that improves
     /// upstream prompt-cache hit rates (OpenAI auto-caches >=1024-token
     /// prefixes; the key routes same-session requests to the same cache
-    /// shard). Set (in `buildChatRequest`) only for genuine OpenAI hosts (see
-    /// `supportsPromptCacheKey`) so strict third-party OpenAI-compat schemas
+    /// shard). Set (in `buildChatRequest`) only for the allowlisted targets in
+    /// `supportsPromptCacheKey` — genuine OpenAI hosts, Azure, OpenRouter, and
+    /// the Osaurus Router (which forwards it upstream and bills cached input
+    /// at the discounted rate) — so strict third-party OpenAI-compat schemas
     /// never see an unknown field. Encoded only when non-nil.
     var promptCacheKey: String? = nil
     /// OpenAI deterministic-sampling `seed`. Forwarded from the caller's
@@ -4680,6 +4794,13 @@ struct RemoteChatRequest: Encodable {
     /// row under the shared agent) instead of one row per request. Never
     /// encoded for `/chat/completions` — that wire is a plain OpenAI body.
     var remoteAgentSessionId: String? = nil
+    /// OpenRouter only: the conversation id sent as `session_id` on
+    /// `/chat/completions` so OpenRouter keeps every turn of one conversation
+    /// on the same upstream provider replica (sticky routing) — a prerequisite
+    /// for its passthrough prompt caching to hit. Shares the `session_id`
+    /// wire key with `remoteAgentSessionId` but is only set for OpenRouter
+    /// hosts (see `buildChatRequest`), so no other upstream sees the field.
+    var openRouterSessionId: String? = nil
     /// Local-only source conversation key for OpenCode session affinity
     /// (`x-opencode-session`). Intentionally absent from `CodingKeys`.
     var opencodeSessionKey: String? = nil
@@ -4711,6 +4832,11 @@ struct RemoteChatRequest: Encodable {
         // the intent. Every other path keeps its exact current wire bytes.
         if !runAsRemoteAgent {
             try container.encode(model, forKey: .model)
+            // OpenRouter sticky routing: same `session_id` wire key, different
+            // intent (see `openRouterSessionId`). Only set for OpenRouter hosts.
+            if let openRouterSessionId, !openRouterSessionId.isEmpty {
+                try container.encode(openRouterSessionId, forKey: .remoteAgentSessionId)
+            }
         } else if let remoteAgentSessionId, !remoteAgentSessionId.isEmpty {
             try container.encode(remoteAgentSessionId, forKey: .remoteAgentSessionId)
         }
@@ -4876,12 +5002,24 @@ struct RemoteChatRequest: Encodable {
                 // a non-whitespace marker for an empty result.
                 if let toolCallId = msg.tool_call_id {
                     let resultText = RemoteProviderService.toolResultText(msg.content)
+                    // Tool results that carry images (`file_read` on a
+                    // picture) become `[text, image...]` blocks — the
+                    // Messages API accepts image blocks inside tool_result.
+                    let imageBlocks: [AnthropicContentBlock] = msg.imageUrls.compactMap { url in
+                        RemoteProviderService.anthropicImageBlock(fromImageUrl: url).map { .image($0) }
+                    }
+                    let content: AnthropicToolResultContent
+                    if imageBlocks.isEmpty {
+                        content = .text(resultText)
+                    } else {
+                        content = .blocks([.text(AnthropicTextBlock(text: resultText))] + imageBlocks)
+                    }
                     pendingToolResults.append(
                         .toolResult(
                             AnthropicToolResultBlock(
                                 type: "tool_result",
                                 tool_use_id: toolCallId,
-                                content: .text(resultText),
+                                content: content,
                                 is_error: nil
                             )
                         )
@@ -4904,7 +5042,7 @@ struct RemoteChatRequest: Encodable {
                 AnthropicTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    input_schema: tool.function.parameters ?? emptySchema,
+                    input_schema: tool.function.parameters?.withEmptyPropertiesIfMissing ?? emptySchema,
                     // GA Anthropic contract: stream large parameter values as
                     // generated so file-write calls do not sit entirely in an
                     // upstream buffer until the value closes.
@@ -4945,6 +5083,12 @@ struct RemoteChatRequest: Encodable {
             // Observed live 2026-07-09 (req_011CcscQwssbYSF8ZBJ8Awdp): HTTP 400
             // "`temperature` is deprecated for this model." on claude-sonnet-5.
             "claude-sonnet-5",
+            // claude-opus-5 (released 2026-07-24) is an adaptive-thinking
+            // model of the same generation as sonnet-5 / fable-5 and shares
+            // their sampler-knob deprecation. Added from the documented
+            // model contract; confirm with a live HTTP 400 trace when an
+            // Anthropic key is available.
+            "claude-opus-5",
         ]
         let deprecatesSamplerKnobs = knobDeprecatingClaudePrefixes.contains {
             bareModel.hasPrefix($0)
@@ -4970,8 +5114,9 @@ struct RemoteChatRequest: Encodable {
             // turn. Safe to send unconditionally — the canonical JSON encoder
             // already guarantees byte-stable prefixes across turns, and
             // requests below the model's minimum cacheable length are simply
-            // processed uncached.
-            cache_control: AnthropicCacheControl()
+            // processed uncached. TTL: 1h after a human turn (gap likely),
+            // 5m after a tool result (tight loop) — see `forConversation`.
+            cache_control: AnthropicCacheControl.forConversation(lastMessageRole: messages.last?.role)
         )
     }
 
@@ -6938,6 +7083,8 @@ extension RemoteProviderService {
         /// The agent's live display name (may differ from the name captured at
         /// pair time if the owner renamed it).
         public let name: String?
+        /// nil means an older peer omitted the field; an explicit empty
+        /// string clears a previously cached purpose and requires repair.
         public let description: String?
         /// Mascot avatar id (e.g. "green"); nil = monogram fallback.
         public let avatar: String?
@@ -6995,7 +7142,7 @@ extension RemoteProviderService {
         return RemoteAgentMetadata(
             effectiveModel: model,
             name: (trimmedName?.isEmpty == false) ? trimmedName : nil,
-            description: (trimmedDescription?.isEmpty == false) ? trimmedDescription : nil,
+            description: trimmedDescription,
             avatar: (trimmedAvatar?.isEmpty == false) ? trimmedAvatar : nil,
             quickActions: parseQuickActions(from: data)
         )

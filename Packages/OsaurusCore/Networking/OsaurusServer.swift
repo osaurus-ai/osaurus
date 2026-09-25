@@ -41,13 +41,17 @@ public actor OsaurusServer: Sendable {
     public struct Config: Sendable {
         public var host: String
         public var port: Int
-        public var agentIndex: UInt32?
+        /// Restrict the validator to a single agent's derived identity
+        /// (single-agent server config). Nil accepts every local agent.
+        public var agentKeyPath: AgentKeyPath?
         public var trustLoopback: Bool
-        public init(host: String = "127.0.0.1", port: Int = 1337, agentIndex: UInt32? = nil, trustLoopback: Bool = true)
-        {
+        public init(
+            host: String = "127.0.0.1", port: Int = 1337, agentKeyPath: AgentKeyPath? = nil,
+            trustLoopback: Bool = true
+        ) {
             self.host = host
             self.port = port
-            self.agentIndex = agentIndex
+            self.agentKeyPath = agentKeyPath
             self.trustLoopback = trustLoopback
         }
     }
@@ -81,7 +85,7 @@ public actor OsaurusServer: Sendable {
         let childChannels = self.childChannels
 
         let validatorSnapshot = LazyAPIKeyValidatorSnapshot {
-            Self.buildValidator(agentIndex: config.agentIndex)
+            Self.buildValidator(agentKeyPath: config.agentKeyPath)
         }
         let trustLoopback = config.trustLoopback
 
@@ -171,7 +175,7 @@ public actor OsaurusServer: Sendable {
 
     /// Build a validator from the current identity, whitelist, and revocation state.
     /// Falls back to `.empty` if the account doesn't exist yet.
-    private static func buildValidator(agentIndex: UInt32?) -> APIKeyValidator {
+    private static func buildValidator(agentKeyPath: AgentKeyPath?) -> APIKeyValidator {
         guard MasterKey.exists() else { return .empty }
 
         let context = LAContext()
@@ -189,11 +193,11 @@ public actor OsaurusServer: Sendable {
             // `aud` is the agent's address, not the master's) validate. The
             // agent addresses come from the thread-safe `AgentIdentityRegistry`
             // (mirrored from `AgentManager`), so no extra key derivation is
-            // needed here. When a specific `agentIndex` is requested
+            // needed here. When a specific `agentKeyPath` is requested
             // (single-agent server config), restrict to just that agent.
             var agentAddresses: Set<OsaurusID> = []
-            if let idx = agentIndex {
-                agentAddresses.insert(try AgentKey.deriveAddress(masterKey: masterKeyData, index: idx))
+            if let path = agentKeyPath {
+                agentAddresses.insert(try AgentKey.deriveAddress(masterKey: masterKeyData, path: path))
             } else {
                 agentAddresses.formUnion(AgentIdentityRegistry.shared.currentAddresses())
             }

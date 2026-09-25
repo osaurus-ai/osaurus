@@ -25,6 +25,35 @@ import Testing
 @MainActor
 struct ModelPickerItemCacheTests {
 
+    /// These ordering tests need a fixed catalog, not an in-progress scan of
+    /// this Mac's model folders or fixtures being changed by another suite.
+    private func withStableCatalog(
+        _ body: @MainActor @Sendable () async throws -> Void
+    ) async rethrows {
+        try await StoragePathsTestLock.shared.run {
+            try await RemoteProviderTestLock.shared.run {
+                let previousScan = ModelManager.scanLocalModelsOverrideForTests
+                let previousExternal = ExternalModelLocator.testRootsOverride
+                defer {
+                    ModelManager.scanLocalModelsOverrideForTests = previousScan
+                    ExternalModelLocator.testRootsOverride = previousExternal
+                    ExternalModelLocator.invalidateInMemory()
+                    ModelManager.invalidateLocalModelsCache()
+                }
+                ExternalModelLocator.testRootsOverride = []
+                ExternalModelLocator.invalidateInMemory()
+                ExternalModelLocator.rescan()
+                ModelManager.scanLocalModelsOverrideForTests = { _ in
+                    [MLXModel(id: "fixture/stable-chat-model", name: "Stable Chat",
+                              description: "fixture", downloadURL: "https://example.invalid/chat")]
+                }
+                ModelManager.invalidateLocalModelsCache()
+                await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+                try await body()
+            }
+        }
+    }
+
     /// Hammer the cache from many concurrent tasks. Because the underlying
     /// state (foundation availability, local models, remote providers) does
     /// not change during the test, every concurrent caller MUST observe the
@@ -34,7 +63,7 @@ struct ModelPickerItemCacheTests {
     /// order, so callers could disagree about whether remote models were
     /// present.
     @Test func concurrentCallers_returnIdenticalResults() async throws {
-        await RemoteProviderTestLock.shared.run {
+        try await withStableCatalog {
             // Establish a baseline so we know what to compare against, and so
             // any work needed to populate the cache (e.g. local model
             // discovery) doesn't perturb the concurrent run below.
@@ -73,15 +102,13 @@ struct ModelPickerItemCacheTests {
     /// asserts the invariant that, once populated, `items` never goes
     /// empty across rebuilds.
     @Test func notificationBurst_doesNotTransientlyEmptyItems() async throws {
-        await RemoteProviderTestLock.shared.run {
+        try await withStableCatalog {
             let cache = ModelPickerItemCache.shared
 
-            // Make sure we start populated. If this machine has no foundation
-            // model, no local MLX models, and no connected remote providers,
-            // the invariant is trivially satisfied - skip in that case so CI
-            // doesn't false-positive.
+            // The fixed fixture guarantees this test exercises a populated
+            // list on CI as well as Macs with installed models.
             _ = await cache.buildModelPickerItems()
-            guard !cache.items.isEmpty else { return }
+            try #require(!cache.items.isEmpty)
             let initialCount = cache.items.count
 
             // Spam many notifications. Each one schedules an observer Task
@@ -326,13 +353,13 @@ struct ModelPickerItemCacheTests {
                 name: "OpenAI",
                 type: .openResponses,
                 host: "api.openai.com",
-                models: ["openai/gpt-5.6-sol", "openai/gpt-4.1"]
+                models: ["openai/gpt-5.6-sol", "openai/gpt-6-astra", "openai/gpt-4.1"]
             ),
             Self.providerEntry(
                 name: "Proxy",
                 type: .openResponses,
                 host: "my-proxy.example.com",
-                models: ["proxy/gpt-5.6-sol"]
+                models: ["proxy/gpt-5.6-sol", "proxy/gpt-6-astra"]
             ),
         ]
 
@@ -372,23 +399,37 @@ struct ModelPickerItemCacheTests {
         // to the documented per-family table instead of the generic default.
         #expect(sol.contextLength == 1_050_000)
 
-        // Official route, non-GPT-5.6 id: no documented profile.
+        // Official API key route, GPT-6 Astra: documented `low`…`max` set
+        // (no `none` — Astra rejects it), 1.05M window from the family table.
+        let astra = try #require(byId["openai/gpt-6-astra"])
+        #expect(astra.displayName == "gpt-6-astra")
+        #expect(astra.reasoningCapabilities == .officialOpenAIGPT6Astra)
+        #expect(
+            astra.reasoningCapabilities?.levels.map(\.id) == ["low", "medium", "high", "xhigh", "max"]
+        )
+        #expect(astra.reasoningCapabilities?.defaultLevelId == "medium")
+        #expect(astra.contextLength == 1_050_000)
+
+        // Official route, non-GPT-5.6/6 id: no documented profile.
         let gpt41 = try #require(byId["openai/gpt-4.1"])
         #expect(gpt41.reasoningCapabilities == nil)
 
         // Custom OpenAI-compatible provider: never assumed to support the
-        // official contract, even for a GPT-5.6 slug.
+        // official contract, even for a GPT-5.6 / GPT-6 slug.
         let proxySol = try #require(byId["proxy/gpt-5.6-sol"])
         #expect(proxySol.reasoningCapabilities == nil)
         #expect(proxySol.chatEndpointCapability == .supported)
         // The static window table is scoped to api.openai.com only — a proxy
         // claiming an OpenAI slug must not inherit OpenAI's real window.
         #expect(proxySol.contextLength == nil)
+        let proxyAstra = try #require(byId["proxy/gpt-6-astra"])
+        #expect(proxyAstra.reasoningCapabilities == nil)
+        #expect(proxyAstra.contextLength == nil)
 
         // Capability map holds exactly the enriched full ids.
         #expect(
             Set(result.reasoningCapabilities.keys)
-                == ["openai-chatgpt/gpt-5.6-terra", "openai/gpt-5.6-sol"]
+                == ["openai-chatgpt/gpt-5.6-terra", "openai/gpt-5.6-sol", "openai/gpt-6-astra"]
         )
     }
 
@@ -400,6 +441,7 @@ struct ModelPickerItemCacheTests {
     /// nil (never a guessed number) so resolution defers to the configured
     /// fallback instead of asserting a wrong window.
     @Test func officialOpenAIContextWindow_resolvesByLongestPrefixMatch() {
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-6-astra") == 1_050_000)
         #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.6-luna") == 1_050_000)
         #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.5-2026-01-01") == 1_050_000)
         // "gpt-5.2" must not fall through to the shorter "gpt-5" entry.

@@ -22,30 +22,38 @@ public enum SubagentPermissionPolicy: String, Codable, CaseIterable, Sendable {
 }
 
 enum SubagentImageLoadPolicy: String, Codable, CaseIterable, Sendable {
+    /// Persisted legacy value. Parent swapping now follows the shared switch;
+    /// this value is equivalent to unloading the image after the job.
     case agentSingleResidency = "agent_single_residency"
     case unloadImageAfterAgentJob = "unload_image_after_agent_job"
     case manualPanelKeepsImageLoaded = "manual_panel_keeps_image_loaded"
 
     var displayName: String {
         switch self {
-        case .agentSingleResidency: return L("Single Residency")
+        case .agentSingleResidency: return L("Unload After Agent Job")
         case .unloadImageAfterAgentJob: return L("Unload After Agent Job")
         case .manualPanelKeepsImageLoaded: return L("Manual Panel Keeps Loaded")
         }
     }
+
+    static let visibleCases: [Self] = [.unloadImageAfterAgentJob, .manualPanelKeepsImageLoaded]
+
+    var effectiveCleanupPolicy: Self {
+        self == .agentSingleResidency ? .unloadImageAfterAgentJob : self
+    }
+
+    func unloadAfterJob(restoresParent: Bool) -> Bool {
+        restoresParent || effectiveCleanupPolicy == .unloadImageAfterAgentJob
+    }
 }
 
-/// How the AppleScript subagent's model is kept resident across calls. The
-/// AppleScript bundle is always a DIFFERENT model than the chat model, so a
-/// run must unload chat, load the AppleScript model, run, and reload chat
-/// (single-GPU residency). Back-to-back `applescript` / `mac_query` calls pay
-/// that whole round-trip each time under `.singleResidency`. `.keepWarmAfterJob`
-/// instead keeps the AppleScript model resident for a short window after a run
-/// (deferring the chat reload), so a follow-up call reuses it and skips the
-/// swap — the biggest everyday latency win. Modeled on `SubagentImageLoadPolicy`.
+/// When local model swapping is enabled for a different-model AppleScript
+/// run, controls when its owned lease restores the invoking chat model.
+/// Keep-warm can reuse the dedicated model for the same parent/session; it
+/// cannot enable swapping when the global setting is off. A resident-parent
+/// `mac_query` does not acquire a dedicated-model warm lease.
 public enum AppleScriptLoadPolicy: String, Codable, CaseIterable, Sendable {
-    /// Restore the chat model immediately after every AppleScript run (the
-    /// original behavior; one resident model at all times).
+    /// Restore the chat model immediately after an authorized swap.
     case singleResidency = "single_residency"
     /// Keep the AppleScript model resident for `keepWarmSeconds` after a run so
     /// a follow-up AppleScript call reuses it. The chat model reload is deferred
@@ -62,10 +70,10 @@ public enum AppleScriptLoadPolicy: String, Codable, CaseIterable, Sendable {
     public var caption: String {
         switch self {
         case .singleResidency:
-            return L("The chat model reloads right after each AppleScript run.")
+            return L("With local model swapping on, the chat model reloads right after each AppleScript run.")
         case .keepWarmAfterJob:
             return L(
-                "The AppleScript model stays loaded briefly after a run so back-to-back automations are faster."
+                "With local model swapping on, the AppleScript model stays loaded briefly for same-session follow-up calls. Turning swapping off disables this warm hold."
             )
         }
     }
@@ -101,21 +109,40 @@ enum SubagentModelKind: String, Codable, CaseIterable, Sendable {
 /// capability id (`"spawn"`, `"image"`, …). Stored as a generic `[kindId:
 /// policy]` map — NOT one field per kind — so a future permissioned kind needs
 /// no new struct field: it reads/writes its own `capability.id`. A kind absent
-/// from the map resolves to the safe `.ask` default.
+/// from the map resolves to `defaultPolicy(for:)`.
 ///
 /// Policy meaning: `.deny` blocks the kind's job; `.ask` prompts before
-/// admission/model loading (`spawn_batch` prompts once for the whole batch);
-/// `.alwaysAllow` skips the prompt.
+/// admission/model loading (several spawn calls in one message prompt once for
+/// the whole wave); `.alwaysAllow` skips the prompt.
 public struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
     private var policies: [String: SubagentPermissionPolicy]
+
+    /// Permission kind for delegating to a teammate's shared (workspace)
+    /// agent. Separate from local `spawn` because a workspace run spends the
+    /// teammate's pool and leaves this Mac, so it stays on Ask by default.
+    public static let workspaceSpawnKindId = "spawn_workspace"
 
     public init(policies: [String: SubagentPermissionPolicy] = [:]) {
         self.policies = policies
     }
 
-    /// The policy for a kind id, defaulting to the safe `.ask` when unset.
+    /// The built-in policy for a kind that has no stored entry. Local `spawn`
+    /// is Always Allow — a delegated worker runs on the user's own agents
+    /// with their own permission cards for anything sensitive, so a second
+    /// card on every delegation was pure friction. Every other kind (image,
+    /// computer use, workspace spawn, …) keeps the safe `.ask`.
+    public static func defaultPolicy(for kindId: String) -> SubagentPermissionPolicy {
+        kindId == SubagentCapabilityRegistry.spawn.id ? .alwaysAllow : .ask
+    }
+
+    /// The policy for a kind id, falling back to `defaultPolicy(for:)`.
     public func policy(for kindId: String) -> SubagentPermissionPolicy {
-        policies[kindId] ?? .ask
+        policies[kindId] ?? Self.defaultPolicy(for: kindId)
+    }
+
+    /// Whether the kind has an explicitly stored policy (vs. the default).
+    public func hasExplicitPolicy(for kindId: String) -> Bool {
+        policies[kindId] != nil
     }
 
     /// Set the policy for a kind id.
@@ -201,105 +228,164 @@ public struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
     }
 }
 
-/// Extra generic tools a spawned subagent (the child worker) may reach.
-/// A configured target agent receives only the cancellation-audited subset of
-/// its own enabled tools; a bare-model worker has no target-agent tools. `none`
-/// adds nothing beyond that target contract. `readOnly` additionally exposes
-/// the cancellation-audited subset of the curated generic read candidates
-/// (currently host `file_read` / `file_search`) so the worker can do its own
-/// bulk reading without ferrying file contents through the parent digest.
-public enum SpawnToolAccess: String, Codable, CaseIterable, Sendable {
-    case none
-    case readOnly = "read_only"
+/// The per-launcher fan-out ceilings one wave of workers is checked against.
+/// `local` mirrors Server Concurrent Sessions (GPU/RAM bound); `remote` is the
+/// independent cloud/provider ceiling.
+public struct SpawnFanOutLimits: Sendable, Equatable {
+    public let local: Int
+    public let remote: Int
+
+    public init(local: Int, remote: Int) {
+        self.local = local
+        self.remote = remote
+    }
+
+    /// Most jobs a wave can carry before the local/remote split is known.
+    public var total: Int { local + remote }
 }
 
 public struct SubagentBudgets: Codable, Equatable, Sendable {
+    /// Maximum output tokens one delegated worker may produce per turn.
     public var maxDelegateTokens: Int
+    /// Maximum model turns (tool-call rounds) one delegated worker may take.
     public var maxDelegateTurns: Int
-    /// Cap on child tool calls per spawn run when the launching agent grants
-    /// tool access (`SpawnToolAccess.readOnly`). `0` means "use the built-in
-    /// default cap" (`TextSubagentKind.defaultReadOnlyToolCallCap`) rather
-    /// than zero calls, so enabling tool access is never silently inert.
-    /// Ignored while tool access is `none` (text-only spawn refuses every
-    /// call regardless).
-    public var maxToolCalls: Int
+    /// Wall-clock limit for one delegated worker, in seconds.
     public var maxElapsedSeconds: Int
-    /// Maximum number of jobs accepted by one `spawn_batch` call and an upper
-    /// bound on concurrent workers. Engine occupancy, continuous-batching
+    /// Maximum LOCAL workers one wave (several `spawn_agent` calls in one
+    /// message) may run at once. Engine occupancy, continuous-batching
     /// settings, RAM safety, and model-residency grouping can lower actual
     /// concurrency; different local models are serialized.
     public var maxParallelSpawns: Int
+    /// Maximum REMOTE (cloud / provider / workspace) workers one wave may fan
+    /// out to. Remote workers consume no local GPU or RAM, so this is
+    /// independent of `maxParallelSpawns`, which mirrors the Server
+    /// Concurrent Sessions ceiling and governs LOCAL workers only.
+    public var maxRemoteParallelSpawns: Int
+
+    /// Built-in defaults. Sized so a worker can actually finish a real task
+    /// (read a few files, run a tool loop, write a deliverable) instead of
+    /// being cut off after two turns.
+    public static let defaultMaxDelegateTokens = 8_192
+    public static let defaultMaxDelegateTurns = 24
+    public static let defaultMaxElapsedSeconds = 900
+    public static let defaultMaxParallelSpawns = 3
+    public static let defaultMaxRemoteParallelSpawns = 8
+
+    /// The defaults shipped before the 2026 Orchestrator rework. A stored
+    /// budget equal to these is treated as "never touched" and upgraded once
+    /// (`migratingLegacyDefaults`).
+    static let legacyDefaults = SubagentBudgets(
+        maxDelegateTokens: 2_048,
+        maxDelegateTurns: 2,
+        maxElapsedSeconds: 120
+    )
 
     /// Accepted bounds for each budget — the single source of truth shared by
     /// `normalized` (the save-time clamp) and the Subagents UI steppers, so the
     /// editor can never offer a value the store would silently clamp away.
-    public static let tokenBounds: ClosedRange<Int> = 256 ... 32_768
-    public static let turnBounds: ClosedRange<Int> = 1 ... 8
-    public static let toolCallBounds: ClosedRange<Int> = 0 ... 32
-    public static let elapsedBounds: ClosedRange<Int> = 15 ... 1_800
+    public static let tokenBounds: ClosedRange<Int> = 256 ... 65_536
+    public static let turnBounds: ClosedRange<Int> = 1 ... 100
+    public static let elapsedBounds: ClosedRange<Int> = 15 ... 3_600
     /// Matches the Server Concurrent Sessions contract. RAM admission,
     /// current engine occupancy, Continuous Batching, and model residency can
-    /// still split a configured batch into smaller execution waves.
+    /// still split a configured wave into smaller execution groups.
     public static let parallelSpawnBounds: ClosedRange<Int> = 1 ... 32
+    public static let remoteParallelSpawnBounds: ClosedRange<Int> = 1 ... 32
+    /// Hard ceiling on workers in one wave regardless of settings: every
+    /// worker is either local or remote, so no wave can exceed both maxima
+    /// combined.
+    public static let jobCountUpperBound =
+        parallelSpawnBounds.upperBound + remoteParallelSpawnBounds.upperBound
 
     public init(
-        maxDelegateTokens: Int = 2048,
-        maxDelegateTurns: Int = 2,
-        maxToolCalls: Int = 0,
-        maxElapsedSeconds: Int = 120,
-        maxParallelSpawns: Int = 3
+        maxDelegateTokens: Int = SubagentBudgets.defaultMaxDelegateTokens,
+        maxDelegateTurns: Int = SubagentBudgets.defaultMaxDelegateTurns,
+        maxElapsedSeconds: Int = SubagentBudgets.defaultMaxElapsedSeconds,
+        maxParallelSpawns: Int = SubagentBudgets.defaultMaxParallelSpawns,
+        maxRemoteParallelSpawns: Int = SubagentBudgets.defaultMaxRemoteParallelSpawns
     ) {
         self.maxDelegateTokens = maxDelegateTokens
         self.maxDelegateTurns = maxDelegateTurns
-        self.maxToolCalls = maxToolCalls
         self.maxElapsedSeconds = maxElapsedSeconds
         self.maxParallelSpawns = maxParallelSpawns
+        self.maxRemoteParallelSpawns = maxRemoteParallelSpawns
     }
 
     public var normalized: SubagentBudgets {
         SubagentBudgets(
             maxDelegateTokens: Self.clamp(maxDelegateTokens, to: Self.tokenBounds),
             maxDelegateTurns: Self.clamp(maxDelegateTurns, to: Self.turnBounds),
-            maxToolCalls: Self.clamp(maxToolCalls, to: Self.toolCallBounds),
             maxElapsedSeconds: Self.clamp(maxElapsedSeconds, to: Self.elapsedBounds),
-            maxParallelSpawns: Self.clamp(maxParallelSpawns, to: Self.parallelSpawnBounds)
+            maxParallelSpawns: Self.clamp(maxParallelSpawns, to: Self.parallelSpawnBounds),
+            maxRemoteParallelSpawns: Self.clamp(
+                maxRemoteParallelSpawns,
+                to: Self.remoteParallelSpawnBounds
+            )
         )
+    }
+
+    /// Whether the per-worker limits (tokens / turns / time) equal the
+    /// pre-rework defaults. Fan-out limits are ignored: they did not change.
+    var matchesLegacyWorkerDefaults: Bool {
+        maxDelegateTokens == Self.legacyDefaults.maxDelegateTokens
+            && maxDelegateTurns == Self.legacyDefaults.maxDelegateTurns
+            && maxElapsedSeconds == Self.legacyDefaults.maxElapsedSeconds
+    }
+
+    /// One-time upgrade: a stored budget whose worker limits still equal the
+    /// old 2048-token / 2-turn / 120-second defaults adopts the current
+    /// defaults (fan-out limits untouched). Any other stored value is a user
+    /// choice and is preserved exactly.
+    var migratingLegacyDefaults: SubagentBudgets {
+        guard matchesLegacyWorkerDefaults else { return self }
+        var upgraded = self
+        upgraded.maxDelegateTokens = Self.defaultMaxDelegateTokens
+        upgraded.maxDelegateTurns = Self.defaultMaxDelegateTurns
+        upgraded.maxElapsedSeconds = Self.defaultMaxElapsedSeconds
+        return upgraded
+    }
+
+    /// Upper bound on the total number of workers one wave can carry before
+    /// the local/remote split of its targets is known.
+    public var maxTotalParallelSpawns: Int {
+        let n = normalized
+        return n.maxParallelSpawns + n.maxRemoteParallelSpawns
     }
 
     private enum CodingKeys: String, CodingKey {
         case maxDelegateTokens
         case maxDelegateTurns
-        case maxToolCalls
         case maxElapsedSeconds
         case maxParallelSpawns
+        case maxRemoteParallelSpawns
     }
 
-    /// Backward-compatible decode for configurations written before batched
-    /// spawning. Each value falls back independently so a missing or malformed
-    /// field never discards the rest of the delegation configuration.
+    /// Backward-compatible decode. Each value falls back independently so a
+    /// missing or malformed field never discards the rest of the delegation
+    /// configuration. The removed `maxToolCalls` key is ignored.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             maxDelegateTokens: (try? container.decodeIfPresent(
                 Int.self,
                 forKey: .maxDelegateTokens
-            )) ?? 2048,
+            )) ?? Self.defaultMaxDelegateTokens,
             maxDelegateTurns: (try? container.decodeIfPresent(
                 Int.self,
                 forKey: .maxDelegateTurns
-            )) ?? 2,
-            maxToolCalls: (try? container.decodeIfPresent(
-                Int.self,
-                forKey: .maxToolCalls
-            )) ?? 0,
+            )) ?? Self.defaultMaxDelegateTurns,
             maxElapsedSeconds: (try? container.decodeIfPresent(
                 Int.self,
                 forKey: .maxElapsedSeconds
-            )) ?? 120,
+            )) ?? Self.defaultMaxElapsedSeconds,
             maxParallelSpawns: (try? container.decodeIfPresent(
                 Int.self,
                 forKey: .maxParallelSpawns
-            )) ?? 3
+            )) ?? Self.defaultMaxParallelSpawns,
+            maxRemoteParallelSpawns: (try? container.decodeIfPresent(
+                Int.self,
+                forKey: .maxRemoteParallelSpawns
+            )) ?? Self.defaultMaxRemoteParallelSpawns
         )
     }
 
@@ -307,9 +393,9 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(maxDelegateTokens, forKey: .maxDelegateTokens)
         try container.encode(maxDelegateTurns, forKey: .maxDelegateTurns)
-        try container.encode(maxToolCalls, forKey: .maxToolCalls)
         try container.encode(maxElapsedSeconds, forKey: .maxElapsedSeconds)
         try container.encode(maxParallelSpawns, forKey: .maxParallelSpawns)
+        try container.encode(maxRemoteParallelSpawns, forKey: .maxRemoteParallelSpawns)
     }
 
     private static func clamp(_ value: Int, to range: ClosedRange<Int>) -> Int {
@@ -378,9 +464,16 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// live agent catalog, then cleared before the next save. New JSON never
     /// writes this field.
     var legacySpawnableAgentNames: [String]
-    /// The DEFAULT / main-chat agent's `image` enable. Custom agents carry their
-    /// own `AgentSettings.imageEnabled`; this governs the main chat only.
-    var imageDelegationEnabled: Bool
+    /// One-time migration sentinel: `true` once a stored budget equal to the
+    /// pre-rework defaults (2048 / 2 / 120) has been upgraded to the current
+    /// defaults. Never re-runs, so a user who later picks those exact values
+    /// keeps them.
+    var budgetDefaultsMigrated: Bool
+    /// One-time migration sentinel: `true` once a stored `spawn` permission of
+    /// `.ask` (the pre-rework default, which the editor persisted verbatim)
+    /// has been flipped to the new Always Allow default. An explicit `.deny`
+    /// is preserved, and once the sentinel is set a user-chosen Ask sticks.
+    var spawnPermissionDefaultMigrated: Bool
     /// Backend-qualified generation selection. Bare legacy model ids decode as
     /// local targets so existing on-device selections keep working.
     var defaultImageGenerationTarget: MediaModelTarget?
@@ -397,17 +490,14 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     var defaultTextToVideoTarget: MediaModelTarget?
     var defaultImageToVideoTarget: MediaModelTarget?
     var imageJobLoadPolicy: SubagentImageLoadPolicy
-    /// The DEFAULT / main-chat agent's `applescript` enable. Custom agents carry
-    /// their own `AgentSettings.appleScriptEnabled`; this governs the main chat
-    /// only.
-    var appleScriptDelegationEnabled: Bool
-    /// The DEFAULT / main-chat agent's chosen AppleScript model id (`nil` →
-    /// resolve to the first installed catalog model at run time). Custom agents
-    /// use their own `AgentSettings.appleScriptModelId`.
+    /// The global default AppleScript model id (`nil` → resolve to the first
+    /// installed catalog model at run time). A custom agent's explicit
+    /// `AgentSettings.appleScriptModelId` wins; "Choose automatically"
+    /// inherits this. The Orchestrator itself has no AppleScript tools.
     var defaultAppleScriptModelId: String?
-    /// The DEFAULT / main-chat agent's AppleScript execution-mode (confirm each
-    /// script vs auto-run with a warning). Custom agents use their own
-    /// `AgentSettings.appleScriptExecutionMode`.
+    /// The global default AppleScript execution mode (confirm each script vs
+    /// auto-run with a warning), inherited by custom agents that leave theirs
+    /// unset.
     var defaultAppleScriptExecutionMode: AppleScriptExecutionMode
     /// How the AppleScript model is kept resident across calls (single residency
     /// vs keep-warm-after-job). Global for every agent's AppleScript runs — the
@@ -429,49 +519,43 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// is freed, the job is rejected instead of unloading the orchestrator and
     /// failing to load the spawn model. See `ChatResidencyHandoff.memoryPreflight`.
     var ramSafetyPreflightEnabled: Bool
-    /// When true, a local spawn model may load ALONGSIDE the resident chat
-    /// model instead of the unload→run→reload handoff — but only when the
-    /// server eviction policy is Flexible (Multi Model) AND the live RAM
-    /// projection says both fit (see `SubagentResidency.decidePlan`'s
-    /// coexistence gate). Default OFF: two resident MLX graphs is the
-    /// historical BUG G concurrent-GPU crash class, so single residency stays
-    /// the default until the direction-matrix crash lane proves a machine's
-    /// configuration safe. Strict eviction policy ignores this flag entirely.
+    /// Legacy persisted key, retained for config round-trip compatibility only.
+    /// OFF on the shared swap switch now retains the parent; no second opt-in
+    /// or Flexible server policy is required. This field has no runtime effect.
     var subagentCoexistenceEnabled: Bool
     /// Per-capability model override for the DEFAULT / main-chat agent's subagent
     /// kinds, keyed by capability id (`"spawn"`, `"computer_use"`). An entry
     /// supersedes the kind's default model source; absent means "inherit". Custom
     /// agents carry their own `AgentSettings.subagentModelOverrides`.
     var subagentModelOverrides: [String: String]
-    /// The DEFAULT / main-chat agent's spawnable MODELS (its `spawn_model` pool):
-    /// raw model ids (local or remote) the main chat may hand a task to directly,
-    /// no agent attached. Empty by default. Custom agents carry their OWN list
-    /// in `AgentSettings`; this governs the main chat only.
-    var spawnableModelNames: [String]
-    /// Optional user-authored "when/how to use" note per spawnable model, keyed by
-    /// model id. Pure descriptor metadata surfaced in the spawn guidance — the
-    /// security gate stays on `spawnableModelNames`. Trimmed, blanks dropped, and
-    /// pruned to current pool members on normalize.
-    var spawnableModelNotes: [String: String]
-    /// The DEFAULT / main-chat agent's child-tool grant for spawn runs. Custom
-    /// agents carry their own `AgentSettings.spawnToolAccess`; this governs the
-    /// main chat only. Default `.none` (text-only spawn).
-    var spawnToolAccess: SpawnToolAccess
     /// The DEFAULT / main-chat agent's spawnable WORKSPACE agents: teammates'
     /// shared agents (by durable `(workspaceId, agentAddress)`) the main chat
-    /// may delegate to over the relay. Opt-in, empty by default — a shared
-    /// agent never becomes a spawn target just by appearing on a roster.
-    /// Custom agents carry their OWN list in `AgentSettings`. Membership here
-    /// is durable configuration; live presence is probed at spawn time and
-    /// never changes this list (or the prompt composed from it).
+    /// may delegate to over the relay. Shared agents on rosters the user
+    /// belongs to auto-join here (`SubagentConfigurationStore
+    /// .reconcileWorkspaceAgents`) unless tombstoned in
+    /// `removedWorkspaceAgents` or their workspace has auto-join off. Custom
+    /// agents carry their OWN list in `AgentSettings`. Membership here is
+    /// durable configuration; live presence is probed at spawn time and never
+    /// changes this list (or the prompt composed from it).
     var spawnableWorkspaceAgents: [WorkspaceAgentRef]
+    /// Shared agents the user removed from the Orchestrator pool. Auto-join
+    /// skips these so a removal survives roster refreshes and re-shares;
+    /// re-adding an agent in the editor clears its tombstone. Pruned when the
+    /// agent leaves every roster.
+    var removedWorkspaceAgents: [WorkspaceAgentRef]
+    /// Workspace ids whose "Let the Orchestrator delegate to shared agents in
+    /// this workspace" toggle is OFF. Default (absent) is on for every
+    /// workspace; turning it off prunes that workspace's refs from the pool
+    /// and stops auto-joining them.
+    var workspaceAutoJoinDisabledIds: [String]
 
     init(
         localTextDelegationEnabled: Bool = true,
         spawnableAgentIDs: [UUID] = [],
         spawnPoolSeeded: Bool = false,
         spawnableAgentNames: [String] = [],
-        imageDelegationEnabled: Bool = false,
+        budgetDefaultsMigrated: Bool = true,
+        spawnPermissionDefaultMigrated: Bool = true,
         defaultImageGenerationModelId: String? = nil,
         defaultImageGenerationTarget: MediaModelTarget? = nil,
         defaultImageEditModelId: String? = nil,
@@ -479,7 +563,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         defaultTextToVideoTarget: MediaModelTarget? = nil,
         defaultImageToVideoTarget: MediaModelTarget? = nil,
         imageJobLoadPolicy: SubagentImageLoadPolicy = .agentSingleResidency,
-        appleScriptDelegationEnabled: Bool = false,
         defaultAppleScriptModelId: String? = nil,
         defaultAppleScriptExecutionMode: AppleScriptExecutionMode = .default,
         appleScriptLoadPolicy: AppleScriptLoadPolicy = .default,
@@ -489,17 +572,22 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         ramSafetyPreflightEnabled: Bool = true,
         subagentCoexistenceEnabled: Bool = false,
         subagentModelOverrides: [String: String] = [:],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
-        spawnToolAccess: SpawnToolAccess = .none,
-        spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
+        removedWorkspaceAgents: [WorkspaceAgentRef] = [],
+        workspaceAutoJoinDisabledIds: [String] = []
     ) {
         self.localTextDelegationEnabled = localTextDelegationEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.spawnableWorkspaceAgents = Self.normalizedWorkspaceAgents(spawnableWorkspaceAgents)
+        // A ref cannot be both in the pool and tombstoned; the pool wins.
+        let pool = Set(self.spawnableWorkspaceAgents)
+        self.removedWorkspaceAgents = Self.normalizedWorkspaceAgents(removedWorkspaceAgents)
+            .filter { !pool.contains($0) }
+        self.workspaceAutoJoinDisabledIds = Self.normalizedWorkspaceIds(workspaceAutoJoinDisabledIds)
         self.spawnPoolSeeded = spawnPoolSeeded
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.imageDelegationEnabled = imageDelegationEnabled
+        self.budgetDefaultsMigrated = budgetDefaultsMigrated
+        self.spawnPermissionDefaultMigrated = spawnPermissionDefaultMigrated
         self.defaultImageGenerationTarget =
             Self.normalizedTarget(defaultImageGenerationTarget)
             ?? Self.normalizedModelId(defaultImageGenerationModelId).map {
@@ -510,7 +598,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.defaultTextToVideoTarget = Self.normalizedTarget(defaultTextToVideoTarget)
         self.defaultImageToVideoTarget = Self.normalizedTarget(defaultImageToVideoTarget)
         self.imageJobLoadPolicy = imageJobLoadPolicy
-        self.appleScriptDelegationEnabled = appleScriptDelegationEnabled
         self.defaultAppleScriptModelId = Self.normalizedModelId(defaultAppleScriptModelId)
         self.defaultAppleScriptExecutionMode = defaultAppleScriptExecutionMode
         self.appleScriptLoadPolicy = appleScriptLoadPolicy
@@ -520,13 +607,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.ramSafetyPreflightEnabled = ramSafetyPreflightEnabled
         self.subagentCoexistenceEnabled = subagentCoexistenceEnabled
         self.subagentModelOverrides = Self.normalizedModelOverrides(subagentModelOverrides)
-        let normalizedModelNames = Self.normalizedSpawnableModelNames(spawnableModelNames)
-        self.spawnableModelNames = normalizedModelNames
-        self.spawnableModelNotes = Self.normalizedSpawnableModelNotes(
-            spawnableModelNotes,
-            names: normalizedModelNames
-        )
-        self.spawnToolAccess = spawnToolAccess
     }
 
     static let `default` = SubagentConfiguration()
@@ -582,7 +662,28 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             into: &merged
         )
         mergeEditorField(
-            \.imageDelegationEnabled,
+            \.removedWorkspaceAgents,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.workspaceAutoJoinDisabledIds,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.budgetDefaultsMigrated,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.spawnPermissionDefaultMigrated,
             editor: editor,
             loadedBaseline: loadedBaseline,
             live: live,
@@ -604,13 +705,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         )
         mergeEditorField(
             \.imageJobLoadPolicy,
-            editor: editor,
-            loadedBaseline: loadedBaseline,
-            live: live,
-            into: &merged
-        )
-        mergeEditorField(
-            \.appleScriptDelegationEnabled,
             editor: editor,
             loadedBaseline: loadedBaseline,
             live: live,
@@ -677,27 +771,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             live: live,
             into: &merged
         )
-        mergeEditorField(
-            \.spawnableModelNames,
-            editor: editor,
-            loadedBaseline: loadedBaseline,
-            live: live,
-            into: &merged
-        )
-        mergeEditorField(
-            \.spawnableModelNotes,
-            editor: editor,
-            loadedBaseline: loadedBaseline,
-            live: live,
-            into: &merged
-        )
-        mergeEditorField(
-            \.spawnToolAccess,
-            editor: editor,
-            loadedBaseline: loadedBaseline,
-            live: live,
-            into: &merged
-        )
         return merged.normalized
     }
 
@@ -742,52 +815,15 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         !spawnableWorkspaceAgents.isEmpty
     }
 
-    /// Whether the raw model id is in the DEFAULT / main chat's `spawn_model`
-    /// pool. Model ids are canonical, so this matches exactly (trimmed) rather
-    /// than case-insensitively like agent names. Custom agents use their own list
-    /// via `SubagentToolVisibility.spawnModelAllowed`.
-    func isModelSpawnable(_ id: String) -> Bool {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return spawnableModelNames.contains(trimmed)
+    /// Whether the Orchestrator auto-joins shared agents from this workspace.
+    func workspaceAutoJoinEnabled(_ workspaceId: String) -> Bool {
+        !workspaceAutoJoinDisabledIds.contains(workspaceId.lowercased())
     }
 
-    /// Whether the DEFAULT / main chat has at least one spawnable model.
-    var anyModelSpawnable: Bool {
-        !spawnableModelNames.isEmpty
-    }
-
-    /// The user's "when/how to use" note for a spawnable model id, or nil when
-    /// none is set (after trimming). Surfaced in the spawn guidance descriptor.
-    func modelNote(_ id: String) -> String? {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard
-            let note = spawnableModelNotes[trimmed]?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !note.isEmpty
-        else { return nil }
-        return note
-    }
-
-    /// Whether `image` is active for the DEFAULT / main chat (its image switch).
-    /// Custom agents gate on their own `AgentSettings.imageEnabled`.
-    var imageDelegationActive: Bool {
-        imageDelegationEnabled
-    }
-
-    /// Whether `applescript` is active for the DEFAULT / main chat (its
-    /// AppleScript switch). Custom agents gate on their own
-    /// `AgentSettings.appleScriptEnabled`.
-    var appleScriptDelegationActive: Bool {
-        appleScriptDelegationEnabled
-    }
-
-    /// Whether an agent-launched image job must evict resident chat models for
-    /// the duration of the job (single-GPU-residency handoff). The other load
-    /// policies keep the chat model resident. Single source for the image
-    /// residency decision (was `NativeImageChatResidencyPolicy`).
+    /// Shared parent policy, independent of the image's post-job cleanup
+    /// preference. Exact-parent ownership is checked by SubagentResidency.
     var imageJobUnloadsChatModels: Bool {
-        imageJobLoadPolicy == .agentSingleResidency
+        localOrchestratorTextHandoffActive
     }
 
     var normalized: SubagentConfiguration {
@@ -796,14 +832,14 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             spawnableAgentIDs: spawnableAgentIDs,
             spawnPoolSeeded: spawnPoolSeeded,
             spawnableAgentNames: legacySpawnableAgentNames,
-            imageDelegationEnabled: imageDelegationEnabled,
+            budgetDefaultsMigrated: budgetDefaultsMigrated,
+            spawnPermissionDefaultMigrated: spawnPermissionDefaultMigrated,
             defaultImageGenerationTarget: Self.normalizedTarget(defaultImageGenerationTarget),
             defaultImageEditModelId: Self.normalizedModelId(defaultImageEditModelId),
             videoDelegationEnabled: videoDelegationEnabled,
             defaultTextToVideoTarget: Self.normalizedTarget(defaultTextToVideoTarget),
             defaultImageToVideoTarget: Self.normalizedTarget(defaultImageToVideoTarget),
             imageJobLoadPolicy: imageJobLoadPolicy,
-            appleScriptDelegationEnabled: appleScriptDelegationEnabled,
             defaultAppleScriptModelId: Self.normalizedModelId(defaultAppleScriptModelId),
             defaultAppleScriptExecutionMode: defaultAppleScriptExecutionMode,
             appleScriptLoadPolicy: appleScriptLoadPolicy,
@@ -816,12 +852,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             ramSafetyPreflightEnabled: ramSafetyPreflightEnabled,
             subagentCoexistenceEnabled: subagentCoexistenceEnabled,
             subagentModelOverrides: subagentModelOverrides,
-            // The init trims model names, drops blanks, and prunes notes to the
-            // surviving pool members, so passing the raw values here is enough.
-            spawnableModelNames: spawnableModelNames,
-            spawnableModelNotes: spawnableModelNotes,
-            spawnToolAccess: spawnToolAccess,
-            spawnableWorkspaceAgents: spawnableWorkspaceAgents
+            spawnableWorkspaceAgents: spawnableWorkspaceAgents,
+            removedWorkspaceAgents: removedWorkspaceAgents,
+            workspaceAutoJoinDisabledIds: workspaceAutoJoinDisabledIds
         )
     }
 
@@ -838,13 +871,108 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         return migrated.normalized
     }
 
+    /// Drop every pool entry whose agent no longer exists. Runs on store load
+    /// and after any agent deletion so a removed agent can never linger as a
+    /// bare UUID in "Allowed subagents" (or be re-persisted by an open editor).
+    func pruningMissingAgents(using agents: [Agent]) -> SubagentConfiguration {
+        let live = Set(agents.map(\.id))
+        guard spawnableAgentIDs.contains(where: { !live.contains($0) }) else { return self }
+        var pruned = self
+        pruned.spawnableAgentIDs = spawnableAgentIDs.filter { live.contains($0) }
+        return pruned
+    }
+
+    /// Pure auto-join / prune step for shared workspace agents (see
+    /// `SubagentConfigurationStore.reconcileWorkspaceAgents`).
+    func reconcilingWorkspaceAgents(
+        rosterRefs: [WorkspaceAgentRef],
+        loadedWorkspaceIds: Set<String>
+    ) -> SubagentConfiguration {
+        let loaded = Set(loadedWorkspaceIds.map { $0.lowercased() })
+        let onRoster = Set(Self.normalizedWorkspaceAgents(rosterRefs))
+        var result = self
+        // Prune: a ref in a LOADED workspace that the roster no longer lists
+        // is gone (unshared / teammate left / workspace left). Refs in
+        // workspaces that have not loaded yet are trusted as-is.
+        func isStale(_ ref: WorkspaceAgentRef) -> Bool {
+            loaded.contains(ref.workspaceId.lowercased()) && !onRoster.contains(ref)
+        }
+        result.spawnableWorkspaceAgents.removeAll(where: isStale)
+        result.removedWorkspaceAgents.removeAll(where: isStale)
+        // A workspace with auto-join off contributes nothing to the pool.
+        result.spawnableWorkspaceAgents.removeAll { !workspaceAutoJoinEnabled($0.workspaceId) }
+        // Join: every roster ref that is neither pooled nor tombstoned.
+        let tombstoned = Set(result.removedWorkspaceAgents)
+        var pooled = Set(result.spawnableWorkspaceAgents)
+        for ref in Self.normalizedWorkspaceAgents(rosterRefs)
+        where !pooled.contains(ref) && !tombstoned.contains(ref)
+            && workspaceAutoJoinEnabled(ref.workspaceId)
+        {
+            result.spawnableWorkspaceAgents.append(ref)
+            pooled.insert(ref)
+        }
+        return result
+    }
+
+    /// User removal from the editor: drop the ref and remember the removal so
+    /// auto-join does not bring it back.
+    mutating func removeWorkspaceAgent(_ ref: WorkspaceAgentRef) {
+        spawnableWorkspaceAgents.removeAll { $0 == ref }
+        if !removedWorkspaceAgents.contains(ref) {
+            removedWorkspaceAgents.append(ref)
+        }
+    }
+
+    /// User re-add from the editor: pool the ref and clear its tombstone.
+    mutating func addWorkspaceAgent(_ ref: WorkspaceAgentRef) {
+        removedWorkspaceAgents.removeAll { $0 == ref }
+        if !spawnableWorkspaceAgents.contains(ref) {
+            spawnableWorkspaceAgents.append(ref)
+        }
+    }
+
+    /// Flip the per-workspace auto-join toggle. Turning it off prunes that
+    /// workspace's refs from the pool immediately.
+    mutating func setWorkspaceAutoJoin(_ enabled: Bool, workspaceId: String) {
+        let id = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !id.isEmpty else { return }
+        if enabled {
+            workspaceAutoJoinDisabledIds.removeAll { $0 == id }
+        } else {
+            if !workspaceAutoJoinDisabledIds.contains(id) {
+                workspaceAutoJoinDisabledIds.append(id)
+            }
+            spawnableWorkspaceAgents.removeAll { $0.workspaceId.lowercased() == id }
+        }
+    }
+
+    /// One-time upgrades applied on store load (see the two sentinels).
+    func migratingLegacyDefaults() -> SubagentConfiguration {
+        var migrated = self
+        if !migrated.budgetDefaultsMigrated {
+            migrated.budgets = migrated.budgets.migratingLegacyDefaults
+            migrated.budgetDefaultsMigrated = true
+        }
+        if !migrated.spawnPermissionDefaultMigrated {
+            let spawnKind = SubagentCapabilityRegistry.spawn.id
+            if migrated.permissionDefaults.hasExplicitPolicy(for: spawnKind),
+                migrated.permissionDefaults.policy(for: spawnKind) == .ask
+            {
+                migrated.permissionDefaults.setPolicy(.alwaysAllow, for: spawnKind)
+            }
+            migrated.spawnPermissionDefaultMigrated = true
+        }
+        return migrated
+    }
+
     enum CodingKeys: String, CodingKey {
         case localTextDelegationEnabled
         case spawnableAgentIDs
         case spawnPoolSeeded
         /// Legacy decode-only key.
         case spawnableAgentNames
-        case imageDelegationEnabled
+        case budgetDefaultsMigrated
+        case spawnPermissionDefaultMigrated
         case defaultImageGenerationTarget
         /// Legacy decode-only key.
         case defaultImageGenerationModelId
@@ -853,7 +981,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case defaultTextToVideoTarget
         case defaultImageToVideoTarget
         case imageJobLoadPolicy
-        case appleScriptDelegationEnabled
         case defaultAppleScriptModelId
         case defaultAppleScriptExecutionMode
         case appleScriptLoadPolicy
@@ -863,10 +990,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case ramSafetyPreflightEnabled
         case subagentCoexistenceEnabled
         case subagentModelOverrides
-        case spawnableModelNames
-        case spawnableModelNotes
-        case spawnToolAccess
         case spawnableWorkspaceAgents
+        case removedWorkspaceAgents
+        case workspaceAutoJoinDisabledIds
     }
 
     init(from decoder: Decoder) throws {
@@ -895,7 +1021,17 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 forKey: .spawnPoolSeeded
             )) ?? false,
             spawnableAgentNames: try container.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? [],
-            imageDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .imageDelegationEnabled) ?? false,
+            // Lenient: configs written before the sentinels decode as
+            // unmigrated, which is exactly what triggers the one-time upgrade
+            // in `SubagentConfigurationStore` (see `migratingLegacyDefaults`).
+            budgetDefaultsMigrated: (try? container.decodeIfPresent(
+                Bool.self,
+                forKey: .budgetDefaultsMigrated
+            )) ?? false,
+            spawnPermissionDefaultMigrated: (try? container.decodeIfPresent(
+                Bool.self,
+                forKey: .spawnPermissionDefaultMigrated
+            )) ?? false,
             defaultImageGenerationModelId: nil,
             defaultImageGenerationTarget:
                 decodedImageTarget
@@ -924,10 +1060,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 SubagentImageLoadPolicy.self,
                 forKey: .imageJobLoadPolicy
             )) ?? .agentSingleResidency,
-            appleScriptDelegationEnabled: try container.decodeIfPresent(
-                Bool.self,
-                forKey: .appleScriptDelegationEnabled
-            ) ?? false,
             defaultAppleScriptModelId: try container.decodeIfPresent(
                 String.self,
                 forKey: .defaultAppleScriptModelId
@@ -971,25 +1103,22 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 [String: String].self,
                 forKey: .subagentModelOverrides
             )) ?? [:],
-            spawnableModelNames: (try? container.decodeIfPresent(
-                [String].self,
-                forKey: .spawnableModelNames
-            )) ?? [],
-            spawnableModelNotes: (try? container.decodeIfPresent(
-                [String: String].self,
-                forKey: .spawnableModelNotes
-            )) ?? [:],
-            // Enum field: lenient like the other enums so an invalid raw value
-            // falls back to the safe text-only default.
-            spawnToolAccess: (try? container.decodeIfPresent(
-                SpawnToolAccess.self,
-                forKey: .spawnToolAccess
-            )) ?? .none,
             // Lenient: a malformed ref list must never discard the whole
             // delegation config; absent (older config) → no workspace targets.
+            // The removed `spawnableModelNames` / `spawnableModelNotes` /
+            // `spawnToolAccess` / `imageDelegationEnabled` /
+            // `appleScriptDelegationEnabled` keys are ignored.
             spawnableWorkspaceAgents: (try? container.decodeIfPresent(
                 [WorkspaceAgentRef].self,
                 forKey: .spawnableWorkspaceAgents
+            )) ?? [],
+            removedWorkspaceAgents: (try? container.decodeIfPresent(
+                [WorkspaceAgentRef].self,
+                forKey: .removedWorkspaceAgents
+            )) ?? [],
+            workspaceAutoJoinDisabledIds: (try? container.decodeIfPresent(
+                [String].self,
+                forKey: .workspaceAutoJoinDisabledIds
             )) ?? []
         )
     }
@@ -1000,7 +1129,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         try container.encode(value.localTextDelegationEnabled, forKey: .localTextDelegationEnabled)
         try container.encode(value.spawnableAgentIDs, forKey: .spawnableAgentIDs)
         try container.encode(value.spawnPoolSeeded, forKey: .spawnPoolSeeded)
-        try container.encode(value.imageDelegationEnabled, forKey: .imageDelegationEnabled)
+        try container.encode(value.budgetDefaultsMigrated, forKey: .budgetDefaultsMigrated)
+        try container.encode(
+            value.spawnPermissionDefaultMigrated,
+            forKey: .spawnPermissionDefaultMigrated
+        )
         try container.encodeIfPresent(
             value.defaultImageGenerationTarget,
             forKey: .defaultImageGenerationTarget
@@ -1019,10 +1152,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             forKey: .defaultImageToVideoTarget
         )
         try container.encode(value.imageJobLoadPolicy, forKey: .imageJobLoadPolicy)
-        try container.encode(
-            value.appleScriptDelegationEnabled,
-            forKey: .appleScriptDelegationEnabled
-        )
         try container.encodeIfPresent(
             value.defaultAppleScriptModelId,
             forKey: .defaultAppleScriptModelId
@@ -1047,14 +1176,32 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             forKey: .subagentCoexistenceEnabled
         )
         try container.encode(value.subagentModelOverrides, forKey: .subagentModelOverrides)
-        try container.encode(value.spawnableModelNames, forKey: .spawnableModelNames)
-        try container.encode(value.spawnableModelNotes, forKey: .spawnableModelNotes)
-        try container.encode(value.spawnToolAccess, forKey: .spawnToolAccess)
         // Only written when non-empty so an untouched config keeps its exact
-        // legacy bytes (older builds ignore the key either way).
+        // legacy bytes (older builds ignore the keys either way).
         if !value.spawnableWorkspaceAgents.isEmpty {
             try container.encode(value.spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)
         }
+        if !value.removedWorkspaceAgents.isEmpty {
+            try container.encode(value.removedWorkspaceAgents, forKey: .removedWorkspaceAgents)
+        }
+        if !value.workspaceAutoJoinDisabledIds.isEmpty {
+            try container.encode(
+                value.workspaceAutoJoinDisabledIds,
+                forKey: .workspaceAutoJoinDisabledIds
+            )
+        }
+    }
+
+    /// Lowercase, trim, drop blanks, de-dupe (order kept).
+    static func normalizedWorkspaceIds(_ value: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in value {
+            let id = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !id.isEmpty, seen.insert(id).inserted else { continue }
+            result.append(id)
+        }
+        return result
     }
 
     /// De-dupe workspace refs (first occurrence wins, order kept) and drop
@@ -1094,35 +1241,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         return result
     }
 
-    /// Trim spawnable model ids, drop blanks, and de-dupe (exact match, keeping
-    /// first occurrence + order) so a model can't stack pool entries.
-    static func normalizedSpawnableModelNames(_ value: [String]) -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        for raw in value {
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
-            result.append(trimmed)
-        }
-        return result
-    }
-
-    /// Trim note keys/values, drop blank notes, and prune any note whose model id
-    /// is not in the (already-normalized) pool so removing a model drops its note.
-    static func normalizedSpawnableModelNotes(
-        _ value: [String: String],
-        names: [String]
-    ) -> [String: String] {
-        let allowed = Set(names)
-        var result: [String: String] = [:]
-        for (key, raw) in value {
-            let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard allowed.contains(trimmedKey) else { continue }
-            let trimmedNote = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedNote.isEmpty { result[trimmedKey] = trimmedNote }
-        }
-        return result
-    }
 }
 
 /// Process-wide settings that can change whether or how any local Spawn job
@@ -1142,12 +1260,11 @@ struct SpawnSharedConfigurationAuthority: Equatable, Sendable {
 /// or tool grant of an already-approved Spawn operation.
 struct SpawnDefaultConfigurationAuthority: Equatable, Sendable {
     let spawnableAgentIDs: [UUID]
-    let spawnableModelNames: [String]
     let spawnableWorkspaceAgents: [WorkspaceAgentRef]
     let permission: SubagentPermissionPolicy
+    let workspacePermission: SubagentPermissionPolicy
     let budgets: SubagentBudgets
     let modelOverride: String?
-    let toolAccess: SpawnToolAccess
 }
 
 /// Agent-owned launcher fields that can alter a custom agent's Spawn
@@ -1158,17 +1275,14 @@ struct SpawnDefaultConfigurationAuthority: Equatable, Sendable {
 struct SpawnCustomLauncherAgentAuthority: Equatable, Sendable {
     let spawnDelegationEnabled: Bool
     let spawnableAgentIDs: [UUID]
-    let spawnableModelNames: [String]
     let spawnableWorkspaceAgents: [WorkspaceAgentRef]
     let budgets: SubagentBudgets
     let modelOverride: String?
-    let toolAccess: SpawnToolAccess
 
     init(_ agent: Agent) {
         let settings = agent.settings
         spawnDelegationEnabled = settings.spawnDelegationEnabled
         spawnableAgentIDs = settings.spawnableAgentIDs
-        spawnableModelNames = settings.spawnableModelNames
         spawnableWorkspaceAgents = settings.spawnableWorkspaceAgents
         budgets = settings.subagentBudgets.normalized
         let rawOverride = settings.subagentModelOverrides[
@@ -1180,7 +1294,6 @@ struct SpawnCustomLauncherAgentAuthority: Equatable, Sendable {
         modelOverride =
             (trimmedOverride?.isEmpty ?? true)
             ? nil : trimmedOverride
-        toolAccess = settings.spawnToolAccess
     }
 }
 
@@ -1211,10 +1324,12 @@ extension SubagentConfiguration {
     var spawnDefaultAuthority: SpawnDefaultConfigurationAuthority {
         SpawnDefaultConfigurationAuthority(
             spawnableAgentIDs: spawnableAgentIDs,
-            spawnableModelNames: spawnableModelNames,
             spawnableWorkspaceAgents: spawnableWorkspaceAgents,
             permission: permissionDefaults.policy(
                 for: SubagentCapabilityRegistry.spawn.id
+            ),
+            workspacePermission: permissionDefaults.policy(
+                for: SubagentPermissionDefaults.workspaceSpawnKindId
             ),
             budgets: budgets.normalized,
             modelOverride: SubagentToolVisibility.effectiveSubagentModel(
@@ -1222,8 +1337,7 @@ extension SubagentConfiguration {
                 isDefault: true,
                 config: self,
                 settings: nil
-            ),
-            toolAccess: spawnToolAccess
+            )
         )
     }
 }
@@ -1247,11 +1361,9 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
     let ramSafetyPreflightEnabled: Bool
     let subagentCoexistenceEnabled: Bool
     let spawnableAgentIDs: [UUID]
-    let spawnableModelNames: [String]
     let spawnableWorkspaceAgents: [WorkspaceAgentRef]
     let budgets: SubagentBudgets
     let modelOverride: String?
-    let toolAccess: SpawnToolAccess
 
     init(
         id: UUID,
@@ -1277,15 +1389,6 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
                     settings?.spawnDelegationEnabled ?? false,
                 perAgentTargets: settings?.spawnableAgentIDs ?? []
             )
-        self.spawnableModelNames =
-            SubagentToolVisibility.effectiveSpawnableModels(
-                isDefault: isDefault,
-                config: configuration,
-                perAgentEnabled:
-                    settings?.spawnDelegationEnabled ?? false,
-                perAgentModelTargets:
-                    settings?.spawnableModelNames ?? []
-            )
         self.spawnableWorkspaceAgents =
             SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
                 isDefault: isDefault,
@@ -1304,12 +1407,6 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
         self.modelOverride =
             SubagentToolVisibility.effectiveSubagentModel(
                 capabilityId: SubagentCapabilityRegistry.spawn.id,
-                isDefault: isDefault,
-                config: configuration,
-                settings: settings
-            )
-        self.toolAccess =
-            SubagentToolVisibility.effectiveSpawnToolAccess(
                 isDefault: isDefault,
                 config: configuration,
                 settings: settings

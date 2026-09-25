@@ -1,0 +1,88 @@
+{
+  "id": "workspace_delegation.mixed-wave-one-card",
+  "domain": "subagent",
+  "label": "Workspace delegation • mixed local + workspace wave asks once, about the workspace kind",
+  "query": "Two local agents and one shared agent issued together are one wave with one card.",
+  "notes": "Model-free. Local spawn is Always Allow and workspace spawn is Ask (shipped defaults): the wave's combined policy is Ask, the card covers only `spawn_workspace` (so Always Allow on it persists just that kind) and the copy says which members leave this Mac. A local-only wave under the same policies plans no card.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "workspace",
+      "workspaceDelegation": {
+        "scenario": {
+          "localAgents": [
+            "Coder",
+            "Writer"
+          ],
+          "sharedAgents": [
+            {
+              "name": "Analyst",
+              "workspaceId": "ws-acme",
+              "workspaceName": "Acme",
+              "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+              "online": true,
+              "lastSeenSecondsAgo": null
+            }
+          ],
+          "localPolicy": "always_allow",
+          "workspacePolicy": "ask",
+          "steps": [
+            {
+              "targets": [
+                "Coder",
+                "Writer",
+                "Analyst@Acme"
+              ],
+              "artifacts": null
+            },
+            {
+              "targets": [
+                "Coder",
+                "Writer"
+              ],
+              "artifacts": null
+            }
+          ]
+        },
+        "expected": [
+          {
+            "resolutions": [
+              "local:Coder",
+              "local:Writer",
+              "workspace:Analyst@Acme"
+            ],
+            "refusals": [
+              "",
+              "",
+              ""
+            ],
+            "policy": "ask",
+            "cardKinds": [
+              "spawn_workspace"
+            ],
+            "cardDescription": "Let this agent run 3 subagents in parallel? 1 of them run on teammates' Macs and spend those workspaces' pools.",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          },
+          {
+            "resolutions": [
+              "local:Coder",
+              "local:Writer"
+            ],
+            "refusals": [
+              "",
+              ""
+            ],
+            "policy": "always_allow",
+            "cardKinds": [
+              "spawn"
+            ],
+            "cardDescription": "Let this agent run 2 subagents in parallel?",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          }
+        ]
+      }
+    }
+  }
+}

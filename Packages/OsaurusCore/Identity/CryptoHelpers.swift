@@ -9,6 +9,7 @@
 import CryptoKit
 import Foundation
 import P256K
+import libsecp256k1
 
 // MARK: - Keccak-256
 
@@ -227,18 +228,40 @@ func recoverAddress(payload: Data, signature: Data, domainPrefix: String) throws
     guard (0 ... 3).contains(v) else {
         throw OsaurusIdentityError.signingFailed
     }
-    let recoverySig = try P256K.Recovery.ECDSASignature(
-        compactRepresentation: compactSig,
-        recoveryId: v
-    )
+    // Parse and recover through the raw libsecp256k1 API rather than
+    // `P256K.Recovery.PublicKey(_:signature:format:)`. From swift-secp256k1
+    // 0.23 that initializer `fatalError`s when `secp256k1_ecdsa_recover`
+    // returns 0, which is the normal outcome for a tampered or mismatched
+    // (r, s, v) triple, not a library bug. Every remote handshake feeds
+    // attacker-controlled bytes here, so a bad signature must throw, never
+    // abort the process.
+    let context = P256K.Context.rawRepresentation
+    var recoverable = secp256k1_ecdsa_recoverable_signature()
+    let sigBytes = [UInt8](compactSig)
+    guard secp256k1_ecdsa_recoverable_signature_parse_compact(
+        context, &recoverable, sigBytes, v
+    ) == 1 else {
+        throw OsaurusIdentityError.signingFailed
+    }
 
-    let pubKey = try P256K.Recovery.PublicKey(
-        HashDigest([UInt8](hash)),
-        signature: recoverySig,
-        format: .uncompressed
-    )
+    let digest = [UInt8](hash)
+    guard digest.count == 32 else {
+        throw OsaurusIdentityError.signingFailed
+    }
+    var pubKey = secp256k1_pubkey()
+    guard secp256k1_ecdsa_recover(context, &pubKey, &recoverable, digest) == 1 else {
+        throw OsaurusIdentityError.signingFailed
+    }
 
-    let pubkeyBody = pubKey.dataRepresentation.dropFirst()
+    var serialized = [UInt8](repeating: 0, count: 65)
+    var serializedLength = serialized.count
+    guard secp256k1_ec_pubkey_serialize(
+        context, &serialized, &serializedLength, &pubKey, UInt32(SECP256K1_EC_UNCOMPRESSED)
+    ) == 1, serializedLength == 65 else {
+        throw OsaurusIdentityError.signingFailed
+    }
+
+    let pubkeyBody = serialized.dropFirst()
     let addressHash = Keccak256.hash(data: Data(pubkeyBody))
     let raw = addressHash.suffix(20).map { String(format: "%02x", $0) }.joined()
     return checksumEncode(raw: raw)

@@ -175,6 +175,8 @@ enum ServerRuntimeSettingsDraftReconciler {
 struct ServerSettingsTabContent: View {
     @EnvironmentObject var server: ServerController
     @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.settingsLandingPending) private var pendingLandingAnchor
+    @State private var renderedLandingAnchors: Set<String> = []
 
     /// Local working copy — saved to disk only on "Save Changes" so
     /// typing in a text field doesn't restart the NIO server every
@@ -373,6 +375,10 @@ struct ServerSettingsTabContent: View {
         }
     }
 
+    private var controlLandingTarget: String? {
+        pendingLandingAnchor.flatMap { renderedLandingAnchors.contains($0) ? $0 : nil }
+    }
+
     private var sectionScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -388,9 +394,26 @@ struct ServerSettingsTabContent: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear.frame(height: 12)
             }
+            .onPreferenceChange(SettingsLandingAnchorsKey.self) { anchors in
+                renderedLandingAnchors = anchors
+            }
             .onChange(of: activeSection) { _, new in
                 withAnimation(.smooth(duration: 0.45)) {
-                    proxy.scrollTo(new, anchor: .top)
+                    if let controlLandingTarget {
+                        proxy.scrollTo(controlLandingTarget, anchor: .center)
+                    } else {
+                        proxy.scrollTo(new, anchor: .top)
+                    }
+                }
+            }
+            .task(id: controlLandingTarget) {
+                guard let target = controlLandingTarget else { return }
+                // A search may create this pane before its controls lay out.
+                // Cancellation prevents an earlier result stealing the scroll.
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                withAnimation(.smooth(duration: 0.45)) {
+                    proxy.scrollTo(target, anchor: .center)
                 }
             }
         }

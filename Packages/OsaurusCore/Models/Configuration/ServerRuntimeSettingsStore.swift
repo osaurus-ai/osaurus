@@ -22,6 +22,8 @@ import os
 
 /// Centralized persistence for `VMLXServerRuntimeSettings`.
 public enum ServerRuntimeSettingsStore {
+    /// Fingerprint of the previously shipped default, not today's Automatic policy.
+    private static let legacyDefaultDiskCachePercent: Double = 10
     /// Emitted after `server-runtime.json` and the hot snapshot have both been
     /// updated successfully. `ServerController` observes this so non-UI
     /// writers (notably `/admin/runtime-settings`) publish the same live value
@@ -80,7 +82,7 @@ public enum ServerRuntimeSettingsStore {
             let raw = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
             let decoded = normalizeLoadedSettings(raw)
             if decoded != raw {
-                save(decoded)
+                persist(decoded, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
             }
             writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = decoded
@@ -113,13 +115,34 @@ public enum ServerRuntimeSettingsStore {
                     userDefaults: userDefaults
                 )
         )
-        save(migrated)
+        persist(migrated, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
         return migrated
     }
 
     /// Persists the settings to disk and updates the nonisolated
     /// snapshot consumed by `ModelRuntime`.
     public nonisolated static func save(_ settings: VMLXServerRuntimeSettings) {
+        persist(settings, mtpSelectionIsFamilyDefault: false)
+    }
+
+    /// Internal default selection is not a user override. All ordinary writers
+    /// (Settings, admin API, configuration imports) use save(_:).
+    nonisolated static func saveFamilyMTPDefault(_ settings: VMLXServerRuntimeSettings) {
+        persist(settings, mtpSelectionIsFamilyDefault: true)
+    }
+
+    private nonisolated static func persist(
+        _ settings: VMLXServerRuntimeSettings,
+        mtpSelectionIsFamilyDefault: Bool,
+        recordMTPChoice: Bool = true
+    ) {
+        // Do not call snapshot(): its normalization path can itself save.
+        let previousMTP =
+            cachedSnapshot?.mtp
+            ?? (try? Data(contentsOf: fileURL())).flatMap {
+                try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: $0)
+            }?.mtp
+            ?? VMLXServerMTPSettings()
         var settings = canonicalizedContextAndKVPolicy(settings)
         // Anything we write is by definition current-schema, so stamp it.
         //
@@ -135,6 +158,13 @@ public enum ServerRuntimeSettingsStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(settings).write(to: url, options: [.atomic])
+            if recordMTPChoice {
+                NativeMTPSelectionDefault.recordSavedChoice(
+                    previous: previousMTP,
+                    next: settings.mtp,
+                    isFamilyDefault: mtpSelectionIsFamilyDefault
+                )
+            }
             writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = settings
             NotificationCenter.default.post(
@@ -163,7 +193,7 @@ public enum ServerRuntimeSettingsStore {
         {
             let normalized = normalizeLoadedSettings(raw)
             if normalized != raw {
-                save(normalized)
+                persist(normalized, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
             }
             cachedSnapshot = normalized
             return normalized
@@ -351,53 +381,13 @@ public enum ServerRuntimeSettingsStore {
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {
         var normalized = canonicalizedContextAndKVPolicy(settings)
-        // Run vmlx's schema migrations.
-        //
-        // These were DEAD CODE: `migrateToCurrentSchema()` had no call site in
-        // either repo, so every version-gated repair it defines silently never
-        // happened. The v2 repair (a persisted flat 10 GB disk cap becoming
-        // auto) therefore never reached a single updating install — only fresh
-        // installs benefited, because their value was nil to begin with and the
-        // resolver handled nil. A live launch is what surfaced it: the config
-        // the app wrote back had no `schemaVersion` at all.
-        //
-        // This is the right home for it. Both `load()` and `loadOrMigrate()`
-        // funnel through here, and `load()` persists whenever normalization
-        // changes the value, so the migration runs once and is written back.
-        // Captured BEFORE the migration, which overwrites `schemaVersion` and
-        // would otherwise make a legacy install indistinguishable from a
-        // current one by the time the MTP repair below runs.
-        let wasPreMigrationInstall =
-            settings.schemaVersion != VMLXServerRuntimeSettings.contractVersion
+        // Run and persist engine schema migrations. Current migrations preserve
+        // explicit percentages and legacy GB; only an unset size is Automatic.
         normalized.migrateToCurrentSchema()
-        // vmlx-swift e095d0f changed the engine default from "MTP off" to
-        // "auto". Existing Osaurus installs persisted the old default exactly,
-        // so without this repair tuned MXFP8/MTP bundles still never reach the
-        // tensor+tuning-gated autodetect path after upgrade.
-        //
-        // Gated by a marker, because the condition above cannot tell a legacy
-        // install from a user who just switched MTP off and touched nothing
-        // else — both are `.off` with the other three fields at defaults.
-        // Ungated it re-fired on EVERY load, and load() persists what it
-        // changes, so "native MTP off" silently became "auto" forever. Same
-        // one-shot shape as the diffusion / tied-head / cache repairs below.
-        // Two gates, because either alone is insufficient. `wasPreMigrationInstall`
-        // is what separates a legacy install from a user who just switched MTP
-        // off — the field values are identical in both cases. The marker then
-        // stops the repair re-firing on later loads, since the migration makes
-        // every install look current from the second load onward.
-        if wasPreMigrationInstall,
-            normalized.mtp.mode == .off,
-            normalized.mtp.draftTokenLimit == nil,
-            normalized.mtp.keepDraftCacheSeparate,
-            normalized.mtp.acceptedTokensOnlyEnterBaseCache,
-            !FileManager.default.fileExists(
-                atPath: mtpAutoDefaultsMigrationMarkerURL().path
-            )
-        {
-            normalized.mtp.mode = .auto
-            writeMTPAutoDefaultsMigrationMarker()
-        }
+        // Native MTP now requires opt-in. Never repair an explicit Off to Auto.
+        // Retire only defaults whose provenance was recorded by the old family
+        // selector, including API-only launches with no chat view present.
+        normalized.mtp = NativeMTPSelectionDefault.retiringOwnedDefault(normalized.mtp)
         // Osaurus product default for block-diffusion models: 16 denoising
         // steps (~74 tok/s on diffusiongemma-26B-A4B MXFP4, coherent) vs the
         // bundle's 48 (~37 tok/s). Seeded exactly once; afterwards a blank
@@ -513,14 +503,11 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
-            // The cap is a share of the disk now, and schema v3 stamps the
-            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
-            // would call a deliberate 40% "untouched" — because that field is
-            // nil for everyone after migration — and let a later defaults
-            // migration overwrite a choice the user made.
+            // Recognize the historical shipped profile without treating an
+            // arbitrary explicit percentage as an untouched cache default.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+                    == legacyDefaultDiskCachePercent)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive == false
     }
@@ -555,14 +542,11 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
-            // The cap is a share of the disk now, and schema v3 stamps the
-            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
-            // would call a deliberate 40% "untouched" — because that field is
-            // nil for everyone after migration — and let a later defaults
-            // migration overwrite a choice the user made.
+            // Recognize the historical shipped profile without treating an
+            // arbitrary explicit percentage as an untouched cache default.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+                    == legacyDefaultDiskCachePercent)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive
     }
@@ -799,22 +783,6 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func diffusionDefaultsMigrationMarkerURL() -> URL {
         directoryURL().appendingPathComponent(diffusionDefaultsMigrationMarkerName)
-    }
-
-    /// One-shot repair of the pre-e095d0f "MTP off" engine default. The marker
-    /// is what keeps a user's later explicit "off" sticky — without it the
-    /// repair cannot distinguish the two and overwrites the choice on reload.
-    static let mtpAutoDefaultsMigrationMarkerName =
-        "mtp-auto-defaults-migrated.marker"
-
-    private nonisolated static func mtpAutoDefaultsMigrationMarkerURL() -> URL {
-        directoryURL().appendingPathComponent(mtpAutoDefaultsMigrationMarkerName)
-    }
-
-    private nonisolated static func writeMTPAutoDefaultsMigrationMarker() {
-        let url = mtpAutoDefaultsMigrationMarkerURL()
-        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
-        try? Data().write(to: url)
     }
 
     private nonisolated static func writeDiffusionDefaultsMigrationMarker() {

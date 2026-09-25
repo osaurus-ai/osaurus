@@ -399,6 +399,67 @@ struct WorkspaceAgentAccessHostTests {
         }
     }
 
+    /// Same identity on two devices: device B redeems access to an agent that
+    /// device A (this host) shares, presenting an attestation for the HOST'S
+    /// OWN wallet. The host must not self-reject — nothing in the handshake
+    /// compares the attested wallet to the host's wallet — so the redeem
+    /// clears every gate up to the key mint. Under a disabled keychain the
+    /// mint itself fails (`mintFailed`); with a real keychain it's `granted`.
+    /// Either way, no wallet/identity rejection.
+    @MainActor
+    @Test func stepTwo_ownWalletFromAnotherDevice_clearsEveryGateBeforeMint() async throws {
+        let ownAddress = "0x00000000000000000000000000000000a11ce001"
+        let hosted = Agent(
+            id: UUID(),
+            name: "Alice's writer",
+            isBuiltIn: false,
+            agentIndex: 0,
+            agentAddress: ownAddress,
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        AgentManager.shared.add(hosted)
+        defer { Task { _ = await AgentManager.shared.delete(id: hosted.id) } }
+
+        // Pretend this host signs router calls as Alice — the attestation
+        // below names that very wallet.
+        let previousWallet = OsaurusRouterWalletCache.lastSignedAddress
+        OsaurusRouterWalletCache.record(TestKeys.aliceAddress)
+        defer { OsaurusRouterWalletCache.reset(to: previousWallet) }
+
+        let host = await makeHost(shared: [ownAddress.lowercased()])
+        let attestation = try factory.token(wallet: TestKeys.aliceAddress)
+        let stepOne = await host.handle(
+            .init(
+                v: 1, agentAddress: ownAddress, attestation: attestation,
+                nonce: nil, walletSignature: nil, encPub: nil
+            )
+        )
+        let nonce = try #require(challengeNonce(stepOne))
+        let signature = try signEIP191Message(
+            WorkspaceAgentAccess.redeemMessage(agentAddress: ownAddress, nonce: nonce),
+            privateKey: TestKeys.alicePrivateKey
+        ).hexEncodedString
+        let outcome = await host.handle(
+            .init(
+                v: 1, agentAddress: ownAddress, attestation: attestation,
+                nonce: nonce, walletSignature: "0x\(signature)", encPub: nil
+            )
+        )
+        switch outcome {
+        case .granted(let grant):
+            #expect(grant.agentAddress.lowercased() == ownAddress.lowercased())
+            #expect(grant.agentName == "Alice's writer")
+        case .rejected(.mintFailed):
+            // Keychain-disabled test process: every identity/wallet/share gate
+            // passed and only the master-key read for the mint failed.
+            break
+        case .rejected(let other):
+            Issue.record("own-wallet redeem must not be refused before the mint, got \(other)")
+        case .challenge:
+            Issue.record("step two must not re-issue a challenge")
+        }
+    }
+
     @Test func stepTwo_acceptsLegacyTeamsRedeemWording() async throws {
         // A teammate on a pre-rename build signs `osaurus-teams:redeem:…`.
         // The host must still recover the wallet from that wording so the

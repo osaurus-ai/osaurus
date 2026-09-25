@@ -331,11 +331,15 @@ public enum AppleScriptLoop {
         requestAccessibility: (@Sendable () -> Void)? = nil,
         compileCheck: AppleScriptCompileCheck? = nil,
         samplingTemperature: Double? = nil,
-        enableThinking: Bool? = nil
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil
     ) async -> AppleScriptRunResult {
         let runStarted = Date()
         let deadline = runStarted.addingTimeInterval(limits.wallClockSeconds)
-        let engine: ChatEngine? = nextScript == nil ? ChatEngine(source: .chatUI) : nil
+        // Auto-scrub: see `ComputerUseLoop`. A per-step review sheet in
+        // the chat window would stall the loop while it drives other apps.
+        let engine: ChatEngine? =
+            nextScript == nil ? ChatEngine(source: .chatUI, privacyReviewMode: .autoScrub) : nil
         // Default to the real in-process executor; tests inject their own. Kept
         // out of the (public) default argument because `AppleScriptExecutor` is
         // internal and a public default value can't reference an internal symbol.
@@ -791,7 +795,8 @@ public enum AppleScriptLoop {
                     sessionId: sessionId,
                     messages: stepMessages,
                     samplingTemperature: samplingTemperature,
-                    enableThinking: enableThinking
+                    enableThinking: enableThinking,
+                    reasoningEffort: reasoningEffort
                 )
             }
 
@@ -2397,7 +2402,8 @@ public enum AppleScriptLoop {
         sessionId: String,
         messages: [ChatMessage],
         samplingTemperature: Double? = nil,
-        enableThinking: Bool?
+        enableThinking: Bool?,
+        reasoningEffort: String?
     ) async throws -> ModelStepResult {
         var req = ChatCompletionRequest(
             model: modelId,
@@ -2420,6 +2426,7 @@ public enum AppleScriptLoop {
         req.samplingParametersAreImplicit = samplingTemperature == nil
         req.isAgentRequest = true
         req.enable_thinking = enableThinking
+        req.reasoning_effort = reasoningEffort
         let generateStarted = Date()
         let response = try await engine.completeChat(request: req)
         AppleScriptTraceLog.record(

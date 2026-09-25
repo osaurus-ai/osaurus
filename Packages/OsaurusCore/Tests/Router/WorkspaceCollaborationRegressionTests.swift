@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import OsaurusCore
@@ -70,6 +71,54 @@ struct WorkspaceCollaborationRegressionTests {
         store.noteHostReachable(agentAddress: "0xabc")
         store.now = { now.addingTimeInterval(WorkspaceRosterStore.verificationLifetime + 1) }
         #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .unknown)
+    }
+
+    /// `/workspaces/sync` heartbeats every few seconds. A heartbeat that
+    /// changes nothing visible (every roster still verified, no evidence to
+    /// drop) must not publish, or every roster observer re-renders on each
+    /// one. It still publishes when a workspace flips back to verified or
+    /// when host-reachable evidence is superseded.
+    @Test func heartbeatPublishesOnlyWhenVisibleStateChanges() throws {
+        let store = WorkspaceRosterStore(observeAppActivation: false)
+        let summary = try JSONDecoder().decode(
+            OsaurusRouterWorkspaceSummary.self,
+            from: Data(#"{"id":"a","name":"A","role":"member"}"#.utf8)
+        )
+        let agent = try JSONDecoder().decode(
+            OsaurusRouterWorkspaceAgent.self,
+            from: Data(#"{"agent_address":"0xabc","online":true}"#.utf8)
+        )
+        var now = Date()
+        store.now = { now }
+        store.apply(rosters: [.init(workspace: summary, agents: [agent])])
+
+        var publishes = 0
+        let subscription = store.objectWillChange.sink { _ in publishes += 1 }
+        defer { subscription.cancel() }
+
+        // Steady state: repeated heartbeats within the lease are silent.
+        store.renewVerification()
+        now = now.addingTimeInterval(15)
+        store.renewVerification()
+        #expect(publishes == 0)
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .online)
+
+        // Expired, then re-verified: one publish for the expiry, one for the flip back.
+        now = now.addingTimeInterval(WorkspaceRosterStore.verificationLifetime + 1)
+        store.expireVerification()
+        #expect(publishes == 1)
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .unknown)
+        store.renewVerification()
+        #expect(publishes == 2)
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .online)
+
+        // Host-reachable evidence superseded by the router's verdict: publishes once.
+        store.noteHostReachable(agentAddress: "0xabc")
+        let before = publishes
+        store.renewVerification()
+        #expect(publishes == before + 1)
+        store.renewVerification()
+        #expect(publishes == before + 1)
     }
 
     /// The router can list a shared agent with no presence verdict at all
@@ -287,10 +336,85 @@ extension WorkspaceCollaborationRegressionTests {
 
 
 extension WorkspaceCollaborationRegressionTests {
+    /// The router's steady-state `/workspaces/sync` tick is 15 s ± 20 %, so a
+    /// healthy stream can legitimately go 18 s without a frame. The lease
+    /// must outlive that (a 3 s lease tore down and reconnected a healthy
+    /// stream every ~9 s, republishing every roster on each reconnect) and
+    /// agree with the roster store's own verification lifetime.
     @Test func subscriptionRenewalRetainsOnlyTheLastVerifiedLease() {
         let lastFrame = Date(timeIntervalSince1970: 1_000)
         #expect(WorkspaceSyncService.verificationIsFresh(lastFrameAt: lastFrame, now: lastFrame.addingTimeInterval(1)))
-        #expect(!WorkspaceSyncService.verificationIsFresh(lastFrameAt: lastFrame, now: lastFrame.addingTimeInterval(3)))
+        // One late steady-state tick (15 s + 20 % jitter) must not expire it.
+        #expect(WorkspaceSyncService.verificationIsFresh(lastFrameAt: lastFrame, now: lastFrame.addingTimeInterval(18)))
+        // Two consecutive missed ticks still do.
+        #expect(
+            !WorkspaceSyncService.verificationIsFresh(
+                lastFrameAt: lastFrame,
+                now: lastFrame.addingTimeInterval(WorkspaceSyncService.verificationLease)
+            )
+        )
         #expect(!WorkspaceSyncService.verificationIsFresh(lastFrameAt: .distantPast, now: lastFrame))
+        #expect(WorkspaceSyncService.verificationLease >= 36)
+        #expect(WorkspaceSyncService.verificationLease == WorkspaceRosterStore.verificationLifetime)
+
+        // A connection that never delivers its first snapshot still falls
+        // back to polling quickly; only a *verified* stream gets the long lease.
+        let started = lastFrame
+        #expect(WorkspaceSyncService.connectionIsPending(startedAt: started, now: started.addingTimeInterval(3)))
+        #expect(
+            !WorkspaceSyncService.connectionIsPending(
+                startedAt: started, now: started.addingTimeInterval(WorkspaceSyncService.firstFrameDeadline)
+            )
+        )
+        #expect(WorkspaceSyncService.firstFrameDeadline < WorkspaceSyncService.verificationLease)
+    }
+}
+
+extension WorkspaceCollaborationRegressionTests {
+    @Test(arguments: ["Reviews supplied research sources.", ""])
+    func credentialRefreshUpdatesDescriptionWithoutRePairing(description: String) async throws {
+        try await ChatHistoryTestStorage.run {
+            let service = WorkspaceAgentConnectService(observeAppActivation: false)
+            let manager = RemoteAgentManager.shared
+            let address = "0x00000000000000000000000000000000abcabcde"
+            let workspace = "description-refresh-\(UUID())"
+            let siblingWorkspace = "description-sibling-\(UUID())"
+            let sibling = manager.upsertPairedAgent(
+                agentAddress: address, name: "Other workspace", description: "Unchanged sibling description.",
+                relayBaseURL: "https://test.invalid", apiKey: "test-key", note: nil,
+                workspaceId: siblingWorkspace
+            )
+            var calls = 0
+            service.testHandshakeOverride = { incomingWorkspace, incomingAddress in
+                #expect(incomingWorkspace == workspace)
+                #expect(incomingAddress == address)
+                calls += 1
+                return .init(
+                    agentAddress: address, agentName: "Host name",
+                    agentDescription: calls == 1 ? "Old description." : description,
+                    agentModel: "test-model", apiKey: "test-key-\(calls)",
+                    attestationExpiresAt: calls == 1 ? Date().addingTimeInterval(0.2) : nil
+                )
+            }
+            defer {
+                service.stopRefreshing(agentAddress: address, workspaceId: workspace)
+                if let agent = manager.remoteAgent(forAddress: address, workspaceId: workspace) {
+                    _ = manager.remove(id: agent.id)
+                }
+                _ = manager.remove(id: sibling.id)
+            }
+            let paired = try #require(await service.connect(
+                workspaceId: workspace, agentAddress: address, displayName: "Shared display name", silent: true
+            ))
+            let deadline = Date().addingTimeInterval(3)
+            while calls < 2 && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+            #expect(calls == 2)
+            let refreshed = try #require(manager.remoteAgent(forAddress: address, workspaceId: workspace))
+            #expect(refreshed.id == paired.id)
+            #expect(refreshed.providerId == paired.providerId)
+            #expect(refreshed.name == "Shared display name")
+            #expect(refreshed.description == description)
+            #expect(manager.remoteAgent(forAddress: address, workspaceId: siblingWorkspace)?.description == "Unchanged sibling description.")
+        }
     }
 }

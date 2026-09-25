@@ -98,9 +98,9 @@ public protocol SubagentKind: Sendable {
 /// A local-model kind whose residency decision can become stale while it waits
 /// for process-wide admission.
 ///
-/// `TextSubagentKind` is the production conformer. Keeping this separate from
-/// `SubagentKind` avoids imposing model-residency policy on browser, media, and
-/// other kinds that already own a different execution contract.
+/// Text, Browser, Computer Use and AppleScript share this scheduling contract.
+/// Keeping it separate from `SubagentKind` avoids imposing text-model residency
+/// policy on media kinds whose detached producers own a different lifetime.
 protocol SubagentPostAdmissionResidencyPlanning: SubagentKind {
     /// Re-read live residency and RAM-safety inputs after admission is held and
     /// update the kind's handoff state to match the returned plan.

@@ -25,7 +25,6 @@ struct ConfigAppBehaviorEnumTests {
     func storeEnumKeys_matchTheRuntimeRawValues() {
         // The manifest's allowed lists derive from the store enums; a raw
         // value rename upstream must fail here, not in a live apply.
-        #expect(ConfigAppBehaviorEnums.spawnToolAccessValues.contains("read_only"))
         #expect(ConfigAppBehaviorEnums.permissionPolicies.contains("always_allow"))
         #expect(!ConfigAppBehaviorEnums.permissionKindIds.isEmpty)
         #expect(ConfigAppBehaviorEnums.applescriptMode(forKey: "confirm_each") == .confirmEach)
@@ -89,11 +88,11 @@ struct ConfigAppCoveragePlannerTests {
         let issues = planIssues { document in
             var delegation = DelegationSection()
             delegation.applescriptExecutionMode = "just_run_it"
-            delegation.spawnToolAccess = "full"
+            delegation.permissionDefaults = ["spawn": "maybe"]
             document.delegation = delegation
         }
         #expect(issues.contains { $0.contains("delegation.applescript_execution_mode") })
-        #expect(issues.contains { $0.contains("delegation.spawn_tool_access") })
+        #expect(issues.contains { $0.contains("delegation.permission_defaults") })
     }
 
     @Test
@@ -101,7 +100,7 @@ struct ConfigAppCoveragePlannerTests {
         let budgetIssues = planIssues { document in
             var delegation = DelegationSection()
             delegation.budgetMaxTokens = 1
-            delegation.budgetMaxTurns = 100
+            delegation.budgetMaxTurns = 101
             delegation.budgetMaxSeconds = 1
             document.delegation = delegation
         }
@@ -136,7 +135,9 @@ struct ConfigAppCoveragePlannerTests {
     func spawnableAgents_acceptAgentsCreatedByTheSameDocument() throws {
         let name = "Spawn Probe Agent \(UUID().uuidString.prefix(6))"
         let plan = try plan { document in
-            document.agents = [AgentEntry(name: name)]
+            var agent = AgentEntry(name: name)
+            agent.description = "Runs a separately requested task for the delegation planner probe."
+            document.agents = [agent]
             var delegation = DelegationSection()
             delegation.spawnableAgents = [name]
             document.delegation = delegation
@@ -177,6 +178,7 @@ struct ConfigAppCoveragePlannerTests {
         var caps = AgentCapabilitiesEntry()
         caps.relayEnabled = true
         var agent = AgentEntry(name: name)
+        agent.description = "Answers relay requests for the configuration risk probe."
         agent.capabilities = caps
         let plan = try plan { $0.agents = [agent] }
         #expect(plan.risks.contains(ConfigRisk.relayEnabled(name)))
@@ -225,21 +227,21 @@ struct ConfigAppCoverageApplyTests {
         var desired = DelegationSection()
         desired.budgetMaxTokens = before?.budgetMaxTokens == 4096 ? 2048 : 4096
         desired.budgetMaxTurns = before?.budgetMaxTurns == 4 ? 2 : 4
-        desired.spawnToolAccess = before?.spawnToolAccess == "none" ? "read_only" : "none"
+        desired.ramSafetyPreflight = !(before?.ramSafetyPreflight ?? true)
         desired.coexistenceEnabled = !(before?.coexistenceEnabled ?? false)
         Self.expectNoFailures(await Self.apply { $0.delegation = desired })
 
         let after = ConfigExporter.export().delegation
         #expect(after?.budgetMaxTokens == desired.budgetMaxTokens)
         #expect(after?.budgetMaxTurns == desired.budgetMaxTurns)
-        #expect(after?.spawnToolAccess == desired.spawnToolAccess)
+        #expect(after?.ramSafetyPreflight == desired.ramSafetyPreflight)
         #expect(after?.coexistenceEnabled == desired.coexistenceEnabled)
         try Self.expectIdempotentExport(sections: [.delegation])
 
         var restore = DelegationSection()
         restore.budgetMaxTokens = before?.budgetMaxTokens
         restore.budgetMaxTurns = before?.budgetMaxTurns
-        restore.spawnToolAccess = before?.spawnToolAccess
+        restore.ramSafetyPreflight = before?.ramSafetyPreflight
         restore.coexistenceEnabled = before?.coexistenceEnabled
         _ = await Self.apply { $0.delegation = restore }
     }

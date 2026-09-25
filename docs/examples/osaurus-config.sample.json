@@ -12,7 +12,7 @@
     "max_tokens": null,
     "system_prompt": "You are a friendly, concise assistant."
   },
-  "active_agent": "default",
+  "new_chat_agent": "default",
   "agents": [
     {
       "name": "Research Agent",
@@ -28,6 +28,9 @@
         "knowledge_collection_ids": [],
         "browser_use_enabled": false,
         "computer_use_enabled": false,
+        "image_enabled": false,
+        "applescript_enabled": false,
+        "apple_apps": [],
         "relay_enabled": false
       }
     }
@@ -43,13 +46,15 @@
   "delegation": {
     "local_text_enabled": true,
     "spawnable_agents": ["Research Agent"],
-    "spawn_tool_access": "read_only",
+    "spawnable_workspace_agents": [],
+    "workspace_auto_join": {},
     "permission_defaults": {
-      "spawn": "ask"
+      "spawn": "always_allow",
+      "spawn_workspace": "ask"
     },
-    "budget_max_tokens": 4096,
-    "budget_max_turns": 4,
-    "budget_max_seconds": 300,
+    "budget_max_tokens": 8192,
+    "budget_max_turns": 24,
+    "budget_max_seconds": 900,
     "ram_safety_preflight": true
   },
   "commands": [
@@ -104,7 +109,7 @@
     }
   ],
   "models": ["mlx-community/Qwen2.5-7B-Instruct-4bit"],
-  "plugins": ["osaurus.weather"],
+  "plugins": ["osaurus.fetch"],
   "providers": [
     {
       "name": "Anthropic",

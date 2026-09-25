@@ -359,6 +359,43 @@ enum SubagentConfigurationStore {
         }
     }
 
+    /// Load-time reconciliation that runs after seeding: drop pool entries
+    /// whose agent no longer exists and apply the one-time budget /
+    /// permission default upgrades. Idempotent — a no-op once the store is
+    /// clean and both sentinels are set.
+    @discardableResult
+    nonisolated static func reconcile(with agents: [Agent]) -> SubagentConfiguration {
+        mutate { current in
+            current = current.pruningMissingAgents(using: agents).migratingLegacyDefaults()
+        }
+    }
+
+    /// Auto-join teammates' shared agents into the Orchestrator pool. Every
+    /// `(workspaceId, address)` on a roster the user belongs to that is NOT
+    /// hosted on this Mac joins `spawnableWorkspaceAgents` unless the user
+    /// removed it before (`removedWorkspaceAgents`) or turned auto-join off for
+    /// that workspace. Refs no longer on any roster (agent unshared, teammate
+    /// left, workspace left) are pruned from both the pool and the tombstones.
+    /// Mirrors `AgentManager.registerInDefaultSpawnPool` for local agents.
+    ///
+    /// - Parameters:
+    ///   - rosterRefs: every shared agent currently on a loaded roster, minus
+    ///     agents hosted here.
+    ///   - loadedWorkspaceIds: the workspaces whose rosters have loaded. Refs in
+    ///     a workspace that has NOT loaded yet are left alone (cold start).
+    @discardableResult
+    nonisolated static func reconcileWorkspaceAgents(
+        rosterRefs: [WorkspaceAgentRef],
+        loadedWorkspaceIds: Set<String>
+    ) -> SubagentConfiguration {
+        mutate { current in
+            current = current.reconcilingWorkspaceAgents(
+                rosterRefs: rosterRefs,
+                loadedWorkspaceIds: loadedWorkspaceIds
+            )
+        }
+    }
+
     nonisolated static func invalidateSnapshot() {
         snapshotLock.lock()
         cachedSnapshot = nil

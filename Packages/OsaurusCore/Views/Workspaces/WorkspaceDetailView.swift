@@ -56,6 +56,7 @@ struct WorkspaceDetailView: View {
     /// Invite row whose link was just copied (button reads "Copied").
     @State private var copiedInviteId: String?
     @State private var copiedInviteTask: Task<Void, Never>?
+    @State private var orchestratorAutoJoin = true
 
     private enum PendingDestruction: Identifiable {
         case removeMember(OsaurusRouterWorkspaceMember)
@@ -1294,6 +1295,7 @@ struct WorkspaceDetailView: View {
                 }
             }
         ) {
+            orchestratorAutoJoinToggle
             if service.workspaceAgents.isEmpty {
                 if service.isLoadingDetail {
                     AgentSectionEmptyState(loading: "Loading shared agents…")
@@ -1345,12 +1347,43 @@ struct WorkspaceDetailView: View {
         .settingsLandingAnchor("workspaces.agents")
     }
 
+    /// Per-workspace switch for the Orchestrator's delegation pool: on
+    /// (default), every teammate agent shared here joins "Allowed
+    /// subagents" automatically as the roster loads; off prunes this
+    /// workspace's agents from the pool and stops auto-joining. Declarative
+    /// twin: `delegation.workspace_auto_join`.
+    private var orchestratorAutoJoinToggle: some View {
+        SettingsToggle(
+            title: L("Let the Orchestrator delegate to shared agents"),
+            description: L(
+                "Teammates' agents shared in this workspace join the Orchestrator's Allowed subagents automatically. Off removes them from the pool; delegating still asks for permission (Settings → Orchestrator)."
+            ),
+            anchorId: "workspaces.agents.orchestratorAutoJoin",
+            isOn: Binding(
+                get: { orchestratorAutoJoin },
+                set: { enabled in
+                    orchestratorAutoJoin = enabled
+                    SubagentConfigurationStore.mutate { config in
+                        config.setWorkspaceAutoJoin(enabled, workspaceId: workspace.id)
+                    }
+                    // Re-run the join/prune step now instead of waiting for
+                    // the next roster tick so the pool reflects the switch.
+                    WorkspaceRosterStore.shared.reconcileSpawnPoolNow()
+                }
+            )
+        )
+        .padding(.bottom, 4)
+        .onAppear {
+            orchestratorAutoJoin =
+                SubagentConfigurationStore.snapshot().workspaceAutoJoinEnabled(workspace.id)
+        }
+    }
+
     /// Identity scoped to THIS workspace (an agent shared into several
     /// workspaces resolves to this one, not the first roster match).
     private func identity(for agent: OsaurusRouterWorkspaceAgent) -> SharedAgentIdentity {
         let address = agent.agentAddress
         let local = agentManager.agent(byAddress: address)
-        let isMine = local != nil || service.isSelf(agent.owner)
         return SharedAgentIdentity.make(
             address: address,
             rosterAgent: agent,
@@ -1360,7 +1393,7 @@ struct WorkspaceDetailView: View {
             localEffectiveModel: local.flatMap { agentManager.effectiveModel(for: $0.id) },
             liveEffectiveModel: nil,
             lastKnownName: nil,
-            isMine: isMine
+            isOwnedByMe: service.isSelf(agent.owner)
         )
     }
 
@@ -1383,10 +1416,10 @@ struct WorkspaceDetailView: View {
 
     private func status(for agent: OsaurusRouterWorkspaceAgent) -> SharedAgentStatus {
         let identity = identity(for: agent)
-        if identity.isMine {
-            guard let local = identity.localAgent else {
-                return .unavailable(reason: L("this agent is no longer on this Mac."), fix: .none)
-            }
+        // Only an agent hosted on THIS Mac reports relay state. An own agent
+        // on another of the user's devices is remote from here and takes
+        // the teammate path (presence + pairing).
+        if let local = identity.localAgent {
             return SharedAgentStatus.forOwnAgent(relayStatus: relayManager.agentStatuses[local.id])
         }
         // Touch the observed stores so the row re-renders on pairing changes.
@@ -1440,8 +1473,11 @@ private struct WorkspaceSharedAgentRow: View {
     let onUnshare: () -> Void
     let onSetBilling: (Bool) -> Void
 
-    private var isMine: Bool { identity.isMine }
-    private var isMissingLocally: Bool { identity.isMissingLocally }
+    /// Hosted on this Mac: relay/billing/local-chat affordances.
+    private var isMine: Bool { identity.isHostedHere }
+    /// Shared by this identity from another device: labelled yours, reached
+    /// like a teammate's.
+    private var isOwnedElsewhere: Bool { identity.isOwnedElsewhere }
     private var isPaired: Bool { identity.paired != nil }
     private var isConnecting: Bool { status == .connecting }
     private var relayOff: Bool {
@@ -1472,7 +1508,7 @@ private struct WorkspaceSharedAgentRow: View {
                 actions
             }
 
-            if isMine, !isMissingLocally {
+            if isMine {
                 billingToggle
             }
         }
@@ -1501,7 +1537,6 @@ private struct WorkspaceSharedAgentRow: View {
                 .overlay(Circle().strokeBorder(theme.cardBackground, lineWidth: 1.5))
                 .offset(x: 1, y: 1)
         }
-        .opacity(isMissingLocally ? 0.6 : 1)
     }
 
     private var titleRow: some View {
@@ -1512,6 +1547,13 @@ private struct WorkspaceSharedAgentRow: View {
                 .lineLimit(1)
             if isMine {
                 CapsuleBadge(L("Yours"), tint: theme.accentColor, style: .tag)
+            } else if isOwnedElsewhere {
+                CapsuleBadge(
+                    L("Yours · other device"),
+                    tint: theme.accentColor,
+                    style: .tag,
+                    help: L("Shared by your identity from another device. Reached through the relay like a teammate's agent.")
+                )
             }
             if let model = identity.modelLabel {
                 CapsuleBadge(
@@ -1565,9 +1607,6 @@ private struct WorkspaceSharedAgentRow: View {
     }
 
     private var statusText: String {
-        if isMissingLocally {
-            return L("No longer on this Mac — teammates can't reach it. Unshare to clean up.")
-        }
         switch status {
         case .ready:
             return isMine
@@ -1597,7 +1636,6 @@ private struct WorkspaceSharedAgentRow: View {
     }
 
     private var statusColor: Color {
-        if isMissingLocally { return theme.tertiaryText }
         switch status.tint {
         case .success: return theme.successColor
         case .accent: return theme.accentColor
@@ -1617,7 +1655,7 @@ private struct WorkspaceSharedAgentRow: View {
     private var actions: some View {
         HStack(spacing: 8) {
             if isMine {
-                if relayOff, !isMissingLocally {
+                if relayOff {
                     Button(action: onTurnOnRelay) {
                         HStack(spacing: 5) {
                             Image(systemName: "antenna.radiowaves.left.and.right")
@@ -1628,12 +1666,10 @@ private struct WorkspaceSharedAgentRow: View {
                     .buttonStyle(PrimaryButtonStyle(size: .compact))
                     .help(L("Teammates reach this agent through its relay tunnel"))
                 }
-                if !isMissingLocally {
-                    Button(action: onChat) {
-                        Text("Chat", bundle: .module)
-                    }
-                    .buttonStyle(SecondaryButtonStyle(size: .compact))
+                Button(action: onChat) {
+                    Text("Chat", bundle: .module)
                 }
+                .buttonStyle(SecondaryButtonStyle(size: .compact))
             } else if isPaired {
                 Button(action: onChat) {
                     Text("Chat", bundle: .module)
@@ -1647,7 +1683,9 @@ private struct WorkspaceSharedAgentRow: View {
                 .disabled(isConnecting)
             }
 
-            if isMine || canManage {
+            // Unshare is an ownership right (any of the owner's devices), or
+            // an owner/admin management right.
+            if identity.isOwnedByMe || canManage {
                 Button(action: onUnshare) {
                     Text("Unshare", bundle: .module)
                 }

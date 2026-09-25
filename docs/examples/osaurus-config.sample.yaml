@@ -34,13 +34,13 @@ default_agent: # the built-in Default agent (the Orchestrator)
   max_tokens: null # null = automatic
   system_prompt: "You are a friendly, concise assistant."
 
-active_agent: default # "default" or a custom agent's name
+new_chat_agent: default # which agent NEW chats open with: "default" or a custom agent's name
 
 agents: # custom agents (never the Default agent)
   - name: Research Agent
     description: "Web research with cited sources"
     system_prompt: "Research topics thoroughly and cite your sources."
-    model: null # null falls back to the first installed local model
+    model: null # null inherits the Orchestrator's model
     temperature: 0.4
     max_tokens: 4096
     capabilities: # only provided keys change
@@ -50,6 +50,11 @@ agents: # custom agents (never the Default agent)
       knowledge_collection_ids: [] # UUIDs from the knowledge scope
       browser_use_enabled: false # HIGH RISK when enabled
       computer_use_enabled: false # HIGH RISK when enabled
+      image_enabled: false # image generation/editing lives on custom agents
+      applescript_enabled: false # AppleScript / mac_query lives on custom agents
+      apple_apps: [] # built-in Apple app tools; full list replaces the set.
+      # calendar | reminders | contacts | notes | mail | messages | maps | music | shortcuts
+      # (mail / messages / shortcuts act on your behalf — the plan card flags them)
       relay_enabled: false # HIGH RISK: reachable from outside
 
 tools: # global tool enablement / permission policies
@@ -58,15 +63,17 @@ tools: # global tool enablement / permission policies
   policies:
     file_write: ask # auto | ask | deny (auto is HIGH RISK)
 
-delegation: # main-chat subagent delegation and child budgets
+delegation: # Orchestrator delegation: who it may spawn, permission, worker limits
   local_text_enabled: true
   spawnable_agents: ["Research Agent"] # replaces the pool
-  spawn_tool_access: read_only # none | read_only
+  spawnable_workspace_agents: [] # teammates' shared agents as Name@Workspace
+  workspace_auto_join: {} # "<workspace>": false stops its shared agents auto-joining
   permission_defaults:
-    spawn: ask # ask | deny | always_allow (always_allow is HIGH RISK)
-  budget_max_tokens: 4096 # 256..32768 per child
-  budget_max_turns: 4 # 1..8
-  budget_max_seconds: 300 # 15..1800
+    spawn: always_allow # ask | deny | always_allow
+    spawn_workspace: ask # teammates' shared agents ask by default
+  budget_max_tokens: 8192 # 256..65536 per worker turn
+  budget_max_turns: 24 # 1..100 tool-call rounds per worker
+  budget_max_seconds: 900 # 15..3600
   ram_safety_preflight: true # false is HIGH RISK
 
 commands: # user template slash commands (built-ins stay)
@@ -112,8 +119,8 @@ mcp_servers: # user-added MCP servers (plugin-owned stay put)
 models: # desired installed local MLX models (HF repo ids)
   - mlx-community/Qwen2.5-7B-Instruct-4bit
 
-plugins: # desired installed plugins (registry ids)
-  - osaurus.weather
+plugins: # desired installed plugins (registry ids). Apple apps are built in — see capabilities.apple_apps above.
+  - osaurus.fetch
 
 providers: # cloud LLM providers
   - name: Anthropic

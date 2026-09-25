@@ -169,6 +169,11 @@ private struct AddProviderFlow: View {
     /// (`false`) or the grouped "Use an API key" sub-list (`true`) is shown.
     @State private var showingAPIKeyPicker = false
     @State private var showingClaudeCodeSetup = false
+    /// Which picker level the configuration form was entered from, so Back
+    /// returns there. The custom endpoint now lives on the top level but still
+    /// pins `.apiKey`, so the auth method alone can no longer tell the levels
+    /// apart.
+    @State private var enteredFromAPIKeyPicker = false
     @State private var apiKey: String = ""
     /// The connection method pinned for the selected provider. Set at selection
     /// time from the catalog (OAuth for top-level rows, `.apiKey` for the "Use
@@ -290,6 +295,9 @@ private struct AddProviderFlow: View {
                 } else {
                     selectedAuthMethod = entryMethods.first ?? .apiKey
                 }
+                // A pre-selected key-only preset has no picker origin; Back
+                // lands on the sub-list where that preset lives, as before.
+                enteredFromAPIKeyPicker = !selectedAuthMethod.isOAuth && initialPreset != .custom
                 selectedPreset = initialPreset
             } else if startAtClaudeCode {
                 showingClaudeCodeSetup = true
@@ -400,15 +408,11 @@ private struct AddProviderFlow: View {
     private var providerSelectionStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Choose a provider", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 4)
-
-                // OAuth-first: one-click sign-in providers as first-class rows,
-                // then a single "Use an API key" drill-in that holds every
-                // paste-a-key vendor, Ollama (local), and the custom endpoint.
-                VStack(spacing: 10) {
+                // Subscription-backed sign-ins first, then
+                // a single "Use an API key" drill-in that holds every
+                // paste-a-key vendor and Ollama (local), and a direct row for
+                // the custom endpoint.
+                VStack(alignment: .leading, spacing: 10) {
                     // Claude Code is not a `RemoteProvider` — it's a local
                     // service driving the user's own `claude` binary — so it
                     // gets a plain row and its own step rather than a catalog
@@ -439,10 +443,23 @@ private struct AddProviderFlow: View {
                     ProviderRowCard(
                         icon: "key.fill",
                         title: "Use an API key",
-                        subtitle: "Anthropic, Google, Ollama, custom, and more"
+                        subtitle: "Anthropic, Google, Ollama, and more"
                     ) {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                             showingAPIKeyPicker = true
+                        }
+                    }
+
+                    // The custom endpoint used to sit three clicks deep at the
+                    // bottom of the API-key sub-list. Surface it here so an
+                    // OpenAI-compatible server is one click from the chooser.
+                    if let custom = ProviderCatalog.entry(for: .custom) {
+                        ProviderRowCard(
+                            icon: custom.preset.icon,
+                            title: "Add custom endpoint",
+                            subtitle: custom.pickerSubtitle(preferAPIKey: false)
+                        ) {
+                            selectCatalogEntry(custom)
                         }
                     }
                 }
@@ -480,14 +497,12 @@ private struct AddProviderFlow: View {
                 }
                 .buttonStyle(PlainButtonStyle())
 
-                ForEach(ProviderCatalog.apiKeyGroups(includeAzure: true)) { section in
+                // The custom endpoint has its own row on the top level, so
+                // the sub-list only carries the key vendors and Ollama.
+                ForEach(ProviderCatalog.apiKeyGroups(includeAzure: true).filter { $0.id != "custom" }) {
+                    section in
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(LocalizedStringKey(section.title), bundle: .module)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.tertiaryText)
-                            .tracking(0.5)
-                            .textCase(.uppercase)
-                            .padding(.horizontal, 4)
+                        pickerSectionHeader(section.title)
 
                         VStack(spacing: 10) {
                             ForEach(section.entries) { entry in
@@ -503,6 +518,17 @@ private struct AddProviderFlow: View {
         }
     }
 
+    /// Small uppercase label above a group of picker rows. `title` is a
+    /// localization key.
+    private func pickerSectionHeader(_ title: String) -> some View {
+        Text(LocalizedStringKey(title), bundle: .module)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(theme.tertiaryText)
+            .tracking(0.5)
+            .textCase(.uppercase)
+            .padding(.horizontal, 4)
+    }
+
     /// Commit a catalog selection from either picker level and drill into its
     /// configuration step.
     ///
@@ -514,6 +540,7 @@ private struct AddProviderFlow: View {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             initializeKnownConnection(for: entry.preset)
             selectedAuthMethod = preferAPIKey ? .apiKey : (entry.authMethods.first ?? .apiKey)
+            enteredFromAPIKeyPicker = preferAPIKey
             selectedPreset = entry.preset
         }
     }
@@ -674,10 +701,11 @@ private struct AddProviderFlow: View {
         Button {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                 // Return to the level the form was reached from. Dual-mode
-                // presets appear at both levels, so read the pinned auth method
-                // (an API-key method means we came from the "Use an API key"
-                // sub-list) before the reset below clears it.
-                showingAPIKeyPicker = !selectedAuthMethod.isOAuth && selectedPreset != nil
+                // presets appear at both levels and the custom endpoint sits on
+                // the top level despite pinning `.apiKey`, so use the origin
+                // recorded at selection time.
+                showingAPIKeyPicker = enteredFromAPIKeyPicker && selectedPreset != nil
+                enteredFromAPIKeyPicker = false
                 selectedPreset = nil
                 apiKey = ""
                 oauthTokens = nil

@@ -121,9 +121,11 @@ struct SkillUpdateToolTests {
     // MARK: - Surface gating
 
     @Test
-    func deniedExternallyAndExcludedFromChildren() {
+    func deniedExternallyButAvailableToSpawnedChildren() {
         #expect(ToolRegistry.externallyDeniedToolNames.contains("update_skill"))
-        #expect(TextSubagentKind.isExcludedChildTool("update_skill"))
+        // Spawned workers carry their agent's full surface; only the spawn
+        // family and `clarify` are held back (`TextSubagentKind.isExcludedChildTool`).
+        #expect(!TextSubagentKind.isExcludedChildTool("update_skill"))
     }
 
     // MARK: - On-demand exposure

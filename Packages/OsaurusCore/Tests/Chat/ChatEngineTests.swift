@@ -514,11 +514,13 @@ struct ChatEngineTests {
     @Test func completeChat_usesStreamingStatsForPlainNonStreamingCompletion() async throws {
         let svc = FakeModelService(
             deltas: [
+                StreamingInputTokenHint.encode(257),
                 "partial answer",
                 StreamingStatsHint.encode(
                     tokenCount: 180,
                     tokensPerSecond: 52.5,
-                    stopReason: "length"
+                    stopReason: "length",
+                    inputTokenCount: 263
                 ),
             ]
         )
@@ -543,6 +545,7 @@ struct ChatEngineTests {
 
         #expect(resp.choices.first?.message.content == "partial answer")
         #expect(resp.choices.first?.finish_reason == "length")
+        #expect(resp.usage.prompt_tokens == 263)
         #expect(resp.usage.completion_tokens == 180)
         #expect(resp.usage.total_tokens == resp.usage.prompt_tokens + 180)
         #expect(resp.usage.tokens_per_second == 52.5)
@@ -602,6 +605,36 @@ struct ChatEngineTests {
         let params = await capture.params
         #expect(params?.maxTokens == 16_384)
         #expect(params?.maxTokensExplicit == false)
+        #expect(params?.admissionOutputTokensAreImplicit == false)
+
+        var childJSON = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(req)) as? [String: Any])
+        childJSON["max_tokens"] = 8192
+        var child = try JSONDecoder().decode(
+            ChatCompletionRequest.self, from: JSONSerialization.data(withJSONObject: childJSON))
+        child.admissionPositionLimit = 8192
+        child.admissionOutputTokensAreImplicit = true
+        _ = try await engine.completeChat(request: child)
+        let childParams = try #require(await capture.params)
+        #expect(childParams.maxTokens == 8192)
+        #expect(childParams.maxTokensExplicit) // Keep the contract ceiling during default resolution.
+        #expect(childParams.admissionOutputTokensAreImplicit)
+        #expect(try AdmissionPositionLimit.resolveOutputTokens(
+            promptTokens: 1788, outputTokens: childParams.maxTokens, limit: 8192,
+            isExplicit: childParams.maxTokensExplicit && !childParams.admissionOutputTokensAreImplicit
+        ) == 6404)
+
+        // Internal provenance cannot be supplied by an API caller or leak to a provider.
+        let encoded = try JSONEncoder().encode(child)
+        let decoded = try JSONDecoder().decode(ChatCompletionRequest.self, from: encoded)
+        #expect(!decoded.admissionOutputTokensAreImplicit)
+        child.admissionOutputTokensAreImplicit = false
+        _ = try await engine.completeChat(request: child)
+        let explicit = try #require(await capture.params)
+        #expect(throws: AdmissionPositionLimit.self) {
+            try AdmissionPositionLimit.resolveOutputTokens(
+                promptTokens: 1788, outputTokens: explicit.maxTokens, limit: 8192,
+                isExplicit: explicit.maxTokensExplicit && !explicit.admissionOutputTokensAreImplicit)
+        }
     }
 
     @Test func completeChat_routesLocalModelWithoutFetchingRemoteServices() async throws {

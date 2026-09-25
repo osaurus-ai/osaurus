@@ -301,7 +301,7 @@ struct DelegationResidencySequenceTests {
 
     // MARK: (d) toggle OFF
 
-    @Test("(d) toggle OFF: no sequencing — passthrough handoff, body only, never a refusal")
+    @Test("(d) toggle OFF: keep-parent handoff, no parent unload/restore")
     func toggleOffNoSequencing() async throws {
         let plan = try SubagentResidency.decidePlan(
             isLocal: true,
@@ -315,11 +315,11 @@ struct DelegationResidencySequenceTests {
             invokingParentModelName: "local-a"
         )
         #expect(!plan.shouldUnload)
-        #expect(plan.sequencingDisabled)
-        #expect(plan.mode == "sequencing_off")
+        #expect(plan.coexists)
+        #expect(plan.mode == "coexist")
 
-        let handoff = SubagentResidency.handoff(for: plan)
-        #expect(handoff is PassthroughHandoff)
+        #expect(SubagentResidency.handoff(for: plan) is CoexistenceHandoff)
+        let handoff = CoexistenceHandoff(maxElapsedSeconds: 60, waitForIdle: { _ in true })
 
         let log = SequenceLog()
         _ = try await handoff.around(
@@ -345,7 +345,7 @@ struct DelegationResidencySequenceTests {
             mainResident: true,
             delegateModelName: "local-b"
         )
-        #expect(summary.contains("Local Orchestrator Handoff is off"))
+        #expect(summary.contains("\"Swap local models for subagents\" is off"))
     }
 
     // MARK: (e) same model
@@ -364,7 +364,7 @@ struct DelegationResidencySequenceTests {
             invokingParentModelName: "local-a"
         )
         #expect(!plan.shouldUnload)
-        #expect(!plan.sequencingDisabled)
+        #expect(!plan.coexists)
         #expect(plan.mode == "in_place")
         #expect(SubagentResidency.handoff(for: plan) is PassthroughHandoff)
         #expect(

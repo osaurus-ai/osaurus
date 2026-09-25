@@ -121,10 +121,16 @@ struct ConfigurationReadScopeFunctionalTests {
             OsaurusInspectTool(), #"{"action": "list", "scope": "agents"}"#)
         let result = try #require(dict["result"] as? [String: Any])
         let shape = try #require(result["yaml_shape"] as? String)
-        // Activation ("switch to X") writes `active_agent`, so the agents
+        // Activation ("switch to X") writes `new_chat_agent`, so the agents
         // read must teach both sections.
         #expect(shape.contains("agents:"))
-        #expect(shape.contains("active_agent:"))
+        #expect(shape.contains("new_chat_agent:"))
+        let items = try #require(result["items"] as? [[String: Any]])
+        #expect(!items.isEmpty)
+        for agent in items {
+            #expect(agent["description"] as? String != nil)
+            #expect(agent["description_required"] as? Bool != nil)
+        }
     }
 
     @Test
@@ -139,6 +145,34 @@ struct ConfigurationReadScopeFunctionalTests {
             let nextStep = try #require(result["next_step"] as? String)
             #expect(nextStep.contains("schema"), "plain hint should still route to schema")
         }
+    }
+
+    /// The two workspace scopes answer "who can I delegate to" from a read.
+    /// The SwiftPM harness has no router session, so the rosters are empty:
+    /// the rows are empty but the envelope, the pool note and the
+    /// `shared_agents` filter must still be well-formed, and a describe by
+    /// `Name@Workspace` against an empty roster is a clean not-found.
+    @Test
+    func list_workspaceScopes_returnRowsAndPoolNote() async throws {
+        for scope in ["workspaces", "shared_agents"] {
+            let dict = try await runAsDefaultAgent(
+                OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}")
+            let result = try #require(dict["result"] as? [String: Any], "scope \(scope)")
+            #expect(result["scope"] as? String == scope)
+            #expect(result["items"] is [[String: Any]], "scope \(scope) must list rows")
+            let note = try #require(result["note"] as? String)
+            #expect(note.contains("spawn_agent"))
+            #expect(note.contains("spawnable_workspace_agents"))
+        }
+        let online = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "list", "scope": "shared_agents", "filter": "online"}"#)
+        #expect((online["result"] as? [String: Any])?["filter"] as? String == "online")
+
+        let missing = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "describe", "scope": "shared_agents", "id": "Research@Acme"}"#)
+        #expect(missing["ok"] as? Bool == false)
+        let message = try #require(missing["message"] as? String)
+        #expect(message.contains("shared_agents"), Comment(rawValue: message))
     }
 
     @Test
@@ -260,10 +294,10 @@ struct ConfigurationReadScopeFunctionalTests {
 
     @Test
     func describe_agent_includesCapabilities() async throws {
-        let agent = await MainActor.run {
-            AgentManager.shared.create(
+        let agent = try await MainActor.run {
+            try AgentManager.shared.create(
                 name: "GapClosure Describe Probe",
-                description: "",
+                description: "Exercises agent configuration in this isolated test.",
                 systemPrompt: "",
                 defaultModel: nil,
                 temperature: nil,
@@ -293,10 +327,10 @@ struct ConfigurationReadScopeFunctionalTests {
         // burn a list round-trip, and the payload key must be `model` — the
         // old `default_model` key taught the model to write `default_model:`
         // into YAML, which the document schema rejects.
-        let agent = await MainActor.run {
-            AgentManager.shared.create(
+        let agent = try await MainActor.run {
+            try AgentManager.shared.create(
                 name: "GapClosure Name Probe",
-                description: "",
+                description: "Exercises agent configuration in this isolated test.",
                 systemPrompt: "",
                 defaultModel: "provider/some-model",
                 temperature: nil,

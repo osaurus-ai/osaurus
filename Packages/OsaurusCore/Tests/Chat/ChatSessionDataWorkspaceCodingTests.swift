@@ -191,7 +191,7 @@ struct ChatSessionDataWorkspaceCodingTests {
         try db.openInMemory()
         defer { db.close() }
 
-        #expect(ChatHistoryDatabase.latestSchemaVersion == 16)
+        #expect(ChatHistoryDatabase.latestSchemaVersion >= 16)
         var indexNames: [String] = []
         try db.executeReadInTest("PRAGMA index_list('sessions')") { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {

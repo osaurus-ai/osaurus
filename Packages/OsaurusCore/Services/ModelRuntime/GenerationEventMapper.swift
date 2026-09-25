@@ -40,6 +40,7 @@ enum GenerationEventMapper {
     static func map(
         events: AsyncStream<Generation>,
         modelName: String = "",
+        promptTokenCount: Int? = nil,
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
         /// Whether this generation's completion-time MTP stats should become
@@ -61,6 +62,9 @@ enum GenerationEventMapper {
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
+            if let promptTokenCount, promptTokenCount >= 0 {
+                continuation.yield(.inputTokenCount(promptTokenCount))
+            }
             let interval = mapperSignposter.beginInterval(
                 "generation",
                 id: mapperSignposter.makeSignpostID()
@@ -83,10 +87,35 @@ enum GenerationEventMapper {
             // STEP-DECODE line at stream end covers those steps instead.
             var firstOutputAt: CFAbsoluteTime?
             var sawToolCall = false
+            // What the runtime's `.cacheRestore` event reported for this
+            // request. Zero restored tokens is a cold request.
+            var cacheRestoredTokens = 0
+            var cacheRestoreDetail: String?
+            var prefillPromptTokens = max(0, promptTokenCount ?? 0)
+            var recordedCacheRestore = false
+
+            // Park the restore where a Settings poll can read it, once per
+            // request: at the first output, when prefill is over and the
+            // figure is final, or at stream end for a request that produced
+            // none. Same gate as the MTP readout, so warm-up prefills and
+            // background housekeeping do not overwrite the user's turn.
+            func recordCacheRestoreOnce() {
+                guard !recordedCacheRestore else { return }
+                recordedCacheRestore = true
+                guard recordMTPLastRun, !suppressProgressUI else { return }
+                let summary = CacheRestoreSummary(
+                    modelName: modelName,
+                    restoredTokens: cacheRestoredTokens,
+                    promptTokens: prefillPromptTokens,
+                    detail: cacheRestoredTokens > 0 ? cacheRestoreDetail : nil
+                )
+                Task { await MLXBatchAdapter.recordLastCacheRestore(summary) }
+            }
 
             func markFirstModelOutput() {
                 guard !markedFirstModelOutput else { return }
                 markedFirstModelOutput = true
+                recordCacheRestoreOnce()
                 firstOutputAt = CFAbsoluteTimeGetCurrent()
                 let ms = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
                 trace?.set("first_token_ms", ms)
@@ -113,6 +142,9 @@ enum GenerationEventMapper {
                     finalTokenCount = info.generationTokenCount
                     logCompletionInfo(info)
                     let mtp = Self.mtpSummary(from: info)
+                    if info.promptTokenCount >= 0, info.promptTokenCount != promptTokenCount {
+                        continuation.yield(.inputTokenCount(info.promptTokenCount))
+                    }
                     // Park the ADAPTIVE result where a Settings poll can read it.
                     // Completion-time, so it shows what the controller settled on
                     // (e.g. asked depth 3, ran depth 1 on low acceptance) rather
@@ -187,6 +219,11 @@ enum GenerationEventMapper {
                         InferenceProgressManager.shared.prefillDidUpdateAsync(state)
                     } else {
                         WarmupProgressHub.shared.prefillDidUpdate(model: modelName, state: state)
+                    }
+                    prefillPromptTokens = max(prefillPromptTokens, state.totalUnitCount)
+                    if state.stage == .cacheRestore, state.completedUnitCount > 0 {
+                        cacheRestoredTokens = max(cacheRestoredTokens, state.completedUnitCount)
+                        cacheRestoreDetail = state.detail
                     }
                     if state.stage.rawValue != lastPrefillStage {
                         lastPrefillStage = state.stage.rawValue
@@ -290,6 +327,7 @@ enum GenerationEventMapper {
             PrefillDebugLog.shared.log(
                 "     STEP-DRAIN logicalTotalMs=\(logicalTotalMs) cleanupDrainMs=\(cleanupDrainMs)"
             )
+            recordCacheRestoreOnce()
             reportPrefillFinished()
             continuation.finish()
         }

@@ -1,0 +1,217 @@
+{
+  "id": "ram_admission.reclaim-restores-sequential-capacity",
+  "domain": "subagent",
+  "label": "RAM policy replay: reclaim-restores-sequential-capacity",
+  "query": "Replay explicit host facts through production planner, recovery and one persistent reservation actor.",
+  "notes": "Deterministic injected facts; not physical 16GB or live inference proof.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "ram_admission",
+      "ramAdmission": {
+        "scenario": {
+          "localJobs": 1,
+          "remoteJobs": 0,
+          "agentLimit": 1,
+          "engineLimit": 1,
+          "batching": true,
+          "ramSafety": true,
+          "steps": [
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "reclaimSucceeds": true
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "reclaimSucceeds": true
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "reclaimSucceeds": true
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "reclaimSucceeds": true
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "reclaimSucceeds": true
+            }
+          ]
+        },
+        "expected": [
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 2,
+            "reclaims": 1,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 2,
+            "reclaims": 1,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 2,
+            "reclaims": 1,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 2,
+            "reclaims": 1,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 2,
+            "reclaims": 1,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          }
+        ]
+      }
+    }
+  }
+}

@@ -142,6 +142,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// spawn admission and BatchEngine slots, without inheriting whichever
         /// settings happen to be saved on the contributor's machine.
         public let runtimeConcurrency: RuntimeConcurrencyFixture?
+        public let delegationSettings: SubagentJobEvaluator.DelegationSettings?
         /// Live-sandbox fixture for `agent_loop` cases. PRESENCE of this
         /// block switches the case into sandbox execution mode: the
         /// runner installs a temporary eval agent with `autonomousExec`
@@ -237,6 +238,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             useHostFolder: Bool? = nil,
             agentCapabilities: AgentCapabilitiesFixture? = nil,
             runtimeConcurrency: RuntimeConcurrencyFixture? = nil,
+            delegationSettings: SubagentJobEvaluator.DelegationSettings? = nil,
             sandbox: SandboxFixture? = nil,
             seedAgents: [SeedAgent]? = nil,
             seedProviders: [SeedProvider]? = nil,
@@ -253,6 +255,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.useHostFolder = useHostFolder
             self.agentCapabilities = agentCapabilities
             self.runtimeConcurrency = runtimeConcurrency
+            self.delegationSettings = delegationSettings
             self.sandbox = sandbox
             self.seedAgents = seedAgents
             self.seedProviders = seedProviders
@@ -427,6 +430,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let spawnAgents: [SpawnAgentFixture]?
         /// Per-call/concurrency ceiling applied to the temporary orchestrator.
         public let maxParallelSpawns: Int?
+        public let childBudgets: SubagentBudgets?
 
         public init(
             dbEnabled: Bool? = nil,
@@ -436,7 +440,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             searchMemoryEnabled: Bool? = nil,
             appleScriptEnabled: Bool? = nil,
             spawnAgents: [SpawnAgentFixture]? = nil,
-            maxParallelSpawns: Int? = nil
+            maxParallelSpawns: Int? = nil,
+            childBudgets: SubagentBudgets? = nil
         ) {
             self.dbEnabled = dbEnabled
             self.selfSchedulingEnabled = selfSchedulingEnabled
@@ -446,6 +451,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.appleScriptEnabled = appleScriptEnabled
             self.spawnAgents = spawnAgents
             self.maxParallelSpawns = maxParallelSpawns
+            self.childBudgets = childBudgets
         }
 
         /// True when any flag is explicitly enabled — the runner only
@@ -472,7 +478,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// file's contents. Resolved by the agent_loop runner under
         /// `Packages/OsaurusEvals/Fixtures/` (with a `Fixtures/AgentDB/`
         /// fallback), so large import fixtures live next to the suite
-        /// instead of inline.
+        /// instead of inline. Bytes are copied verbatim, so binary
+        /// documents (`Fixtures/Documents/*.pdf|xlsx|pptx|png`) seed too.
         public let contentsFromFixture: String?
 
         public init(
@@ -1214,6 +1221,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `concurrent_isolation`: the two echo tokens (default
         /// ["ALPHA-7391", "BRAVO-2648"]).
         public let echoTokens: [String]?
+        /// Vision qualification must fail on unsupported media, never skip it.
+        public let requireMediaSupport: Bool?
 
         public init(
             scenario: String,
@@ -1226,7 +1235,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             responseContains: [String]? = nil,
             outputSchema: JSONValue? = nil,
             prefixProbe: Bool? = nil,
-            echoTokens: [String]? = nil
+            echoTokens: [String]? = nil,
+            requireMediaSupport: Bool? = nil
         ) {
             self.scenario = scenario
             self.prompt = prompt
@@ -1239,6 +1249,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.outputSchema = outputSchema
             self.prefixProbe = prefixProbe
             self.echoTokens = echoTokens
+            self.requireMediaSupport = requireMediaSupport
         }
     }
 
@@ -1456,10 +1467,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Require the final assistant message to be the transcript's last
         /// event, so a tool loop cannot silently reopen after finalization.
         public let requireFinalIsLastEvent: Bool?
-        /// Optional production-shaped `spawn_batch` aggregate assertion. The
-        /// grounding runner parses every matching result with the canonical
-        /// AgentLoop parser and reuses the structured AgentLoop scorer.
-        public let spawnBatch: AgentLoopExpectations.SpawnBatchAssertion?
+        /// Optional structured `spawn_agent` wave assertion. The grounding
+        /// runner parses every `spawn_agent` call/result pair with the
+        /// canonical AgentLoop parser and reuses the structured scorer.
+        public let spawnWave: AgentLoopExpectations.SpawnWaveAssertion?
 
         public init(
             events: [Event],
@@ -1470,7 +1481,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             requireSingleFinalAssistant: Bool? = nil,
             requireFinalAfterAllToolResults: Bool? = nil,
             requireFinalIsLastEvent: Bool? = nil,
-            spawnBatch: AgentLoopExpectations.SpawnBatchAssertion? = nil
+            spawnWave: AgentLoopExpectations.SpawnWaveAssertion? = nil
         ) {
             self.events = events
             self.assertions = assertions
@@ -1480,7 +1491,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.requireSingleFinalAssistant = requireSingleFinalAssistant
             self.requireFinalAfterAllToolResults = requireFinalAfterAllToolResults
             self.requireFinalIsLastEvent = requireFinalIsLastEvent
-            self.spawnBatch = spawnBatch
+            self.spawnWave = spawnWave
         }
 
         public struct Event: Sendable, Codable {
@@ -1754,11 +1765,27 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// tool calls (the loop's `isCancelled` hook flips true once the
         /// count is reached). The run must exit `cancelled` cleanly — pair
         /// with `allowedExits: ["cancelled"]` and `files` assertions that
-        /// prove no post-cancel writes landed. nil → never cancelled.
+        /// prove no post-cancel writes landed. Uses the production serial
+        /// dispatch path so a model-emitted batch cannot outrun the injected
+        /// boundary; ordinary runs retain parallel dispatch. nil → never cancelled.
         public let cancelAfterToolCalls: Int?
-        /// Structured `spawn_batch` aggregate/row assertions. This scores the
-        /// complete parsed result rather than the bounded transcript preview.
-        public let spawnBatch: SpawnBatchAssertion?
+        /// Structured `spawn_agent` wave/row assertions. This scores the
+        /// complete parsed results rather than the bounded transcript preview.
+        public let spawnWave: SpawnWaveAssertion?
+
+        /// Exact digests from executed single-child calls, in order. Parent
+        /// prose, deduped calls and previews cannot satisfy this assertion.
+        public let spawnSummaries: [String]?
+        public let spawnAgentIDs: [UUID]?
+        /// Fresh parent conversations in the same process before the scored
+        /// main query. Workers/model/cache/admission are deliberately retained.
+        public let freshChatWarmups: [FreshChatWarmup]?
+
+        public struct FreshChatWarmup: Sendable, Codable {
+            public let query: String
+            public let spawnSummaries: [String]
+            public let spawnAgentIDs: [UUID]?
+        }
 
         public init(
             maxIterations: Int? = nil,
@@ -1793,7 +1820,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             scoredMaxPromptTokens: Int? = nil,
             scoredMaxTotalTokens: Int? = nil,
             cancelAfterToolCalls: Int? = nil,
-            spawnBatch: SpawnBatchAssertion? = nil
+            spawnWave: SpawnWaveAssertion? = nil,
+            spawnSummaries: [String]? = nil,
+            spawnAgentIDs: [UUID]? = nil,
+            freshChatWarmups: [FreshChatWarmup]? = nil
         ) {
             self.maxIterations = maxIterations
             self.maxTokens = maxTokens
@@ -1827,118 +1857,71 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.scoredMaxPromptTokens = scoredMaxPromptTokens
             self.scoredMaxTotalTokens = scoredMaxTotalTokens
             self.cancelAfterToolCalls = cancelAfterToolCalls
-            self.spawnBatch = spawnBatch
+            self.spawnWave = spawnWave
+            self.spawnSummaries = spawnSummaries
+            self.spawnAgentIDs = spawnAgentIDs
+            self.freshChatWarmups = freshChatWarmups
         }
 
-        /// Aggregate and per-child result contract for one or more
-        /// `spawn_batch` calls.
-        public struct SpawnBatchAssertion: Sendable, Codable {
+        /// Per-call and fan-out contract for the `spawn_agent` calls in a
+        /// run. Several `spawn_agent` calls issued in one model message form
+        /// one wave; the scorer groups the transcript's calls by model step
+        /// and compares every non-nil field exactly.
+        public struct SpawnWaveAssertion: Sendable, Codable {
+            /// Exact number of `spawn_agent` calls (executed + deduped).
             public let exactCallCount: Int?
-            public let expectedJobIds: [String]?
+            /// Ordered `agent` arguments (name / UUID) as the model wrote
+            /// them, in call order.
+            public let expectedTargets: [String]?
             public let expectedSucceeded: Int?
             public let expectedFailed: Int?
-            public let expectedMaxParallel: Int?
-            public let requireEveryRowSettled: Bool?
-            public let requireReportedCountsMatchRows: Bool?
-            public let expectedAggregateStatus: String?
-            public let expectedExecutionWaves: [ExecutionWaveAssertion]?
-            public let requireEveryExecutionWaveWellFormed: Bool?
-            public let expectedCacheAvailable: Bool?
-            /// Ordered child truth expected from the nested production
-            /// envelopes. This prevents a parent from passing by echoing
-            /// tokens from its prompt while the wrong worker/model ran.
+            /// Sizes of consecutive same-step groups, in order. `[2]` pins
+            /// "both calls in one message" (one wave of two); `[1, 1]` pins
+            /// two sequential single calls.
+            public let expectedWaveSizes: [Int]?
+            /// Ordered per-call truth from the real envelopes. This prevents
+            /// a parent from passing by echoing tokens from its prompt while
+            /// the wrong worker/model ran.
             public let expectedRows: [ChildRowAssertion]?
 
             public init(
                 exactCallCount: Int? = nil,
-                expectedJobIds: [String]? = nil,
+                expectedTargets: [String]? = nil,
                 expectedSucceeded: Int? = nil,
                 expectedFailed: Int? = nil,
-                expectedMaxParallel: Int? = nil,
-                requireEveryRowSettled: Bool? = nil,
-                requireReportedCountsMatchRows: Bool? = nil,
-                expectedAggregateStatus: String? = nil,
-                expectedExecutionWaves: [ExecutionWaveAssertion]? = nil,
-                requireEveryExecutionWaveWellFormed: Bool? = nil,
-                expectedCacheAvailable: Bool? = nil,
+                expectedWaveSizes: [Int]? = nil,
                 expectedRows: [ChildRowAssertion]? = nil
             ) {
                 self.exactCallCount = exactCallCount
-                self.expectedJobIds = expectedJobIds
+                self.expectedTargets = expectedTargets
                 self.expectedSucceeded = expectedSucceeded
                 self.expectedFailed = expectedFailed
-                self.expectedMaxParallel = expectedMaxParallel
-                self.requireEveryRowSettled = requireEveryRowSettled
-                self.requireReportedCountsMatchRows = requireReportedCountsMatchRows
-                self.expectedAggregateStatus = expectedAggregateStatus
-                self.expectedExecutionWaves = expectedExecutionWaves
-                self.requireEveryExecutionWaveWellFormed =
-                    requireEveryExecutionWaveWellFormed
-                self.expectedCacheAvailable = expectedCacheAvailable
+                self.expectedWaveSizes = expectedWaveSizes
                 self.expectedRows = expectedRows
             }
 
             public struct ChildRowAssertion: Sendable, Codable {
-                public let id: String
-                public let targetType: String?
                 public let target: String?
                 public let ok: Bool?
                 public let model: String?
+                public let failureKind: String?
                 public let summaryContains: [String]?
+                public let summaryEquals: String?
 
                 public init(
-                    id: String,
-                    targetType: String? = nil,
                     target: String? = nil,
                     ok: Bool? = nil,
                     model: String? = nil,
-                    summaryContains: [String]? = nil
+                    failureKind: String? = nil,
+                    summaryContains: [String]? = nil,
+                    summaryEquals: String? = nil
                 ) {
-                    self.id = id
-                    self.targetType = targetType
                     self.target = target
                     self.ok = ok
                     self.model = model
+                    self.failureKind = failureKind
                     self.summaryContains = summaryContains
-                }
-            }
-
-            /// One execution-wave contract in call order. Every non-nil
-            /// field is compared exactly; nil leaves that fact unscored.
-            public struct ExecutionWaveAssertion: Sendable, Codable {
-                public let wave: Int?
-                public let remoteJobs: Int?
-                public let localJobs: Int?
-                public let engineRequestedMaximum: Int?
-                public let engineArchitectureMaximum: Int?
-                public let requireUncappedArchitecture: Bool?
-                public let engineEffectiveMaximum: Int?
-                public let effectiveLocalSlots: Int?
-                public let localSubwaves: [Int]?
-                public let limitingFactors: [String]?
-
-                public init(
-                    wave: Int? = nil,
-                    remoteJobs: Int? = nil,
-                    localJobs: Int? = nil,
-                    engineRequestedMaximum: Int? = nil,
-                    engineArchitectureMaximum: Int? = nil,
-                    requireUncappedArchitecture: Bool? = nil,
-                    engineEffectiveMaximum: Int? = nil,
-                    effectiveLocalSlots: Int? = nil,
-                    localSubwaves: [Int]? = nil,
-                    limitingFactors: [String]? = nil
-                ) {
-                    self.wave = wave
-                    self.remoteJobs = remoteJobs
-                    self.localJobs = localJobs
-                    self.engineRequestedMaximum = engineRequestedMaximum
-                    self.engineArchitectureMaximum = engineArchitectureMaximum
-                    self.requireUncappedArchitecture = requireUncappedArchitecture
-                    self.engineEffectiveMaximum = engineEffectiveMaximum
-                    self.effectiveLocalSlots = effectiveLocalSlots
-                    self.localSubwaves = localSubwaves
-                    self.limitingFactors = limitingFactors
+                    self.summaryEquals = summaryEquals
                 }
             }
         }
@@ -2567,6 +2550,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             /// What a click on this element does (buttons / toggles). Omitted
             /// for plain fields and static text.
             public let onClick: ClickEffect?
+            /// What pressing Return does while this (editable) element is
+            /// focused — the conventional submit. Gives a type→press_key plan
+            /// an observable result to verify. Omitted → Return is a no-op.
+            public let onReturn: ClickEffect?
             /// Lowest capture tier at which this element is visible: `ax`
             /// (default), `som`, or `vision`. An element gated to `som`/`vision`
             /// is INVISIBLE in a plain AX capture — the Electron / custom-drawn
@@ -2595,6 +2582,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 editable: Bool? = nil,
                 hidden: Bool? = nil,
                 onClick: ClickEffect? = nil,
+                onReturn: ClickEffect? = nil,
                 minTier: String? = nil,
                 clickFailures: Int? = nil,
                 revealAfterCaptures: Int? = nil,
@@ -2608,6 +2596,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 self.editable = editable
                 self.hidden = hidden
                 self.onClick = onClick
+                self.onReturn = onReturn
                 self.minTier = minTier
                 self.clickFailures = clickFailures
                 self.revealAfterCaptures = revealAfterCaptures
@@ -2722,6 +2711,35 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// gate/verb scenarios run in CI with no model. When present, the model
         /// is never called; when nil, the case uses the live `modelId`.
         public let scriptedActions: [String]?
+        /// Wall-clock budget for the run (`RunLimits.wallClockSeconds`).
+        /// nil → 240. Set low together with `confirmDelaySeconds` to prove
+        /// that user confirm time is credited back to the deadline.
+        public let wallClockSeconds: Double?
+        /// Seconds the harness waits inside every confirm before approving —
+        /// a stand-in for a slow user on the card. nil → approve immediately.
+        public let confirmDelaySeconds: Double?
+        /// When true, the harness tells the loop no surface can render a
+        /// confirm card, so a gated action must fail fast (`gaveUp`) instead
+        /// of being approved.
+        public let confirmUnavailable: Bool?
+        /// When true, the scripted driver's `open` reports `ready: false` and
+        /// the capture right after it is empty — the "app launched but exposed
+        /// no window in time" shape the loop must report as a failed open.
+        public let openNotReady: Bool?
+        /// `RunLimits.requireVerifiedChangeForDone`. nil → the production
+        /// default (true). Set false only for scenes that intentionally
+        /// exercise gate/parse contracts with a static tree.
+        public let requireVerifiedChangeForDone: Bool?
+        /// Floor on `metrics.unverifiedActs` — actions the driver accepted
+        /// but whose verify saw no change. Scores that the loop counted (and
+        /// therefore reported) a posted-but-unobserved input. nil → not scored.
+        public let minUnverifiedActs: Int?
+        /// Floor on `metrics.verifyChanged`. nil → not scored.
+        public let minVerifyChanged: Int?
+        /// Case-insensitive substrings that must each appear in at least one
+        /// feed event title — how a case pins loop-side reporting (e.g. an
+        /// "Open X: not ready" event) that never lands in the tree or summary.
+        public let feedTitleContains: [String]?
 
         public init(
             app: String,
@@ -2739,7 +2757,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectVerbsInOrder: [String]? = nil,
             scoredMaxModelTokens: Int? = nil,
             redactEvidenceValues: Bool? = nil,
-            scriptedActions: [String]? = nil
+            scriptedActions: [String]? = nil,
+            wallClockSeconds: Double? = nil,
+            confirmDelaySeconds: Double? = nil,
+            confirmUnavailable: Bool? = nil,
+            openNotReady: Bool? = nil,
+            requireVerifiedChangeForDone: Bool? = nil,
+            minUnverifiedActs: Int? = nil,
+            minVerifyChanged: Int? = nil,
+            feedTitleContains: [String]? = nil
         ) {
             self.app = app
             self.elements = elements
@@ -2757,6 +2783,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.scoredMaxModelTokens = scoredMaxModelTokens
             self.redactEvidenceValues = redactEvidenceValues
             self.scriptedActions = scriptedActions
+            self.wallClockSeconds = wallClockSeconds
+            self.confirmDelaySeconds = confirmDelaySeconds
+            self.confirmUnavailable = confirmUnavailable
+            self.openNotReady = openNotReady
+            self.requireVerifiedChangeForDone = requireVerifiedChangeForDone
+            self.minUnverifiedActs = minUnverifiedActs
+            self.minVerifyChanged = minVerifyChanged
+            self.feedTitleContains = feedTitleContains
         }
     }
 
@@ -2768,8 +2802,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     ///     recursion guard, and the feed lifecycle run in CI with no tokens.
     ///   - `spawn` — live. Invokes the real `spawn_agent` path (host +
     ///     `TextSubagentKind`) against a user-configured spawnable agent.
-    ///   - `spawn_model` — live. Invokes the real `spawn_model` path (host +
-    ///     `TextSubagentKind`) against a bare spawnable model id, no agent.
+    ///   - `spawn_residency` — live. Drives the PRODUCTION residency path with
+    ///     an independent orchestrator + target model through a temporary
+    ///     spawnable agent, proving the real unload/reload directions.
     ///   - `image` — live. Invokes the real `ImageTool` (host +
     ///     `ImageSubagentKind`); `sourcePaths` non-empty selects edit mode.
     /// Live lanes SKIP (not fail) when the host can't satisfy them (no
@@ -2836,12 +2871,28 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     }
 
     public struct SubagentExpectations: Sendable, Codable {
-        /// One child in a heterogeneous model-free scripted batch. Each child
-        /// still runs through the real `SubagentSession` host and admission
-        /// gate; this shape only supplies deterministic eval inputs.
-        public struct ScriptedBatchRun: Sendable, Codable {
+        public struct RAMAdmission: Sendable, Codable {
+            public let scenario: SubagentAdmissionEvaluator.Scenario
+            public let expected: [SubagentAdmissionEvaluator.Observation]
+        }
+        public let ramAdmission: RAMAdmission?
+
+        /// `workspace` lane: a scripted roster (local + teammates' shared
+        /// agents with presence) and the launcher's two spawn policies drive
+        /// the production resolver, offline refusal, wave permission plan
+        /// and artifact relay caps — one observation per step.
+        public struct WorkspaceDelegation: Sendable, Codable {
+            public let scenario: WorkspaceDelegationEvaluator.Scenario
+            public let expected: [WorkspaceDelegationEvaluator.Observation]
+        }
+        public let workspaceDelegation: WorkspaceDelegation?
+
+        /// One child in a heterogeneous model-free scripted wave (several
+        /// `spawn_agent` calls issued together). Each child still runs through
+        /// the real `SubagentSession` host and admission gate; this shape only
+        /// supplies deterministic eval inputs.
+        public struct ScriptedWaveRun: Sendable, Codable {
             public let id: String?
-            public let targetType: String?
             public let target: String?
             public let input: String?
             public let needsHandoff: Bool?
@@ -2855,7 +2906,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
 
             public init(
                 id: String? = nil,
-                targetType: String? = nil,
                 target: String? = nil,
                 input: String? = nil,
                 needsHandoff: Bool? = nil,
@@ -2868,7 +2918,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 modelName: String? = nil
             ) {
                 self.id = id
-                self.targetType = targetType
                 self.target = target
                 self.input = input
                 self.needsHandoff = needsHandoff
@@ -2882,7 +2931,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             }
         }
 
-        /// `"scripted"` | `"spawn"` | `"spawn_model"` | `"image"`. Selects the lane.
+        /// `"scripted"` | `"spawn"` | `"spawn_residency"` | `"image"` |
+        /// `"computer_use"` | `"browser_use"` | `"ram_admission"`. Selects the lane.
         public let lane: String
 
         // --- scripted lane inputs ---
@@ -2903,15 +2953,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Lifecycle phases the scripted kind emits onto the feed.
         public let phases: [String]?
         /// Scripted lane: run this many copies CONCURRENTLY through the host
-        /// (one parallel tool batch). ≥2 selects the parallel-batch path; the
+        /// (one `spawn_agent` wave). ≥2 selects the parallel-wave path; the
         /// transcript then reports `maxConcurrent` + `runsCompleted`. Pair
         /// with `needsHandoff` (local-exclusive → must serialize) or `remote`
         /// (fan-out → must overlap).
         public let parallel: Int?
-        /// Scripted lane: heterogeneous child specs for one concurrent batch.
+        /// Scripted lane: heterogeneous child specs for one concurrent wave.
         /// When present with at least two entries, this takes precedence over
         /// the uniform `parallel` input.
-        public let scriptedBatch: [ScriptedBatchRun]?
+        public let scriptedWave: [ScriptedWaveRun]?
         /// Scripted lane: resolve as a REMOTE model (`isLocal: false`) so the
         /// admission class is `.remote` — the parallel fan-out input.
         public let remote: Bool?
@@ -2921,7 +2971,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Scripted parallel lane: rendezvous — each run waits (bounded) until
         /// ALL siblings have entered, so fan-out overlap is observed by
         /// construction. Only set for concurrent-capable classes (`remote`);
-        /// a serialized batch would just burn the bounded wait.
+        /// a serialized wave would just burn the bounded wait.
         public let rendezvous: Bool?
         /// Scripted lane: attach canned `usage` + `context` accounting to the
         /// success payload — deterministic CI coverage for the usage /
@@ -2944,26 +2994,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// (e.g. "not spawnable → rejected") that must NOT be seeded.
         public let seedSpawnableAgent: Bool?
 
-        // --- live spawn_model lane inputs ---
-        /// When true, the runner seeds the target model (explicit `model` else
-        /// the run model) into the Default agent's global spawnable MODEL pool
-        /// for the duration of the run and restores it after, so the
-        /// `spawn_model` case RUNS across models on any host instead of skipping.
-        /// Leave false/nil for negative guards (e.g. "model not spawnable →
-        /// rejected") that must NOT be seeded. `input` is the task; `model` (when
-        /// set) pins the target id, otherwise the run model is used.
-        public let seedSpawnableModel: Bool?
-        /// Tool-capable spawn lane: grant the child this tool reach for the
-        /// run (`"readOnly"` → curated read-only toolset; nil/`"none"` →
-        /// text-only). Applied with the seeding snapshot/restore, so a
-        /// developer's real config is untouched.
-        public let seedSpawnToolAccess: String?
-
-        // --- live spawn_model_residency lane inputs ---
+        // --- live spawn_residency lane inputs ---
         /// The chat/core ORCHESTRATOR model the residency decision is made
         /// against. A LOCAL id (installed) models a resident local orchestrator;
         /// a remote id models a cloud orchestrator (nothing local to evict).
-        /// Paired with `model` (the spawn target) to exercise one of the four
+        /// Paired with `model` (the spawn target, run through a temporary
+        /// spawnable agent pinned to it) to exercise one of the four
         /// directions end-to-end (the only lane that proves the real swap).
         public let orchestrator: String?
         /// Toggle the "Local Orchestrator Handoff" switch for the run. `false`
@@ -3069,29 +3105,30 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let expectImageMode: String?
         /// Image lane: minimum number of images on success.
         public let minImages: Int?
-        /// Parallel-batch lane: exact peak overlap of run bodies. `1` pins
-        /// serialization (two local handoffs never overlap — the batch-race
+        /// Parallel-wave lane: exact peak overlap of run bodies. `1` pins
+        /// serialization (two local handoffs never overlap — the wave-race
         /// guard); `2` pins remote fan-out (both actually ran concurrently).
         public let expectMaxConcurrent: Int?
-        /// Parallel-batch lane: exact number of runs that must succeed (the
+        /// Parallel-wave lane: exact number of runs that must succeed (the
         /// queued run completes rather than being refused or deadlocking).
         public let expectRunsCompleted: Int?
-        /// Parallel-batch lane: exact number of children that must reach a
+        /// Parallel-wave lane: exact number of children that must reach a
         /// terminal envelope, whether successful or failed.
         public let expectRunsSettled: Int?
-        /// Parallel-batch lane: ordered terminal envelope kinds for all
+        /// Parallel-wave lane: ordered terminal envelope kinds for all
         /// children.
         public let expectRunEnvelopeKinds: [String]?
-        /// Production spawn_batch aggregate status.
-        public let expectBatchAggregateStatus: String?
-        /// Production spawn_batch caller-stable child ids in result order.
-        public let expectBatchJobIDs: [String]?
-        /// Ordered child summaries returned inside each aggregated envelope.
-        public let expectBatchSummaries: [String]?
+        /// Scripted wave aggregate status (`succeeded` / `partial_failure` /
+        /// `all_failed` / `all_cancelled`).
+        public let expectWaveAggregateStatus: String?
+        /// Scripted wave caller-stable child ids in call order.
+        public let expectWaveJobIDs: [String]?
+        /// Ordered child summaries returned inside each wave envelope.
+        public let expectWaveSummaries: [String]?
         /// Ordered string payload subsets for each child. Each expected
         /// key/value must be present; extra production payload fields are
         /// allowed.
-        public let expectBatchPayloadFields: [[String: String]]?
+        public let expectWavePayloadFields: [[String: String]]?
         /// Assert worker usage was recorded: `prompt_tokens` +
         /// `completion_tokens` present and > 0 (per the proof rule that a
         /// generation row without token accounting is not a pass).
@@ -3116,6 +3153,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
 
         public init(
             lane: String,
+            ramAdmission: RAMAdmission? = nil,
+            workspaceDelegation: WorkspaceDelegation? = nil,
             needsHandoff: Bool? = nil,
             decision: String? = nil,
             resolveFailure: String? = nil,
@@ -3123,7 +3162,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             recurse: Bool? = nil,
             phases: [String]? = nil,
             parallel: Int? = nil,
-            scriptedBatch: [ScriptedBatchRun]? = nil,
+            scriptedWave: [ScriptedWaveRun]? = nil,
             remote: Bool? = nil,
             runDelayMs: Int? = nil,
             rendezvous: Bool? = nil,
@@ -3132,8 +3171,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             agent: String? = nil,
             input: String? = nil,
             seedSpawnableAgent: Bool? = nil,
-            seedSpawnableModel: Bool? = nil,
-            seedSpawnToolAccess: String? = nil,
             orchestrator: String? = nil,
             handoffEnabled: Bool? = nil,
             ensureResident: Bool? = nil,
@@ -3170,10 +3207,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectRunsCompleted: Int? = nil,
             expectRunsSettled: Int? = nil,
             expectRunEnvelopeKinds: [String]? = nil,
-            expectBatchAggregateStatus: String? = nil,
-            expectBatchJobIDs: [String]? = nil,
-            expectBatchSummaries: [String]? = nil,
-            expectBatchPayloadFields: [[String: String]]? = nil,
+            expectWaveAggregateStatus: String? = nil,
+            expectWaveJobIDs: [String]? = nil,
+            expectWaveSummaries: [String]? = nil,
+            expectWavePayloadFields: [[String: String]]? = nil,
             expectUsageRecorded: Bool? = nil,
             expectContextAccounting: Bool? = nil,
             minContextSavedTokens: Int? = nil,
@@ -3182,6 +3219,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectPostRunCache: Bool? = nil
         ) {
             self.lane = lane
+            self.ramAdmission = ramAdmission
+            self.workspaceDelegation = workspaceDelegation
             self.needsHandoff = needsHandoff
             self.decision = decision
             self.resolveFailure = resolveFailure
@@ -3189,7 +3228,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.recurse = recurse
             self.phases = phases
             self.parallel = parallel
-            self.scriptedBatch = scriptedBatch
+            self.scriptedWave = scriptedWave
             self.remote = remote
             self.runDelayMs = runDelayMs
             self.rendezvous = rendezvous
@@ -3198,8 +3237,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.agent = agent
             self.input = input
             self.seedSpawnableAgent = seedSpawnableAgent
-            self.seedSpawnableModel = seedSpawnableModel
-            self.seedSpawnToolAccess = seedSpawnToolAccess
             self.orchestrator = orchestrator
             self.handoffEnabled = handoffEnabled
             self.ensureResident = ensureResident
@@ -3236,10 +3273,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectRunsCompleted = expectRunsCompleted
             self.expectRunsSettled = expectRunsSettled
             self.expectRunEnvelopeKinds = expectRunEnvelopeKinds
-            self.expectBatchAggregateStatus = expectBatchAggregateStatus
-            self.expectBatchJobIDs = expectBatchJobIDs
-            self.expectBatchSummaries = expectBatchSummaries
-            self.expectBatchPayloadFields = expectBatchPayloadFields
+            self.expectWaveAggregateStatus = expectWaveAggregateStatus
+            self.expectWaveJobIDs = expectWaveJobIDs
+            self.expectWaveSummaries = expectWaveSummaries
+            self.expectWavePayloadFields = expectWavePayloadFields
             self.expectUsageRecorded = expectUsageRecorded
             self.expectContextAccounting = expectContextAccounting
             self.minContextSavedTokens = minContextSavedTokens

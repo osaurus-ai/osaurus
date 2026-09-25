@@ -152,15 +152,31 @@ struct RouterAccountUsageCenterView: View {
         }
     }
 
+    /// Totals for the Credits Activity card. The "Cached input" row appears
+    /// only once the router has echoed a non-zero prompt-cache split, so
+    /// accounts on a pre-cache router (or with no hits yet) see the original
+    /// four rows unchanged.
+    private var creditsTotalsRows: [(String, String)] {
+        let credits = model.snapshot.credits
+        var rows: [(String, String)] = [
+            (L("Input tokens"), credits.inputTokens.formatted())
+        ]
+        if let cached = OsaurusRouter.formatCachedInputLabel(
+            cachedTokens: credits.cachedInputTokens,
+            inputTokens: credits.inputTokens
+        ) {
+            rows.append((L("Cached input"), cached))
+        }
+        rows.append((L("Output tokens"), credits.outputTokens.formatted()))
+        rows.append((L("Usage cost"), OsaurusRouter.formatMicroAsCredits(credits.costMicro)))
+        rows.append((L("Top-ups"), OsaurusRouter.formatMicroAsCredits(model.snapshot.transactions.creditMicro)))
+        return rows
+    }
+
     private var creditsActivitySection: some View {
         sectionCard(title: L("Credits Activity"), icon: "clock.arrow.circlepath") {
             VStack(alignment: .leading, spacing: 14) {
-                keyValueGrid([
-                    (L("Input tokens"), model.snapshot.credits.inputTokens.formatted()),
-                    (L("Output tokens"), model.snapshot.credits.outputTokens.formatted()),
-                    (L("Usage cost"), OsaurusRouter.formatMicroAsCredits(model.snapshot.credits.costMicro)),
-                    (L("Top-ups"), OsaurusRouter.formatMicroAsCredits(model.snapshot.transactions.creditMicro)),
-                ])
+                keyValueGrid(creditsTotalsRows)
 
                 Divider()
 

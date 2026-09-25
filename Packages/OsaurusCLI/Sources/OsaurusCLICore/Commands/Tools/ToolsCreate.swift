@@ -1926,7 +1926,7 @@ public struct ToolsCreate {
             ### 2. Test in Osaurus
 
             1. Open Osaurus app
-            2. Go to Tools settings (Cmd+Shift+M → Tools)
+            2. Go to Tools settings (Settings… (⌘,) → Tools → Native Plugins)
             3. Verify your plugin appears
             4. Test each tool by asking the AI to use it
 

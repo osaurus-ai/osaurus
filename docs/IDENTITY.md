@@ -45,13 +45,25 @@ Osaurus takes a different approach: **address-based identity**. Every participan
 The identity system has three tiers, each serving a distinct role:
 
 ```
-Master Address (Human)
-├── Agent Address (index 0)
-├── Agent Address (index 1)
-├── Agent Address (index 2)
-│   ...
-└── Device ID (per physical device)
+Master Address (Human)            ← iCloud Keychain / 24-word phrase; same on every device
+├── Device A (device ID a1b2c3d4)
+│   ├── Agent Address v2 (scope a1b2c3d4, index 0)
+│   ├── Agent Address v2 (scope a1b2c3d4, index 1)
+│   └── ...
+├── Device B (device ID c3d4e5f6)
+│   ├── Agent Address v2 (scope c3d4e5f6, index 0)
+│   └── ...
+└── Legacy Agent Address v1 (index n)   ← minted before device scoping; master-global
 ```
+
+The master is shared by every device that holds the same identity. Each
+device has its own hardware-bound device ID, and every agent address minted on
+that device is derived from `(master, deviceID, index)`. Two Macs (or a Mac and
+a future iOS client) restored from the same phrase therefore mint **disjoint**
+agent addresses even when both allocate index 0 — there is no cross-device
+index coordination, and none is needed. Ownership is still provable from the
+master alone: any device holding the master can re-derive and sign for any of
+its agents given the stored `(deviceScope, index)` path.
 
 ### Master Address
 
@@ -70,9 +82,9 @@ The master key is a 32-byte random secret generated via `SecRandomCopyBytes`. It
 
 Each agent in Osaurus gets a deterministic child key derived from the master key. Agents can sign messages on their own behalf, but their authority always traces back to the master address.
 
-- **Derivation:** HMAC-SHA512 with domain separation
+- **Derivation:** HMAC-SHA512 with domain separation; v2 additionally binds the minting device's ID
 - **Storage:** Agent keys are never stored — they are re-derived on demand from the master key
-- **Association:** Each agent's `agentIndex` and `agentAddress` are persisted on the `Agent` model
+- **Association:** Each agent's `agentIndex`, `agentDeviceScope` (nil for legacy v1), and `agentAddress` are persisted on the `Agent` model. `Agent.agentKeyPath` bundles the first two into an `AgentKeyPath` that every derivation/signing site takes, so v1 and v2 agents are handled by one code path.
 
 Agent addresses enable per-agent scoping: an access key signed by an agent can only authorize actions for that specific agent, not the entire identity.
 
@@ -80,9 +92,12 @@ Agent addresses enable per-agent scoping: an access key signed by an agent can o
 
 | Operation | Effect |
 |-----------|--------|
-| `assignAddress(to:)` | Allocates the next unused HMAC index and persists the derived address. No-op if the agent already has one. |
-| `rotateAddress(of:)` | Allocates a fresh unused index, re-derives a new address, and revokes every active osk-v1 key whose audience matched the previous address. Indices are never reused — old addresses may still be referenced by external clients holding tokens. |
-| `revokeAddress(of:)` | Clears the agent's address and index, and revokes every active osk-v1 key scoped to it. The agent itself stays around (prompt, settings, etc.) but loses signing authority until a fresh address is assigned. |
+| `assignAddress(to:)` | Allocates the next unused index under this device's scope (v2) and persists the derived address plus `agentDeviceScope`. No-op if the agent already has one. |
+| `rotateAddress(of:)` | Allocates a fresh unused v2 path, re-derives a new address, and revokes every active osk-v1 key whose audience matched the previous address. Paths are never reused — old addresses may still be referenced by external clients holding tokens. Rotating a legacy v1 agent moves it to v2. |
+| `revokeAddress(of:)` | Clears the agent's address, index, and device scope, and revokes every active osk-v1 key scoped to it. The agent itself stays around (prompt, settings, etc.) but loses signing authority until a fresh address is assigned. |
+
+Existing v1 agents keep their addresses: nothing about pairings, shares, or
+access keys changes on upgrade. New and rotated addresses are always v2.
 
 ### Device ID
 
@@ -93,6 +108,16 @@ A hardware-bound identity that proves which physical device is making a request.
 - **Fallback:** Software-generated random ID when App Attest is unavailable (development builds)
 
 The device ID adds a second authentication factor: even if someone obtains a valid identity signature, they cannot forge the device assertion without physical access to the Secure Enclave.
+
+The device ID is a **device fact, not an identity fact**. It is attested
+independently of master creation via `OsaurusIdentity.ensureDeviceAttested()`
+(→ `DeviceKey.ensureAttested()`), which returns the existing ID or attests a
+new one but never replaces one that exists. `setup()` calls it on both the
+fresh and existing-master branches, `loadExistingIdentity()` and
+`restore(words:)` call it too, so a device that received the master through
+iCloud Keychain sync or a phrase restore is attested on first load instead of
+failing with `deviceNotAttested`. Reset Identity and Recover from phrase
+replace the master but keep the device ID.
 
 ---
 
@@ -111,7 +136,43 @@ The device ID adds a second authentication factor: even if someone obtains a val
 
 The master key is stored in iCloud Keychain with `kSecAttrAccessibleWhenUnlocked`. iCloud sync is attempted first; if unavailable, the key is stored device-only with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
 
+**Shared Keychain access group — code-ready, not shipped.** iCloud Keychain only hands a synced item to another app in the same access group, so a same-team iOS client can receive the master without the phrase only if both apps write into a shared group, `<TeamID>.ai.osaurus.identity`. [`OsaurusKeychainGroup`](../Packages/OsaurusCore/Identity/OsaurusKeychainGroup.swift) resolves that group from the `OsaurusKeychainAccessGroup` Info.plist key, and `MasterKey` / `MasterMnemonicStore` dual-write and mirror as described below whenever it resolves.
+
+**Why it is off:** `keychain-access-groups` is a *profile-managed* entitlement on macOS. The Developer ID release build ships without a provisioning profile, and adding the key made AMFI refuse to spawn the app — that bricked 0.19.3 (#1288, reverted in #1296, which also added the `RuntimePolicySourceTests` guard that fails CI if the key reappears in `osaurus.entitlements`, and the `verify_launch.sh` spawn gate in the release workflow). Neither the entitlement nor the Info.plist key is in `App/osaurus`, so `OsaurusKeychainGroup.shared` is `nil` in every shipped build and the Keychain layout is unchanged: one synced item in the app's default group. Enabling the group is a release-pipeline decision — embed a provisioning profile for the Developer ID build, or pick a mechanism macOS accepts without one — and is tracked as **BLOCKED** rather than partially shipped. Until then, a phone's only bootstrap path is the 24-word phrase (see `MOBILE_PROTOCOL.md` § 2.2).
+
+When the group is enabled, the layout below applies.
+
+The layout is deliberately **two copies of the same bytes, never one**:
+
+- **Dual-write** (`MasterKey.addGenericPassword`, order pinned by `OsaurusKeychainGroup.writeAttemptGroups`): the app's default per-app group is written first and unconditionally — sync, then device-only — because that is the only group a Mac still on a build *without* the entitlement can read. The shared group is then written as an additional copy. `errSecMissingEntitlement` on the shared group (dev signing, SwiftPM tests, the CLI) just leaves that copy out.
+- **Add-only mirror** (`MasterKey.mirrorGenericPassword`, decision in `OsaurusKeychainGroup.mirrorPlan`): once per process after a successful read, list every item for the `(service, account)`; if a synced copy exists but none in the shared group, add one there; if every copy is in the shared group (minted by a client that only wrote there), add one in the default group. Each added copy is read back through a group-precise query and removed again on mismatch. **Nothing pre-existing is ever deleted.** An iCloud Keychain delete propagates to every device, so a "move" would make a second Mac on the previous build watch its only visible master disappear, report "no identity", and mint a second master on *Create* — two masters, one account. A device-only master (data-protection default group or the file-based login keychain, which has no access groups) is left where it is: it was never going to reach another device.
+- Read and delete queries never name a group and use `kSecAttrSynchronizableAny`, so a read matches either copy (same bytes, so order does not matter) and *Reset Identity* / *Recover from phrase* clear both before re-writing both.
+
+Consequence for a mixed-version fleet: a Mac on an entitled build and a Mac on a build without the group keep unlocking the same master, and a Reset or Recover on either is seen by the other. Dropping the default-group copy would require every device to be on an entitled build, which a client cannot observe; the duplicate costs nothing, so there is no plan to remove it.
+
 ### Agent Key
+
+Two derivations exist. Which one applies to an agent is decided by its stored
+`AgentKeyPath` (`Agent.agentKeyPath`): `deviceScope == nil` → v1, otherwise v2.
+
+**v2 (device-scoped, current — everything minted or rotated now):**
+
+```
+HMAC-SHA512(
+    key:  masterKey,                                                  // 32 bytes
+    data: "osaurus-agent-v2" || utf8(deviceScope) || 0x00 || bigEndian(index)
+)
+    → first 32 bytes of HMAC output
+    → same address derivation as master key
+```
+
+`deviceScope` is the minting device's device ID (see below). The `0x00`
+terminator makes the variable-length scope unambiguous against the index.
+Different devices under the same master produce disjoint address spaces, so
+the same index on two devices is two different agents with two different
+addresses.
+
+**v1 (legacy, master-global — agents minted before device scoping):**
 
 ```
 HMAC-SHA512(
@@ -122,7 +183,7 @@ HMAC-SHA512(
     → same address derivation as master key
 ```
 
-The domain prefix `osaurus-agent-v1` prevents cross-protocol key reuse. The big-endian index encoding ensures a canonical byte representation across platforms. Each unique index produces a completely independent keypair.
+The distinct domain prefixes (`osaurus-agent-v1` / `osaurus-agent-v2`) prevent cross-protocol and cross-version key reuse: a v2 address at index 0 is unrelated to the v1 address at index 0. The big-endian index encoding ensures a canonical byte representation across platforms. Each unique path produces a completely independent keypair.
 
 Agent keys are **never persisted**. They are re-derived from the master key whenever a signature is needed, which requires biometric authentication to access the master key. The derived `agentAddress` is persisted on the `Agent` model so it can be displayed without triggering biometric prompts.
 
@@ -328,6 +389,21 @@ A standard BIP39 24-word mnemonic encoding the 32-byte master key. This is the o
 - **Memory hygiene:** The 32-byte seed is held only on the stack of `OsaurusIdentity.setup()` long enough to compute the mnemonic, then wiped via `Data.zeroOut()` (which calls `memset` over the underlying buffer).
 - **Acknowledgement:** A `masterMnemonicAcknowledged` UserDefaults flag (canonicalised in `IdentityDefaultsKey`) is set when the user confirms "I've saved it". On subsequent launches the Identity view shows a yellow "Master key backup not confirmed" banner whenever the flag is missing.
 
+**What the phrase does and does not recover.** The phrase rebuilds the **master** only. Agent addresses are re-derived from the master plus each agent's stored key path, and the two layouts differ in what that path needs:
+
+| Layout | Path | Recoverable from the phrase **alone**? | Recoverable from the phrase **plus the Agent record**? |
+|---|---|---|---|
+| v1 (legacy) | `index` | Effectively yes — the index space is tiny, so a known address can be matched by scanning | Yes |
+| v2 (device-scoped) | `(deviceScope, index)` | **No.** The scope is an opaque 8-hex device ID that exists only on the `Agent` record; there is no way to rediscover it from the phrase or from the address | Yes — `agentDeviceScope` is a field on `Agent` |
+
+Where the `(deviceScope, index)` path lives, and therefore what counts as a backup of a v2 agent address:
+
+- The `Agent` JSON on disk (`~/.osaurus/agents/<id>.json`) and anything that copies it — Time Machine, `AgentStore` backups.
+- An `.osaurus-agent` bundle: `agent.json` is the full `Agent` encoding, so the scope travels with the export.
+- **Not** the Workspaces roster: `OsaurusRouterWorkspaceShareAgentBody` / the roster row carry `agent_address`, display name, description and proof — no scope and no index. Knowing an address from the router (or from a teammate's pairing) is not enough to re-derive it.
+
+So a wiped Mac restored from the phrase gets its identity back and can prove ownership of any address it later learns the path for, but it cannot reconstitute a v2 agent's address without a copy of that agent's record. This is a regression relative to v1's scan-the-indices fallback and is the price of collision-free addresses across devices; keep agent exports or a `~/.osaurus` backup alongside the phrase. `RecoverFromMnemonicSheet` handles both layouts because it confirms the candidate master against each agent's stored `agentKeyPath`, not against a bare index.
+
 ### One-time recovery code (server-side claim)
 
 ```
@@ -361,11 +437,14 @@ The **Recover** path will refuse to overwrite the current master if the entered 
 
 ```swift
 public struct IdentityDrift: Sendable {
-    public let mismatchedAgents: [Agent]    // stored agentAddress != deriveAddress(currentMaster, agentIndex)
+    public let mismatchedAgents: [Agent]    // stored agentAddress != deriveAddress(currentMaster, agentKeyPath)
     public let staleAccessKeys: [AccessKeyInfo] // iss is neither the current master nor any current agent
-    public var hasDrift: Bool { ... }
+    public let recoverableScopeAgents: [Agent] // scope dropped by an older build; v2 path under THIS device re-derives the address
+    public var hasDrift: Bool { ... }          // mismatched || stale — recoverable agents are not drift
 }
 ```
+
+`diagnose(masterKey:agents:accessKeys:currentDeviceScope:)` takes this device's ID so it can tell a *lost scope* from a *lost master*: an agent with `agentDeviceScope == nil` whose v1 derivation does not match but whose v2 derivation under `currentDeviceScope` reproduces the stored address exactly was re-saved by a build that predates the field (downgrade → upgrade). That is lossless to fix — `AgentManager.repairDeviceScope(for:scope:)` writes the scope back without touching the address, index, or any minted key — so the Identity view (and `OsaurusIdentity.restore`) repair it automatically before rendering the banner, and show "Restored the device scope for N agent address(es) saved by an older version. No keys were changed." A dropped scope diagnosed on a *different* device stays `mismatched`, because nothing lossless can be done there.
 
 The helper does no Keychain or biometric work itself — the Identity view performs the biometric unlock once on load, passes the bytes in, and wipes them after the call.
 
@@ -373,7 +452,7 @@ The helper does no Keychain or biometric work itself — the Identity view perfo
 
 **What the health check catches:**
 
-- **Mismatched agents** — `agent.agentAddress.lowercased() != AgentKey.deriveAddress(currentMaster, agent.agentIndex).lowercased()` for any non-built-in agent with both fields set. Built-in agents and agents without an address yet are skipped.
+- **Mismatched agents** — `agent.agentAddress.lowercased() != AgentKey.deriveAddress(masterKey: currentMaster, path: agent.agentKeyPath).lowercased()` for any non-built-in agent with an address. Each agent is checked against **its own** stored derivation (v1 or v2), so a legacy agent is not flagged just because the v2 derivation at the same index differs, and an agent minted on another device under a different scope is healthy as long as its own `(scope, index)` re-derives correctly. Built-in agents and agents without an address yet are skipped.
 - **Stale access keys** — `key.iss` does not match the current master and does not match any agent's *current* derived address. Revoked keys are ignored. The check tolerates rotated agents (it knows about both the old and new derived address while drift is still being repaired).
 
 When `drift.hasDrift` is true, `IdentityView` renders an `IdentityDriftBanner` at the top of the scroll view with the three exit doors above. The same banner shows a one-line summary like "3 agent address(es) and 2 access key(s) reference a previous master."
@@ -386,10 +465,10 @@ The `AgentAddressesSection` of the Identity view renders each non-built-in agent
 
 The collapsed row is a compact summary: address, copy button, "Stale" pill if the agent appears in `IdentityDrift.mismatchedAgents`, and a chevron. Expanded, the row exposes:
 
-- **Rotate Key** — `AgentManager.rotateAddress(of:)`. Picks a fresh unused HMAC index, derives a new address, persists it, and revokes every active osk-v1 key whose audience matched the *previous* address. The HTTP server restarts so the new validator takes effect immediately.
+- **Rotate Key** — `AgentManager.rotateAddress(of:)`. Picks a fresh unused v2 path under this device's scope, derives a new address, persists it, and revokes every active osk-v1 key whose audience matched the *previous* address. It returns an `AddressRotation { agentId, previousAddress, newAddress, newKeyPath }` and `IdentityView.rotateKey` propagates it to every surface that pinned the old address: the HTTP server restarts so the new validator takes effect; `RelayTunnelManager.handleAddressRotated(agentId:previousAddress:)` sends `remove_agent` for the old address and `add_agent` (freshly signed) for the new one on the live tunnel and clears any `superseded` mark; `WorkspacesService.migrateShares(from:to:)` re-shares the new address into every workspace that listed the old one (share first, then unshare, so no workspace is ever left with neither), kills the workspace-minted keys for the old address, and re-keys the per-agent pool-billing preference; `OwnerDeviceAccessHost.forgetRecords(agentAddress:)` drops the owner-device key records (their keys were already revoked). Workspaces whose re-share failed are listed in the error message for a manual re-share.
 - **Revoke** — `AgentManager.revokeAddress(of:)`. Clears the agent's address and index and revokes every active osk-v1 key scoped to it. The agent's prompt and settings stay intact.
 - **Per-agent osk-v1 access keys.** A scoped list of every key whose `aud` matches the agent's address (via `APIKeyManager.listKeys(forAudience:)`). Each key shows its label, status pill (Active / Expired / Revoked), expiration, and a per-key Revoke button.
-- **Generate access key (scoped to this agent).** Opens the shared `AccessKeyGeneratorSheet` with `agentIndex` pre-filled, so `APIKeyManager.generate(label:expiration:agentIndex:)` mints an agent-scoped key. The sheet displays a "Scoped to {agent name} ({address})" caption to make the scope unambiguous. The freshly generated key is shown in a one-shot copy banner ("Copy this key now. It won't be shown again.") and is never persisted to disk.
+- **Generate access key (scoped to this agent).** Opens the shared `AccessKeyGeneratorSheet` with the agent's `agentKeyPath` pre-filled, so `APIKeyManager.generate(label:expiration:agentKeyPath:)` mints an agent-scoped key. The sheet displays a "Scoped to {agent name} ({address})" caption to make the scope unambiguous. The freshly generated key is shown in a one-shot copy banner ("Copy this key now. It won't be shown again.") and is never persisted to disk.
 
 The same `AccessKeyGeneratorSheet` powers the global `AccessKeysSection` in `ServerView` (master-scoped). It was extracted from `ServerView.swift` into [`Views/Settings/AccessKeyGeneratorSheet.swift`](../Packages/OsaurusCore/Views/Settings/AccessKeyGeneratorSheet.swift) so both call sites share one widget.
 
@@ -426,7 +505,7 @@ The LAN pairing flow is a challenge-response protocol between an in-app connecto
 1. **Challenge.** Connector calls `GET /pair/challenge`; the host issues a single-use nonce (~2 minute TTL, tracked in `PairingChallengeStore`). Connector-chosen nonces are not accepted, so a captured `/pair` request cannot be replayed.
 2. **Request.** Connector generates an ephemeral X25519 keypair and signs `nonce` + ephemeral public key (`encPub`) with its `connectorAddress` private key (domain prefix `Osaurus Signed Pairing`), then `POST`s to `/pair`.
 3. **Verification and approval.** The host verifies the signature, atomically consumes the nonce, resolves the target agent, and shows an approval dialog naming both the connector and the agent. Prompts are serialized (a concurrent request gets `429 busy`), auto-deny after a 2-minute timeout, and only accept Return when the prompt window is key — keystrokes in other apps cannot approve a pairing. `/pair` and `/pair/challenge` are rate-limited per source IP, with a cooldown after a denial.
-4. **Sealed key delivery.** On approval, the host mints an **agent-scoped** `osk-v1` key for the approved agent (`agentIndex = agent.agentIndex`) with a **90-day expiration** by default ("Remember this device permanently" opts into a non-expiring key). The key is HPKE-sealed (X25519 + HKDF-SHA256 + ChaCha20-Poly1305, via `PairingKeyEnvelope`) to the connector's ephemeral `encPub`, with the agent address and nonce bound into the HPKE `info` — a passive observer on the LAN never sees the plaintext key, and an envelope cannot be transplanted to a different exchange.
+4. **Sealed key delivery.** On approval, the host mints an **agent-scoped** `osk-v1` key for the approved agent (signed along `agent.agentKeyPath`) with a **90-day expiration** by default ("Remember this device permanently" opts into a non-expiring key). The key is HPKE-sealed (X25519 + HKDF-SHA256 + ChaCha20-Poly1305, via `PairingKeyEnvelope`) to the connector's ephemeral `encPub`, with the agent address and nonce bound into the HPKE `info` — a passive observer on the LAN never sees the plaintext key, and an envelope cannot be transplanted to a different exchange.
 5. **Server identity verification.** The response carries a server signature (agent key) over the challenge and key fingerprint. The connector recovers the signer address and requires it to match the `address` it discovered in the agent's Bonjour TXT record, defeating spoofed advertisements.
 6. The response body containing the new key is sent on the wire but **never persisted to the request log** — `InsightsService` redacts both `apiKey` JSON values and `Bearer osk-…` headers as defense-in-depth across all logged bodies.
 
@@ -438,7 +517,9 @@ Agents can be exposed through the Osaurus Relay (`agent.osaurus.ai`), which prox
 
 - **No loopback trust for relayed traffic.** `RelayTunnelManager` stamps every proxied request with an internal marker header (set *after* copying the external caller's headers, so a remote caller cannot suppress or forge a trusted state). The HTTP handler treats marked requests as non-loopback: they always pass through the full auth gate, CORS origin rules, and the built-in-agent remote block, even when `Expose to network` is off.
 - **Relay pairing (`/pair-invite`)** consumes a signed, single-use `AgentInvite` and supports the same HPKE sealed-key delivery as LAN pairing: the connector supplies an ephemeral `encPub`, and the minted key is returned only inside a sealed envelope. The relay operator (a TLS-terminating MITM by construction) never observes plaintext credentials in transit.
-- **Tunnel auth** uses a server-issued nonce challenge signed with the master key; the key material is zeroed immediately after signing, and transient auth failures retry with bounded exponential backoff.
+- **Tunnel auth** uses a server-issued nonce challenge. Each agent on the tunnel signs `osaurus-tunnel:<agentAddress>:<nonce>:<timestamp>` with its **own derived child key** (`AgentKey.sign(payload:masterKey:path:)` along the agent's `agentKeyPath`), not the master; the relay recovers the signer and requires it to equal the claimed address. The master key material is zeroed immediately after derivation, and transient auth failures retry with bounded exponential backoff.
+- **Owner redeem (`/pair-invite`, `{"owner_redeem": …}`).** A device holding the *same* master (a phone signed into the user's iCloud Keychain, a second Mac restored from the phrase) obtains an agent-scoped osk-v1 key for an agent hosted here without a Workspace, a router attestation, or an invite. Step one issues a 120 s single-use nonce bound to `(agent_address, device_id)` — one outstanding per pair (a repeat replaces it) under a hard table cap, so unauthenticated step-one traffic cannot grow the table; step two must carry a fresh X25519 `encPub` (required, validated before the nonce is consumed; `400` without it) and an EIP-191 **master** signature over `osaurus-owner:redeem:<agent_address_lower>:<nonce>` that recovers to this host's own master address (derived non-interactively, as the validator does). Then: agent must be hosted here (`404`), must not be built-in (`403`, `Agent.rejectBuiltInForExternalSurface`), key is minted with label `Owner device – <device_name>` and a 90-day expiry, HPKE-sealed to `encPub` (never returned in plaintext — the relay terminates TLS and is untrusted by design), and recorded in `~/.osaurus/identity/owner-devices.json` (one live key per device + agent; a re-redeem replaces the previous key). Implementation: [`Services/Auth/OwnerDeviceAccessHost.swift`](../Packages/OsaurusCore/Services/Auth/OwnerDeviceAccessHost.swift); full wire contract in [`MOBILE_PROTOCOL.md`](MOBILE_PROTOCOL.md).
+- **One tunnel per address.** The relay maps each agent address to exactly one tunnel; a newer authenticated tunnel for the same address evicts the older one with `agent_removed reason:"superseded"`. `RelayTunnelManager` honors this: the evicted agent is marked `AgentRelayStatus.servedElsewhere` (surfaced as "Served From Another Device" / "On another device" in the relay status UI), its address is dropped from the auth frame on subsequent reconnects, and if no agents remain the tunnel stops reconnecting instead of ping-ponging with the other device. The superseded set is cleared on a user-initiated relay toggle/reconnect ("Serve From This Mac") and on relaunch. With v2 device-scoped addresses, supersession only happens for genuinely duplicated agent state (e.g. a restored backup running on two machines) — two devices minting independently never collide.
 
 ### Secure Channel (Agent-to-Agent E2E Encryption)
 
@@ -492,6 +573,8 @@ The address-based design naturally extends to agent-to-agent communication acros
 | Master key cannot be silently overwritten | `MasterKey.generate(allowReplace:)` defaults to `false` and throws `masterAlreadyExists` if a master is present; `OsaurusIdentity.setup()` short-circuits when one already exists |
 | Master key has a local restore path | BIP39 24-word mnemonic shown once at setup; entered via `RecoverFromMnemonicSheet` to call `MasterKey.install(seed:allowReplace: true)` |
 | Agent keys never stored | Re-derived on demand via HMAC-SHA512 from master key |
+| Multi-device: unique addresses | v2 derivation binds the minting device's ID, so devices sharing one master mint disjoint agent addresses with no coordination |
+| Multi-device: same identity everywhere | Master syncs via iCloud Keychain or phrase; device attestation is ensured on load/restore, never gated on master creation |
 | Agent indices are never reused | `AgentManager.nextUnusedAgentIndex()` always picks a fresh slot so old derived addresses cannot be regenerated by the rotate path |
 | Device keys hardware-bound | Secure Enclave P-256 via App Attest (`DCAppAttestService`) |
 | Anti-replay | Per-device monotonic counter (`cnt`) persisted in `UserDefaults`; server rejects seen values |
@@ -526,8 +609,10 @@ The address-based design naturally extends to agent-to-agent communication acros
 |------|---------------|
 | `MasterKey.swift` | Generate (`generate(allowReplace:)`), install a caller-supplied seed (`install(seed:allowReplace:)`), read, sign, and delete the secp256k1 master key in iCloud Keychain |
 | `MasterKeyMnemonic.swift` | BIP39 24-word encode/decode of the 32-byte master, backed by the bundled English wordlist |
-| `IdentityHealthCheck.swift` | Pure helper that classifies persisted derivatives as healthy / mismatched against the current master |
-| `AgentKey.swift` | Deterministic child key derivation (HMAC-SHA512) and signing for per-agent identities |
+| `MasterMnemonicStore.swift` | iCloud Keychain item for the 24-word phrase, same service / access group as the master |
+| `OsaurusKeychainGroup.swift` | Resolves the shared Keychain access group from Info.plist (nil in builds without the entitlement); pure dual-write order (`writeAttemptGroups`) and add-only mirror decision (`mirrorPlan`) |
+| `IdentityHealthCheck.swift` | Pure helper that classifies persisted derivatives as healthy / mismatched / recoverable-scope against the current master |
+| `AgentKey.swift` | Deterministic child key derivation (HMAC-SHA512, v1 master-global and v2 device-scoped), `AgentKeyPath`, and signing for per-agent identities |
 | `DeviceKey.swift` | App Attest key generation, attestation, assertion, and software fallback |
 | `OsaurusIdentity.swift` | Public entry point — orchestrates `setup()`, `wipe()`, and two-layer request signing |
 | `IdentityModels.swift` | Data types: `OsaurusID`, `TokenHeader`, `TokenPayload`, `AccessKeyPayload`, `AccessKeyInfo`, `AgentInfo`, `RevocationSnapshot`, `IdentityInfo` (now carries `mnemonic`), and the `IdentityDefaultsKey` namespace for UserDefaults flags |
@@ -560,3 +645,11 @@ The address-based design naturally extends to agent-to-agent communication acros
 | File | Responsibility |
 |------|---------------|
 | `Views/Settings/AccessKeyGeneratorSheet.swift` | Modal sheet for generating an `osk-v1` key. Used by `ServerView` (master-scoped) and `IdentityView` (agent-scoped via the optional `scopeCaption`) |
+
+### Same-identity device access
+
+| File | Responsibility |
+|------|---------------|
+| `Services/Auth/OwnerDeviceAccessHost.swift` | `owner_redeem` envelope on `/pair-invite`: challenge table, master-signature verification against the host's own address, built-in guard, key mint + HPKE seal, per-device key records |
+| `Services/AgentBridge/AgentBundleService.swift` | `.osaurus-agent` import identity rule (`resolveImportIdentity`): collision → clear + re-mint, foreign scope → keep as a move, legacy v1 → keep; surfaced as `ImportPreview.identityNote` |
+| `docs/MOBILE_PROTOCOL.md` | Wire contract for a client-only (iOS / second Mac) Osaurus: bootstrap, discovery, key acquisition, Secure Channel, errors, compatibility |

@@ -68,7 +68,7 @@ struct WorkspaceAgentRunClientTests {
         let client = WorkspaceAgentRunClient()
         client.routerEnabled = { true }
         client.identityExists = { true }
-        client.isOwnAgent = { _ in false }
+        client.isHostedHere = { _ in false }
         client.rosterKnows = { _ in true }
         client.lastSeen = { _ in nil }
         client.pairedAgent = { _ in paired }
@@ -117,7 +117,7 @@ struct WorkspaceAgentRunClientTests {
         #expect(await Self.prepareError(noIdentity) == .noIdentity)
 
         let own = Self.makeClient(trace: trace)
-        own.isOwnAgent = { _ in true }
+        own.isHostedHere = { _ in true }
         #expect(await Self.prepareError(own) == .ownAgent)
 
         // Not paired AND not on any roster: unshared / left the workspace.
@@ -128,6 +128,20 @@ struct WorkspaceAgentRunClientTests {
         #expect(trace.probes == 0)
         #expect(trace.pairs == 0)
         #expect(trace.connects == 0)
+    }
+
+    /// The refusal is a HOSTING check. An agent this same identity shared
+    /// from another of the user's devices is not hosted here and must be a
+    /// legitimate remote target — pair, probe, connect like a teammate's.
+    @Test func prepare_ownWalletAgentHostedOnAnotherDevice_isRunRemotely() async throws {
+        let trace = Trace()
+        let client = Self.makeClient(trace: trace, paired: nil, connected: false)
+        client.isHostedHere = { _ in false }  // owned by this wallet, lives on device B
+        let prepared = try await client.prepare(Self.ref)
+        #expect(prepared.ref == Self.ref)
+        #expect(trace.pairs == 1)
+        #expect(trace.probes == 1)
+        #expect(trace.connects == 1)
     }
 
     // MARK: - Pair if missing

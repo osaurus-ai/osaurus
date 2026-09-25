@@ -5,9 +5,8 @@
 //  Snapshot of server-side generation defaults consulted by the MLX runtime.
 //
 //  Per-request generation parameters always win. This struct is the
-//  fallback layer that applies after model-shipped defaults and before
-//  the engine's hardcoded defaults: per-request → model defaults →
-//  runtime defaults → engine defaults. Sourced from
+//  explicit runtime override layer consulted before model-shipped defaults:
+//  per-request → explicit runtime defaults → model defaults → engine defaults. Sourced from
 //  `VMLXServerRuntimeSettings.generation`.
 //
 
@@ -21,6 +20,10 @@ struct RuntimeConfig: Sendable {
     /// Concurrency/runtime batch controls projected from
     /// `runtimeSettings.concurrency`.
     let concurrency: VMLXServerConcurrencySettings
+
+    /// MTP controls captured with the request's other runtime settings.
+    /// Depth selection and exploration policy must use this same snapshot.
+    let mtp: VMLXServerMTPSettings
 
     /// Captures a generation config snapshot from
     /// `VMLXServerRuntimeSettings`. Falls back to `ServerConfiguration`
@@ -40,7 +43,8 @@ struct RuntimeConfig: Sendable {
         }
         return RuntimeConfig(
             generation: generation,
-            concurrency: runtime.concurrency
+            concurrency: runtime.concurrency,
+            mtp: runtime.mtp
         )
     }
 

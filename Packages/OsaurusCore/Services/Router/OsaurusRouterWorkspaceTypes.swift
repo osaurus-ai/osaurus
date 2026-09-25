@@ -7,7 +7,8 @@ import Foundation
 //  subscription starts with a trial — and spends from a shared monthly credit
 //  pool. A workspace whose owner subscription (or admin comp) lapsed is
 //  `suspended` until the owner reactivates it. Identity is the wallet; the
-//  router's optional `dino_id` decoration is not consumed here. Money is
+//  router's `osaurus_id` decoration (the claimed `@handle`) is shown when
+//  present, and the optional `dino_id` decoration is not consumed. Money is
 //  micro-USD strings exactly like the personal `/credits/*` API. Loosely
 //  specified/expandable response fields decode as optionals so newer router
 //  deployments never break older clients.
@@ -179,32 +180,55 @@ struct PendingWorkspaceJoin: Equatable, Sendable {
 }
 
 /// A person reference as embedded in owners, inviters, shared-agent owners,
-/// and usage actors/callers. The wallet is the identity; `display_name` is
-/// router-side decoration that is `null` unless the account set one.
+/// and usage actors/callers. The wallet is the identity; `display_name` and
+/// `osaurus_id` (the claimed `@handle`, see OSAURUS_ID.md) are router-side
+/// decoration that is `null` unless the account set / claimed one.
 struct OsaurusRouterWorkspacePerson: Decodable, Equatable, Sendable {
     let accountId: String?
     let walletAddress: String?
     let displayName: String?
+    /// The account's claimed Osaurus ID handle (without `@`), if any.
+    let osaurusId: String?
 
     enum CodingKeys: String, CodingKey {
         case accountId = "account_id"
         case walletAddress = "wallet_address"
         case displayName = "display_name"
+        case osaurusId = "osaurus_id"
     }
 
-    /// Display name → shortened wallet → account id.
+    init(accountId: String?, walletAddress: String?, displayName: String?, osaurusId: String? = nil) {
+        self.accountId = accountId
+        self.walletAddress = walletAddress
+        self.displayName = displayName
+        self.osaurusId = osaurusId
+    }
+
+    /// Display name → `@handle` → shortened wallet → account id.
     var friendlyName: String {
         OsaurusRouterWorkspacePerson.friendlyName(
-            displayName: displayName, walletAddress: walletAddress, accountId: accountId
+            displayName: displayName, osaurusId: osaurusId, walletAddress: walletAddress, accountId: accountId
         )
     }
 
-    static func friendlyName(displayName: String?, walletAddress: String?, accountId: String?)
-        -> String
-    {
+    static func friendlyName(
+        displayName: String?,
+        osaurusId: String? = nil,
+        walletAddress: String?,
+        accountId: String?
+    ) -> String {
         if let displayName, !displayName.isEmpty { return displayName }
+        if let handle = handle(osaurusId) { return handle }
         if let walletAddress, !walletAddress.isEmpty { return shortWallet(walletAddress) }
         return accountId ?? "?"
+    }
+
+    /// `@rex-42` for a non-empty handle; nil otherwise.
+    static func handle(_ osaurusId: String?) -> String? {
+        guard let osaurusId = osaurusId?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !osaurusId.isEmpty
+        else { return nil }
+        return "@" + osaurusId
     }
 
     /// `0x1234…abcd` for a 0x-prefixed address; anything shorter is returned
@@ -799,6 +823,8 @@ struct OsaurusRouterWorkspaceMember: Decodable, Identifiable, Equatable, Sendabl
     let accountId: String
     let walletAddress: String?
     let displayName: String?
+    /// The member's claimed Osaurus ID handle (without `@`), if any.
+    let osaurusId: String?
     let role: String
     let agentsShared: Int?
     let joinedAt: String?
@@ -808,6 +834,7 @@ struct OsaurusRouterWorkspaceMember: Decodable, Identifiable, Equatable, Sendabl
         case accountId = "account_id"
         case walletAddress = "wallet_address"
         case displayName = "display_name"
+        case osaurusId = "osaurus_id"
         case agentsShared = "agents_shared"
         case joinedAt = "joined_at"
     }
@@ -817,7 +844,7 @@ struct OsaurusRouterWorkspaceMember: Decodable, Identifiable, Equatable, Sendabl
 
     var friendlyName: String {
         OsaurusRouterWorkspacePerson.friendlyName(
-            displayName: displayName, walletAddress: walletAddress, accountId: accountId
+            displayName: displayName, osaurusId: osaurusId, walletAddress: walletAddress, accountId: accountId
         )
     }
 }

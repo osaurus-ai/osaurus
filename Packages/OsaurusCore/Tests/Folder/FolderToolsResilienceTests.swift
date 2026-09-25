@@ -310,21 +310,25 @@ struct FolderToolsResilienceTests {
         #expect(FileManager.default.fileExists(atPath: path))
     }
 
-    @Test func fileWrite_rejectsWorkbookPackagesWithoutTouchingExistingFile() async throws {
+    @Test func fileWrite_rejectsLegacyWorkbookFormatsWithoutTouchingExistingFile() async throws {
+        // `.xlsx` is generated natively (see FileWriteDocumentFormatsTests);
+        // legacy binary spreadsheet formats have no writer and must refuse
+        // without clobbering the existing bytes.
         let root = tmpRoot()
-        let existing = root.appendingPathComponent("report.xlsx")
-        let original = Data([0x50, 0x4B, 0x03, 0x04, 0x00])
+        let existing = root.appendingPathComponent("report.xls")
+        let original = Data([0xD0, 0xCF, 0x11, 0xE0, 0x00])
         try original.write(to: existing)
 
         let tool = FileWriteTool(rootPath: root)
         let result = try await tool.execute(
-            argumentsJSON: #"{"path": "report.xlsx", "content": "not a workbook"}"#
+            argumentsJSON: #"{"path": "report.xls", "content": "not a workbook"}"#
         )
 
         #expect(ToolEnvelope.isError(result))
         #expect(failureKind(result) == "rejected")
         #expect(failureField(result) == "path")
-        #expect(result.contains("structured workbook"))
+        #expect(result.contains("spreadsheet format"))
+        #expect(result.contains(".xlsx"))
         let after = try Data(contentsOf: existing)
         #expect(after == original)
     }
@@ -346,10 +350,10 @@ struct FolderToolsResilienceTests {
     }
 
     @Test func fileWrite_rejectsBinaryDocumentPackagesWithoutTouchingExistingFile() async throws {
+        // `.docx` and `.pdf` are generated natively; everything below has no
+        // writer and must refuse without clobbering the existing bytes.
         let root = tmpRoot()
         let cases: [(name: String, bytes: [UInt8])] = [
-            ("report.pdf", [0x25, 0x50, 0x44, 0x46]),
-            ("report.docx", [0x50, 0x4B, 0x03, 0x04]),
             ("legacy.doc", [0xD0, 0xCF, 0x11, 0xE0]),
             ("bundle.rtfd", [0x50, 0x4B, 0x03, 0x04]),
             ("deck.pptx", [0x50, 0x4B, 0x03, 0x04]),
@@ -536,12 +540,18 @@ struct FolderToolsResilienceTests {
                 == .number(Double(WorkspaceToolContract.maxWriteContentCharacters))
         )
         #expect(WorkspaceToolContract.maxWriteContentCharacters >= 30_000)
+        guard case .some(.string(let description)) = content["description"] else {
+            Issue.record("file_write content description should be a string")
+            return
+        }
         #expect(
-            content["description"]
-                == .string(
-                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
-                )
+            description.hasPrefix(
+                "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
+            )
         )
+        #expect(description.contains(".xlsx"))
+        #expect(description.contains(".docx"))
+        #expect(description.contains(".pdf"))
         #expect(
             WorkspaceToolContract.recommendedWriteChunkCharacters
                 < WorkspaceToolContract.maxWriteContentCharacters

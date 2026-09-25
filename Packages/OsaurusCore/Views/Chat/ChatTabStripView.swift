@@ -11,6 +11,7 @@
 //  hairline dividers that hide next to the active/hovered tab.
 //
 
+import AppKit
 import SwiftUI
 
 /// Chrome's tab silhouette: vertical sides with rounded top corners and
@@ -67,44 +68,21 @@ struct ChatTabStripView: View {
     /// The strip's actual leading x in WINDOW coordinates, measured from
     /// AppKit. Guessing this from constants proved fragile (toolbar
     /// inter-item spacing varies with the empty back slot and OS version);
-    /// measuring makes the inset exact by construction.
+    /// measuring makes the inset exact by construction. It only depends on
+    /// the chrome BEFORE the strip, so it holds still during a window resize.
     @State private var measuredChromeX: CGFloat?
 
-    /// The window content width, measured alongside `measuredChromeX`. Used
-    /// to give the strip a FIXED width: if the strip hugged its contents,
-    /// its NSHostingView would snap to the new intrinsic width the instant a
-    /// tab closes while the tabs inside are still sliding — the container
-    /// jump reads as jank. A width that only changes on window resize keeps
-    /// the toolbar item stable while the close animation plays inside it.
-    @State private var windowContentWidth: CGFloat?
+    /// Last laid-out strip width, for drag math that runs outside `body`.
+    @State private var lastStripWidth: CGFloat = 0
 
-    /// Space reserved for the toolbar's trailing items so the fixed-width
-    /// strip never runs under them (undershooting folds them into the
-    /// toolbar overflow menu). MEASURED by the reader from the actual
-    /// toolbar items after the strip — constants proved wrong twice: too
-    /// big leaves a dead gap, too small hides the pin.
-    @State private var measuredTrailingReserve: CGFloat?
-
-    private var trailingChromeReserve: CGFloat {
-        measuredTrailingReserve ?? 150
-    }
-
-    private var stripWidth: CGFloat? {
-        // Prefer the delegate-fed width (survives the strip's toolbar item
-        // being folded into overflow, when the reader below goes silent);
-        // the reader's reading seeds the value before the first resize.
-        let liveWidth = windowState.windowContentWidth ?? self.windowContentWidth
-        guard let windowContentWidth = liveWidth, let measuredChromeX else { return nil }
-        let inset = needsSidebarInset ? sidebarOpenInset : 0
-        // No artificial cap: like Chrome, tabs may use the whole bar up to
-        // the trailing buttons; the reserve is what keeps them clear. The
-        // extra 12 covers the toolbar item's own ~8pt frame padding (log:
-        // frame = fitting + 8) and live-resize rounding — budgeting to the
-        // exact pixel folds the item on a 1pt overshoot.
-        // `footFlare` keeps the active tab's outward-curving feet inside the
-        // content area instead of over the sidebar edge / trailing buttons.
-        let available = windowContentWidth - measuredChromeX - inset - trailingChromeReserve - 12 - 2 * Self.footFlare
-        return max(0, available)
+    /// Width the tabs may use, given the space the container hands the
+    /// strip. The strip does not size itself: the toolbar item is flexible
+    /// (AppKit gives it whatever lies between the sidebar button and the
+    /// trailing items, in the same layout pass as the window resize), so a
+    /// fast resize can never race a measurement. `footFlare` on each side
+    /// keeps the active tab's outward-curving feet inside the item.
+    private func stripWidth(in available: CGFloat) -> CGFloat {
+        max(0, available - leadingInset - 2 * Self.footFlare)
     }
 
     /// Hover is tracked at strip level (not per item) so separators can
@@ -130,69 +108,88 @@ struct ChatTabStripView: View {
         return max(0, CGFloat(clamped) - (measuredChromeX ?? leadingChromeWidth))
     }
 
-    private var needsSidebarInset: Bool {
-        windowState.showSidebar
+    private var leadingInset: CGFloat {
+        windowState.showSidebar ? sidebarOpenInset : 0
     }
 
     var body: some View {
         // Tabs are chat chrome; the project detail page hides them along
         // with the rest of the chat-specific toolbar items.
         if !windowState.isProjectPageVisible {
-            // The row is laid out at IDEAL size (fixedSize in `tabsRow`), so
-            // chips hug their titles; crowding is handled by shrinking the
-            // per-tab width cap (`maxTabWidth`) as tabs multiply, computed so
-            // the row NEVER exceeds the strip. An overflowing row would push
-            // the "+" button outside the toolbar item's bounds, where it
-            // still draws but no longer hit-tests.
-            tabsRow()
-            // Tour spotlight anchor (invisible; reports the strip's frame).
-            .background(TourAnchorMarker(anchor: .tabStrip))
-            // Tabs slide over when a neighbor closes (Chrome-like). Opening
-            // stays un-animated: `newTab()` disables animations in its
-            // transaction so the strip doesn't interpolate while ChatView
-            // remounts for the fresh session.
-            .animation(
-                windowState.theme.animationQuick(),
-                value: windowState.scopedTabs.map(\.id)
-            )
-            // Fixed width once measured (see `stripWidth`): the toolbar item
-            // must not resize mid-animation. Content-hugging is only the
-            // pre-measurement fallback for the first layout pass.
-            .frame(width: stripWidth, alignment: .leading)
-            .frame(maxWidth: stripWidth == nil ? 700 : nil, alignment: .leading)
-            .frame(height: 30)
-            .padding(.leading, (needsSidebarInset ? sidebarOpenInset : 0) + Self.footFlare)
-            // Anchored to the strip's OUTER leading edge (after the padding
-            // modifier, so the padding lies inside the measured bounds and
-            // the reading is the pre-inset chrome edge — no feedback loop).
+            GeometryReader { proxy in
+                let width = stripWidth(in: proxy.size.width)
+                // The row is laid out at IDEAL size (fixedSize in `tabsRow`),
+                // so chips hug their titles; crowding is handled by shrinking
+                // the per-tab width cap (`maxTabWidth`) as tabs multiply,
+                // computed so the row NEVER exceeds the strip. An overflowing
+                // row would push the "+" button outside the toolbar item's
+                // bounds, where it still draws but no longer hit-tests.
+                tabsRow(stripWidth: width)
+                    // Tour spotlight anchor (invisible; reports the strip's frame).
+                    .background(TourAnchorMarker(anchor: .tabStrip))
+                    // Tabs slide over when a neighbor closes (Chrome-like).
+                    // Opening stays un-animated: `newTab()` disables
+                    // animations in its transaction so the strip doesn't
+                    // interpolate while ChatView remounts for the fresh session.
+                    .animation(
+                        windowState.theme.animationQuick(),
+                        value: windowState.scopedTabs.map(\.id)
+                    )
+                    .frame(width: width, alignment: .leading)
+                    .padding(.horizontal, Self.footFlare)
+                    .frame(height: Self.stripHeight)
+                    // Nothing draws outside the strip, even for a frame: the
+                    // sidebar and trailing buttons stay clear mid-resize.
+                    .clipped()
+                    .padding(.leading, leadingInset)
+                    .onChange(of: width, initial: true) { _, newWidth in
+                        lastStripWidth = newWidth
+                    }
+            }
+            .frame(height: Self.stripHeight)
+            // Anchored to the strip's OUTER leading edge (the inset lies
+            // inside the measured bounds, so the reading is the pre-inset
+            // chrome edge — no feedback loop).
             .background(alignment: .leading) {
-                WindowXReader { x, contentWidth, trailingReserve in
+                WindowXReader { x in
                     if abs((measuredChromeX ?? -1) - x) > 0.5 {
                         measuredChromeX = x
-                    }
-                    if abs((windowContentWidth ?? -1) - contentWidth) > 0.5 {
-                        windowContentWidth = contentWidth
-                    }
-                    if let trailingReserve,
-                        abs((measuredTrailingReserve ?? -1) - trailingReserve) > 0.5
-                    {
-                        measuredTrailingReserve = trailingReserve
                     }
                 }
                 .frame(width: 0)
             }
             .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
+            // Leaving the strip ends a close streak: widths relax to fit.
+            .onHover { inside in
+                guard !inside, frozenTabWidth != nil else { return }
+                withAnimation(windowState.theme.animationQuick()) { frozenTabWidth = nil }
+            }
             .environment(\.theme, windowState.theme)
         }
     }
 
+    /// Tab width pinned by a × close (Chrome): closing a tab would otherwise
+    /// widen the survivors and slide the next × out from under the cursor.
+    /// Held until the pointer leaves the strip, at which point the tabs
+    /// relax to `fittedTabWidth` in one animated pass.
+    @State private var frozenTabWidth: CGFloat?
+
+    /// The width every tab renders at: the pinned width while a close
+    /// streak is in progress (never wider than what still fits, so a
+    /// shrinking window or a new tab cannot overflow the strip), else the
+    /// fitted width.
+    private func maxTabWidth(stripWidth: CGFloat) -> CGFloat {
+        min(frozenTabWidth ?? .infinity, fittedTabWidth(stripWidth: stripWidth))
+    }
+
     /// Per-tab width cap, shrunk as tabs multiply so the whole row (tabs +
-    /// separators + "+" button) always fits inside `stripWidth`.
-    private var maxTabWidth: CGFloat {
-        guard let stripWidth else { return Self.maxTabWidthCap }
-        let count = CGFloat(max(visibleTabs.count, 1))
+    /// separators + "+" button) always fits inside the strip.
+    private func fittedTabWidth(stripWidth: CGFloat) -> CGFloat {
+        let visibleCount = visibleTabs(stripWidth: stripWidth).count
+        let count = CGFloat(max(visibleCount, 1))
+        let hasHidden = windowState.scopedTabs.count > visibleCount
         let available = stripWidth - Self.plusButtonReserve - (count - 1)
-            - (hiddenTabs.isEmpty ? 0 : Self.overflowButtonReserve)
+            - (hasHidden ? Self.overflowButtonReserve : 0)
         // Floor at the compact chip: below it a tab is unreadable, so tabs
         // that would push under the floor drop into the overflow menu
         // instead (see `visibleTabs`) — the row never exceeds the strip.
@@ -202,6 +199,7 @@ struct ChatTabStripView: View {
     /// How far the active tab's feet flare beyond its slot (mirrors the
     /// item's `footRadius`); the strip is inset by this on both sides.
     static let footFlare: CGFloat = 8
+    static let stripHeight: CGFloat = 30
 
     /// Narrowest chip: avatar only, no title (Chrome's pinned-tab size).
     /// Widest a tab grows with room to spare (Chrome caps around 240).
@@ -210,13 +208,17 @@ struct ChatTabStripView: View {
     private static let plusButtonReserve: CGFloat = 30
     private static let overflowButtonReserve: CGFloat = 40
 
+    /// Narrowest the toolbar item may get: one compact tab, the overflow
+    /// chevron and "+", plus the feet. AppKit folds the trailing buttons
+    /// before it squeezes the strip below this.
+    static let minimumItemWidth: CGFloat =
+        minTabWidth + overflowButtonReserve + plusButtonReserve + 2 * footFlare
+
     /// How many tabs fit at the floor width, keeping the active tab visible.
-    /// While unmeasured every tab is visible (the first layout pass). Only
-    /// the active agent's tabs are candidates: the strip is scoped per agent
-    /// (other agents' tabs stay live but out of sight until selected).
-    private var visibleTabs: [ChatTab] {
+    /// Only the active agent's tabs are candidates: the strip is scoped per
+    /// agent (other agents' tabs stay live but out of sight until selected).
+    private func visibleTabs(stripWidth: CGFloat) -> [ChatTab] {
         let tabs = windowState.scopedTabs
-        guard let stripWidth else { return tabs }
         let fitsAll = stripWidth - Self.plusButtonReserve - CGFloat(tabs.count - 1)
             >= CGFloat(tabs.count) * Self.minTabWidth
         if fitsAll { return tabs }
@@ -233,15 +235,12 @@ struct ChatTabStripView: View {
         return shown
     }
 
-    private var hiddenTabs: [ChatTab] {
-        let visibleIds = Set(visibleTabs.map(\.id))
-        return windowState.scopedTabs.filter { !visibleIds.contains($0.id) }
-    }
-
-
-    private func tabsRow() -> some View {
-        HStack(spacing: 0) {
-            let shown = visibleTabs
+    private func tabsRow(stripWidth: CGFloat) -> some View {
+        let shown = visibleTabs(stripWidth: stripWidth)
+        let visibleIds = Set(shown.map(\.id))
+        let hiddenTabs = windowState.scopedTabs.filter { !visibleIds.contains($0.id) }
+        let tabWidth = maxTabWidth(stripWidth: stripWidth)
+        return HStack(spacing: 0) {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, tab in
                 // Hairline divider between adjacent tabs, suppressed
                 // when either neighbor is active or hovered (their
@@ -253,6 +252,8 @@ struct ChatTabStripView: View {
                     )
                 }
                 ChatTabItemView(
+                    windowState: windowState,
+                    tabId: tab.id,
                     session: tab.session,
                     isActive: tab.id == windowState.activeTabId,
                     isHovered: hoveredTabId == tab.id,
@@ -261,11 +262,16 @@ struct ChatTabStripView: View {
                         || shown[index + 1].id == windowState.activeTabId,
                     hasSiblings: shown.count + hiddenTabs.count > 1,
                     isHibernated: tab.isHibernated,
-                    width: maxTabWidth,
+                    width: tabWidth,
                     isDragging: draggingTabId == tab.id,
                     dragOffset: draggingTabId == tab.id ? dragOffset : 0,
                     onSelect: { windowState.selectTab(id: tab.id) },
-                    onClose: { windowState.closeTab(id: tab.id) },
+                    onClose: {
+                        // Pin the current width for the rest of this close
+                        // streak so the next tab's × lands under the cursor.
+                        if frozenTabWidth == nil { frozenTabWidth = tabWidth }
+                        windowState.closeTab(id: tab.id)
+                    },
                     onOpenProject: {
                         windowState.selectTab(id: tab.id)
                         NotificationCenter.default.post(
@@ -288,7 +294,7 @@ struct ChatTabStripView: View {
             }
 
             if !hiddenTabs.isEmpty {
-                overflowButton
+                overflowButton(hiddenTabs: hiddenTabs)
                     .padding(.leading, 2)
             }
 
@@ -310,7 +316,7 @@ struct ChatTabStripView: View {
 
     /// Distance between adjacent tab origins: tab width plus the 1pt
     /// separator laid out between neighbours.
-    private var slotPitch: CGFloat { maxTabWidth + 1 }
+    private var slotPitch: CGFloat { maxTabWidth(stripWidth: lastStripWidth) + 1 }
 
     /// Cumulative pitch already absorbed by live swaps during this drag.
     @State private var swappedDistance: CGFloat = 0
@@ -372,8 +378,8 @@ struct ChatTabStripView: View {
     /// Tabs that don't fit at the floor width, as a native menu (Chrome's
     /// tab-search chevron). Picking one selects it, which swaps it into the
     /// strip in place of the last visible tab.
-    private var overflowButton: some View {
-        Button(action: presentOverflowTabs) {
+    private func overflowButton(hiddenTabs: [ChatTab]) -> some View {
+        Button(action: { presentOverflowTabs(hiddenTabs) }) {
             HStack(spacing: 2) {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
@@ -391,7 +397,7 @@ struct ChatTabStripView: View {
         .help(Text(LocalizedStringKey("More Tabs"), bundle: .module))
     }
 
-    private func presentOverflowTabs() {
+    private func presentOverflowTabs(_ hiddenTabs: [ChatTab]) {
         let menu = NSMenu()
         for tab in hiddenTabs {
             let item = NSMenuItem(
@@ -454,6 +460,9 @@ private struct ChromeHoverCapsuleButtonStyle: ButtonStyle {
 /// A single tab. Observes its own session so the label tracks live title
 /// changes (auto-titling, renames) and the run indicator tracks streaming.
 private struct ChatTabItemView: View {
+    /// Owner of the tab; the right-click menu routes its actions here.
+    let windowState: ChatWindowState
+    let tabId: UUID
     @ObservedObject var session: ChatSession
     let isActive: Bool
     let isHovered: Bool
@@ -509,6 +518,9 @@ private struct ChatTabItemView: View {
 
     private var title: String {
         let stored = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A hibernated tab has no turns in memory but is a saved
+        // conversation: show its title, not "New Chat".
+        if isHibernated, !stored.isEmpty { return stored }
         // A dispatched run carries its task title (schedule name, channel
         // thread…) before its first turn lands; a user's untouched tab is a
         // "New Chat".
@@ -630,6 +642,11 @@ private struct ChatTabItemView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            } else if !isCompact {
+                // No title, but the × keeps its trailing inset: without the
+                // spacer the avatar and × pack left and the slack piles up
+                // on the right.
+                Spacer(minLength: 0)
             }
 
             if canClose, !isCompact {
@@ -638,7 +655,9 @@ private struct ChatTabItemView: View {
         }
         .frame(maxWidth: .infinity, alignment: isCompact ? .center : .leading)
         .padding(.leading, isCompact ? 0 : Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
-        .padding(.trailing, isCompact ? 0 : Self.footRadius + (isActive ? 14 : 10))
+        // Same inset for every tab: the × must not shift when a tab gains
+        // or loses selection (closing tabs one by one made that jump felt).
+        .padding(.trailing, isCompact ? 0 : Self.footRadius + 2)
     }
 
     private var closeButton: some View {
@@ -714,6 +733,19 @@ private struct ChatTabItemView: View {
         )
         .onHover(perform: onHover)
         .animation(.easeOut(duration: 0.1), value: isHovered)
+        // Same actions the History dialog / sidebar rows offer, plus Close
+        // Tab, so a chat can be managed without leaving the strip.
+        .overlay(
+            TabRightClickCatcher {
+                ChatTabContextMenu(
+                    windowState: windowState,
+                    session: session,
+                    activityStatus: activityStatus,
+                    canClose: canClose,
+                    onClose: onClose
+                ).makeMenu()
+            }
+        )
         // The title is hidden on narrow chips and truncated on medium ones,
         // so the tooltip is how a tab is recognised in a small window. It
         // carries the agent name too, since avatars alone don't identify a
@@ -730,14 +762,263 @@ private struct ChatTabItemView: View {
     }
 }
 
-/// Reports the hosting SwiftUI view's leading x in WINDOW coordinates plus
-/// the window's content width. SwiftUI's `.global` coordinate space bottoms
-/// out at the enclosing `NSHostingView` (each toolbar item is its own), so
-/// window-relative geometry needs an AppKit bridge.
+/// Right-click menu for a tab chip: the sidebar / History row actions
+/// (Stop, Open in New Window, Rename, Pin, Move to Project, Export,
+/// Archive, Delete) applied to the tab's session, plus Close Tab. A blank
+/// tab that has never been saved still gets a menu: Rename, Pin and Move
+/// to Project act on the live `ChatSession` alone and ride along on its
+/// first save (a user title also stops auto-titling), and Open in New
+/// Window opens a blank window for the same agent. Export, Archive and
+/// Delete need a stored row and are hidden until there is one. For a saved
+/// chat, mutations go through `ChatSessionsManager` and are mirrored onto
+/// the live `ChatSession` so its next auto-save does not clobber them,
+/// exactly like the sidebar.
+///
+/// Built as an `NSMenu`, not a SwiftUI `.contextMenu`: the strip lives in
+/// an `NSToolbarItem`, and the toolbar's own right-click handler (Icon and
+/// Text / Icon Only) wins over SwiftUI's context menu there. The catcher
+/// view below takes the right-click first and pops this menu.
+@MainActor
+private struct ChatTabContextMenu {
+    let windowState: ChatWindowState
+    let session: ChatSession
+    let activityStatus: SessionActivityMonitor.Status?
+    let canClose: Bool
+    let onClose: () -> Void
+
+    private var alertScope: ThemedAlertScope { .chat(windowState.windowId) }
+
+    /// The persisted row for this tab, if the conversation has been saved.
+    private var persisted: ChatSessionData? {
+        session.sessionId.flatMap { ChatSessionsManager.shared.session(for: $0) }
+    }
+
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        let session = self.session
+        let windowState = self.windowState
+        if activityStatus != nil {
+            add(to: menu, L("Stop"), icon: "stop.circle") { session.stop() }
+            menu.addItem(.separator())
+        }
+        // A blank tab is not saved, so there is nothing to open elsewhere;
+        // a blank window for the same agent is the closest equivalent.
+        let isBlank = session.turns.isEmpty && !session.isStreaming
+        if let persisted {
+            add(to: menu, L("Open in New Window"), icon: "macwindow.badge.plus") {
+                ChatWindowManager.shared.createWindow(
+                    agentId: persisted.agentId, sessionData: persisted)
+            }
+            menu.addItem(.separator())
+        } else if isBlank {
+            add(to: menu, L("Open in New Window"), icon: "macwindow.badge.plus") {
+                _ = ChatWindowManager.shared.createWindow(agentId: session.agentId)
+            }
+            menu.addItem(.separator())
+        }
+        let id = session.sessionId
+        // Rename / Pin / Move to Project work for a never-saved tab too: the
+        // live session carries the values into its first save.
+        if id != nil || isBlank {
+            add(to: menu, L("Rename")) { requestRename() }
+            add(to: menu, session.pinned ? L("Unpin") : L("Pin")) {
+                let pinned = !session.pinned
+                if let id { ChatSessionsManager.shared.setPinned(id: id, pinned: pinned) }
+                session.pinned = pinned
+                windowState.refreshSessions()
+            }
+            let projects = ProjectManager.shared.projects
+            if !projects.isEmpty {
+                let item = NSMenuItem(
+                    title: session.projectId == nil ? L("Move to Project") : L("Change Project"),
+                    action: nil, keyEquivalent: "")
+                item.submenu = makeProjectSubmenu(projects: projects)
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+        }
+        if let id {
+            if persisted != nil {
+                add(to: menu, L("Export…")) { requestExport() }
+                menu.addItem(.separator())
+            }
+            add(to: menu, session.archived ? L("Unarchive") : L("Archive")) {
+                let archived = !session.archived
+                ChatSessionsManager.shared.setArchived(id: id, archived: archived)
+                session.archived = archived
+                windowState.refreshSessions()
+            }
+            add(to: menu, L("Delete")) { requestDelete() }
+            menu.addItem(.separator())
+        }
+        if canClose {
+            add(to: menu, L("Close Tab"), handler: onClose)
+        }
+        if menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.items.count - 1) }
+        return menu
+    }
+
+    /// One row per project (checkmark on the current one) plus "Remove from
+    /// Project" while the chat is in one. Mirrors the sidebar row's submenu.
+    private func makeProjectSubmenu(projects: [Project]) -> NSMenu {
+        let submenu = NSMenu()
+        for project in projects {
+            let item = add(to: submenu, project.name) { setProject(project.id) }
+            item.state = project.id == session.projectId ? .on : .off
+        }
+        if session.projectId != nil {
+            submenu.addItem(.separator())
+            add(to: submenu, L("Remove from Project")) { setProject(nil) }
+        }
+        return submenu
+    }
+
+    @discardableResult
+    private func add(
+        to menu: NSMenu, _ title: String, icon: String? = nil, handler: @escaping () -> Void
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(TabMenuTarget.select(_:)), keyEquivalent: "")
+        if let icon { item.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil) }
+        let target = TabMenuTarget(handler)
+        item.target = target
+        item.representedObject = target  // keeps the target alive with the item
+        menu.addItem(item)
+        return item
+    }
+
+    private func setProject(_ projectId: UUID?) {
+        if let id = session.sessionId {
+            ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
+        }
+        session.projectId = projectId
+        // A blank active tab moved into a project also takes the project's
+        // folder, the way a New Chat started from that project does.
+        if session.sessionId == nil, session === windowState.session,
+            let project = ProjectManager.shared.project(for: projectId)
+        {
+            windowState.adoptProjectFolder(project)
+        }
+        windowState.refreshSessions()
+    }
+
+    // MARK: - Rename
+
+    /// The sidebar renames inline in its row; a tab chip has no room for a
+    /// field, so the strip asks in the same single-field prompt the sidebar
+    /// uses for project names.
+    private func requestRename() {
+        let id = session.sessionId
+        let requestId = UUID()
+        let scope = alertScope
+        let windowState = self.windowState
+        let session = self.session
+        let sheet = ProjectNamePromptSheet(
+            initialName: session.title,
+            submitLabel: "Save",
+            placeholder: "Chat Title"
+        ) { title in
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            if let id { ChatSessionsManager.shared.rename(id: id, title: title) }
+            session.title = title
+            windowState.refreshSessions()
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Rename Chat",
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 360,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    // MARK: - Export
+
+    /// Same chooser + coordinator the sidebar row uses.
+    private func requestExport() {
+        guard let metadata = persisted else { return }
+        let requestId = UUID()
+        let scope = alertScope
+        let sheet = ExportChooserSheet(session: metadata) { format, options in
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            ChatSessionExportCoordinator.run(
+                metadataSession: metadata,
+                format: format,
+                options: options,
+                scope: scope
+            )
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Export Conversation",
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 420,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    // MARK: - Delete
+
+    /// Same confirmation (with the session-wide "don't ask again" toggle)
+    /// and the same teardown order as the sidebar: cancel a registry-owned
+    /// run, detach this window's tab, then delete the row.
+    private func requestDelete() {
+        guard let id = session.sessionId else { return }
+        let scope = alertScope
+        let windowState = self.windowState
+        let perform = {
+            if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+                BackgroundTaskManager.shared.cancelTask(liveTask.id)
+            }
+            windowState.prepareForSessionDeletion(id: id)
+            ChatSessionsManager.shared.delete(id: id)
+            windowState.refreshSessions()
+        }
+        if DeleteConfirmationPreference.shared.skipForSession {
+            perform()
+            return
+        }
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Delete Conversation?",
+                message: L("\"\(session.title)\" will be removed permanently. This can't be undone."),
+                accessory: AnyView(DontAskAgainToggle()),
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete")) { perform() },
+                ],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+}
+
+/// Reports the hosting SwiftUI view's leading x in WINDOW coordinates.
+/// SwiftUI's `.global` coordinate space bottoms out at the enclosing
+/// `NSHostingView` (each toolbar item is its own), so window-relative
+/// geometry needs an AppKit bridge.
 private struct WindowXReader: NSViewRepresentable {
-    /// (leading x, window content width, measured trailing-items reserve —
-    /// nil when no toolbar is available, e.g. full screen).
-    var onChange: (CGFloat, CGFloat, CGFloat?) -> Void
+    var onChange: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ReaderView {
         ReaderView(onChange: onChange)
@@ -749,24 +1030,13 @@ private struct WindowXReader: NSViewRepresentable {
     }
 
     final class ReaderView: NSView {
-        var onChange: (CGFloat, CGFloat, CGFloat?) -> Void
+        var onChange: (CGFloat) -> Void
         // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
         // observer; all writes happen on the main thread (same pattern as
         // ChatWindowState's notificationObservers).
         private nonisolated(unsafe) var resizeObserver: NSObjectProtocol?
-        /// The window whose resizes we track. Held (weakly) SEPARATELY from
-        /// `self.window`: when the window shrinks enough that AppKit folds
-        /// the strip's toolbar item into the overflow menu, this view is
-        /// REMOVED from the window — if resize reporting stopped then, the
-        /// strip's width state would freeze too wide and the item could
-        /// never come back until the window regrew past the stale width.
-        private weak var observedWindow: NSWindow?
-        /// Last chrome-x reading, reused for resize reports that arrive
-        /// while the view is detached (x can't be measured then, but it
-        /// doesn't change with window width anyway).
-        private var lastX: CGFloat?
 
-        init(onChange: @escaping (CGFloat, CGFloat, CGFloat?) -> Void) {
+        init(onChange: @escaping (CGFloat) -> Void) {
             self.onChange = onChange
             super.init(frame: .zero)
         }
@@ -781,13 +1051,13 @@ private struct WindowXReader: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            // Only rebind when landing in a NEW window; keep observing the
-            // old one while detached (overflow-menu case above).
-            if let window, window !== observedWindow {
-                if let resizeObserver {
-                    NotificationCenter.default.removeObserver(resizeObserver)
-                }
-                observedWindow = window
+            if let resizeObserver {
+                NotificationCenter.default.removeObserver(resizeObserver)
+                self.resizeObserver = nil
+            }
+            // Entering or leaving full screen moves the leading chrome
+            // without necessarily re-laying out this zero-width view.
+            if let window {
                 resizeObserver = NotificationCenter.default.addObserver(
                     forName: NSWindow.didResizeNotification,
                     object: window,
@@ -805,48 +1075,14 @@ private struct WindowXReader: NSViewRepresentable {
         }
 
         func report() {
-            guard let contentView = observedWindow?.contentView else { return }
-            // A detached view can't measure x; fall back to the last live
-            // reading so width-only updates still flow.
-            if window != nil {
-                lastX = convert(CGPoint.zero, to: nil).x
-            }
-            guard let x = lastX else { return }
-            let width = contentView.bounds.width
-            let trailing = measureTrailingReserve()
+            guard window != nil else { return }
+            let x = convert(CGPoint.zero, to: nil).x
             let callback = onChange
             // Defer: `layout` runs mid-layout-pass, and mutating SwiftUI
             // @State from inside it is undefined (AttributeGraph reentrancy).
-            DispatchQueue.main.async { callback(x, width, trailing) }
-        }
-
-        /// Sum the ACTUAL widths of the toolbar items after the tab strip
-        /// (flexible space, action, pin) plus AppKit's inter-item spacing
-        /// and trailing margin, so the strip's reserve matches whatever is
-        /// really visible instead of a guessed constant.
-        private func measureTrailingReserve() -> CGFloat? {
-            guard let toolbar = observedWindow?.toolbar else { return nil }
-            var reserve: CGFloat = 12  // toolbar trailing margin + safety
-            var pastStrip = false
-            for item in toolbar.items {
-                if item.itemIdentifier.rawValue == "ChatToolbar.tabs" {
-                    pastStrip = true
-                    continue
-                }
-                guard pastStrip else { continue }
-                if item.itemIdentifier == .flexibleSpace {
-                    reserve += 8  // its collapsed minimum
-                    continue
-                }
-                // LAID-OUT width, not fittingSize: AppKit gives every item a
-                // ~44pt minimum footprint even when its SwiftUI content
-                // measures 0 (the log showed action fitting=0 / frame=44 —
-                // the exact undershoot that folded the pin into overflow).
-                let laidOut = item.view?.superview?.frame.width ?? 0
-                let fitting = item.view?.fittingSize.width ?? 0
-                reserve += max(laidOut, fitting, 44)
-            }
-            return reserve
+            // The x only depends on the chrome before the strip, so the one
+            // runloop of lag never shows during a resize.
+            DispatchQueue.main.async { callback(x) }
         }
     }
 }
@@ -919,6 +1155,80 @@ private struct ChromeCloseButtonStyle: ButtonStyle {
     }
 }
 
+
+/// Invisible AppKit layer over a tab chip that pops the given menu on a
+/// right-click (or control-click) landing on the chip. It never takes part
+/// in hit testing (`hitTest` returns nil), so the tap, drag-to-reorder and
+/// close button keep working. The click is caught with a local event
+/// monitor rather than `rightMouseDown`: the strip lives in an
+/// `NSToolbarItem`, and the toolbar claims right-clicks on its items for its
+/// own display-mode menu (Icon and Text / Icon Only) before they are ever
+/// routed to a subview. The monitor runs before the window dispatches the
+/// event, and consuming it there keeps the toolbar menu from appearing.
+private struct TabRightClickCatcher: NSViewRepresentable {
+    let makeMenu: @MainActor () -> NSMenu
+
+    func makeNSView(context: Context) -> CatcherView { CatcherView(makeMenu: makeMenu) }
+
+    func updateNSView(_ view: CatcherView, context: Context) { view.makeMenu = makeMenu }
+
+    final class CatcherView: NSView {
+        var makeMenu: @MainActor () -> NSMenu
+        // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
+        // monitor; all writes happen on the main thread (same pattern as
+        // WindowXReader's resize observer).
+        private nonisolated(unsafe) var monitor: Any?
+
+        init(makeMenu: @escaping @MainActor () -> NSMenu) {
+            self.makeMenu = makeMenu
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) {
+                [weak self] incoming in
+                // Local monitors are delivered on the main thread; the
+                // handler type is not annotated, so assert the isolation.
+                // NSEvent is not Sendable, so it is rebound unchecked to
+                // cross into the isolated block.
+                nonisolated(unsafe) let event = incoming
+                let handled = MainActor.assumeIsolated { () -> Bool in
+                    guard let self, self.shouldHandle(event) else { return false }
+                    NSMenu.popUpContextMenu(self.makeMenu(), with: event, for: self)
+                    return true
+                }
+                return handled ? nil : incoming
+            }
+        }
+
+        /// A right-click (or control-click) in this view's window whose
+        /// location falls inside the chip.
+        private func shouldHandle(_ event: NSEvent) -> Bool {
+            guard let window, event.window === window else { return false }
+            switch event.type {
+            case .rightMouseDown: break
+            case .leftMouseDown where event.modifierFlags.contains(.control): break
+            default: return false
+            }
+            let point = convert(event.locationInWindow, from: nil)
+            return bounds.contains(point)
+        }
+    }
+}
 
 /// Closure target for the overflow-tabs menu items.
 private final class TabMenuTarget: NSObject {

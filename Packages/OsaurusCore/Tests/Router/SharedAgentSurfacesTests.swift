@@ -71,6 +71,45 @@ struct SharedAgentSurfacesTests {
         #expect(!ChatSessionSidebar.isDirectlyShared(linkPaired, onRoster: false, isOwn: true))
     }
 
+    // MARK: - Sidebar "On This Network" partition
+
+    private static func discovered(address: String?, osc: Bool = true) -> DiscoveredAgent {
+        DiscoveredAgent(
+            id: UUID(),
+            name: "Peer",
+            agentDescription: "",
+            address: address,
+            host: "peer.local.",
+            resolvedIP: nil,
+            port: 1234,
+            supportsSecureChannel: osc,
+            serviceName: "peer._osaurus._tcp."
+        )
+    }
+
+    @Test func sidebar_discoveredPeer_hidesWhenItsAddressIsAlreadyPaired() {
+        let paired: Set<String> = [Self.addressA.lowercased()]
+
+        // A pairing (workspace or direct share) already owns a row for this
+        // address — no duplicate under "On This Network". Address casing
+        // must not defeat the match.
+        #expect(
+            !ChatSessionSidebar.isVisibleDiscovered(
+                Self.discovered(address: Self.addressA.uppercased()), pairedAddresses: paired))
+        // Unpaired peers render.
+        #expect(
+            ChatSessionSidebar.isVisibleDiscovered(
+                Self.discovered(address: Self.addressB), pairedAddresses: paired))
+        // Addressless peers (pre-Secure-Channel) have nothing to match a
+        // pairing on, so they always render.
+        #expect(
+            ChatSessionSidebar.isVisibleDiscovered(
+                Self.discovered(address: nil, osc: false), pairedAddresses: paired))
+        #expect(
+            ChatSessionSidebar.isVisibleDiscovered(
+                Self.discovered(address: "", osc: false), pairedAddresses: paired))
+    }
+
     @Test func sidebar_orphanedPairings_groupByWorkspaceOnlyWhenRosterMissing() {
         let a = Self.remote(address: Self.addressA, workspaceId: "ws-1")
         let b = Self.remote(address: Self.addressB, workspaceId: "ws-2")

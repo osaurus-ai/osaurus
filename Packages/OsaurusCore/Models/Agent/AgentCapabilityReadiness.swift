@@ -50,11 +50,11 @@ public enum AgentCapabilityBlocker: String, Sendable, Hashable, CaseIterable {
         case .noModelSelected:
             return L("Needs setup: choose a model")
         case .noConfiguredTargets:
-            return L("Needs setup: add an allowed agent or model")
+            return L("Add at least one allowed subagent to turn this on")
         case .noRunnableTargets:
-            return L("Unavailable: no configured target can run right now")
+            return L("Unavailable: none of the allowed subagents can run right now")
         case .checkingTargets:
-            return L("Checking configured targets…")
+            return L("Checking allowed subagents…")
         case .noImageModel:
             return L("Needs setup: install a compatible image model")
         case .noVideoModel:
@@ -66,7 +66,7 @@ public enum AgentCapabilityBlocker: String, Sendable, Hashable, CaseIterable {
         case .permissionDenied:
             return L("Unavailable: denied by policy")
         case .systemPermissionMissing:
-            return L("Unavailable: required macOS permission is missing")
+            return L("Unavailable: Accessibility permission is missing")
         case .providerDisconnected:
             return L("Unavailable: the configured provider is disconnected")
         case .unsupportedSurface:
@@ -141,12 +141,20 @@ public struct AgentCapabilityReadiness: Sendable, Equatable {
         hasReadyImageModel: Bool = false,
         hasReadyVideoModel: Bool = false,
         hasReadyAppleScriptModel: Bool = false,
-        permission: SubagentPermissionPolicy = .ask
+        permission: SubagentPermissionPolicy = .ask,
+        hasRequiredSystemPermissions: Bool = true
     ) -> AgentCapabilityReadiness {
         var blockers: [AgentCapabilityBlocker] = []
 
         switch flag {
-        case .computerUse, .browserUse:
+        case .computerUse:
+            if !hasResolvedModel { blockers.append(.noModelSelected) }
+            // Accessibility is the runtime floor (`ComputerUseTool.requirements`):
+            // `ToolRegistry.runPermissionGate` fails the very first call without
+            // it, so a card that said "Active" here was promising a run that
+            // could not start.
+            if !hasRequiredSystemPermissions { blockers.append(.systemPermissionMissing) }
+        case .browserUse:
             if !hasResolvedModel { blockers.append(.noModelSelected) }
         case .spawn:
             if configuredSpawnTargetCount == 0 {

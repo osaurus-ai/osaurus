@@ -67,6 +67,16 @@ public enum EvalRunner {
         }
 
         let modelLabel = ModelOverride.describe(model)
+        // A headless media run does not necessarily construct ModelManager's
+        // UI singleton, which normally starts external discovery. Complete the
+        // same installed scan before warm-up/routing; a cached empty snapshot
+        // is not evidence that an inventoried model is absent.
+        if suite.cases.contains(where: {
+            EvalCaseFilter.matches(caseID: $0.id, filter: filter)
+                && ["multimodal_image", "multimodal_video"].contains($0.expect.httpAPI?.scenario ?? "")
+        }) {
+            _ = await InstalledVisionEvaluation.inventory()
+        }
         let startedAt = isoNow()
         var rows: [EvalCaseReport] = []
 
@@ -1805,11 +1815,13 @@ public enum EvalRunner {
         // selections, or the pre-run binding for keep-current ("(unset)"
         // when nothing was configured — fall back to the store for that).
         let pinnedModel = modelId == "(unset)" ? nil : modelId
-        let transcript = await DefaultAgentConfigurationEvaluator.run(
-            query: testCase.query,
-            maxIterations: exp.maxIterations ?? 6,
-            model: pinnedModel
-        )
+        let transcript = await EvalDefaultAgentModelBinding.run(model: pinnedModel) {
+            await DefaultAgentConfigurationEvaluator.run(
+                query: testCase.query,
+                maxIterations: exp.maxIterations ?? 6,
+                model: pinnedModel
+            )
+        }
         await MainActor.run { ChatConfigurationStore.save(chatConfigBeforeCase) }
         PrivacyFilterStore.save(privacyConfigBeforeCase ?? .default)
         // Normalized latency: loop-only (judge timed separately below).

@@ -8,12 +8,6 @@
 import AppKit
 import SwiftUI
 
-/// One pickable spawn model in the first-use permission prompt.
-struct SpawnModelChoice: Identifiable, Equatable, Hashable {
-    let id: String
-    let label: String
-}
-
 struct ToolPermissionView: View {
     let toolName: String
     let description: String
@@ -22,14 +16,6 @@ struct ToolPermissionView: View {
     let onDeny: () -> Void
     let onAlwaysAllow: () -> Void
     var onAllowForRun: (() -> Void)? = nil
-    /// First-use spawn-model picker. When `spawnModelOptions` is non-empty the
-    /// prompt shows a labelled picker so the user chooses the spawn model the
-    /// same time they grant permission; `onModelSelected` reports each change so
-    /// the presenter can persist the choice on Allow / Always Allow.
-    var spawnModelTitle: String? = nil
-    var spawnModelOptions: [SpawnModelChoice] = []
-    var initialSpawnModel: String? = nil
-    var onModelSelected: ((String) -> Void)? = nil
     /// Knowledge writes replace the generic JSON arguments block with a
     /// per-document manifest and diffs. Approving a document replacement out
     /// of a pretty-printed JSON blob is not informed consent, and knowledge
@@ -41,6 +27,16 @@ struct ToolPermissionView: View {
     /// blanket grant would be the wrong thing to be able to give. See
     /// `PerCallApprovalTool`.
     var perCallApprovalOnly: Bool = false
+    /// Number of approval requests waiting behind this one. The prompt
+    /// service presents one card at a time; telling the user more are coming
+    /// explains why another card appears right after this decision.
+    var queuedBehind: Int = 0
+    /// Where the approved call will run — the isolated sandbox VM, this Mac,
+    /// or a remote MCP server. `shell_run` and the `file_*` tools keep one
+    /// name in every mode and are routed at execution time, so without this
+    /// the card cannot tell the user whether "run this command" touches the
+    /// host (osaurus#2651). Nil hides the row (billing / policy prompts).
+    var executionSurface: ToolExecutionSurface? = nil
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -48,7 +44,6 @@ struct ToolPermissionView: View {
     @State private var copied = false
     @State private var showAlwaysAllowConfirm = false
     @State private var appeared = false
-    @State private var selectedSpawnModel: String = ""
     @State private var alertScopeId = UUID()
     private var alertScope: ThemedAlertScope { .toolPermission(alertScopeId) }
 
@@ -97,6 +92,14 @@ struct ToolPermissionView: View {
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : -8)
 
+                if let executionSurface {
+                    ExecutionSurfaceNotice(surface: executionSurface)
+                        .padding(.top, 12)
+                        .padding(.horizontal, 24)
+                        .opacity(appeared ? 1 : 0)
+                        .offset(y: appeared ? 0 : -4)
+                }
+
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentSizedScrollView(maxHeight: 140) {
                         Text(description)
@@ -127,9 +130,9 @@ struct ToolPermissionView: View {
                         .offset(y: appeared ? 0 : 4)
                 }
 
-                if !spawnModelOptions.isEmpty {
-                    spawnModelSection
-                        .padding(.top, 14)
+                if queuedBehind > 0 {
+                    queuedFootnote
+                        .padding(.top, 12)
                         .padding(.horizontal, 24)
                         .opacity(appeared ? 1 : 0)
                         .offset(y: appeared ? 0 : 4)
@@ -170,10 +173,6 @@ struct ToolPermissionView: View {
             y: 12
         )
         .onAppear {
-            if selectedSpawnModel.isEmpty {
-                selectedSpawnModel =
-                    initialSpawnModel ?? spawnModelOptions.first?.id ?? ""
-            }
             withAnimation(theme.springAnimation(responseMultiplier: 1.25).delay(0.05)) {
                 appeared = true
             }
@@ -213,24 +212,21 @@ struct ToolPermissionView: View {
         }
     }
 
-    // MARK: - Spawn Model Picker (first-use)
+    // MARK: - Queue Footnote
 
-    private var spawnModelSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(LocalizedStringKey(spawnModelTitle ?? "Spawn model"), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Picker("", selection: $selectedSpawnModel) {
-                ForEach(spawnModelOptions) { option in
-                    Text(option.label).tag(option.id)
-                }
-            }
-            .labelsHidden()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .onChange(of: selectedSpawnModel) { _, newValue in
-                onModelSelected?(newValue)
-            }
+    private var queuedFootnote: some View {
+        Label {
+            Text(
+                queuedBehind == 1
+                    ? L("1 more approval is waiting behind this one.")
+                    : L("\(queuedBehind) more approvals are waiting behind this one.")
+            )
+        } icon: {
+            Image(systemName: "rectangle.stack")
         }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(theme.secondaryText)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     // MARK: - Arguments Block
@@ -320,6 +316,63 @@ struct ToolPermissionView: View {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             withAnimation(theme.animationQuick()) { copied = false }
         }
+    }
+}
+
+/// Execution-surface row on the approval card: which machine the call will
+/// run on, tinted so the host case reads as the one that needs a closer
+/// look. Host = warning tint (it can change this Mac), VM = success tint
+/// (isolated), remote = neutral.
+private struct ExecutionSurfaceNotice: View {
+    let surface: ToolExecutionSurface
+
+    @Environment(\.theme) private var theme
+
+    private var accent: Color {
+        switch surface {
+        case .sandboxVM: theme.successColor
+        case .nativeHost: theme.warningColor
+        case .remoteServer: theme.secondaryText
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: surface.symbolName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(accent)
+                .frame(width: 18, alignment: .center)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Runs in", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    Text(surface.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                }
+                Text(surface.consentDetail)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(accent.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(accent.opacity(0.35), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: "\(L("Runs in")) \(surface.title). \(surface.consentDetail)"))
+        .accessibilityIdentifier("toolPermission.executionSurface.\(surface.rawValue)")
     }
 }
 
@@ -467,18 +520,17 @@ private struct AlwaysAllowButton: View {
 #if DEBUG && canImport(PreviewsMacros)
     #Preview("Tool Permission - Dark") {
         ToolPermissionView(
-            toolName: "execute_code",
-            description: "This tool will execute Python code on your system.",
+            toolName: "shell_run",
+            description: "Run a shell command in the working directory.",
             argumentsJSON: """
                 {
-                    "language": "python",
-                    "code": "import os\\nprint(os.getcwd())",
-                    "timeout": 30
+                    "command": "rm -rf build && swift build"
                 }
                 """,
             onAllow: { print("Allowed") },
             onDeny: { print("Denied") },
-            onAlwaysAllow: { print("Always Allow") }
+            onAlwaysAllow: { print("Always Allow") },
+            executionSurface: .nativeHost
         )
         .environment(\.theme, DarkTheme())
         .preferredColorScheme(.dark)
@@ -488,16 +540,17 @@ private struct AlwaysAllowButton: View {
 
     #Preview("Tool Permission - Light") {
         ToolPermissionView(
-            toolName: "read_file",
-            description: "Read the contents of a file from disk.",
+            toolName: "shell_run",
+            description: "Run a shell command in the working directory.",
             argumentsJSON: """
                 {
-                    "path": "/Users/example/Documents/config.json"
+                    "command": "pip install requests && python3 fetch.py"
                 }
                 """,
             onAllow: { print("Allowed") },
             onDeny: { print("Denied") },
-            onAlwaysAllow: { print("Always Allow") }
+            onAlwaysAllow: { print("Always Allow") },
+            executionSurface: .sandboxVM
         )
         .environment(\.theme, LightTheme())
         .preferredColorScheme(.light)

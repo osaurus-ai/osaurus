@@ -1,431 +1,255 @@
-// Copyright © 2026 osaurus.
-//
-// MC/DC tests for `ModelMediaCapabilities.from(modelId:)` — drives the
-// chat composer's drag/drop allowlist. Each modality (image/video/audio)
-// must independently flip its flag based on regex/substring matching.
-//
-// Decision tree from the implementation:
-//   D1: matches `nemotron-3-nano-omni|nemotron_h_omni`        → .omni
-//   D2: matches `qwen[2-3](\.\d+|_\d+)?[-_]?vl`               → .imageVideo
-//   D3: matches `qwen3\.[5-6].*[-_]vl|holo3.*[-_]vl`          → .imageVideo
-//   D4: contains `smolvlm|smol-vlm`                           → .imageVideo
-//   D5: matches ZAYA1-VL family                                 → .imageOnly
-//   D6: any of {paligemma, idefics3, fastvlm, llava-qwen2,
-//               pixtral, glm-ocr, lfm2-vl, gemma-3, gemma3,
-//               gemma-4-it}                                    → .imageOnly
-//   D7: matches `mistral[-_](3|medium-3)`                     → .imageOnly
-//   D8: matches `mistral[-_]?4.*[-_]vl`                       → .imageOnly
-//   else                                                       → .textOnly
-
 import Foundation
 import Testing
-
 @testable import OsaurusCore
 
-@Suite("ModelMediaCapabilities — MC/DC coverage")
+@Suite("ModelMediaCapabilities — config and weight evidence")
 struct ModelMediaCapabilitiesMCDCTests {
-
-    // MARK: - D1: Nemotron-3 omni (audio + video + image)
-
-    @Test("D1: Nemotron-3-Nano-Omni HF id → .omni")
-    func d1_nemotronOmniHF() {
-        let cap = ModelMediaCapabilities.from(
-            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"
-        )
-        #expect(cap == .omni)
-        #expect(cap.supportsAudio)
-        #expect(cap.supportsVideo)
-        #expect(cap.supportsImage)
-    }
-
-    @Test("D1: case-folded picker form → .omni")
-    func d1_nemotronOmniLower() {
-        #expect(ModelMediaCapabilities.from(modelId: "nemotron-3-nano-omni-30b-a3b-mxfp4") == .omni)
-    }
-
-    @Test("D1: short local Nemotron-Omni-Nano form → .omni")
-    func d1_nemotronOmniShortLocal() {
-        #expect(ModelMediaCapabilities.from(modelId: "Nemotron-Omni-Nano-JANGTQ-CRACK") == .omni)
-        #expect(ModelMediaCapabilities.from(modelId: "nemotron-omni-nano-jangtq-crack") == .omni)
-    }
-
-    @Test("D1: nemotron_h_omni alternate naming → .omni")
-    func d1_nemotronHOmniUnderscore() {
-        #expect(ModelMediaCapabilities.from(modelId: "OsaurusAI/Nemotron_H_Omni-Future") == .omni)
-    }
-
-    @Test("D1 boundary: bare 'nemotron-3' (text-only) does NOT match omni")
-    func d1_bareNemotron3_notOmni() {
-        // Critical: `nemotron-3` text-only bundles must NOT advertise audio.
-        let cap = ModelMediaCapabilities.from(modelId: "OsaurusAI/Nemotron-3-30B-Text-MXFP4")
-        #expect(
-            !cap.supportsAudio,
-            "bare nemotron-3 (no -nano-omni) must NOT advertise audio support"
-        )
-    }
-
-    @Test("D1 boundary: Nemotron 3 Ultra is text-only unless it is Omni")
-    func d1_nemotronUltraTextOnly() throws {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        try #"{"model_type":"nemotron_h","vision_config":{"hidden_size":1280}}"#
-            .write(to: tmp.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
-
-        let cap = ModelMediaCapabilities.from(
-            directory: tmp,
-            modelId: "nvidia-nemotron-3-ultra-550b-a55b-jangtq_1l"
-        )
-
-        #expect(cap == .textOnly)
-    }
-
-    @Test("D1 boundary: Nemotron 3 Ultra composer fallback stays text-only")
-    func d1_nemotronUltraComposerFallbackTextOnly() {
-        for modelId in [
-            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
-            "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
-            "nemotron-3-ultra-550b-a55b-jangtq-1l",
-        ] {
-            let cap = ModelMediaCapabilities.composerCapabilities(
-                modelId: modelId,
-                fallbackSupportsImages: true
-            )
-            #expect(
-                cap == .textOnly,
-                "explicit text-only Nemotron Ultra must not inherit stale image fallback: \(modelId)"
-            )
+    @Test func mimoNativeProcessorAndComponentEvidenceSurviveAliases() throws {
+        let root = try VisionBundleFixture.makeMiMo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "MiMo-V2.6", "Qwen3-VL"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(caps.supportsVideo)
+            #expect(caps.supportsAudio)
         }
     }
 
-    @Test("Step 3.7 text runtime does not advertise media")
-    func step37TextRuntimeDoesNotAdvertiseMedia() {
-        #expect(ModelMediaCapabilities.from(modelId: "JANGQ-AI/Step-3.7-Flash-JANG_2L") == .textOnly)
-        #expect(ModelMediaCapabilities.from(modelId: "step-3.7-flash-jangtq_k") == .textOnly)
+    @Test(arguments: ["visual.patch_embed", "visual.blocks.1", "visual.merger.mlp.2",
+                      "speech_embeddings.1", "audio_encoder.projection.mlp.2",
+                      "audio_encoder.input_local_transformer.layers.1"])
+    func mimoMissingComponentOnlyDisablesItsModality(component: String) throws {
+        let root = try VisionBundleFixture.makeMiMo(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "neutral")
+        #expect(caps.supportsImage == !component.hasPrefix("visual"))
+        #expect(caps.supportsVideo == caps.supportsImage)
+        #expect(caps.supportsAudio == component.hasPrefix("visual"))
     }
 
-    // MARK: - D2: Qwen 2/2.5/3 VL (image + video)
-
-    @Test("D2: Qwen2-VL → .imageVideo")
-    func d2_qwen2VL() {
-        let cap = ModelMediaCapabilities.from(modelId: "Qwen/Qwen2-VL-7B-Instruct-MLX-8bit")
-        #expect(cap == .imageVideo)
-        #expect(!cap.supportsAudio)
+    @Test(arguments: ["encoder.conv1", "encoder.down_sample_layer", "encoder.layers.1",
+                      "encoder.quantizer.vq.layers.1"])
+    func mimoAudioRequiresTokenizerWeights(component: String) throws {
+        let root = try VisionBundleFixture.makeMiMo(sidecarOmit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "neutral")
+        #expect(caps.supportsImage && caps.supportsVideo)
+        #expect(!caps.supportsAudio)
     }
 
-    @Test("D2: Qwen2.5-VL with dot variant → .imageVideo")
-    func d2_qwen25VL_dot() {
-        #expect(
-            ModelMediaCapabilities.from(modelId: "Qwen/Qwen2.5-VL-7B-MLX") == .imageVideo
-        )
-    }
-
-    @Test("D2: qwen2_vl underscore variant → .imageVideo")
-    func d2_qwen2VL_underscore() {
-        #expect(ModelMediaCapabilities.from(modelId: "qwen2_vl-future-bundle") == .imageVideo)
-    }
-
-    @Test("D2: Qwen3-VL → .imageVideo")
-    func d2_qwen3VL() {
-        #expect(ModelMediaCapabilities.from(modelId: "Qwen/Qwen3-VL-30B-A3B-MLX-8bit") == .imageVideo)
-    }
-
-    // MARK: - D3: Qwen 3.5 / 3.6 MoE VL + Holo3 VL (image + video)
-
-    @Test("D3: Qwen3.5-VL → .imageVideo")
-    func d3_qwen35VL() {
-        #expect(
-            ModelMediaCapabilities.from(modelId: "OsaurusAI/Qwen3.5-VL-9B-8bit") == .imageVideo
-        )
-    }
-
-    @Test("D3: Qwen3.6-VL → .imageVideo")
-    func d3_qwen36VL() {
-        #expect(
-            ModelMediaCapabilities.from(modelId: "OsaurusAI/Qwen3.6-VL-30B-A3B-MXFP4") == .imageVideo
-        )
-    }
-
-    @Test("D3 boundary: Qwen3.5/3.6 text-only (no -vl) → .textOnly")
-    func d3_qwen35Text_notVL() {
-        // Without `-vl` suffix, qwen3.5/3.6 falls through to text-only
-        #expect(ModelMediaCapabilities.from(modelId: "OsaurusAI/Qwen3.5-35B-A3B-mxfp4") == .textOnly)
-        #expect(ModelMediaCapabilities.from(modelId: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4") == .textOnly)
-    }
-
-    @Test("D3: Holo3 VL → .imageVideo")
-    func d3_holo3VL() {
-        #expect(ModelMediaCapabilities.from(modelId: "JANGQ-AI/Holo3-VL-35B-JANGTQ") == .imageVideo)
-    }
-
-    // MARK: - D4: SmolVLM 2 (image + video)
-
-    @Test("D4: SmolVLM 2 → .imageVideo")
-    func d4_smolVLM2() {
-        #expect(ModelMediaCapabilities.from(modelId: "HuggingFaceTB/SmolVLM2-2.2B") == .imageVideo)
-        #expect(ModelMediaCapabilities.from(modelId: "smolvlm-instruct") == .imageVideo)
-    }
-
-    // MARK: - D5: ZAYA1-VL image-only family
-
-    @Test("D5: ZAYA1-VL → .imageOnly")
-    func d5_zaya1VL() {
-        let cap = ModelMediaCapabilities.from(modelId: "Zyphra/ZAYA1-VL-8B-MXFP4")
-        #expect(cap == .imageOnly)
-        #expect(cap.supportsImage)
-        #expect(!cap.supportsVideo)
-        #expect(!cap.supportsAudio)
-    }
-
-    @Test("D5: ZAYA1-VL flat picker id → .imageOnly")
-    func d5_zaya1VLFlatPicker() {
-        #expect(ModelMediaCapabilities.from(modelId: "zaya1-vl-8b-mxfp4") == .imageOnly)
-    }
-
-    @Test("D5 boundary: text ZAYA remains text-only")
-    func d5_textZaya_notVL() {
-        #expect(ModelMediaCapabilities.from(modelId: "Zyphra/ZAYA1-8B-MXFP4") == .textOnly)
-        #expect(ModelMediaCapabilities.from(modelId: "zaya1-8b-mxfp4") == .textOnly)
-    }
-
-    // MARK: - D6: Image-only VLM families
-
-    @Test("D6: PaliGemma → .imageOnly")
-    func d6_paligemma() {
-        #expect(ModelMediaCapabilities.from(modelId: "google/paligemma2-3b-mix") == .imageOnly)
-    }
-
-    @Test("D6: Idefics 3 → .imageOnly")
-    func d6_idefics3() {
-        #expect(ModelMediaCapabilities.from(modelId: "HuggingFaceM4/Idefics3-8B") == .imageOnly)
-    }
-
-    @Test("D6: FastVLM / LLava-Qwen2 → .imageOnly")
-    func d6_fastVLM() {
-        #expect(ModelMediaCapabilities.from(modelId: "apple/FastVLM-7B") == .imageOnly)
-        #expect(ModelMediaCapabilities.from(modelId: "llava-hf/llava_qwen2-7b") == .imageOnly)
-    }
-
-    @Test("D6: Pixtral standalone → .imageOnly")
-    func d6_pixtral() {
-        #expect(ModelMediaCapabilities.from(modelId: "mistralai/Pixtral-12B-2409") == .imageOnly)
-    }
-
-    @Test("D6: GLM OCR → .imageOnly")
-    func d6_glmOcr() {
-        #expect(ModelMediaCapabilities.from(modelId: "THUDM/GLM-OCR-large") == .imageOnly)
-    }
-
-    @Test("D6: LFM2-VL → .imageOnly")
-    func d6_lfm2VL() {
-        #expect(ModelMediaCapabilities.from(modelId: "LiquidAI/LFM2-VL-1.6B") == .imageOnly)
-    }
-
-    @Test("D6: Gemma 3 / 4 (VLM) → .imageOnly")
-    func d6_gemmaVLM() {
-        #expect(ModelMediaCapabilities.from(modelId: "google/gemma-3-27b-it") == .imageOnly)
-        #expect(ModelMediaCapabilities.from(modelId: "OsaurusAI/Gemma-4-it-26B-A4B") == .imageOnly)
-        #expect(ModelMediaCapabilities.from(modelId: "gemma-4-12b-it-jang_4m") == .imageOnly)
-        #expect(ModelMediaCapabilities.from(modelId: "gemma-4-12b-it-mxfp4") == .imageOnly)
-        #expect(ModelMediaCapabilities.from(modelId: "gemma-4-12b-it-mxfp8") == .imageOnly)
-    }
-
-    @Test("D6: DiffusionGemma is image-only, not video/audio")
-    func d6_diffusionGemmaImageOnly() {
-        for modelId in [
-            "google/diffusiongemma-26B-A4B-it",
-            "OsaurusAI/diffusiongemma-26B-A4B-it-MXFP4",
-            "diffusion_gemma",
-        ] {
-            let cap = ModelMediaCapabilities.from(modelId: modelId)
-            #expect(cap == .imageOnly, "\(modelId) must advertise image only")
-            #expect(cap.supportsImage)
-            #expect(!cap.supportsVideo)
-            #expect(!cap.supportsAudio)
+    @Test(arguments: ["attention_projection_layout", "processor_config", "video_token_id", "audio_token_id"])
+    func mimoRequiresNativeRepresentationAndMatchingTokens(key: String) throws {
+        let root = try VisionBundleFixture.makeMiMo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("config.json")
+        var config = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        config.removeValue(forKey: key)
+        try VisionBundleFixture.writeJSON(config, to: file)
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "MiMo-V2.6")
+        if key == "video_token_id" {
+            #expect(caps.supportsImage && caps.supportsAudio && !caps.supportsVideo)
+        } else if key == "audio_token_id" {
+            #expect(caps.supportsImage && caps.supportsVideo && !caps.supportsAudio)
+        } else {
+            #expect(caps == .textOnly)
         }
     }
 
-    // MARK: - D7: Mistral 3 / 3.5 (image only via Pixtral wrap)
-
-    @Test("D7: Mistral 3 / 3.5 → .imageOnly")
-    func d7_mistral3() {
-        #expect(ModelMediaCapabilities.from(modelId: "mistralai/Mistral-3-Small-24B") == .imageOnly)
-        #expect(
-            ModelMediaCapabilities.from(modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4")
-                == .imageOnly
-        )
+    @Test func visionEvidenceMatchesFormatPreflightAndRefreshesChangedHeaders() throws {
+        let root = try VisionBundleFixture.make()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let names = Array(LocalVisionEvidence.inspect(root).tensorNames)
+        #expect(ModelFormatDetection.isMLXFormat(at: root))
+        try VisionBundleFixture.writeWeights(names, metadata: ["format": "pt"],
+            to: root.appendingPathComponent("model.safetensors"))
+        for alias in ["OsaurusAI/renamed", "other/renamed", "vision-looking-name"] {
+            let row = InstalledVisionEvaluation.inspect(directory: root, modelID: alias)
+            #expect(!row.supportsImage)
+            #expect(row.reason.contains("weight format"))
+        }
+        #expect(!ModelFormatDetection.isMLXFormat(at: root))
+        try VisionBundleFixture.writeWeights(names, metadata: ["format": "mlx"],
+            to: root.appendingPathComponent("model.safetensors"))
+        #expect(InstalledVisionEvaluation.inspect(directory: root, modelID: "neutral").supportsImage)
+        #expect(ModelFormatDetection.isMLXFormat(at: root))
     }
 
-    @Test("D7 boundary: bare 'mistral-7b' (no 3 or medium-3) → .textOnly")
-    func d7_bareMistral_notImage() {
-        #expect(ModelMediaCapabilities.from(modelId: "mistralai/Mistral-7B-v0.3") == .textOnly)
+    @Test(arguments: ["qwen3_5", "qwen3_5_moe"])
+    func renamedDerivativeWithPreservedVisionTower(type: String) throws {
+        let root = try VisionBundleFixture.make(type: type)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Actual Ornith dense/MoE layout: 27 blocks, vision_tower rather
+        // than visual, with the selected preprocessor_config.json sidecar.
+        try VisionBundleFixture.writeJSON(["model_type": type, "vision_config": ["depth": 27]],
+            to: root.appendingPathComponent("config.json"))
+        try VisionBundleFixture.writeJSON(["processor_class": "Qwen3VLProcessor", "patch_size": 16],
+            to: root.appendingPathComponent("preprocessor_config.json"))
+        let names = ["vision_tower.patch_embed.proj.weight", "vision_tower.merger.linear_fc2.weight"]
+            + (0..<27).map { "vision_tower.blocks.\($0).attn.qkv.weight" }
+        try VisionBundleFixture.writeWeights(names, to: root.appendingPathComponent("model.safetensors"))
+        for alias in ["Ornith-1.5", "ordinary-renamed-model", "Qwen3-VL"] {
+            let row = InstalledVisionEvaluation.inspect(directory: root, modelID: alias)
+            #expect(row.supportsImage)
+            #expect(row.declaresVision)
+            #expect(row.modelType == type)
+        }
+        try VisionBundleFixture.writeWeights(names.filter { !$0.contains(".blocks.26.") },
+            to: root.appendingPathComponent("model.safetensors"))
+        let incomplete = InstalledVisionEvaluation.inspect(directory: root, modelID: "Ornith-1.5")
+        #expect(incomplete.declaresVision)
+        #expect(!incomplete.supportsImage)
+        #expect(incomplete.reason.contains("missing configured"))
     }
 
-    // MARK: - D8: Mistral 4 VLM (image only)
-
-    @Test("D8: Mistral 4 VL → .imageOnly")
-    func d8_mistral4VL() {
-        #expect(
-            ModelMediaCapabilities.from(modelId: "OsaurusAI/Mistral-4-VL-Future") == .imageOnly
-        )
-    }
-
-    @Test("D8 boundary: Mistral 4 dense (no -vl) → .textOnly")
-    func d8_mistral4Dense_notImage() {
-        #expect(
-            ModelMediaCapabilities.from(modelId: "mistralai/Mistral-4-Small-24B-Instruct")
-                == .textOnly
-        )
-    }
-
-    // MARK: - Master FALSE: dense LLM families
-
-    @Test("Master FALSE: dense LLMs all → .textOnly")
-    func masterFalse_denseLLMs() {
-        let denseFamilies = [
-            "lmstudio-community/gpt-oss-20b-MLX-8bit",
-            "OsaurusAI/Laguna-XS.2-mxfp4",  // SWA-hybrid LLM, no vision
-            "deepseekv4-flash-jangtq",
-            "kimi/Kimi-K2-Instruct",
-            "OsaurusAI/MiniMax-M2.7-JANGTQ",  // hybrid SSM but text-only
-            "nemotron-cascade-2-30b-a3b-jang_4m",  // hybrid SSM but text-only
-            // Holo3 base bundles ARE image+video (no -vl suffix needed) —
-            // see commit 0a14145 + the imageVideo branch in
-            // ModelMediaCapabilities.from(modelId:). Keep them out of the
-            // dense-LLM/text-only master-FALSE set.
-            "foundation",
-            "",  // empty edge case
-        ]
-        for id in denseFamilies {
-            let cap = ModelMediaCapabilities.from(modelId: id)
-            #expect(
-                cap == .textOnly,
-                "\(id) must resolve to text-only (got: \(cap.summary))"
-            )
-            #expect(!cap.anyMedia, "\(id) anyMedia must be false")
+    @Test(arguments: ["qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_5", "qwen3_5_moe", "qwen4_exp", "gemma4", "gemma4_unified"])
+    func installedFamilies(type: String) throws {
+        let root = try VisionBundleFixture.make(type: type)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["ordinary-local-model", "Qwen3-VL", "Nemotron-3-Ultra-Local", "Step-3.7-Local"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(caps.supportsVideo == type.hasPrefix("qwen"))
+            #expect(!caps.supportsAudio)
+            #expect(VLMDetection.isVLM(at: root) == caps.supportsImage)
         }
     }
 
-    // MARK: - Capabilities convenience surface
-
-    @Test("Capabilities.summary renders modality list")
-    func summary_renders() {
-        #expect(ModelMediaCapabilities.Capabilities.textOnly.summary == "text-only")
-        #expect(ModelMediaCapabilities.Capabilities.imageOnly.summary == "image")
-        #expect(ModelMediaCapabilities.Capabilities.imageVideo.summary == "image + video")
-        #expect(ModelMediaCapabilities.Capabilities.omni.summary == "image + video + audio")
+    @Test(arguments: ["Qwen3-VL", "Gemma-4-it", "Nemotron-3-Nano-Omni", "Holo3-VL", "unrelated-name"])
+    func missingBundleNeverUsesName(name: String) {
+        let absent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        #expect(ModelMediaCapabilities.from(directory: absent, modelId: name) == .textOnly)
     }
 
-    @Test("Capabilities.anyMedia flips on any modality")
-    func anyMedia_flips() {
-        #expect(!ModelMediaCapabilities.Capabilities.textOnly.anyMedia)
-        #expect(ModelMediaCapabilities.Capabilities.imageOnly.anyMedia)
-        #expect(ModelMediaCapabilities.Capabilities.imageVideo.anyMedia)
-        #expect(ModelMediaCapabilities.Capabilities.omni.anyMedia)
+    @Test func explicitLocalNegativeCannotBeOverridden() {
+        #expect(ModelMediaCapabilities.composerCapabilities(modelId: "Qwen3-VL",
+            fallbackSupportsImages: true, localHasAudioTensors: true, localCapabilities: .textOnly) == .textOnly)
+        #expect(ModelMediaCapabilities.composerCapabilities(modelId: "opaque-provider-id",
+            fallbackSupportsImages: true) == .imageOnly)
+        #expect(ModelMediaCapabilities.composerCapabilities(modelId: "Qwen3-VL",
+            fallbackSupportsImages: true, localModelType: "qwen3_5") == .textOnly)
     }
 
-    @Test("Descriptor gates Gemma4 audio per-bundle when only the name is known")
-    func descriptor_gemma4AudioBundleGatedByName() {
-        // Name-only detection cannot see the weight map, so audio stays
-        // unproven with the per-bundle gating message. Installed-bundle
-        // detection (`from(directory:)`) flips audio on iff the weight map
-        // ships embed_audio.embedding_projection (12B unified + E-series).
-        let descriptor = ModelMediaCapabilities.descriptor(
-            modelId: "OsaurusAI/Gemma-4-12B-it-MXFP4"
-        )
-
-        #expect(descriptor.capabilities == .imageOnly)
-        #expect(descriptor.image.status == .supported)
-        #expect(descriptor.audio.status == .unproven)
-        #expect(!descriptor.audio.isUsable)
-        #expect(descriptor.rejectionMessage(for: .audio).contains("Gemma4 audio is enabled per-bundle"))
+    @Test func missingVisionDoesNotHideIndependentAudioWeights() throws {
+        let root = try VisionBundleFixture.make(type: "gemma4")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON([
+            "model_type": "gemma4", "vision_config": NSNull(),
+            "audio_config": ["model_type": "gemma4_audio"],
+        ], to: root.appendingPathComponent("config.json"))
+        try VisionBundleFixture.writeWeights(["embed_audio.embedding_projection.weight"],
+                                             to: root.appendingPathComponent("model.safetensors"))
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "neutral")
+        #expect(!caps.supportsImage)
+        #expect(!caps.supportsVideo)
+        #expect(caps.supportsAudio)
+        try VisionBundleFixture.writeWeights(["language_model.weight"],
+                                             to: root.appendingPathComponent("model.safetensors"))
+        #expect(!ModelMediaCapabilities.descriptor(directory: root, modelId: "neutral", refresh: true)
+            .capabilities.supportsAudio)
     }
 
-    @Test("Descriptor keeps Nemotron Omni audio supported")
-    func descriptor_nemotronOmniAudioSupported() {
-        let descriptor = ModelMediaCapabilities.descriptor(
-            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"
-        )
-
-        #expect(descriptor.capabilities == .omni)
-        #expect(descriptor.audio.status == .supported)
-        #expect(descriptor.audio.isUsable)
+    @Test(arguments: ["patch_embed", "blocks.1", "merger"])
+    func missingComponentRejected(component: String) throws {
+        let root = try VisionBundleFixture.make(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!VLMDetection.isVLM(at: root))
     }
 
-    @Test("Composer capabilities merge image fallback only")
-    func composerCapabilities_mergeImageFallbackOnly() {
-        #expect(
-            ModelMediaCapabilities.composerCapabilities(
-                modelId: "unknown-remote-vlm",
-                fallbackSupportsImages: true
-            ) == .imageOnly
-        )
-        #expect(
-            ModelMediaCapabilities.composerCapabilities(
-                modelId: "JANGQ-AI/Laguna-XS.2-JANGTQ",
-                fallbackSupportsImages: false
-            ) == .textOnly
-        )
-        #expect(
-            ModelMediaCapabilities.composerCapabilities(
-                modelId: "Qwen/Qwen3-VL-8B",
-                fallbackSupportsImages: false
-            ) == .imageVideo
-        )
-        #expect(
-            ModelMediaCapabilities.composerCapabilities(
-                modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
-                fallbackSupportsImages: false
-            ) == .omni
-        )
+    @Test(arguments: ["patch_dense.weight", "patch_dense.bias", "patch_ln1.weight", "patch_ln1.bias",
+                      "patch_ln2.weight", "patch_ln2.bias", "pos_embedding", "pos_norm.weight",
+                      "pos_norm.bias", "embed_vision.embedding_projection.weight"])
+    func unifiedEmbedderRequiresEachComponent(component: String) throws {
+        let root = try VisionBundleFixture.make(type: "gemma4_unified", omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!VLMDetection.isVLM(at: root))
     }
 
-    @Test("Composer upgrades an opaque local Qwen 3.5 VLM name to image plus video")
-    func composerCapabilities_usesScannedLocalModelTypeForVideo() {
-        #expect(
-            ModelMediaCapabilities.composerCapabilities(
-                modelId: "bonsai-27b-1bit-jang",
-                fallbackSupportsImages: true,
-                localModelType: "qwen3_5"
-            ) == .imageVideo
-        )
-        #expect(
-            ModelMediaCapabilities.composerDescriptor(
-                modelId: "bonsai-27b-1bit-jang",
-                fallbackSupportsImages: true,
-                localModelType: "QWEN3_5"
-            ).video.reason.contains("local bundle model_type")
-        )
+    @Test(arguments: ["pixtral", "mistral3", "ministral3"])
+    func pixtralPatchConvolutionIsInputEvidence(type: String) throws {
+        let root = try VisionBundleFixture.make(type: type)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON(["processor_class": "PixtralProcessor"],
+                                          to: root.appendingPathComponent("processor_config.json"))
+        let block = "vision_tower.transformer.layers.0.attention.wq.weight"
+        try VisionBundleFixture.writeWeights(["vision_tower.patch_conv.weight", block],
+                                            to: root.appendingPathComponent("model.safetensors"))
+        #expect(VLMDetection.isVLM(at: root))
+        try VisionBundleFixture.writeWeights([block], to: root.appendingPathComponent("model.safetensors"))
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
     }
 
-    @Test("Local Qwen model_type alone never grants media to a text-only bundle")
-    func composerCapabilities_localModelTypeNeedsVisionProof() {
-        #expect(
-            ModelMediaCapabilities.composerCapabilities(
-                modelId: "opaque-qwen-checkpoint",
-                fallbackSupportsImages: false,
-                localModelType: "qwen3_5"
-            ) == .textOnly
-        )
+    @Test func discreteVisionTokenizerUsesItsConfigAndCodebook() throws {
+        let root = try VisionBundleFixture.make(type: "apertus1p5")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON(["model_type": "apertus1p5",
+            "vision_tokenizer_config": ["codebook_size": 131072]],
+            to: root.appendingPathComponent("config.json"))
+        try VisionBundleFixture.writeJSON(["processor_class": "Apertus1p5Processor"],
+            to: root.appendingPathComponent("processor_config.json"))
+        let weights = ["vision_tokenizer.encoder.conv_in.weight",
+            "vision_tokenizer.encoder.down.0.block.0.conv1.weight",
+            "vision_tokenizer.encoder.conv_out.weight", "vision_tokenizer.quant_conv.weight",
+            "vision_tokenizer.quantize.embedding.weight"]
+        try VisionBundleFixture.writeWeights(weights, to: root.appendingPathComponent("model.safetensors"))
+        #expect(VLMDetection.isVLM(at: root))
+        try VisionBundleFixture.writeWeights(Array(weights.dropLast()),
+            to: root.appendingPathComponent("model.safetensors"))
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
     }
 
-    @Test("Community 6-bit Qwen3.6 name (no -vl suffix) keeps video via model_type")
-    func composerCapabilities_communityQwen36BundleKeepsVideo() {
-        // "Qwen3.6-35B-A3B-6bit" fails the name matcher's -vl requirement, so
-        // any surface gating on `from(modelId:)` alone drops the video the
-        // composer accepted — the live "I don't see any video attached" bug.
-        // The send path must resolve through composerCapabilities like the
-        // composer's attach gate does.
-        #expect(
-            ModelMediaCapabilities.from(modelId: "Qwen3.6-35B-A3B-6bit").supportsVideo == false
-        )
-        #expect(
-            ModelMediaCapabilities.composerCapabilities(
-                modelId: "Qwen3.6-35B-A3B-6bit",
-                fallbackSupportsImages: true,
-                localModelType: "qwen3_5_moe"
-            ) == .imageVideo
-        )
+    @Test func configAndWeightsBothRequired() throws {
+        for value: Any in [NSNull(), [:] as [String: Any], ["depth": 2]] {
+            let root = try VisionBundleFixture.make()
+            defer { try? FileManager.default.removeItem(at: root) }
+            try VisionBundleFixture.writeJSON(["model_type": "qwen3_5", "vision_config": value],
+                                             to: root.appendingPathComponent("config.json"))
+            try FileManager.default.removeItem(at: root.appendingPathComponent("model.safetensors"))
+            #expect(!LocalVisionEvidence.inspect(root).hasVision)
+        }
+        let root = try VisionBundleFixture.make()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON(["model_type": "qwen3_5", "vision_config": NSNull()],
+                                         to: root.appendingPathComponent("config.json"))
+        #expect(!VLMDetection.isVLM(at: root))
+    }
+
+    @Test func staleIndexCannotProveWeights() throws {
+        let root = try VisionBundleFixture.make(indexed: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(LocalVisionEvidence.inspect(root).hasVision)
+        try VisionBundleFixture.writeWeights(["language_model.weight"], to: root.appendingPathComponent("model.safetensors"))
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+    }
+
+    @Test func refreshAndNotificationInvalidateBothDirections() throws {
+        let root = try VisionBundleFixture.make()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(VLMDetection.isVLM(at: root))
+        let file = root.appendingPathComponent("config.json")
+        let original = try Data(contentsOf: file)
+        try VisionBundleFixture.writeJSON(["model_type": "qwen3_5"], to: file)
+        #expect(!ModelMediaCapabilities.descriptor(directory: root, modelId: "Qwen3-VL", refresh: true).capabilities.supportsImage)
+        try original.write(to: file)
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+        #expect(VLMDetection.isVLM(at: root))
+    }
+
+    @Test func newUnsupportedPayloadFailsInsteadOfDropping() throws {
+        let image = Attachment.image(Data([1, 2, 3]))
+        #expect(throws: ModelMediaCapabilities.UnsupportedAttachment.self) {
+            try ModelMediaCapabilities.validateAttachments([image], capabilities: .textOnly)
+        }
+        try ModelMediaCapabilities.validateAttachments([image], capabilities: .imageOnly)
+    }
+
+    @Test func corruptHeaderAndAbsentProcessorRejected() throws {
+        let root = try VisionBundleFixture.make()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data([255, 255, 255]).write(to: root.appendingPathComponent("model.safetensors"))
+        #expect(!LocalVisionEvidence.inspect(root).hasVision)
+        let other = try VisionBundleFixture.make()
+        defer { try? FileManager.default.removeItem(at: other) }
+        try FileManager.default.removeItem(at: other.appendingPathComponent("processor_config.json"))
+        #expect(!LocalVisionEvidence.inspect(other).hasVision)
     }
 }

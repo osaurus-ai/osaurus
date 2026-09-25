@@ -124,11 +124,9 @@ public enum WhatsNewContent {
     ]
 
     /// First-launch announcement for native Browser Use in 0.22.9.
-    /// Three pages: what it does and the persistent per-agent sessions
-    /// (superseding the osaurus.browser plugin, whose profiles were
-    /// migrated automatically), the safe-by-default consent gate plus the
-    /// direct sign-in window, and how to turn it on per custom agent.
-    /// The final CTA deep-links to Settings → Browser.
+    /// Two pages: what it does plus the persistent per-agent sessions, and
+    /// the safe-by-default consent gate plus how to turn it on per custom
+    /// agent. The final CTA deep-links to Settings → Browser.
     private static let browserUse_0_22_9 = WhatsNewRelease(
         version: "0.22.9",
         pages: [
@@ -137,24 +135,16 @@ public enum WhatsNewContent {
                 title: "Browser Use",
                 titlePrefix: "Introducing",
                 description:
-                    "Your agents can now browse the web for you — navigating pages, reading content, and filling forms, with every step shown in a live feed. Each agent gets its own persistent browser session, so cookies and sign-ins carry over between chats but are never shared with other agents or your regular browser. If you used the browser plugin before, your sessions were migrated automatically.",
+                    "Your agents can browse the web for you — navigating pages, reading content, and filling forms, with every step shown in a live feed. Each agent keeps its own persistent browser session, separate from other agents and your regular browser.",
                 systemImage: "globe"
             ),
             WhatsNewPage(
-                id: "browser-use-0.22.9:safety",
-                title: "Safe by default",
-                eyebrow: "Introducing Browser Use",
-                description:
-                    "Reading and ordinary navigation run automatically, following your Computer Use autonomy level — but typing pauses for your approval, and submitting, purchasing, sending, or clearing data always asks first. Sign-ins happen in a window you type into directly, so agents never see your passwords. And you can stop a run any time from the feed.",
-                systemImage: "checkmark.shield.fill"
-            ),
-            WhatsNewPage(
                 id: "browser-use-0.22.9:enable",
-                title: "Turn it on per agent",
+                title: "Safe by default, on per agent",
                 eyebrow: "Introducing Browser Use",
                 description:
-                    "Browser Use is off by default and only custom agents can use it. Open a custom agent's Subagents tab and flip on Browser Use — optionally with a dedicated model for browsing. Review or reset each agent's session in the new Browser settings tab.",
-                systemImage: "person.2.fill",
+                    "Reading and navigation run automatically; typing pauses for approval, and submitting, purchasing, or sending always asks first. Turn it on for a custom agent under Abilities → Subagents, and review each agent's session in Settings → Browser.",
+                systemImage: "checkmark.shield.fill",
                 actionLabel: "Open Browser settings",
                 action: .openBrowserSettings
             ),
@@ -162,9 +152,9 @@ public enum WhatsNewContent {
     )
 
     /// First-launch announcement for native Channels in 0.22.13.
-    /// Three pages introduce supported services, per-channel reply routing
-    /// and outbound destinations, and the global safety and audit controls.
-    /// The final CTA deep-links to Management → Channels.
+    /// Two pages: the supported services, then per-channel routing plus the
+    /// global safety and audit controls. The final CTA deep-links to
+    /// Management → Channels.
     private static let channels_0_22_13 = WhatsNewRelease(
         version: "0.22.13",
         pages: [
@@ -173,23 +163,15 @@ public enum WhatsNewContent {
                 title: "Channels",
                 titlePrefix: "Introducing",
                 description:
-                    "Connect Discord, Slack, Telegram, and iMessage so your agents can read and reply where conversations already happen. Set up every service in one place and check its status at a glance.",
+                    "Connect Discord, Slack, Telegram, WhatsApp, and iMessage — plus n8n and custom JSON agents — so your agents can read and reply where conversations already happen. Set up every service in one place and check its status at a glance.",
                 systemImage: "bubble.left.and.bubble.right.fill"
             ),
             WhatsNewPage(
-                id: "channels-0.22.13:routing",
-                title: "Route replies to the right agent",
-                eyebrow: "Introducing Channels",
-                description:
-                    "Choose which agent answers each connected channel and which people may trigger it. Agents can also start new messages only in destinations you explicitly allow.",
-                systemImage: "arrow.triangle.branch"
-            ),
-            WhatsNewPage(
                 id: "channels-0.22.13:control",
-                title: "You stay in control",
+                title: "You choose who and where",
                 eyebrow: "Introducing Channels",
                 description:
-                    "Pause sending everywhere with one switch, review incoming activity and the outbox, and keep access limited to the channels, people, and destinations you choose.",
+                    "Pick which agent answers each channel and which people may trigger it; agents can only start new messages in destinations you allow. Pause sending everywhere with one switch and review incoming activity and the outbox.",
                 systemImage: "checkmark.shield.fill",
                 actionLabel: "Open Channels",
                 action: .openChannelsSettings
@@ -197,10 +179,10 @@ public enum WhatsNewContent {
         ]
     )
 
-    /// First-launch announcement for Projects in 0.22.23. Three pages:
-    /// what a project bundles, the shared memory that carries across every
-    /// chat and agent, and how to start one. The final CTA reveals the
-    /// sidebar's Projects tab via `openProjects`.
+    /// First-launch announcement for Projects in 0.22.23. Two pages: what a
+    /// project bundles (including the shared memory that carries across
+    /// every chat and agent), and how to start one. The final CTA reveals
+    /// the sidebar's Projects tab via `openProjects`.
     private static let projects_0_22_23 = WhatsNewRelease(
         version: "0.22.23",
         pages: [
@@ -209,23 +191,15 @@ public enum WhatsNewContent {
                 title: "Projects",
                 titlePrefix: "Introducing",
                 description:
-                    "Group related chats into a project so they share one set of instructions, knowledge collections, and memory. Everything you work on in a project stays together, and every new chat starts with the same context instead of a blank slate.",
+                    "Group related chats into a project so they share one set of instructions, knowledge collections, and memory. A fact learned in one chat is recalled in another right away, even across different agents.",
                 systemImage: "folder.fill"
-            ),
-            WhatsNewPage(
-                id: "projects-0.22.23:memory",
-                title: "Memory shared across every chat",
-                eyebrow: "Introducing Projects",
-                description:
-                    "Chats in a project pool their memory, so a fact learned in one chat is recalled in another right away, even across different agents. It works even for agents whose own memory is off. They read and add to the project's shared memory without building any personal memory of their own.",
-                systemImage: "brain"
             ),
             WhatsNewPage(
                 id: "projects-0.22.23:start",
                 title: "Start in the sidebar",
                 eyebrow: "Introducing Projects",
                 description:
-                    "Open the Projects tab in the sidebar to create one, set its instructions, knowledge, and default agent, then pull in existing chats or start new ones. Your existing chats and memory are untouched until you add them.",
+                    "Open the Projects tab to create one, set its instructions, knowledge, and default agent, then pull in existing chats or start new ones. Existing chats and memory are untouched until you add them.",
                 systemImage: "folder.badge.plus",
                 actionLabel: "Open Projects",
                 action: .openProjects
@@ -233,11 +207,11 @@ public enum WhatsNewContent {
         ]
     )
 
-    /// First-launch announcement for the Orchestrator in 0.24.0. Three
-    /// pages: the default agent's new role (declarative config + delegation),
-    /// the delegation helpers and their safety rails, and the new
-    /// Settings → Orchestrator tab for identity + delegation. The final CTA
-    /// deep-links to Settings → Orchestrator.
+    /// First-launch announcement for the Orchestrator in 0.24.0. Two
+    /// pages: the default agent's new role (declarative config + delegation
+    /// to your agents and allowed models), and the Settings → Orchestrator
+    /// tab for identity + delegation. The final CTA deep-links to
+    /// Settings → Orchestrator.
     private static let orchestrator_0_24_0 = WhatsNewRelease(
         version: "0.24.0",
         pages: [
@@ -246,23 +220,15 @@ public enum WhatsNewContent {
                 title: "The Orchestrator",
                 titlePrefix: "Introducing",
                 description:
-                    "Your default agent grew up. Beyond setting up Osaurus and answering questions, it now manages your whole configuration as one reviewable document — it plans every change, shows you exactly what would happen, and applies only after you approve — and it can delegate real work to your agents.",
+                    "Your default agent now manages your whole configuration as one reviewable document — it plans each change, shows exactly what would happen, and applies only after you approve. It can also delegate work to your custom agents and allowed local or cloud models, in parallel, within budgets you set.",
                 systemImage: "point.3.connected.trianglepath.dotted"
-            ),
-            WhatsNewPage(
-                id: "orchestrator-0.24.0:delegation",
-                title: "Delegates work to your agents",
-                eyebrow: "Introducing the Orchestrator",
-                description:
-                    "Ask for something bigger and the Orchestrator can spawn your custom agents and allowed local or cloud models as helpers — in parallel, each within budgets you set for tokens, turns, tool calls, and time. A RAM-safety preflight keeps parallel local models from overwhelming your Mac, and results flow back into one conversation.",
-                systemImage: "square.stack.3d.up.fill"
             ),
             WhatsNewPage(
                 id: "orchestrator-0.24.0:settings",
                 title: "Make it yours",
                 eyebrow: "Introducing the Orchestrator",
                 description:
-                    "The Orchestrator has its own home in Settings: give it a name, write its persona, tune its generation, and choose exactly which agents and models it may delegate to. Delegation stays off until you allow specific helpers.",
+                    "Settings → Orchestrator is its home: name it, write its persona, tune generation, and choose exactly which helpers it may delegate to. Delegation stays off until you allow specific agents or models.",
                 systemImage: "slider.horizontal.3",
                 actionLabel: "Open Orchestrator settings",
                 action: .openOrchestratorSettings
@@ -270,30 +236,33 @@ public enum WhatsNewContent {
         ]
     )
 
-    /// First-launch announcement for the Raptor v0.5 model in 0.24.4.
-    /// Two pages: what the model is (agentic tool use tuned for Macs with
-    /// less RAM — only ~1B of its 8B parameters active per token) and where
-    /// to get it. The final CTA deep-links to Management → Models.
+    /// First-launch announcement for the Raptor model family, first shipped
+    /// as v0.5 in 0.24.4. Two pages: what the family is (agentic tool use
+    /// tuned for Macs with less RAM) and where to get it. The copy names the
+    /// current default (Raptor 0.6) rather than the version announced at
+    /// the time, because the notes are read by users arriving at the latest
+    /// release and v0.5 has since been retired from the catalog. The final
+    /// CTA deep-links to Management → Models.
     private static let raptor_0_24_4 = WhatsNewRelease(
         version: "0.24.4",
         pages: [
             WhatsNewPage(
                 id: "raptor-0.24.4:summary",
-                title: "Raptor v0.5",
+                title: "Raptor",
                 titlePrefix: "Introducing",
                 description:
-                    "Meet our new recommended model, made for Macs with less memory. Raptor is quick and light on its feet, so your assistant can use tools, work through multi-step tasks, and keep up with long conversations without slowing down your Mac.",
+                    "Meet Raptor, our own model family built for Macs with less memory. It is quick and light, so your assistant can use tools, work through multi-step tasks, and keep up with long conversations without slowing down your Mac.",
                 assetImage: "osaurus-logo"
             ),
             WhatsNewPage(
                 id: "raptor-0.24.4:download",
                 title: "Get it from the model catalog",
-                eyebrow: "Introducing Raptor v0.5",
+                eyebrow: "Introducing Raptor",
                 description:
-                    "Raptor v0.5 is now a Top Pick in the model catalog, and new setups on mainstream hardware start with it by default. Already set up? Grab it any time from Management → Models.",
+                    "Raptor 0.6 is a Top Pick in the model catalog, and new setups on mainstream hardware start with it by default. Already set up? Grab it any time from Settings… (⌘,) → Local Models.",
                 systemImage: "arrow.down.circle.fill",
                 actionLabel: "Open Models",
-                action: .openModelDownloads(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")
+                action: .openModelDownloads(modelId: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
             ),
         ]
     )

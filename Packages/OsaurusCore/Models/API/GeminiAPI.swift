@@ -265,6 +265,26 @@ struct GeminiUsageMetadata: Codable, Sendable {
     let promptTokenCount: Int?
     let candidatesTokenCount: Int?
     let totalTokenCount: Int?
+    /// Tokens of the prompt served from Gemini's implicit (or explicit)
+    /// context cache at the discounted rate; subset of `promptTokenCount`.
+    /// Absent when nothing was cached.
+    var cachedContentTokenCount: Int? = nil
+    /// Reasoning tokens for thinking models; not part of `candidatesTokenCount`.
+    var thoughtsTokenCount: Int? = nil
+
+    init(
+        promptTokenCount: Int?,
+        candidatesTokenCount: Int?,
+        totalTokenCount: Int?,
+        cachedContentTokenCount: Int? = nil,
+        thoughtsTokenCount: Int? = nil
+    ) {
+        self.promptTokenCount = promptTokenCount
+        self.candidatesTokenCount = candidatesTokenCount
+        self.totalTokenCount = totalTokenCount
+        self.cachedContentTokenCount = cachedContentTokenCount
+        self.thoughtsTokenCount = thoughtsTokenCount
+    }
 }
 
 // MARK: - Error Response

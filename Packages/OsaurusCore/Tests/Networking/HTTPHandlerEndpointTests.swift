@@ -23,6 +23,33 @@ import Testing
 @Suite(.serialized)
 struct HTTPHandlerEndpointTests {
 
+    @Test(arguments: ["/v1/embeddings", "/embeddings", "/api/embed", "/embed"])
+    func embeddings_rejectUnsupportedModelBeforeLoading(_ path: String) async throws {
+        let server = try await startServer()
+        defer { Task { await server.shutdown() } }
+        for model in ["mxbai-embed-large-v1", "bge-small-en-v1.5", "other/potion-base-4M", "bad\"model\\\n"] {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "input": "test"])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            #expect((response as? HTTPURLResponse)?.statusCode == 400)
+            let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(object["data"] == nil)
+            #expect(object["embeddings"] == nil)
+            let message: String
+            if path.hasSuffix("embeddings") {
+                let error = try #require(object["error"] as? [String: Any])
+                #expect(error["code"] as? String == "unsupported_embedding_model")
+                #expect(error["param"] as? String == "model")
+                message = try #require(error["message"] as? String)
+            } else {
+                message = try #require(object["error"] as? String)
+            }
+            #expect(message.contains(model))
+        }
+    }
+
     @Test func health_endpoint_returns_healthy_json() async throws {
         let server = try await startServer()
         defer { Task { await server.shutdown() } }
@@ -147,6 +174,50 @@ struct HTTPHandlerEndpointTests {
             let persisted = ServerRuntimeSettingsStore.snapshot()
             #expect(persisted.generation.temperature == 0.42)
             #expect(persisted.concurrency.maxConcurrentSequences == 2)
+        }
+    }
+
+    @Test @MainActor
+    func runtimeSettings_put_mtpTransitionsMatchControllerDecisions() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            var previous = VMLXServerRuntimeSettings()
+            previous.mtp = .init(mode: .forceOn, explicitDepth: 1)
+            ServerRuntimeSettingsStore.save(previous)
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            // Exercise the real endpoint, not a duplicate decision helper.
+            // No model is resident: load effects here are policy receipts,
+            // not evidence of a real container unload or head activation.
+            let transitions: [(VMLXServerMTPSettings, Bool, Bool)] = [
+                (.init(mode: .forceOn, explicitDepth: 3), false, true),
+                (.init(mode: .auto), false, true),
+                (.init(mode: .auto, draftTokenLimit: 2), false, true),
+                (.init(mode: .auto, draftTokenLimit: 2), false, false),
+                (.init(mode: .off), true, true),
+                (.init(mode: .forceOn, explicitDepth: 1), true, true),
+            ]
+            for (mtp, refreshExpected, invalidateExpected) in transitions {
+                var next = previous
+                next.mtp = mtp
+                let (data, response) = try await putRuntimeSettings(next, server: server)
+                #expect((response as? HTTPURLResponse)?.statusCode == 200)
+                let decoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: data)
+                #expect(decoded.effects?.loadedModelRefreshNeeded == refreshExpected)
+                #expect(decoded.effects?.runtimeConfigInvalidated == invalidateExpected)
+                #expect(decoded.settings.mtp == next.mtp)
+                #expect(ServerRuntimeSettingsStore.snapshot().mtp == next.mtp)
+                #expect(
+                    decoded.effects?.loadedModelRefreshNeeded
+                        == ServerController.loadedModelRuntimeInputsRequireRefresh(previous: previous, next: next)
+                )
+                #expect(
+                    decoded.effects?.runtimeConfigInvalidated
+                        == ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next)
+                )
+                previous = next
+            }
         }
     }
 
@@ -339,6 +410,17 @@ struct HTTPHandlerEndpointTests {
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             #expect(obj?["id"] as? String == hostAgentId.uuidString)
             #expect(obj?["default_model"] as? String == "fake-metadata-model")
+            #expect(obj?["description"] as? String == "")
+            #expect(obj?["description_required"] as? Bool == true)
+            #expect(obj?["description_validation"] as? String == AgentDescriptionPolicy.Violation.required.message)
+            let (listData, listResponse) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)/agents")!)
+            #expect((listResponse as? HTTPURLResponse)?.statusCode == 200)
+            let list = try JSONSerialization.jsonObject(with: listData) as? [String: Any]
+            let rows = list?["agents"] as? [[String: Any]]
+            let listed = rows?.first { $0["id"] as? String == hostAgentId.uuidString }
+            #expect(listed?["description_required"] as? Bool == true)
+
 
             // An address with no registry mapping still fails closed.
             let unknown = "0xdead000000000000000000000000000000000000"
@@ -369,6 +451,7 @@ struct HTTPHandlerEndpointTests {
             let agent = Agent(
                 id: hostAgentId,
                 name: "Action Bar Peer",
+                description: "Explains and summarizes documents.",
                 defaultModel: "fake-metadata-model",
                 chatQuickActions: actions,
                 isBuiltIn: false,
@@ -391,6 +474,9 @@ struct HTTPHandlerEndpointTests {
             )
             #expect((resp as? HTTPURLResponse)?.statusCode == 200)
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            #expect(obj?["description"] as? String == "Explains and summarizes documents.")
+            #expect(obj?["description_required"] as? Bool == false)
+            #expect(obj?["description_validation"] == nil)
             let wireActions = obj?["chat_quick_actions"] as? [[String: Any]]
             #expect(wireActions?.count == 2)
             #expect(wireActions?.first?["text"] as? String == "Explain")
@@ -501,16 +587,19 @@ struct HTTPHandlerEndpointTests {
     @MainActor
     private func withOverriddenRuntimeSettingsDirectory(
         _ dir: URL,
-        _ body: () async throws -> Void
+        _ body: @MainActor @Sendable () async throws -> Void
     ) async throws {
-        let previous = ServerRuntimeSettingsStore.overrideDirectory
-        ServerRuntimeSettingsStore.overrideDirectory = dir
-        ServerRuntimeSettingsStore.invalidateSnapshot()
-        defer {
-            ServerRuntimeSettingsStore.overrideDirectory = previous
+        try await ServerConfigStoreTestLock.shared.run {
+            let previous = ServerRuntimeSettingsStore.overrideDirectory
+            ServerRuntimeSettingsStore.overrideDirectory = dir
             ServerRuntimeSettingsStore.invalidateSnapshot()
-            try? FileManager.default.removeItem(at: dir)
+            defer {
+                ServerRuntimeSettingsStore.overrideDirectory = previous
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+                try? FileManager.default.removeItem(at: dir)
+            }
+            try await body()
+
         }
-        try await body()
     }
 }

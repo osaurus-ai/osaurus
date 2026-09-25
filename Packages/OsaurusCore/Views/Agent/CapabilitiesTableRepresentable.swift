@@ -29,6 +29,18 @@ enum CapabilitySection: Hashable {
     case main
 }
 
+/// Trailing status badge on a group header (e.g. "Permission needed" on an
+/// Apple app whose macOS grant is missing). Tapping it fires
+/// `onGroupStatusTap(groupId)` when `isActionable`.
+struct CapabilityGroupStatus: Equatable {
+    let text: String
+    let icon: String
+    let isWarning: Bool
+    let isActionable: Bool
+    /// Tooltip / accessibility hint.
+    let detail: String
+}
+
 /// Flattened row model for the unified capabilities list.
 enum CapabilityRow: Equatable, Identifiable {
     case groupHeader(
@@ -37,7 +49,8 @@ enum CapabilityRow: Equatable, Identifiable {
         icon: String,
         enabledCount: Int,
         totalCount: Int,
-        isExpanded: Bool
+        isExpanded: Bool,
+        status: CapabilityGroupStatus?
     )
     case tool(
         id: String,
@@ -45,14 +58,18 @@ enum CapabilityRow: Equatable, Identifiable {
         description: String,
         enabled: Bool,
         availability: ToolAvailability,
-        isAgentRestricted: Bool,
+        /// Non-nil when the row's switch acts on its whole group (built-in
+        /// Apple apps turn on and off per app). Rendered as a small badge
+        /// with this label; the toggle callback still fires per row and the
+        /// host maps it onto the group.
+        groupToggleLabel: String?,
         catalogTokens: Int,
         estimatedTokens: Int
     )
 
     var id: String {
         switch self {
-        case .groupHeader(let id, _, _, _, _, _): return "gh-\(id)"
+        case .groupHeader(let id, _, _, _, _, _, _): return "gh-\(id)"
         case .tool(let id, _, _, _, _, _, _, _): return "tool-\(id)"
         }
     }
@@ -65,6 +82,7 @@ struct CapabilityRenderingContext {
     let onToggleGroup: ((String) -> Void)?
     let onEnableAllInGroup: ((String) -> Void)?
     let onDisableAllInGroup: ((String) -> Void)?
+    let onGroupStatusTap: ((String) -> Void)?
 
     let onToggleTool: ((String, Bool) -> Void)?
 }
@@ -79,6 +97,7 @@ struct CapabilitiesTableRepresentable: NSViewRepresentable {
     var onToggleGroup: ((String) -> Void)?
     var onEnableAllInGroup: ((String) -> Void)?
     var onDisableAllInGroup: ((String) -> Void)?
+    var onGroupStatusTap: ((String) -> Void)?
 
     var onToggleTool: ((String, Bool) -> Void)?
 
@@ -112,6 +131,7 @@ struct CapabilitiesTableRepresentable: NSViewRepresentable {
             onToggleGroup: onToggleGroup,
             onEnableAllInGroup: onEnableAllInGroup,
             onDisableAllInGroup: onDisableAllInGroup,
+            onGroupStatusTap: onGroupStatusTap,
             onToggleTool: onToggleTool
         )
     }
@@ -378,7 +398,8 @@ extension CapabilitiesTableRepresentable {
                     let icon,
                     let enabledCount,
                     let totalCount,
-                    let isExpanded
+                    let isExpanded,
+                    let status
                 ) = row, let theme = ctx?.theme
             else { return nil }
             return ThemedContent(
@@ -389,10 +410,12 @@ extension CapabilitiesTableRepresentable {
                     enabledCount: enabledCount,
                     totalCount: totalCount,
                     isExpanded: isExpanded,
+                    status: status,
                     isHovered: isHovered,
                     onToggle: { [weak self] in self?.ctx?.onToggleGroup?(id) },
                     onEnableAll: { [weak self] in self?.ctx?.onEnableAllInGroup?(id) },
-                    onDisableAll: { [weak self] in self?.ctx?.onDisableAllInGroup?(id) }
+                    onDisableAll: { [weak self] in self?.ctx?.onDisableAllInGroup?(id) },
+                    onStatusTap: { [weak self] in self?.ctx?.onGroupStatusTap?(id) }
                 )
             )
         }
@@ -408,7 +431,7 @@ extension CapabilitiesTableRepresentable {
                     let description,
                     let enabled,
                     let availability,
-                    let isAgentRestricted,
+                    let groupToggleLabel,
                     let catalogTokens,
                     let estimatedTokens
                 ) = row, let theme = ctx?.theme
@@ -420,7 +443,7 @@ extension CapabilitiesTableRepresentable {
                     description: description,
                     enabled: enabled,
                     availability: availability,
-                    isAgentRestricted: isAgentRestricted,
+                    groupToggleLabel: groupToggleLabel,
                     catalogTokens: catalogTokens,
                     estimatedTokens: estimatedTokens,
                     isHovered: isHovered,
@@ -524,10 +547,12 @@ struct GroupHeaderCell: View {
     let enabledCount: Int
     let totalCount: Int
     let isExpanded: Bool
+    var status: CapabilityGroupStatus?
     let isHovered: Bool
     let onToggle: () -> Void
     let onEnableAll: () -> Void
     let onDisableAll: () -> Void
+    var onStatusTap: () -> Void = {}
 
     @Environment(\.theme) private var theme
 
@@ -576,6 +601,10 @@ struct GroupHeaderCell: View {
                 .lineLimit(1)
 
             Spacer()
+
+            if let status {
+                GroupStatusBadge(status: status, onTap: onStatusTap)
+            }
 
             // Assignment cluster: the badge says how many are on, the
             // checkbox right next to it acts on exactly that set — trailing
@@ -659,7 +688,7 @@ struct ToolRowCell: View {
     let description: String
     let enabled: Bool
     let availability: ToolAvailability
-    let isAgentRestricted: Bool
+    let groupToggleLabel: String?
     let catalogTokens: Int
     let estimatedTokens: Int
     let isHovered: Bool
@@ -668,8 +697,7 @@ struct ToolRowCell: View {
     @Environment(\.theme) private var theme
 
     private var nameColor: Color {
-        if isAgentRestricted { return theme.tertiaryText }
-        return enabled ? theme.primaryText : theme.secondaryText
+        enabled ? theme.primaryText : theme.secondaryText
     }
 
     var body: some View {
@@ -677,7 +705,6 @@ struct ToolRowCell: View {
             CapabilitySwitch(
                 isOn: enabled,
                 tint: theme.accentColor,
-                disabled: isAgentRestricted,
                 onToggle: onToggle
             )
 
@@ -688,8 +715,8 @@ struct ToolRowCell: View {
                         .foregroundColor(nameColor)
                         .lineLimit(1)
 
-                    if isAgentRestricted {
-                        SmallCapsuleBadge(text: "Chat Mode only")
+                    if let groupToggleLabel {
+                        SmallCapsuleBadge(text: groupToggleLabel, icon: "square.stack")
                     }
 
                     ToolAvailabilityBadge(availability: availability)
@@ -702,33 +729,65 @@ struct ToolRowCell: View {
 
             Spacer()
 
-            if !isAgentRestricted {
-                TokenBadge(count: catalogTokens)
-                    .help(
-                        catalogTokens == estimatedTokens
-                            ? "~\(estimatedTokens) tokens"
-                            : "Catalog: ~\(catalogTokens), Full: ~\(estimatedTokens) tokens"
-                    )
-            }
+            TokenBadge(count: catalogTokens)
+                .help(
+                    catalogTokens == estimatedTokens
+                        ? "~\(estimatedTokens) tokens"
+                        : "Catalog: ~\(catalogTokens), Full: ~\(estimatedTokens) tokens"
+                )
         }
         .padding(.leading, 32)
         .padding(.trailing, 12)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture {
-            if !isAgentRestricted { onToggle() }
-        }
-        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: enabled && !isAgentRestricted))
+        .onTapGesture { onToggle() }
+        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: enabled))
         // Outer gutter: matches the group header inset so hover washes and
         // content share one gutter with the sticky header above.
         .padding(.horizontal, 12)
         // The availability detail used to be a third text line on every row;
         // it's tooltip-only now, keeping the row to name + description.
         .help(
-            isAgentRestricted
-                ? "Restricted for this agent."
+            groupToggleLabel != nil
+                ? "\(availability.displayDetail) These tools turn on and off together with their app."
                 : availability.displayDetail
         )
+    }
+}
+
+/// Trailing status capsule on a group header ("Permission needed"). Acts as
+/// a button when the status is actionable so the fix is one click away.
+private struct GroupStatusBadge: View {
+    let status: CapabilityGroupStatus
+    let onTap: () -> Void
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let tint = status.isWarning ? theme.warningColor : theme.secondaryText
+        Button(action: { if status.isActionable { onTap() } }) {
+            HStack(spacing: 4) {
+                Image(systemName: status.icon)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(status.text)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundColor(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(tint.opacity(0.12))
+                    .overlay(Capsule().strokeBorder(tint.opacity(0.25), lineWidth: 1))
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!status.isActionable)
+        .help(status.detail)
+        .accessibilityLabel(Text(status.text))
+        .accessibilityHint(Text(status.detail))
     }
 }
 

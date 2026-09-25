@@ -4,9 +4,10 @@
 //
 //  Pure capacity policy for one canonical local-model group plus any remote
 //  jobs that may overlap it. This is deliberately not a scheduler:
-//  `SpawnBatchTool` owns fan-out and vMLX `BatchEngine` owns inference.
+//  the `spawn_agent` wave gate owns fan-out and vMLX `BatchEngine` owns inference.
 //
 
+import Darwin
 import Foundation
 import os
 
@@ -30,23 +31,40 @@ enum SubagentBatchLimitingFactor: String, Sendable, Hashable {
     case memoryEstimateUnavailable
 }
 
-/// What a specific delegation will actually ask the child to hold: the
-/// seed/input size and the configured output ceiling. Used to price the
-/// child's incremental KV/SSM state from the BOUNDED request instead of the
-/// model-wide retention cap. Characters are converted at the repo-standard
-/// chars/4 estimate with a 1.5× safety factor plus a 1024-token margin for
-/// the child's system prompt and template overhead — conservative, but not
-/// "the whole 64K window".
+/// A failed/unsupported pressure sample is not evidence of normal pressure.
+public enum SubagentMemoryPressure: String, Sendable, Codable {
+    case normal, warning, critical, unknown
+
+    static func sampled() -> Self {
+        var level: Int32 = 0
+        var size = MemoryLayout.size(ofValue: level)
+        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0,
+            size == MemoryLayout.size(ofValue: level)
+        else { return .unknown }
+        return fromKernelLevel(level)
+    }
+
+    static func fromKernelLevel(_ level: Int32) -> Self {
+        // XNU converts its internal pressure enum to dispatch's public
+        // flags for this sysctl (normal=1, warning/urgent=2, critical=4).
+        switch UInt32(bitPattern: level) {
+        case UInt32(DispatchSource.MemoryPressureEvent.normal.rawValue): return .normal
+        case UInt32(DispatchSource.MemoryPressureEvent.warning.rawValue): return .warning
+        case UInt32(DispatchSource.MemoryPressureEvent.critical.rawValue): return .critical
+        default: return .unknown
+        }
+    }
+}
+
+/// A priced child context contract. Text execution forwards the same position
+/// ceiling to the prepared-token boundary, where the complete rendered prompt
+/// plus output allowance must fit. Heuristics choose a contract; they do not
+/// prove the actual token count.
 public struct SubagentChildRequestEstimate: Sendable, Equatable {
     public let seedCharacters: Int?
     public let maxOutputTokens: Int?
-    /// A position ceiling the child's execution path ENFORCES outright —
-    /// for a delegated chat session, the target agent's resolved context
-    /// window (`AgentLoopBudget.resolveContextWindow`: bundle window ∩ the
-    /// user's context-length cap), which the loop's budget manager trims
-    /// history to on every request. Unlike seed/output, this bound holds
-    /// even when tool results grow the transcript, because trimming applies
-    /// to the whole outbound context.
+    /// Checked by AdmissionPositionLimit after template rendering/tokenization,
+    /// including tools, memory and all prior child turns.
     public let enforcedPositionCeiling: Int?
 
     public init(
@@ -66,7 +84,7 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
     /// seed + output (requires BOTH — a seed without an output ceiling, or
     /// vice versa, is an incomplete contract, not a bound) and the
     /// execution-enforced position ceiling.
-    func boundedPositionBudget(policyCap: Int?) -> Int? {
+    func boundedPositionBudget() -> Int? {
         var candidates: [Int] = []
         if let seedCharacters, let maxOutputTokens,
             seedCharacters >= 0, maxOutputTokens > 0
@@ -86,26 +104,21 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
                 }
             }
         }
-        // The 4096 floor applies ONLY to the seed+output candidate: that
-        // form measures nothing about the child's wrapper/system/template
-        // context, so the floor absorbs it. An enforced position ceiling is
-        // fully MEASURED (dispatched prompt + composed system prompt +
-        // composer tool reservation) and enforced verbatim by the session's
-        // window clamp, so it prices as-is — no hidden floor.
+        // A seed-only estimate carries a minimum composition allowance. It
+        // becomes a safety bound only because execution checks it exactly.
+        // An explicit delegated contract is already the complete ceiling.
         var floored = candidates.map { max(4096, $0) }
         if let enforcedPositionCeiling, enforcedPositionCeiling > 0 {
             floored.append(enforcedPositionCeiling)
         }
         guard let tightest = floored.min() else { return nil }
-        if let policyCap, policyCap > 0 {
-            return min(tightest, policyCap)
-        }
+        // defaultMaxKVSize is conditional on prompt length in vMLX. It is
+        // not a hard retention bound and cannot reduce an admission contract.
         return tightest
     }
 
     /// Conservative wave envelope for a batch: each job's safe position
-    /// budget is resolved INDEPENDENTLY (uncapped — the policy cap clamps
-    /// later, and clamping commutes with max), and the wave is priced at
+    /// budget is resolved independently, and the wave is priced at
     /// the MAXIMUM per-child bound, carried as a pure position ceiling.
     ///
     /// Never combine heterogeneous jobs field-by-field: an estimate built
@@ -122,7 +135,7 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
         guard !estimates.isEmpty else { return nil }
         var perJobBudgets: [Int] = []
         for estimate in estimates {
-            guard let budget = estimate?.boundedPositionBudget(policyCap: nil) else {
+            guard let budget = estimate?.boundedPositionBudget() else {
                 return nil
             }
             perJobBudgets.append(budget)
@@ -146,22 +159,19 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
     let targetAlreadyResident: Bool
     let targetLoadFootprintBytes: UInt64?
     let perActiveChildHeadroomBytes: UInt64?
-    /// Request-bounded per-child active-state price: the same KV/SSM
-    /// estimator as `perActiveChildHeadroomBytes` but clamped to what THIS
-    /// delegation can actually allocate (seed/input tokens + the child's
-    /// configured max output, with margin) instead of the model-wide KV
-    /// retention cap. A 2K-output child must not be priced as though it
-    /// immediately materializes a 64K-retention cache — on a 16 GB Mac
-    /// that difference alone turns an affordable single same-resident-model
-    /// child into `ramSlots == 0` (#2221 owns the math; #2498 made the
-    /// path common). nil = no request estimate was available; admission
-    /// then falls back to the conservative cap-priced value (fail closed,
-    /// never cheaper than the physics).
+    /// Price of the complete enforced child contract. Unknown contracts use
+    /// the model context envelope. A soft runtime cache default is not a hard
+    /// ceiling and cannot discount either price.
     let requestBoundedChildHeadroomBytes: UInt64?
     let reclaimableBytes: UInt64?
     let releasableParentBytes: UInt64
     let resolvedLoadBudgetBytes: UInt64?
     let osHeadroomBytes: UInt64
+    let memoryPressure: SubagentMemoryPressure
+    /// Full allocator reuse ceiling for the next generation, including any
+    /// MTP/architecture-specific window. Charged once for the shared pool;
+    /// do not infer it from the Memory Safety profile's display default.
+    let allocatorCacheAllowanceBytes: UInt64?
 
     init(
         canonicalModelKey: String,
@@ -172,7 +182,9 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
         reclaimableBytes: UInt64?,
         releasableParentBytes: UInt64,
         resolvedLoadBudgetBytes: UInt64?,
-        osHeadroomBytes: UInt64
+        osHeadroomBytes: UInt64,
+        memoryPressure: SubagentMemoryPressure = .unknown,
+        allocatorCacheAllowanceBytes: UInt64? = nil
     ) {
         self.canonicalModelKey = canonicalModelKey
         self.targetAlreadyResident = targetAlreadyResident
@@ -183,31 +195,65 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
         self.releasableParentBytes = releasableParentBytes
         self.resolvedLoadBudgetBytes = resolvedLoadBudgetBytes
         self.osHeadroomBytes = osHeadroomBytes
+        self.memoryPressure = memoryPressure
+        self.allocatorCacheAllowanceBytes = allocatorCacheAllowanceBytes
     }
 
-    /// The per-child price admission actually uses: the request-bounded
-    /// estimate when one exists, never above the conservative cap-priced
-    /// estimate (a request estimate can only SHRINK the charge; if a
-    /// caller ever supplies a larger one, the conservative value wins so
-    /// the estimate cannot inflate past the model-wide envelope).
+    /// Price the enforced request when known. A soft cache default or a
+    /// declared model window must not discount a larger enforced request.
     var effectiveChildHeadroomBytes: UInt64? {
-        switch (requestBoundedChildHeadroomBytes, perActiveChildHeadroomBytes) {
-        case (let bounded?, let cap?): return min(bounded, cap)
-        case (let bounded?, nil): return bounded
-        case (nil, let cap?): return cap
-        case (nil, nil): return nil
-        }
+        requestBoundedChildHeadroomBytes ?? perActiveChildHeadroomBytes
     }
+
+    /// A bounded request reusing a resident model allocates child state, not
+    /// another OS/app working set. The host sample already excludes resident
+    /// anonymous, wired and compressed pages; the child estimate includes KV,
+    /// activations and slack, and the model budget remains a second
+    /// independent ceiling. Applying the cold-load 3 GiB allowance here made
+    /// 512 MiB children fail with more than 2 GiB actually reclaimable.
+    ///
+    /// Relax only this cold-load allowance, and only with positive evidence:
+    /// resident weights, an execution-enforced child bound, a resolved model
+    /// budget, a known allocator ceiling and normal kernel pressure. The full
+    /// pool ceiling is charged once, conservatively including currently cached
+    /// buffers: their physical residency cannot be inferred from MLX bytes.
+    /// Unknown/elevated pressure and cold
+    /// or unbounded requests retain the existing conservative allowance.
+    var usesIncrementalResidentAdmission: Bool {
+        targetAlreadyResident && memoryPressure == .normal
+            && (requestBoundedChildHeadroomBytes ?? 0) > 0
+            && resolvedLoadBudgetBytes != nil
+            && allocatorCacheAllowanceBytes != nil
+    }
+
+    var effectiveOSHeadroomBytes: UInt64 {
+        usesIncrementalResidentAdmission ? 0 : osHeadroomBytes
+    }
+
+    var effectiveAllocatorAllowanceBytes: UInt64 {
+        usesIncrementalResidentAdmission ? (allocatorCacheAllowanceBytes ?? 0) : 0
+    }
+
 }
 
 struct SubagentBatchAdmissionInput: Sendable, Equatable {
     let localJobCount: Int
     let remoteJobCount: Int
+    /// Per-agent LOCAL fan-out (`SubagentBudgets.maxParallelSpawns`, mirrored
+    /// from Server Concurrent Sessions). Remote jobs never consume it: they
+    /// allocate no local model, KV state, or engine slot.
     let agentParallelLimit: Int
+    /// Per-agent REMOTE fan-out (`SubagentBudgets.maxRemoteParallelSpawns`).
+    /// The tool enforces the exact per-agent value before planning (typed
+    /// `invalid_args` the model can correct); the planner re-checks against
+    /// whatever the caller passes, defaulting to the schema-wide hard cap.
+    var remoteParallelLimit: Int = SubagentBudgets.remoteParallelSpawnBounds.upperBound
     /// vMLX `maxConcurrentSequences`. The planner independently applies the
     /// Continuous Batching toggle so a stale or contradictory caller cannot
     /// accidentally admit concurrent local work while batching is disabled.
     let engineParallelLimit: Int
+    /// New submissions allowed by the current engine snapshot, distinct from its total ceiling.
+    var engineSubmissionLimit: Int? = nil
     let continuousBatchingEnabled: Bool
     let ramSafetyEnabled: Bool
     let failClosedWhenEstimateUnknown: Bool
@@ -238,9 +284,82 @@ struct SubagentBatchAdmissionPlan: Sendable, Equatable {
     /// queued), so this wave deliberately submits only one request and lets
     /// BatchEngine own the queue.
     var engineQueuedAtAdmission = false
+    /// Preserve the exact sampled inputs with the decision. A later OS sample
+    /// must not be presented as the reason for an earlier refusal.
+    var memoryFacts: SubagentBatchMemoryFacts? = nil
+    /// The policy used for THIS decision, not a later settings snapshot.
+    /// With safety off, ramSlots is diagnostic only and cannot veto a child.
+    var ramSafetyEnabled = true
+
+    var memoryDiagnostics: [String: Any] {
+        var result: [String: Any] = [
+            "ram_safety_enabled": ramSafetyEnabled,
+            "engine_slots": engineSlots,
+            "ram_slots": ramSlots ?? NSNull(),
+            "limited_by": limitingFactors.map(\.rawValue).sorted(),
+        ]
+        guard let m = memoryFacts else { return result }
+        result["canonical_model"] = m.canonicalModelKey
+        result["target_already_resident"] = m.targetAlreadyResident
+        result["target_load_bytes"] = m.targetLoadFootprintBytes ?? NSNull()
+        result["per_child_bytes"] = m.effectiveChildHeadroomBytes ?? NSNull()
+        result["per_child_cap_bytes"] = m.perActiveChildHeadroomBytes ?? NSNull()
+        result["reclaimable_bytes"] = m.reclaimableBytes ?? NSNull()
+        result["releasable_parent_bytes"] = m.releasableParentBytes
+        result["os_reserve_bytes"] = m.effectiveOSHeadroomBytes
+        result["cold_load_reserve_bytes"] = m.osHeadroomBytes
+        result["memory_pressure"] = m.memoryPressure.rawValue
+        result["resident_incremental"] = m.usesIncrementalResidentAdmission
+        result["allocator_allowance_bytes"] = m.effectiveAllocatorAllowanceBytes
+        result["load_budget_bytes"] = m.resolvedLoadBudgetBytes ?? NSNull()
+        return result
+    }
 }
 
 enum SubagentBatchAdmissionPlanner {
+    /// Resolve live facts at the single-child floor before a caller chooses
+    /// its wave width. Both direct spawns and batches use this boundary.
+    static func memoryFactsAfterReclaimingIfNeeded(
+        isolation: isolated (any Actor)? = #isolation,
+        ramSafetyEnabled: Bool,
+        sample: () async -> SubagentBatchMemoryFacts?,
+        reclaim: () async -> Bool,
+        waitForPostReclaimSample: () async throws -> Void = {
+            // XNU rate-limits third-party host_statistics64 callers using a
+            // shared 1-second cache (osfmk/kern/host.c,
+            // rate_limit_host_statistics). A second successful syscall can
+            // return the PRE-reclaim counters. Outlive that window before
+            // making recovery's final decision; polling it faster cannot
+            // force a refresh. The extra 100ms avoids a boundary sample.
+            try await Task.sleep(for: .milliseconds(1_100))
+        }
+    ) async -> SubagentBatchMemoryFacts? {
+        let initial = await sample()
+        guard ramSafetyEnabled, !Task.isCancelled,
+            let facts = initial,
+            let footprint = positive(facts.targetLoadFootprintBytes),
+            let perChild = positive(facts.effectiveChildHeadroomBytes),
+            let capacity = resolveMemoryCapacity(facts), capacity.slots == 0
+        else { return initial }
+        // Reclamation cannot make a request fit an explicit total budget.
+        // Nor do we trim just to widen a batch that can already serialize.
+        if let budget = facts.resolvedLoadBudgetBytes,
+            saturatingSubtract(budget, saturatingAdd(footprint, facts.effectiveAllocatorAllowanceBytes)) < perChild
+        { return initial }
+        guard await reclaim(), !Task.isCancelled else { return initial }
+        do {
+            try await waitForPostReclaimSample()
+        } catch {
+            return initial
+        }
+        guard !Task.isCancelled else { return initial }
+        let refreshed = await sample()
+        log.info(
+            "[admission-recovery] model=\(facts.canonicalModelKey, privacy: .public) reclaimable_before=\(facts.reclaimableBytes ?? 0) reclaimable_after=\(refreshed?.reclaimableBytes ?? 0) fresh_estimate_available=\(refreshed != nil)"
+        )
+        return refreshed
+    }
+
     private static let log = Logger(
         subsystem: "ai.osaurus", category: "SubagentAdmission")
 
@@ -268,7 +387,10 @@ enum SubagentBatchAdmissionPlanner {
             perChildBounded=\(mb(m?.requestBoundedChildHeadroomBytes), privacy: .public) \
             reclaimable=\(mb(m?.reclaimableBytes), privacy: .public) \
             releasableParent=\(mb(m?.releasableParentBytes), privacy: .public) \
-            osReserve=\(mb(m?.osHeadroomBytes), privacy: .public) \
+            osReserve=\(mb(m?.effectiveOSHeadroomBytes), privacy: .public) \
+            pressure=\(m?.memoryPressure.rawValue ?? "unknown", privacy: .public) \
+            residentIncremental=\(m?.usesIncrementalResidentAdmission ?? false) \
+            allocatorAllowance=\(mb(m?.effectiveAllocatorAllowanceBytes), privacy: .public) \
             loadBudget=\(mb(m?.resolvedLoadBudgetBytes), privacy: .public) \
             -> verdict=\(String(describing: plan.verdict), privacy: .public) \
             ramSlots=\(plan.ramSlots.map(String.init) ?? "nil", privacy: .public) \
@@ -278,7 +400,9 @@ enum SubagentBatchAdmissionPlanner {
     }
 
     static func plan(_ input: SubagentBatchAdmissionInput) -> SubagentBatchAdmissionPlan {
-        let plan = planInternal(input)
+        var plan = planInternal(input)
+        plan.memoryFacts = input.memory
+        plan.ramSafetyEnabled = input.ramSafetyEnabled
         logDiagnostics(input, plan)
         return plan
     }
@@ -288,19 +412,23 @@ enum SubagentBatchAdmissionPlanner {
     ) -> SubagentBatchAdmissionPlan {
         let localJobs = max(0, input.localJobCount)
         let remoteJobs = max(0, input.remoteJobCount)
-        let requestedJobs = saturatingIntAdd(localJobs, remoteJobs)
         let engineSlots =
             input.continuousBatchingEnabled
             ? max(1, input.engineParallelLimit)
             : 1
 
-        guard input.agentParallelLimit > 0 else {
+        guard input.agentParallelLimit > 0, input.remoteParallelLimit > 0 else {
             return rejected(
                 .invalidParallelLimit,
                 engineSlots: engineSlots
             )
         }
-        guard requestedJobs <= input.agentParallelLimit else {
+        // Local and remote fan-out are independent budgets: a wave of eight
+        // cloud workers must not be refused because the local BatchEngine is
+        // configured for three concurrent sequences.
+        guard localJobs <= input.agentParallelLimit,
+            remoteJobs <= input.remoteParallelLimit
+        else {
             return rejected(
                 .batchExceedsAgentLimit,
                 engineSlots: engineSlots,
@@ -367,7 +495,7 @@ enum SubagentBatchAdmissionPlanner {
                 limitingFactors: limitingFactors.union([.memoryCapacity])
             )
         }
-        let localSlots = min(localJobs, localCapacity)
+        let localSlots = min(localJobs, localCapacity, max(1, input.engineSubmissionLimit ?? engineSlots))
 
         let perChild = input.memory?.effectiveChildHeadroomBytes
         let incrementalWeight = input.memory.flatMap { facts -> UInt64? in
@@ -378,11 +506,11 @@ enum SubagentBatchAdmissionPlanner {
         }
         let projectedIncrementalPeak =
             zipOptionals(incrementalWeight, activeChildCharge).map {
-                saturatingAdd($0.0, $0.1)
+                saturatingAdd(saturatingAdd($0.0, $0.1), input.memory?.effectiveAllocatorAllowanceBytes ?? 0)
             }
         let projectedModelWorkingSet =
             zipOptionals(input.memory?.targetLoadFootprintBytes, activeChildCharge)
-            .map { saturatingAdd($0.0, $0.1) }
+            .map { saturatingAdd(saturatingAdd($0.0, $0.1), input.memory?.effectiveAllocatorAllowanceBytes ?? 0) }
 
         return SubagentBatchAdmissionPlan(
             verdict: .admitted,
@@ -415,6 +543,7 @@ enum SubagentBatchAdmissionPlanner {
             return nil
         }
 
+        guard facts.memoryPressure != .critical else { return MemoryCapacity(slots: 0) }
         let incrementalWeight = facts.targetAlreadyResident ? 0 : footprint
         let availableBeforeReserve = saturatingAdd(
             reclaimable,
@@ -422,7 +551,7 @@ enum SubagentBatchAdmissionPlanner {
         )
         let availableFixedCharge = saturatingAdd(
             incrementalWeight,
-            facts.osHeadroomBytes
+            saturatingAdd(facts.effectiveOSHeadroomBytes, facts.effectiveAllocatorAllowanceBytes)
         )
         let availableResidual = saturatingSubtract(
             availableBeforeReserve,
@@ -435,7 +564,9 @@ enum SubagentBatchAdmissionPlanner {
         // The fixed OS reserve belongs to the reclaimable-memory calculation,
         // not this model-only budget.
         if let budget = facts.resolvedLoadBudgetBytes {
-            let budgetResidual = saturatingSubtract(budget, footprint)
+            let budgetResidual = saturatingSubtract(
+                budget, saturatingAdd(footprint, facts.effectiveAllocatorAllowanceBytes)
+            )
             slots = min(slots, clampedSlotCount(budgetResidual / perChild))
         }
         return MemoryCapacity(slots: slots)
@@ -476,7 +607,7 @@ enum SubagentBatchAdmissionPlanner {
             incrementalWeightChargeBytes: memory.flatMap { facts -> UInt64? in
                 facts.targetAlreadyResident ? 0 : facts.targetLoadFootprintBytes
             },
-            perActiveChildHeadroomBytes: memory?.perActiveChildHeadroomBytes,
+            perActiveChildHeadroomBytes: memory?.effectiveChildHeadroomBytes,
             projectedIncrementalPeakBytes: nil,
             projectedModelWorkingSetBytes: nil,
             limitingFactors: limitingFactors
@@ -494,11 +625,6 @@ enum SubagentBatchAdmissionPlanner {
 
     private static func saturatingMultiply(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
         let (value, overflow) = lhs.multipliedReportingOverflow(by: rhs)
-        return overflow ? .max : value
-    }
-
-    private static func saturatingIntAdd(_ lhs: Int, _ rhs: Int) -> Int {
-        let (value, overflow) = lhs.addingReportingOverflow(rhs)
         return overflow ? .max : value
     }
 
