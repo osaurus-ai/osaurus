@@ -606,6 +606,7 @@ struct HarnessStabilityFixesTests {
         let fixtures: [(String, Int, Bool)] = [
             ("alpha\nbeta\n", 2, true),
             ("alpha\r\nbeta\r\n", 2, true),
+            ("alpha\rbeta\r", 2, true),
             ("alpha\nbeta\n\n", 3, true),
             ("alpha\nbeta", 2, false),
             ("\n", 1, true),

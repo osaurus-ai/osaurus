@@ -1456,7 +1456,7 @@ struct FileReadTool: OsaurusTool {
         // dropped the trailing newline, failing a byte-for-byte check by one
         // byte). Only stated when the read actually reached the end of file.
         if content.rawRead?.truncatedByByteLimit != true {
-            result["ends_with_newline"] = content.text.hasSuffix("\n")
+            result["ends_with_newline"] = content.text.last?.isNewline == true
         }
         if let partialLine {
             result["partial_line"] = partialLine

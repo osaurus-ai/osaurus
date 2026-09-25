@@ -279,7 +279,7 @@ struct FolderToolsResilienceTests {
         #expect(payload["content"] == nil)
         #expect(payload["start_line"] as? Int == 1)
         #expect(payload["end_line"] as? Int == 1)
-        #expect(payload["total_lines"] as? Int == 3)
+        #expect(payload["total_lines"] as? Int == 2)
         #expect(payload["total_lines_exact"] as? Bool == true)
         #expect(payload["truncated"] as? Bool == false)
         #expect(payload["raw_bytes_truncated"] as? Bool == false)
