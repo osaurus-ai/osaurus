@@ -1174,7 +1174,7 @@ struct ModelDetailView: View, Identifiable {
 
     private var manifestStatus: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let check = modelManager.manifestChecks[model.id] {
+            if let check = modelManager.manifestChecks[model.id.lowercased()] {
                 if let version = check.local.manifest?.modelVersion {
                     Text("Installed model revision: \(version)", bundle: .module)
                 }
@@ -1219,7 +1219,7 @@ struct ModelDetailView: View, Identifiable {
             } label: {
                 Text("Check for Model Updates", bundle: .module)
             }
-            .disabled(modelManager.manifestChecksInFlight.contains(model.id))
+            .disabled(modelManager.manifestChecksInFlight.contains(model.id.lowercased()))
         }
         .font(.system(size: 12))
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1402,9 +1402,9 @@ struct ModelDetailView: View, Identifiable {
 
                 Button(action: { modelManager.downloadService.repair(model) }) {
                     Text(
-                        modelManager.manifestChecks[model.id]?.updateAvailable == true
+                        modelManager.manifestChecks[model.id.lowercased()]?.updateAvailable == true
                             ? "Update Model"
-                            : modelManager.manifestChecks[model.id]?.verificationRequired == true
+                            : modelManager.manifestChecks[model.id.lowercased()]?.verificationRequired == true
                                 ? "Verify Model" : "Repair",
                         bundle: .module
                     )

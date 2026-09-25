@@ -28,6 +28,42 @@ struct ModelUpdatePollingSchedule: Codable {
     struct Attempt: Codable {
         var nextCheck: Date
         var failures: Int
+        var observation: Observation?
+    }
+
+    /// Remote observations survive the due-time throttle. Local files are always
+    /// reread on restoration; this cache never certifies installed file contents.
+    struct Observation: Codable {
+        let revision: String?
+        let manifest: Data?
+        let error: String?
+        let checkedAt: Date
+
+        init(_ check: ModelManifestCheck) {
+            revision = check.remote?.revision
+            if let remote = check.remote?.manifest {
+                manifest = try? JSONSerialization.data(withJSONObject: [
+                    "required_osaurus_version": remote.requiredOsaurusVersion ?? "",
+                    "model_version": remote.modelVersion ?? "",
+                ])
+            } else { manifest = nil }
+            error = check.error
+            checkedAt = check.checkedAt
+        }
+
+        func restoring(local: ModelManifest.Local) -> ModelManifestCheck? {
+            let remote: HuggingFaceService.ManifestSnapshot?
+            if let revision {
+                guard revision.count == 40, revision.allSatisfy(\.isHexDigit) else { return nil }
+                let decoded: ModelManifest?
+                if let manifest {
+                    guard let parsed = try? ModelManifest.decode(manifest) else { return nil }
+                    decoded = parsed
+                } else { decoded = nil }
+                remote = .init(revision: revision, manifest: decoded)
+            } else { remote = nil }
+            return ModelManifestCheck(local: local, remote: remote, error: error, checkedAt: checkedAt)
+        }
     }
 
     static let interval: TimeInterval = 6 * 60 * 60
@@ -38,11 +74,11 @@ struct ModelUpdatePollingSchedule: Codable {
         return now >= attempt.nextCheck
     }
 
-    mutating func record(_ repository: String, at now: Date, succeeded: Bool) {
+    mutating func record(_ repository: String, at now: Date, succeeded: Bool, observation: Observation? = nil) {
         let key = repository.lowercased()
         let failures = succeeded ? 0 : min((attempts[key]?.failures ?? 0) + 1, 6)
         let delay = succeeded ? Self.interval : min(Self.interval, 900 * pow(2, Double(failures - 1)))
-        attempts[key] = Attempt(nextCheck: now.addingTimeInterval(delay), failures: failures)
+        attempts[key] = Attempt(nextCheck: now.addingTimeInterval(delay), failures: failures, observation: observation)
     }
 }
 
@@ -51,10 +87,10 @@ extension ModelManager {
     /// the last remote observation without initiating a background request.
     func refreshCachedManifestLocalState() async {
         for model in await Self.discoverLocalModelsOffMain() {
-            guard manifestChecks[model.id] != nil else { continue }
+            guard manifestChecks[model.id.lowercased()] != nil else { continue }
             let local = await Task.detached(priority: .utility) { ModelManifest.read(at: model.localDirectory) }.value
-            guard let previous = manifestChecks[model.id] else { continue }
-            manifestChecks[model.id] = ModelManifestCheck(
+            guard let previous = manifestChecks[model.id.lowercased()] else { continue }
+            manifestChecks[model.id.lowercased()] = ModelManifestCheck(
                 local: local,
                 remote: previous.remote,
                 error: previous.error,
@@ -90,7 +126,7 @@ extension ModelManager {
     /// verification and replacement; this path never calls the downloader.
     func refreshAutomaticModelUpdates() async {
         guard ownsModelUpdatePolling else { return }
-        guard automaticallyChecksModelUpdates, !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return }
         await automaticModelUpdateSweep.run { [weak self] in
             guard let self else { return }
             let key = "ModelUpdatePollingSchedule"
@@ -104,15 +140,29 @@ extension ModelManager {
             let currentIDs = Set(official.map { $0.id.lowercased() })
             schedule.attempts = schedule.attempts.filter { currentIDs.contains($0.key) }
             for model in official {
-                guard !Task.isCancelled, self.automaticallyChecksModelUpdates else { return }
+                guard !Task.isCancelled else { return }
+                let repositoryKey = model.id.lowercased()
+                if self.manifestChecks[repositoryKey] == nil,
+                    let observation = schedule.attempts[repositoryKey]?.observation {
+                    let local = await Task.detached(priority: .utility) { ModelManifest.read(at: model.localDirectory) }.value
+                    guard !Task.isCancelled else { return }
+                    self.manifestChecks[repositoryKey] = observation.restoring(local: local)
+                }
+                guard self.automaticallyChecksModelUpdates else { continue }
                 let started = Date()
-                guard schedule.isDue(model.id, at: started) else { continue }
-                guard !self.manifestChecksInFlight.contains(model.id) else { continue }
+                // Old schedules lacked observations. Check once to restore the
+                // missing status rather than hiding a badge for six hours.
+                guard self.manifestChecks[repositoryKey] == nil || schedule.isDue(model.id, at: started) else { continue }
+                guard !self.manifestChecksInFlight.contains(model.id.lowercased()) else { continue }
                 // Reuse manual/list check coalescing and its short TTL too.
                 await self.checkModelManifest(model)
                 guard !Task.isCancelled, self.automaticallyChecksModelUpdates else { return }
-                guard let result = self.manifestChecks[model.id] else { continue }
-                schedule.record(model.id, at: result.checkedAt, succeeded: result.error == nil && result.remote != nil)
+                guard let result = self.manifestChecks[model.id.lowercased()] else { continue }
+                schedule.record(
+                    model.id, at: result.checkedAt,
+                    succeeded: result.error == nil && result.remote != nil,
+                    observation: .init(result)
+                )
                 if let data = try? JSONEncoder().encode(schedule) {
                     UserDefaults.standard.set(data, forKey: key)
                 }

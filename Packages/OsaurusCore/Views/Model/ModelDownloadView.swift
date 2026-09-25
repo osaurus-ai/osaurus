@@ -758,7 +758,7 @@ struct ModelDownloadView: View {
             onResume: { modelManager.resumeDownload(model.id) }
         )
         .overlay(alignment: .topTrailing) {
-            if let check = modelManager.manifestChecks[model.id], check.updateAvailable || check.verificationRequired {
+            if let check = modelManager.manifestChecks[model.id.lowercased()], check.updateAvailable || check.verificationRequired {
                 Text(check.updateAvailable ? "Update available" : "Verification needed", bundle: .module)
                     .font(.system(size: 10, weight: .semibold))
                     .padding(6)

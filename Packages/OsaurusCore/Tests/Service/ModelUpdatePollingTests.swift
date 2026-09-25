@@ -21,6 +21,38 @@ struct ModelUpdatePollingTests {
         }
     }
 
+    @Test func persistedObservationRebuildsBadgeFromCurrentLocalFiles() throws {
+        let now = Date(timeIntervalSince1970: 1000)
+        let remote = HuggingFaceService.ManifestSnapshot(
+            revision: String(repeating: "a", count: 40),
+            manifest: ModelManifest(requiredOsaurusVersion: "0.25.0", modelVersion: "2")
+        )
+        let check = ModelManifestCheck(
+            local: .present(.init(requiredOsaurusVersion: "0.25.0", modelVersion: "1")),
+            remote: remote, error: nil, checkedAt: now
+        )
+        var schedule = ModelUpdatePollingSchedule()
+        schedule.record("OsaurusAI/Model", at: now, succeeded: true, observation: .init(check))
+        let restarted = try JSONDecoder().decode(ModelUpdatePollingSchedule.self, from: JSONEncoder().encode(schedule))
+        let observation = try #require(restarted.attempts["osaurusai/model"]?.observation)
+        #expect(!restarted.isDue("OSAURUSAI/MODEL", at: now))
+        #expect(observation.restoring(local: check.local)?.status == .updateAvailable)
+        #expect(observation.restoring(local: .absent)?.status == .verificationRequired)
+        #expect(observation.restoring(local: .present(remote.manifest!))?.status == .current)
+        #expect(observation.restoring(local: .invalid(ModelManifest.invalid("damaged")))?.status == .invalidLocal)
+    }
+
+    @Test func persistedFailureStaysUnavailableAndOldSchedulesRemainReadable() throws {
+        let check = ModelManifestCheck(local: .absent, remote: nil, error: "offline", checkedAt: Date())
+        let bytes = try JSONEncoder().encode(ModelUpdatePollingSchedule.Observation(check))
+        let observation = try JSONDecoder().decode(ModelUpdatePollingSchedule.Observation.self, from: bytes)
+        #expect(observation.restoring(local: .absent)?.status == .unavailable)
+        #expect(observation.restoring(local: .absent)?.error == "offline")
+        let old = Data(#"{"attempts":{"osaurusai/model":{"nextCheck":1000,"failures":0}}}"#.utf8)
+        let schedule = try JSONDecoder().decode(ModelUpdatePollingSchedule.self, from: old)
+        #expect(schedule.attempts["osaurusai/model"]?.observation == nil)
+    }
+
     @Test func changedRemoteRevisionFetchesNewMetadata() async throws {
         let revision = String(repeating: "b", count: 40)
         let prior = HuggingFaceService.ManifestSnapshot(revision: String(repeating: "a", count: 40), manifest: nil)

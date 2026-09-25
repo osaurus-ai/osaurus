@@ -29,6 +29,9 @@ struct ModelManifestCheck: Sendable {
 }
 
 extension ModelManager {
+    // Identifies the remote publisher repository, not the provenance or integrity
+    // of local bytes. Legacy folders have no download receipt; explicit Verify
+    // remains the file-integrity operation even when publisher revisions match.
     nonisolated static func isRegisteredOfficialUpdateRepository(_ id: String, registered: Set<String>) -> Bool {
         let parts = id.split(separator: "/", omittingEmptySubsequences: false)
         return parts.count == 2 && parts[0].lowercased() == "osaurusai"
@@ -38,18 +41,18 @@ extension ModelManager {
     /// Detail views and catalog refresh share one result per repository. No network
     /// request is made from SwiftUI body evaluation or from runtime admission.
     func checkModelManifest(_ model: MLXModel, force: Bool = false) async {
-        guard !manifestChecksInFlight.contains(model.id) else {
-            if force { pendingManifestChecks[model.id] = model }
+        guard !manifestChecksInFlight.contains(model.id.lowercased()) else {
+            if force { pendingManifestChecks[model.id.lowercased()] = model }
             return
         }
-        if !force, let previous = manifestChecks[model.id], Date().timeIntervalSince(previous.checkedAt) < 300 {
+        if !force, let previous = manifestChecks[model.id.lowercased()], Date().timeIntervalSince(previous.checkedAt) < 300 {
             return
         }
-        manifestChecksInFlight.insert(model.id)
+        manifestChecksInFlight.insert(model.id.lowercased())
         defer {
-            manifestChecksInFlight.remove(model.id)
+            manifestChecksInFlight.remove(model.id.lowercased())
             // Download completion must not lose its refresh to an older check.
-            if let pending = pendingManifestChecks.removeValue(forKey: model.id) {
+            if let pending = pendingManifestChecks.removeValue(forKey: model.id.lowercased()) {
                 Task { await checkModelManifest(pending, force: true) }
             }
         }
@@ -57,7 +60,7 @@ extension ModelManager {
         let errorMessage: String?
         do {
             remote = try await HuggingFaceService.shared.fetchModelManifest(
-                repoId: model.id, previous: manifestChecks[model.id]?.remote
+                repoId: model.id, previous: manifestChecks[model.id.lowercased()]?.remote
             )
             errorMessage = nil
         } catch is CancellationError { return } catch {
@@ -68,7 +71,7 @@ extension ModelManager {
         guard !Task.isCancelled else { return }
         let local = await Task.detached(priority: .utility) { ModelManifest.read(at: model.localDirectory) }.value
         guard !Task.isCancelled else { return }
-        manifestChecks[model.id] = ModelManifestCheck(
+        manifestChecks[model.id.lowercased()] = ModelManifestCheck(
             local: local,
             remote: remote,
             error: errorMessage,
