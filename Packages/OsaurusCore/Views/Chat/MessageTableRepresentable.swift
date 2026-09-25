@@ -1058,12 +1058,22 @@ extension MessageTableRepresentable {
                     }
                 }
 
-                self.handlePostSnapshotScroll(
-                    lastAssistantTurnId: lastAssistantTurnId,
-                    autoScrollEnabled: autoScrollEnabled,
-                    wasPinnedToBottom: wasPinnedToBottom,
-                    isStreaming: isStreaming
-                )
+                // Defer the scroll until after the apply completion returns so
+                // that NSTableView has fully finished its layout pass. Calling
+                // scrollToBottom / restoreAnchor synchronously here triggers
+                // clipView.setBoundsOrigin, which causes NSTableView to
+                // re-enter prepareContentInRect → updateVisibleRowViews and
+                // prepare new cells (including follow-up suggestion cells that
+                // create NSHostingView) inline — resulting in a >3000 ms hang.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.handlePostSnapshotScroll(
+                        lastAssistantTurnId: lastAssistantTurnId,
+                        autoScrollEnabled: autoScrollEnabled,
+                        wasPinnedToBottom: wasPinnedToBottom,
+                        isStreaming: isStreaming
+                    )
+                }
 
                 // When streaming ends, the last throttled height measurement
                 // may not reflect the final content. Reconfigure the cell and
