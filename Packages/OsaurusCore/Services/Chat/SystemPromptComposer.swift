@@ -3618,9 +3618,17 @@ public struct SystemPromptComposer: Sendable {
         let basePrompt: String
         switch profile {
         case .osaurusAssistant:
-            let prefersCompact = ContextSizeResolver.resolve(modelId: snapshot.model)
-                .prefersCompactPrompt
-            let addendum = DefaultAgentSystemPromptBuilder.render(compact: prefersCompact)
+            let window = ContextSizeResolver.resolve(modelId: snapshot.model)
+            let toolsOff = resolveEffectiveToolsOff(
+                toolsDisabled: snapshot.toolsDisabled,
+                globalToolsDisabled: snapshot.globalToolsDisabled,
+                sizeClassDisablesTools: window.sizeClass.disablesTools,
+                executionMode: executionMode
+            )
+            let addendum = DefaultAgentSystemPromptBuilder.render(
+                compact: window.prefersCompactPrompt,
+                toolsAvailable: !toolsOff
+            )
             let userPersona = snapshot.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             basePrompt = userPersona.isEmpty ? addendum : addendum + "\n\n" + snapshot.systemPrompt
         case .customAgent:
