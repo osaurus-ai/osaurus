@@ -317,7 +317,7 @@ let package = Package(
         // prefill shapes; short/decode shapes retain the reference expression.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "41abcab27b76e6ad67f2b0d04c80ace7c13eaf3a"
+            revision: "4d81de5caa995b64ce0b51ad51922a8de73ba6fc"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
