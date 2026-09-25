@@ -6785,6 +6785,8 @@ final class ChatSession: ObservableObject {
                                         var effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
                                             for: effectiveAgentId
                                         )
+                    let admissionOutputTokensAreImplicit = self.delegationBudget != nil
+                        && effectiveMaxTokensForAgent == nil
                     if let delegationBudget = self.delegationBudget {
                         // Delegated child: the contract's per-generation
                         // response ceiling is ENFORCED here (admission
@@ -6928,6 +6930,8 @@ final class ChatSession: ObservableObject {
                     }
 
                     var maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
+                    let admissionOutputTokensAreImplicit = self.delegationBudget != nil
+                        && effectiveMaxTokensForAgent == nil
                     if let delegationBudget = self.delegationBudget {
                         // Delegated child: the contract's turn ceiling is
                         // ENFORCED here (admission priced it). Tighten-only.
@@ -7792,6 +7796,7 @@ final class ChatSession: ObservableObject {
                                 session_id: self.sessionId?.uuidString
                             )
                             req.admissionPositionLimit = self.delegationBudget?.contextPositions
+                            req.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
                             req.samplingParametersAreImplicit = true
                             req.claudeCodeOptions = self.claudeCodeRunOptions(for: turnAgentId)
                             // Mode 2 routing signal: tells `RemoteProviderService`
@@ -8370,6 +8375,7 @@ final class ChatSession: ObservableObject {
                                     session_id: sessionId?.uuidString
                                 )
                                 finalReq.admissionPositionLimit = self.delegationBudget?.contextPositions
+                                finalReq.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
                                 finalReq.samplingParametersAreImplicit = true
                                 finalReq.claudeCodeOptions = claudeCodeRunOptions(for: turnAgentId)
                                 finalReq.runAsRemoteAgent = isRemoteAgentTarget

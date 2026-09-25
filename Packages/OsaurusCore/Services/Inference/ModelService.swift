@@ -14,6 +14,7 @@ struct GenerationParameters: Sendable {
     /// local MLX services may replace the hardcoded app fallback with the
     /// model bundle's `generation_config.json.max_new_tokens`.
     let maxTokensExplicit: Bool
+    let admissionOutputTokensAreImplicit: Bool
     /// Optional per-request top_p override (falls back to server configuration when nil)
     let topPOverride: Float?
     /// Optional per-request top_k override (falls back to model/server configuration when nil).
@@ -151,6 +152,7 @@ struct GenerationParameters: Sendable {
         temperature: Float?,
         maxTokens: Int,
         maxTokensExplicit: Bool = true,
+        admissionOutputTokensAreImplicit: Bool = false,
         topPOverride: Float? = nil,
         topKOverride: Int? = nil,
         minPOverride: Float? = nil,
@@ -184,6 +186,7 @@ struct GenerationParameters: Sendable {
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.maxTokensExplicit = maxTokensExplicit
+        self.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
         self.topPOverride = topPOverride
         self.topKOverride = topKOverride
         self.minPOverride = minPOverride

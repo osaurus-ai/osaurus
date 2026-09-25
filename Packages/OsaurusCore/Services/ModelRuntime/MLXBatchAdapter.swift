@@ -1587,7 +1587,8 @@ struct MLXBatchAdapter {
                 promptTokens: prepared.promptTokens.count,
                 outputTokens: effective.maxTokens,
                 limit: generation.admissionPositionLimit,
-                isExplicit: generation.maxTokensExplicit || runtime.generation.maxTokens != nil
+                isExplicit: (generation.maxTokensExplicit && !generation.admissionOutputTokensAreImplicit)
+                    || runtime.generation.maxTokens != nil
             )
         } catch {
             if let soloLease { await soloLease.release() }

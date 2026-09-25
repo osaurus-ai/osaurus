@@ -243,6 +243,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             temperature: temperature,
             maxTokens: maxTokens,
             maxTokensExplicit: request.resolvedMaxTokens != nil,
+            admissionOutputTokensAreImplicit: request.admissionOutputTokensAreImplicit,
             topPOverride: request.top_p,
             topKOverride: request.top_k,
             minPOverride: request.min_p,
