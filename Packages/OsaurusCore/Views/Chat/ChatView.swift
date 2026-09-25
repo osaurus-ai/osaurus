@@ -6930,8 +6930,6 @@ final class ChatSession: ObservableObject {
                     }
 
                     var maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
-                    let admissionOutputTokensAreImplicit = self.delegationBudget != nil
-                        && effectiveMaxTokensForAgent == nil
                     if let delegationBudget = self.delegationBudget {
                         // Delegated child: the contract's turn ceiling is
                         // ENFORCED here (admission priced it). Tighten-only.
