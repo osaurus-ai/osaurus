@@ -1765,7 +1765,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// tool calls (the loop's `isCancelled` hook flips true once the
         /// count is reached). The run must exit `cancelled` cleanly — pair
         /// with `allowedExits: ["cancelled"]` and `files` assertions that
-        /// prove no post-cancel writes landed. nil → never cancelled.
+        /// prove no post-cancel writes landed. Uses the production serial
+        /// dispatch path so a model-emitted batch cannot outrun the injected
+        /// boundary; ordinary runs retain parallel dispatch. nil → never cancelled.
         public let cancelAfterToolCalls: Int?
         /// Structured `spawn_agent` wave/row assertions. This scores the
         /// complete parsed results rather than the bounded transcript preview.

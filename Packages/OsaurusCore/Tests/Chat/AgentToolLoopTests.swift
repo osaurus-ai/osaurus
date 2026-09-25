@@ -2239,6 +2239,75 @@ struct AgentToolLoopTests {
         #expect(state.lastResultEnvelope == nil)
     }
 
+    @Test func processedCallCancellationDoesNotExecuteLaterBatchWrites() async throws {
+        for limit in [0, 1, 2] {
+            let surface = ScriptedLoopSurface(steps: [
+                .toolCalls([inv("write_one"), inv("write_two"), inv("write_three")])
+            ])
+            var hooks = surface.makeHooks()
+            let serial = hooks.executeTool
+            hooks.executeBatch = { calls in
+                var results: [AgentLoopToolExecution] = []
+                for call in calls { results.append(await serial(call.invocation, call.callId)) }
+                return results
+            }
+            hooks.isCancelled = { surface.executedCalls.count >= limit }
+            AgentLoopEvaluator.applyProcessedCallCancellation(to: &hooks, after: limit)
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(),
+                state: AgentTaskState(),
+                hooks: hooks
+            )
+            #expect(result.exit == .cancelled)
+            #expect(surface.executedCalls.map(\.name) == Array(["write_one", "write_two"].prefix(limit)))
+            #expect(surface.emittedToolRejectionTexts.isEmpty)
+        }
+    }
+
+    @Test func ordinaryEvalKeepsParallelDispatch() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("one"), inv("two")]), .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        var batches = 0
+        hooks.executeBatch = { calls in
+            batches += 1
+            return calls.map {
+                AgentLoopToolExecution(result: ToolEnvelope.success(tool: $0.invocation.toolName, text: "ok"))
+            }
+        }
+        AgentLoopEvaluator.applyProcessedCallCancellation(to: &hooks, after: nil)
+        let result = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .finalResponse)
+        #expect(batches == 1)
+        #expect(surface.executedCalls.isEmpty)
+    }
+
+    @Test func nativeRejectedWriteStopsWithoutCreatingFileOrRunningSibling() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_write", #"{"path":"report.pptx","content":"hello"}"#), inv("never_runs")])
+        ])
+        var hooks = surface.makeHooks()
+        hooks.executeTool = { call, _ in
+            let result: String
+            do {
+                result = try await FileWriteTool(rootPath: root).execute(argumentsJSON: call.jsonArguments)
+            } catch {
+                Issue.record("Native fixture unexpectedly threw: \(error)")
+                return AgentLoopToolExecution(result: ToolEnvelope.fromError(error, tool: call.toolName), isError: true)
+            }
+            #expect(result.contains("\"kind\":\"rejected\""))
+            #expect(call.toolName == "file_write")
+            return AgentLoopToolExecution(result: result, isError: ToolEnvelope.isError(result))
+        }
+        let result = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .toolRejected)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("report.pptx").path))
+    }
+
     @Test func cancellationStopsBetweenToolCalls() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("first_tool"), inv("second_tool")])

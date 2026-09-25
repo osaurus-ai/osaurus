@@ -182,6 +182,62 @@ struct AgentLoopBudgetTests {
         #expect(!history.contains { ($0.content ?? "").hasPrefix("[System Notice]") })
     }
 
+    @Test func batchedReadsCannotMasqueradeAsFiveCompactableIterations() {
+        let calls = (1 ... 5).map { index in
+            ToolCall(
+                id: "read_\(index)",
+                type: "function",
+                function: ToolCallFunction(name: "file_read", arguments: "{}")
+            )
+        }
+        let results = calls.map { call in
+            ChatMessage(
+                role: "tool",
+                content: String(repeating: "ordinary log line\n", count: 900),
+                tool_calls: nil,
+                tool_call_id: call.id
+            )
+        }
+        let prefix = [
+            ChatMessage(role: "system", content: "Read the logs."), ChatMessage(role: "user", content: "Find ERROR."),
+        ]
+        let batched = prefix + [ChatMessage(role: "assistant", content: nil, tool_calls: calls)] + results
+        var sequential = prefix
+        for (call, result) in zip(calls, results) {
+            sequential.append(ChatMessage(role: "assistant", content: nil, tool_calls: [call]))
+            sequential.append(result)
+        }
+        // Enough room for three full read turns, but not all five results.
+        // The estimator determines the window so this tests grouping, not a
+        // brittle hardcoded tokenizer ratio.
+        let manager = ContextBudgetManager(
+            contextLength: Int(Double(ContextBudgetManager.estimateTokens(for: batched)) * 0.9)
+        )
+        let batchedWatermark = CompactionWatermark()
+        let batchResult = AgentLoopBudget.composeIterationMessages(
+            batched,
+            notices: [],
+            manager: manager,
+            watermark: batchedWatermark
+        )
+        #expect(batchResult.overBudget)
+        #expect(!batchedWatermark.hasCompacted)
+        #expect(batchResult.messages.filter { $0.role == "tool" }.map(\.tool_call_id) == calls.map { Optional($0.id) })
+        let sequentialWatermark = CompactionWatermark()
+        let sequentialResult = AgentLoopBudget.composeIterationMessages(
+            sequential,
+            notices: [],
+            manager: manager,
+            watermark: sequentialWatermark
+        )
+        #expect(!sequentialResult.overBudget)
+        #expect(sequentialWatermark.hasCompacted)
+        #expect(
+            sequentialResult.messages.filter { $0.role == "tool" }.suffix(3).map(\.tool_call_id)
+                == calls.suffix(3).map { Optional($0.id) }
+        )
+    }
+
     @Test func composeIterationMessagesWithoutManagerStillAppendsNotices() {
         let history = [ChatMessage(role: "user", content: "hi")]
         let composed = AgentLoopBudget.composeIterationMessages(
