@@ -37,6 +37,7 @@ Osaurus includes presets for common providers:
 | **OpenAI**     | api.openai.com    | 443  | /v1       | OpenAI     | API Key required |
 | **xAI**        | api.x.ai          | 443  | /v1       | OpenAI     | API Key required |
 | **OpenRouter** | openrouter.ai     | 443  | /api/v1   | OpenAI     | API Key required |
+| **Requesty**   | router.requesty.ai | 443 | /v1       | OpenAI     | API Key required |
 | **Custom**     | (you specify)     | —    | /v1       | OpenAI     | Optional         |
 
 **Note:** For Ollama, LM Studio, or other OpenAI-compatible endpoints, use the **Custom** preset and configure the host/port manually. See [Provider-Specific Notes](#provider-specific-notes) for configuration examples.
@@ -328,6 +329,24 @@ OpenRouter provides access to multiple model providers. Use model IDs like:
 - `openai/gpt-4o`
 - `anthropic/claude-3.5-sonnet`
 - `google/gemini-pro`
+
+### Requesty
+
+```
+Host: router.requesty.ai
+Protocol: HTTPS
+Base Path: /v1
+Auth: API Key (get from app.requesty.ai/api-keys)
+```
+
+Requesty is an OpenAI-compatible router for many model providers. Use model IDs like:
+
+- `openai/gpt-4o-mini`
+- `anthropic/claude-sonnet-4-5`
+- `gpt-5.4-mini` (managed policy ids from `GET /v1/models/managed` have no vendor prefix)
+
+For EU data residency, set the host to `router.eu.requesty.ai` under the provider's advanced settings.
+See https://docs.requesty.ai for details.
 
 ### OpenCode (Zen / Go)
 

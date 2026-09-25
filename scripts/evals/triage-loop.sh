@@ -34,7 +34,7 @@ from pathlib import Path
 baseline = Path("$BASELINE")
 candidate = Path("$CANDIDATE") if "$CANDIDATE" else None
 
-REMOTE_PREFIXES = ("xai/", "openai/", "groq/", "openrouter/", "anthropic/", "google/", "deepseek/")
+REMOTE_PREFIXES = ("xai/", "openai/", "groq/", "openrouter/", "requesty/", "anthropic/", "google/", "deepseek/")
 
 
 def load_cases(d, model_id):

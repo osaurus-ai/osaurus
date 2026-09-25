@@ -41,6 +41,7 @@ enum ConfigProviderPresets {
         "deepseek": .preset(.deepseek),
         "venice": .preset(.venice),
         "openrouter": .preset(.openrouter),
+        "requesty": .preset(.requesty),
         "ollama": .preset(.ollama),
         "custom": .preset(.custom),
         "openai_compatible": .preset(.custom),
@@ -51,8 +52,8 @@ enum ConfigProviderPresets {
     /// Canonical list surfaced in schema docs and error messages.
     static let canonicalIds: [String] = [
         "anthropic", "openai", "codex_oauth", "azure_openai", "google",
-        "xai", "deepseek", "venice", "openrouter", "ollama",
-        "custom", "osaurus_agent",
+        "xai", "deepseek", "venice", "openrouter", "requesty",
+        "ollama", "custom", "osaurus_agent",
     ]
 
     static func resolve(_ value: String?) -> ProviderToolResolution? {

@@ -293,7 +293,7 @@ label_for() { printf '%s' "$1" | tr '/' '-'; }
 # mirror `EvalRemoteProviderBootstrap.presets`. A slash alone doesn't mean
 # remote (local HF repo ids like mlx-community/Qwen3-4B also have one); only
 # a known provider prefix routes off-device.
-REMOTE_PREFIXES="xai openai groq openrouter anthropic google deepseek"
+REMOTE_PREFIXES="xai openai groq openrouter requesty anthropic google deepseek"
 is_remote_model() {
   local model="$1"
   case "${model}" in */*) ;; *) return 1 ;; esac

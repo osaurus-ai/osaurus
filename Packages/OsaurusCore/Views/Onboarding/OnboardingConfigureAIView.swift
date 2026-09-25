@@ -1694,6 +1694,7 @@ private struct ConfigureAIProviderPanel: View {
         case .google: return "Paste a key from aistudio.google.com"
         case .xai: return "Paste a key from console.x.ai"
         case .openrouter: return "Paste a key from openrouter.ai"
+        case .requesty: return "Paste a key from app.requesty.ai"
         default: return "Paste a key from your provider dashboard"
         }
     }

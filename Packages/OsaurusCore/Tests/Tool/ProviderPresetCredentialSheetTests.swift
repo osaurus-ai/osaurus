@@ -84,6 +84,28 @@ struct ProviderPresetCredentialSheetTests {
     }
 
     @Test
+    func requestyPreset_usesApiKeyAndVendorHost() {
+        let request = ProviderCredentialRequest(
+            preset: .requesty,
+            providerName: "Requesty",
+            mode: .addNew
+        )
+        #expect(request.preset == .requesty)
+        #expect(request.providerType == .openaiLegacy)
+        #expect(request.instructions.authMethod == .apiKey)
+        #expect(request.instructions.presetId == "requesty")
+        #expect(ProviderPreset.requesty.configuration.host == "router.requesty.ai")
+    }
+
+    @Test
+    func requestyCatalogEntry_usesApiKeyStorageAuth() {
+        let entry = ProviderCredentialInstructionsCatalog.entry(for: .requesty)
+        #expect(entry.storageAuthType == .apiKey)
+        #expect(entry.authMethod == .apiKey)
+        #expect(entry.getKeyURL?.absoluteString == "https://app.requesty.ai/api-keys")
+    }
+
+    @Test
     func customPreset_requiresHostExtraField() {
         let request = ProviderCredentialRequest(
             preset: .custom,

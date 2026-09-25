@@ -458,12 +458,12 @@ public enum ConfigManifest {
                             allowed: [
                                 "anthropic", "openai", "codex_oauth", "azure_openai",
                                 "google", "xai", "deepseek", "venice", "openrouter",
-                                "ollama", "custom", "osaurus_agent",
+                                "requesty", "ollama", "custom", "osaurus_agent",
                             ]),
                         comment: "anthropic | openai | codex_oauth | azure_openai |",
                         moreComments: [
                             "google | xai | deepseek | venice | openrouter |",
-                            "ollama | custom | osaurus_agent",
+                            "requesty | ollama | custom | osaurus_agent",
                             "required to create; immutable after",
                         ]),
                     ConfigKeySpec("enabled", .scalar(.boolean, example: "true")),

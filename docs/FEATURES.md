@@ -251,6 +251,7 @@ Research notes for the next local-runtime compatibility wave live in
 | OpenAI | api.openai.com | 443 (HTTPS) | API Key |
 | xAI | api.x.ai | 443 (HTTPS) | API Key |
 | OpenRouter | openrouter.ai | 443 (HTTPS) | API Key |
+| Requesty | router.requesty.ai | 443 (HTTPS) | API Key |
 | Custom | (user-defined) | (user-defined) | Optional |
 
 **Osaurus peers (paired / discovered):** a native Osaurus peer is added as an `.osaurus` provider and can be used either as a plain OpenAI-compatible inference backend (**Mode 1**, `/chat/completions`, local tool loop) or run fully server-side as a **remote agent** (**Mode 2**, `/agents/{address}/run`, the remote agent's own model/context/tools). Mode 2 pins the model chip to the agent's live effective model and gates the first send on connect. See [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md) and [SECURE_CHANNEL.md](SECURE_CHANNEL.md).

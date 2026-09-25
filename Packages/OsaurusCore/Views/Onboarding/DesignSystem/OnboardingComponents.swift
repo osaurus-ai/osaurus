@@ -566,7 +566,7 @@ struct OnboardingProviderLogo: View {
         }
     }
 
-    /// Imageset name for the five Figma-exported logos; `nil` falls back to
+    /// Imageset name for the bundled provider logos; `nil` falls back to
     /// the generic `ProviderIcon` symbol.
     static func assetName(for preset: ProviderPreset) -> String? {
         switch preset {
@@ -574,6 +574,7 @@ struct OnboardingProviderLogo: View {
         case .anthropic: return "provider-logo-anthropic"
         case .xai: return "provider-logo-xai"
         case .openrouter: return "provider-logo-openrouter"
+        case .requesty: return "provider-logo-requesty"
         case .google: return "provider-logo-gemini"
         default: return nil
         }
