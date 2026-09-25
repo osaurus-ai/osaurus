@@ -17,3 +17,7 @@ Metadata-only repair does not mutate an already-loaded holder's snapshot; unload
 ## Evidence and pending proof
 
 17 exact-source parser boundary rows passed; deterministic defaults-cache invalidation probe passed and the missing-epoch negative control failed as expected. Permanent regressions cover parser aliases, malformed caps, reload/override precedence, omitted utility temperature and stale publication. These CPU probes do not establish live chat, spawned child, provider, restart, UI or full eval completion. The current qualified-source/test/runtime matrix is recorded in `/Users/eric/vmlx-private-evidence/raptor06-speed-2026-09-23/parallel-closeout-2026-09-25/generation/`.
+
+## Engine pin
+
+Engine #512 and #513 are merged in `6827ef1153efa434f04ebeff801d9d6b0ce3e6bd`. Its entire git tree matches qualified combined candidate `5b69b512` (`dd8def5dc63fa7904d8160f9ea3adf4b3f9092e2`): 68 native tests passed, including 3 real-module output-alias consumer tests. All app package/lock pins and pin assertions now target that commit. App-level validation at this new pin remains pending and is not implied by the engine tests.

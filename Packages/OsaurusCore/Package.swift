@@ -315,9 +315,12 @@ let package = Package(
         // resident expert dispatch, and correct post-answer cache boundaries.
         // vmlx-swift#508 fuses exact BF16 Spark GELU/multiply for large
         // prefill shapes; short/decode shapes retain the reference expression.
+        // #512 validates persisted architecture state before granting SSD hits
+        // and serializes validation with MLX disk I/O. #513 honors validated
+        // max_tokens bundle aliases with max_new_tokens precedence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "bfdc48c8295803e15799cc591c9a949f0b1e9f81"
+            revision: "6827ef1153efa434f04ebeff801d9d6b0ce3e6bd"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
