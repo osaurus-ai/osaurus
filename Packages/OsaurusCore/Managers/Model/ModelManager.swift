@@ -1951,6 +1951,7 @@ extension ModelManager {
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
+    nonisolated(unsafe) static var localModelsScanFinishedForTests: (@Sendable () -> Void)?
 
     public nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -1995,10 +1996,10 @@ extension ModelManager {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 localModelsCacheCondition.lock()
-                if cachedLocalModels == nil && !localModelsScanInFlight {
-                    startLocalModelsScanLocked()
-                }
-                while cachedLocalModels == nil && localModelsScanInFlight {
+                while cachedLocalModels == nil {
+                    if !localModelsScanInFlight {
+                        startLocalModelsScanLocked()
+                    }
                     localModelsCacheCondition.wait()
                 }
                 localModelsCacheCondition.unlock()
@@ -2085,10 +2086,20 @@ extension ModelManager {
     /// `localModelsCacheCondition` with `localModelsScanInFlight == false`.
     private nonisolated static func startLocalModelsScanLocked() {
         localModelsScanInFlight = true
+        // Invalidation starts a new catalog generation without waiting for old
+        // filesystem work. Only the scan that still owns this generation may
+        // publish or clear the current in-flight flag.
+        let scanGeneration = localModelsCacheGen
+        let finishedForTests = localModelsScanFinishedForTests
         DispatchQueue.global(qos: .utility).async {
+            defer { finishedForTests?() }
             let scanned = scanLocalModels()
 
             localModelsCacheCondition.lock()
+            guard localModelsCacheGen == scanGeneration else {
+                localModelsCacheCondition.unlock()
+                return
+            }
             cachedLocalModels = scanned
             localModelsScanInFlight = false
             localModelsCacheGen &+= 1

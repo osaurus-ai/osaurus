@@ -475,6 +475,88 @@ struct ModelManagerTests {
         #expect(detected.map(\.id) == ["Nex-N2-Pro-JANGTQ2"])
     }
 
+
+    @Test func discoverLocalModels_invalidationKeepsDispatchWaitingForCurrentScan() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let previousOverride = ModelManager.scanLocalModelsOverrideForTests
+            let previousFinished = ModelManager.localModelsScanFinishedForTests
+            let previousExternal = ExternalModelLocator.testRootsOverride
+            let previousRoot = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osu-scan-generation-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            ExternalModelLocator.testRootsOverride = []
+            ExternalModelLocator.invalidateInMemory()
+            ExternalModelLocator.rescan()
+
+            let oldStarted = DispatchSemaphore(value: 0)
+            let newStarted = DispatchSemaphore(value: 0)
+            let releaseOld = DispatchSemaphore(value: 0)
+            let releaseNew = DispatchSemaphore(value: 0)
+            let finished = LocalModelsScanNotificationProbe()
+            let dispatched = LocalModelsScanNotificationProbe()
+            defer {
+                releaseOld.signal()
+                releaseNew.signal()
+                ModelManager.scanLocalModelsOverrideForTests = previousOverride
+                ModelManager.localModelsScanFinishedForTests = previousFinished
+                ExternalModelLocator.testRootsOverride = previousExternal
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.invalidateInMemory()
+                ModelManager.invalidateLocalModelsCache()
+                try? FileManager.default.removeItem(at: root)
+            }
+            ModelManager.localModelsScanFinishedForTests = { finished.record() }
+            ModelManager.scanLocalModelsOverrideForTests = { _ in
+                oldStarted.signal()
+                releaseOld.wait()
+                releaseOld.signal()
+                return []
+            }
+            ModelManager.invalidateLocalModelsCache()
+            let waiter = Task {
+                await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+                dispatched.record()
+            }
+            // Poll only the explicit barriers, never use a sleep to impose ordering.
+            func consumeSignalIfReady(_ signal: DispatchSemaphore) -> Bool {
+                signal.wait(timeout: .now()) == .success
+            }
+            func waitForSignal(_ signal: DispatchSemaphore) async throws -> Bool {
+                let deadline = Date().addingTimeInterval(5)
+                while Date() < deadline {
+                    if consumeSignalIfReady(signal) { return true }
+                    try await Task.sleep(nanoseconds: 1_000_000)
+                }
+                return false
+            }
+            let beganOld = try await waitForSignal(oldStarted)
+            try #require(beganOld)
+            ModelManager.scanLocalModelsOverrideForTests = { _ in
+                newStarted.signal()
+                releaseNew.wait()
+                releaseNew.signal()
+                return [MLXModel(id: "current-scan", name: "Current", description: "fixture",
+                                 downloadURL: "https://example.invalid/current")]
+            }
+            ModelManager.invalidateLocalModelsCache()
+            let beganNew = try await waitForSignal(newStarted)
+            try #require(beganNew)
+            releaseOld.signal()
+            let deadline = Date().addingTimeInterval(5)
+            while finished.count == 0, Date() < deadline {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            }
+            try #require(finished.count == 1)
+            #expect(!ModelManager.isLocalModelsCacheWarm)
+            #expect(dispatched.count == 0)
+            releaseNew.signal()
+            await waiter.value
+            #expect(ModelManager.discoverLocalModels().map(\.id) == ["current-scan"])
+        }
+    }
+
     @Test func discoverLocalModels_timeoutDoesNotCacheEmptyResult() async throws {
         try await StoragePathsTestLock.shared.run {
             let previousOverride = ModelManager.scanLocalModelsOverrideForTests
@@ -485,13 +567,15 @@ struct ModelManagerTests {
                 .appendingPathComponent("osu-model-manager-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: manifestRoot, withIntermediateDirectories: true)
             OsaurusPaths.overrideRoot = manifestRoot
-            ModelManager.invalidateLocalModelsCache()
             ExternalModelLocator.testRootsOverride = []
             ExternalModelLocator.invalidateInMemory()
             ExternalModelLocator.rescan()
+            let releaseScan = DispatchSemaphore(value: 0)
+            defer { releaseScan.signal() }
             ModelManager.localModelsScanWaitLimitOverrideForTests = 0.02
             ModelManager.scanLocalModelsOverrideForTests = { _ in
-                Thread.sleep(forTimeInterval: 0.12)
+                releaseScan.wait()
+                releaseScan.signal() // Keep the latch open for any later scan.
                 return [
                     MLXModel(
                         id: "gemma-4-E2B-it-qat-MXFP4",
@@ -501,6 +585,9 @@ struct ModelManagerTests {
                     )
                 ]
             }
+            // Install the fixture before invalidating: external rescan notifications
+            // can otherwise start a real scan before the override is installed.
+            ModelManager.invalidateLocalModelsCache()
             let completionNotifications = LocalModelsScanNotificationProbe()
             let completionObserver = NotificationCenter.default.addObserver(
                 forName: .localModelsChanged,
@@ -520,8 +607,9 @@ struct ModelManagerTests {
                 try? FileManager.default.removeItem(at: manifestRoot)
             }
 
-            let first = ModelManager.discoverLocalModels()
+            let first = await ModelManager.discoverLocalModelsOffMain()
             #expect(first.isEmpty)
+            releaseScan.signal()
 
             // Dispatch-time validation must not inherit the UI discovery
             // timeout: it waits for the in-flight scan's real completion so
