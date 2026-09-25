@@ -67,6 +67,7 @@ extension ModelManager {
         }
         guard !Task.isCancelled else { return }
         let local = await Task.detached(priority: .utility) { ModelManifest.read(at: model.localDirectory) }.value
+        guard !Task.isCancelled else { return }
         manifestChecks[model.id] = ModelManifestCheck(
             local: local,
             remote: remote,

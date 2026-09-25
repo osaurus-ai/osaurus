@@ -4,6 +4,23 @@ import Testing
 @testable import OsaurusCore
 
 struct ModelUpdatePollingTests {
+    @Test func cancellationNeverBecomesAnUnavailableOrCurrentSnapshot() async throws {
+        let service = HuggingFaceService(metadataRequest: { _ in throw CancellationError() })
+        await #expect(throws: CancellationError.self) {
+            _ = try await service.fetchModelManifest(repoId: "OsaurusAI/model")
+        }
+    }
+
+    @Test func authorizationFailureRemainsAnError() async throws {
+        let service = HuggingFaceService(metadataRequest: { request in
+            let url = try #require(request.url)
+            return (Data(), HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!)
+        })
+        await #expect(throws: DirectDownloader.HTTPStatusError.self) {
+            _ = try await service.fetchModelManifest(repoId: "OsaurusAI/model")
+        }
+    }
+
     @Test func changedRemoteRevisionFetchesNewMetadata() async throws {
         let revision = String(repeating: "b", count: 40)
         let prior = HuggingFaceService.ManifestSnapshot(revision: String(repeating: "a", count: 40), manifest: nil)
