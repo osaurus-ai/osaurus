@@ -497,6 +497,7 @@ struct ModelManagerTests {
             let releaseOld = DispatchSemaphore(value: 0)
             let releaseNew = DispatchSemaphore(value: 0)
             let finished = LocalModelsScanNotificationProbe()
+            let finishedSignal = DispatchSemaphore(value: 0)
             let dispatched = LocalModelsScanNotificationProbe()
             defer {
                 releaseOld.signal()
@@ -510,7 +511,10 @@ struct ModelManagerTests {
                 ModelManager.invalidateLocalModelsCache()
                 try? FileManager.default.removeItem(at: root)
             }
-            ModelManager.localModelsScanFinishedForTests = { finished.record() }
+            ModelManager.localModelsScanFinishedForTests = {
+                finished.record()
+                finishedSignal.signal()
+            }
             ModelManager.localModelsDispatchWaitingForTests = { dispatchWaiting.signal() }
             ModelManager.scanLocalModelsOverrideForTests = { _ in
                 oldStarted.signal()
@@ -527,21 +531,20 @@ struct ModelManagerTests {
                 await ModelManager.awaitLocalModelsCacheReadyForDispatch()
                 dispatched.record()
             }
-            // Poll only the explicit barriers, never use a sleep to impose ordering.
-            func consumeSignalIfReady(_ signal: DispatchSemaphore) -> Bool {
-                signal.wait(timeout: .now()) == .success
-            }
-            func waitForSignal(_ signal: DispatchSemaphore) async throws -> Bool {
-                let deadline = Date().addingTimeInterval(5)
-                while Date() < deadline {
-                    if consumeSignalIfReady(signal) { return true }
-                    try await Task.sleep(nanoseconds: 1_000_000)
+            // Block on the semaphore from GCD. A Task.sleep poll misses the
+            // signal when the cooperative pool is saturated: the sleep resumes
+            // after the deadline and the loop returns without checking again.
+            func waitForSignal(_ signal: DispatchSemaphore) async -> Bool {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let signaled = signal.wait(timeout: .now() + 30) == .success
+                        continuation.resume(returning: signaled)
+                    }
                 }
-                return false
             }
-            let beganOld = try await waitForSignal(oldStarted)
+            let beganOld = await waitForSignal(oldStarted)
             try #require(beganOld)
-            let attachedToOldScan = try await waitForSignal(dispatchWaiting)
+            let attachedToOldScan = await waitForSignal(dispatchWaiting)
             try #require(attachedToOldScan)
             ModelManager.scanLocalModelsOverrideForTests = { _ in
                 newStarted.signal()
@@ -551,13 +554,11 @@ struct ModelManagerTests {
                                  downloadURL: "https://example.invalid/current")]
             }
             ModelManager.invalidateLocalModelsCache()
-            let beganNew = try await waitForSignal(newStarted)
+            let beganNew = await waitForSignal(newStarted)
             try #require(beganNew)
             releaseOld.signal()
-            let deadline = Date().addingTimeInterval(5)
-            while finished.count == 0, Date() < deadline {
-                try await Task.sleep(nanoseconds: 1_000_000)
-            }
+            let oldScanFinished = await waitForSignal(finishedSignal)
+            try #require(oldScanFinished)
             try #require(finished.count == 1)
             #expect(!ModelManager.isLocalModelsCacheWarm)
             #expect(dispatched.count == 0)
