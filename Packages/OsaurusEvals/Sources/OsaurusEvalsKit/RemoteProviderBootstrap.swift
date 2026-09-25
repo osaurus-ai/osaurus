@@ -52,6 +52,12 @@ public enum EvalRemoteProviderBootstrap {
             basePath: "/v1",
             envKey: "OPENROUTER_API_KEY"
         ),
+        "requesty": Preset(
+            name: "Requesty",
+            host: "router.requesty.ai",
+            basePath: "/v1",
+            envKey: "REQUESTY_API_KEY"
+        ),
         // Native Anthropic Messages API: auth rides in `x-api-key` (plus the
         // required version header), mirroring what `resolvedHeaders` builds
         // for a Keychain-backed provider — but kept in-memory only.
