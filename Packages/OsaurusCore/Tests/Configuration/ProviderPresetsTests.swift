@@ -68,6 +68,58 @@ struct ProviderPresetsTests {
         )
     }
 
+    @Test func requestyPreset_configurationMatchesOfficialAPI() throws {
+        let config = ProviderPreset.requesty.configuration
+
+        #expect(config.name == "Requesty")
+        #expect(config.host == "router.requesty.ai")
+        #expect(config.providerProtocol == .https)
+        #expect(config.port == nil)
+        #expect(config.basePath == "/v1")
+        #expect(config.authType == .apiKey)
+        #expect(config.providerType == .openaiLegacy)
+    }
+
+    @Test func requestyPreset_includesSeedManualModels() throws {
+        let config = ProviderPreset.requesty.configuration
+
+        #expect(config.defaultManualModelIds.contains("gpt-5.4-mini"))
+        #expect(config.defaultManualModelIds.contains("claude-sonnet-4-5"))
+        #expect(config.defaultManualModelIds.contains("gemini-3.5-flash"))
+        #expect(config.defaultManualModelIds.contains("deepseek-v4-flash"))
+    }
+
+    @Test func requestyPreset_isListedAsKnownPreset() throws {
+        #expect(ProviderPreset.knownPresets.contains(.requesty))
+    }
+
+    @Test func matching_providerWithRequestyHost_resolvesToRequestyPreset() throws {
+        let provider = RemoteProvider(
+            name: "My Requesty",
+            host: "router.requesty.ai",
+            basePath: "/v1",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+
+        #expect(ProviderPreset.matching(provider: provider) == .requesty)
+    }
+
+    @Test func requestyPreset_chatEndpointResolvesToChatCompletions() throws {
+        let provider = RemoteProvider(
+            name: "Requesty",
+            host: ProviderPreset.requesty.configuration.host,
+            basePath: ProviderPreset.requesty.configuration.basePath,
+            authType: .apiKey,
+            providerType: ProviderPreset.requesty.configuration.providerType
+        )
+
+        #expect(
+            provider.url(for: provider.providerType.chatEndpoint)?.absoluteString
+                == "https://router.requesty.ai/v1/chat/completions"
+        )
+    }
+
     @Test func deepseekPreset_configurationMatchesOfficialAPI() throws {
         let config = ProviderPreset.deepseek.configuration
 

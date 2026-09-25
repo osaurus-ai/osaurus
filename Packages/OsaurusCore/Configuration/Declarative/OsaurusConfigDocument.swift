@@ -493,7 +493,7 @@ public struct MCPServerEntry: Codable, Equatable, Sendable {
 public struct ProviderEntry: Equatable, Sendable {
     public var name: String
     /// Preset id (anthropic, openai, codex_oauth, azure_openai, google, xai,
-    /// deepseek, venice, openrouter, ollama, custom, osaurus_agent).
+    /// deepseek, venice, openrouter, requesty, ollama, custom, osaurus_agent).
     /// Required to create; immutable after (recreate to change).
     public var provider: String?
     public var enabled: Bool?

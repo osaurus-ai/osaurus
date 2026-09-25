@@ -183,6 +183,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .requesty:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("Requesty"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Get a key from app.requesty.ai/api-keys."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .deepseek:
             return ProviderCredentialInstructions(
                 providerType: providerType,

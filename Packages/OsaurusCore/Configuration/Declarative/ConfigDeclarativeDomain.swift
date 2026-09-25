@@ -34,7 +34,7 @@ enum ConfigDeclarativeDomain {
             "plugin", "install plugin", "uninstall plugin",
             "mcp", "mcp server", "model context protocol", "tool server",
             "provider", "api key", "anthropic", "openai", "claude", "gpt",
-            "gemini", "openrouter", "deepseek", "ollama", "connect provider", "sign in",
+            "gemini", "openrouter", "requesty", "deepseek", "ollama", "connect provider", "sign in",
             "search provider", "tavily", "brave search", "search ranking",
             "schedule", "cron", "daily", "every morning",
             "watcher", "watch folder", "when files change",
