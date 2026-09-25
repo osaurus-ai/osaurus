@@ -515,6 +515,10 @@ struct ModelManagerTests {
                 return []
             }
             ModelManager.invalidateLocalModelsCache()
+            // Start the old scan before scheduling the dispatch waiter. The
+            // regression is about invalidating an in-flight scan, not whether
+            // the cooperative executor starts a new Task before this barrier.
+            _ = ModelManager.localModelsSnapshotNonBlocking()
             let waiter = Task {
                 await ModelManager.awaitLocalModelsCacheReadyForDispatch()
                 dispatched.record()
