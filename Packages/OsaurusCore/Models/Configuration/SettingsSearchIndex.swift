@@ -620,6 +620,23 @@ public enum SettingsSearchIndex {
             subTab: "concurrency"
         ),
         .init(
+            id: "settings.server.concurrentSessions",
+            tab: .server,
+            section: "Concurrency & Batching",
+            title: "Concurrent Sessions",
+            keywords: ["parallel", "batch engine", "local subagents", "maximum requests"],
+            subTab: "concurrency",
+            disambiguation: "Shared engine ceiling for same-model local work; memory safety and Continuous Batching can reduce the effective limit."
+        ),
+        .init(
+            id: "settings.server.prefillChunkSize",
+            tab: .server,
+            section: "Concurrency & Batching",
+            title: "Prompt Prefill Chunk Size",
+            keywords: ["prompt processing", "prefill step", "tokens per step", "chunk"],
+            subTab: "concurrency"
+        ),
+        .init(
             id: "server.proxy",
             tab: .server,
             section: "Global Proxy",

@@ -176,3 +176,10 @@ and **Re-derive SSM State After Generation**. Each result opens Server → Setti
 → Cache and scrolls to that control. Prefix Cache controls all reuse; Enable GPU
 Cache controls the optional RAM tier, Disk Cache controls SSD reuse, and the
 SSM option retains architecture-specific companion state for hybrid models.
+
+### Concurrency and prompt processing
+
+- **Server → Concurrency & Batching → Concurrent Sessions** sets the shared BatchEngine ceiling for same-model local jobs and local subagents. Continuous Batching must be on for concurrent decoding. Memory Safety overrides and current occupancy can reduce the effective limit displayed below the field; an empty override uses the Memory Safety profile.
+- **Server → Concurrency & Batching → Prompt Prefill Chunk Size** sets how many prompt tokens are processed per prefill step. Empty uses the engine default. This is not the context window or the response token limit.
+
+Search settings or ask Settings Help using either exact control name to navigate directly to it.

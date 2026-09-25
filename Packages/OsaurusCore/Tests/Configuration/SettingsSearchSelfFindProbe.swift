@@ -59,6 +59,8 @@ struct SettingsSearchSelfFindProbe {
     @Test("controls are findable by the label they display")
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
+            ("Concurrent Sessions", "settings.server.concurrentSessions"),
+            ("Prompt Prefill Chunk Size", "settings.server.prefillChunkSize"),
             ("Automatically Check Model Updates", "models.automaticUpdates"),
             ("Brief description (optional)", "agents.description"),
             ("agent description", "agents.description"),
