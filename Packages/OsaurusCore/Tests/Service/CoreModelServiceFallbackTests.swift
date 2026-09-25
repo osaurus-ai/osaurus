@@ -67,14 +67,19 @@ struct CoreModelServiceFallbackTests {
         }
     }
 
-    @Test("utility callers can retain model sampling defaults without losing cache isolation")
-    func utilityNativeDefaultsReachService() async throws {
+    @Test("utility calls preserve model defaults or an explicit override", arguments: [false, true])
+    func utilityNativeDefaultsReachService(explicitOverride: Bool) async throws {
         let probe = ResidencyProbe()
         let service = CoreModelService(localServices: [probe])
-        _ = try await service.generate(
-            prompt: "Describe an agent", temperature: nil, timeout: 5, modelOverride: probe.id)
+        if explicitOverride {
+            _ = try await service.generate(
+                prompt: "Describe an agent", temperature: 0.2, timeout: 5, modelOverride: probe.id)
+        } else {
+            _ = try await service.generate(
+                prompt: "Describe an agent", timeout: 5, modelOverride: probe.id)
+        }
         let parameters = try #require(await probe.parameters)
-        #expect(parameters.temperature == nil)
+        #expect(parameters.temperature == (explicitOverride ? Float(0.2) : nil))
         #expect(parameters.auxiliaryCacheIntent)
         #expect(parameters.preserveExistingResidencyOwner)
     }

@@ -47,6 +47,7 @@
 
 import Foundation
 import Darwin
+import CoreFoundation
 
 enum LocalGenerationDefaults {
 
@@ -69,43 +70,55 @@ enum LocalGenerationDefaults {
         static let empty = Defaults()
     }
 
-    private static nonisolated let lock = NSLock()
-    private static nonisolated(unsafe) var cache: [String: Defaults] = [:]
+    /// A lookup may read disk while a repair, directory change or unload invalidates
+    /// metadata. An old read must neither repopulate the cache nor serve stale defaults.
+    final class Cache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [String: Defaults] = [:]
+        private var generation: UInt64 = 0
 
-    /// Resolve and cache the sampling defaults for `modelId`. The id may be
-    /// either the short picker name or the full `ORG/REPO` identifier; both
-    /// are supported via `ModelManager.findInstalledModel`.
-    static func defaults(forModelId modelId: String) -> Defaults {
-        let key = modelId.lowercased()
-        lock.lock()
-        if let hit = cache[key] {
+        func resolve(key: String, load: () -> Defaults, shouldCache: (Defaults) -> Bool) -> Defaults {
+            while true {
+                lock.lock()
+                if let hit = values[key] {
+                    lock.unlock()
+                    return hit
+                }
+                let startedGeneration = generation
+                lock.unlock()
+                let value = load()
+                let cacheable = shouldCache(value)
+                lock.lock()
+                guard generation == startedGeneration else {
+                    lock.unlock()
+                    continue
+                }
+                if cacheable { values[key] = value }
+                lock.unlock()
+                return value
+            }
+        }
+
+        func invalidate() {
+            lock.lock()
+            generation &+= 1
+            values.removeAll()
             lock.unlock()
-            return hit
         }
-        lock.unlock()
-
-        let resolved = load(modelId: modelId)
-
-        // A main-thread lookup during the launch scan can miss purely
-        // because the local-models cache is still cold (see
-        // `localDirectory(forModelId:)`). Don't memoize that provisional
-        // miss — the next lookup after the scan lands gets the real answer.
-        if resolved == .empty, !ModelManager.isLocalModelsCacheWarm {
-            return resolved
-        }
-
-        lock.lock()
-        cache[key] = resolved
-        lock.unlock()
-        return resolved
     }
 
-    /// Invalidate the cache. Call when models are added/removed so the next
-    /// lookup re-reads the file from disk.
+    private static nonisolated let cache = Cache()
+
+    /// Resolve model-owned defaults. Provisional cold-discovery misses are never cached.
+    static func defaults(forModelId modelId: String) -> Defaults {
+        cache.resolve(key: modelId.lowercased(), load: { load(modelId: modelId) }) { resolved in
+            resolved != .empty || ModelManager.isLocalModelsCacheWarm
+        }
+    }
+
+    /// Call when models or metadata change so subsequent requests re-read disk.
     static func invalidate() {
-        lock.lock()
-        cache.removeAll()
-        lock.unlock()
+        cache.invalidate()
     }
 
     /// Repair the known Laguna XS 2.1 sampling-metadata packaging mistake
@@ -609,7 +622,10 @@ enum LocalGenerationDefaults {
 
     private static func extractSamplingFields(from obj: [String: Any]) -> Defaults {
         var out = Defaults()
-        if let maxTokens = readInt(obj["max_new_tokens"]) { out.maxTokens = maxTokens }
+        // Prefer the canonical valid cap, then the equivalent publisher alias.
+        // Neither max_length nor context length is an output-token limit.
+        out.maxTokens = readPositiveInteger(obj["max_new_tokens"])
+            ?? readPositiveInteger(obj["max_tokens"])
         if let t = readFloat(obj["temperature"]) { out.temperature = t }
         if let p = readFloat(obj["top_p"]) { out.topP = p }
         if let k = readInt(obj["top_k"]) { out.topK = k }
@@ -628,6 +644,14 @@ enum LocalGenerationDefaults {
     private static func readFloat(_ any: Any?) -> Float? {
         if let n = any as? NSNumber { return n.floatValue }
         return nil
+    }
+
+    private static func readPositiveInteger(_ any: Any?) -> Int? {
+        guard let number = any as? NSNumber,
+            CFGetTypeID(number) != CFBooleanGetTypeID(),
+            number.intValue > 0, number.decimalValue == Decimal(number.intValue)
+        else { return nil }
+        return number.intValue
     }
 
     private static func readInt(_ any: Any?) -> Int? {
