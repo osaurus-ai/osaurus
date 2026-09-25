@@ -600,6 +600,60 @@ struct HarnessStabilityFixesTests {
 
     // MARK: - 7. file_read trailing-newline metadata
 
+    @Test func fileRead_lineBoundariesPreserveRealBlankLines() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixtures: [(String, Int, Bool)] = [
+            ("alpha\nbeta\n", 2, true),
+            ("alpha\r\nbeta\r\n", 2, true),
+            ("alpha\nbeta\n\n", 3, true),
+            ("alpha\nbeta", 2, false),
+            ("\n", 1, true),
+            ("", 1, false),
+        ]
+        for (text, count, terminated) in fixtures {
+            try text.write(to: root.appendingPathComponent("lines.txt"), atomically: true, encoding: .utf8)
+            let result = try await FileReadTool(rootPath: root).execute(
+                argumentsJSON: #"{"path":"lines.txt"}"#)
+            let payload = EnvelopeAssertions.successPayload(result)
+            #expect(payload?["total_lines"] as? Int == count)
+            #expect(payload?["end_line"] as? Int == count)
+            #expect(payload?["ends_with_newline"] as? Bool == terminated)
+        }
+    }
+
+    @Test func fileRead_tailEndsAtLastContentLine() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "alpha\r\nbeta\r\n".write(
+            to: root.appendingPathComponent("lines.txt"), atomically: true, encoding: .utf8)
+        let result = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"lines.txt","tail_lines":1}"#)
+        let payload = EnvelopeAssertions.successPayload(result)
+        #expect(payload?["start_line"] as? Int == 2)
+        #expect(payload?["end_line"] as? Int == 2)
+        #expect((payload?["text"] as? String)?.contains("2|beta") == true)
+    }
+
+    @Test func fileContentLinesTreatCRLFAsOneTerminator() {
+        #expect(FolderToolHelpers.contentLines("one\r\n\r\nthree\r\n") == ["one", "", "three"])
+        #expect(FolderToolHelpers.contentLines("one\n\n") == ["one", ""])
+        #expect(FolderToolHelpers.contentLines("one\rthree\r") == ["one", "three"])
+    }
+
+    @Test func fileSearch_lineNumbersAgreeWithCRLFRead() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "alpha\r\nbeta\r\n".write(
+            to: root.appendingPathComponent("lines.txt"), atomically: true, encoding: .utf8)
+        let result = try await FileSearchTool(rootPath: root).execute(
+            argumentsJSON: #"{"pattern":"beta","target":"content"}"#)
+        #expect(ToolEnvelope.isSuccess(result))
+        let text = EnvelopeAssertions.successText(result) ?? ""
+        #expect(text.contains("lines.txt:2:"))
+        #expect(!text.contains("lines.txt:3:"))
+    }
+
     // Regression (E4B loop, ordered-procedure): the numbered gutter can't
     // express whether the last line is `\n`-terminated, so a byte-exact
     // copy reconstructed from a read was one byte short. The payload now
