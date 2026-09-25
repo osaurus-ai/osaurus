@@ -617,6 +617,7 @@ export GEMINI_API_KEY=...   # google/<model>
 export DEEPSEEK_API_KEY=... # deepseek/<model>
 export GROQ_API_KEY=...     # groq/<model>
 export OPENROUTER_API_KEY=. # openrouter/<model>
+export REQUESTY_API_KEY=... # requesty/<model>
 
 # 2. Optional: fixed judge for cross-model comparability
 export JUDGE_MODEL=xai/grok-4.3   # needs XAI_API_KEY
