@@ -186,16 +186,19 @@ public actor FollowUpSuggestionService {
     /// when there's no array to decode so the caller can fall back to the
     /// line-list parser.
     private static func parseJSONArray(_ text: String) -> [String]? {
-        guard
-            let start = text.firstIndex(of: "["),
-            let end = text.lastIndex(of: "]"),
-            start < end
-        else { return nil }
+        guard let start = text.firstIndex(of: "[") else { return nil }
+        let tail = text[text.index(after: start)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        // Plain questions may contain bracket notation. Only an array-shaped
+        // response (or quoted array after a preamble) commits to JSON parsing.
+        guard start == text.startIndex || tail.hasPrefix("\"") else { return nil }
+        // Once an array starts, malformed/truncated JSON is not a plain list.
+        // Reject it rather than exposing JSON fragments as clickable prompts.
+        guard let end = text.lastIndex(of: "]"), start < end else { return [] }
         let slice = String(text[start...end])
         guard
             let data = slice.data(using: .utf8),
             let array = try? JSONDecoder().decode([String].self, from: data)
-        else { return nil }
+        else { return [] }
         return array
     }
 
