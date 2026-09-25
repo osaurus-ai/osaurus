@@ -146,7 +146,11 @@ extension ModelManager {
                     let observation = schedule.attempts[repositoryKey]?.observation {
                     let local = await Task.detached(priority: .utility) { ModelManifest.read(at: model.localDirectory) }.value
                     guard !Task.isCancelled else { return }
-                    self.manifestChecks[repositoryKey] = observation.restoring(local: local)
+                    // A manual check may finish while the local read is suspended.
+                    // Never replace that newer observation with persisted state.
+                    if self.manifestChecks[repositoryKey] == nil {
+                        self.manifestChecks[repositoryKey] = observation.restoring(local: local)
+                    }
                 }
                 guard self.automaticallyChecksModelUpdates else { continue }
                 let started = Date()
