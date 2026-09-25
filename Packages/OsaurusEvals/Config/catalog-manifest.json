@@ -62,6 +62,7 @@
       "agent_loop.impossible-task-declines",
       "agent_loop.list-folder-contents",
       "agent_loop.listing-navigation-discipline",
+      "agent_loop.missing-file-is-recoverable",
       "agent_loop.multi-file-create-trio",
       "agent_loop.no-clarify-when-default-obvious",
       "agent_loop.over-budget-hard-overflow",

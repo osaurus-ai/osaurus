@@ -201,10 +201,10 @@ struct AgentLoopBudgetTests {
         let prefix = [
             ChatMessage(role: "system", content: "Read the logs."), ChatMessage(role: "user", content: "Find ERROR."),
         ]
-        let batched = prefix + [ChatMessage(role: "assistant", content: nil, tool_calls: calls)] + results
+        let batched = prefix + [ChatMessage(role: "assistant", content: nil, tool_calls: calls, tool_call_id: nil)] + results
         var sequential = prefix
         for (call, result) in zip(calls, results) {
-            sequential.append(ChatMessage(role: "assistant", content: nil, tool_calls: [call]))
+            sequential.append(ChatMessage(role: "assistant", content: nil, tool_calls: [call], tool_call_id: nil))
             sequential.append(result)
         }
         // Enough room for three full read turns, but not all five results.
@@ -222,7 +222,9 @@ struct AgentLoopBudgetTests {
         )
         #expect(batchResult.overBudget)
         #expect(!batchedWatermark.hasCompacted)
-        #expect(batchResult.messages.filter { $0.role == "tool" }.map(\.tool_call_id) == calls.map { Optional($0.id) })
+        let batchToolIDs: [String?] = batchResult.messages.filter { $0.role == "tool" }.map(\.tool_call_id)
+        let expectedToolIDs: [String?] = calls.map { $0.id }
+        #expect(batchToolIDs == expectedToolIDs)
         let sequentialWatermark = CompactionWatermark()
         let sequentialResult = AgentLoopBudget.composeIterationMessages(
             sequential,
@@ -232,10 +234,9 @@ struct AgentLoopBudgetTests {
         )
         #expect(!sequentialResult.overBudget)
         #expect(sequentialWatermark.hasCompacted)
-        #expect(
-            sequentialResult.messages.filter { $0.role == "tool" }.suffix(3).map(\.tool_call_id)
-                == calls.suffix(3).map { Optional($0.id) }
-        )
+        let recentToolIDs: [String?] = sequentialResult.messages.filter { $0.role == "tool" }.suffix(3).map(\.tool_call_id)
+        let expectedRecentToolIDs: [String?] = calls.suffix(3).map { $0.id }
+        #expect(recentToolIDs == expectedRecentToolIDs)
     }
 
     @Test func composeIterationMessagesWithoutManagerStillAppendsNotices() {
