@@ -5,6 +5,7 @@
 - Bundle output limit: first valid positive integral `max_new_tokens`, then `max_tokens`; never context size or `max_length`. JANG sampling defaults remain primary over generation_config per field.
 - Local precedence remains explicit request/agent value, saved user Sampling Defaults, resolved bundle snapshot, engine fallback. Loaded runtime holders own their bundle defaults until reload; model metadata changes invalidate catalog defaults, and a read interrupted by invalidation retries before returning or caching its value.
 - CoreModelService omission preserves native model/provider temperature. Callers explicitly requesting a temperature retain that choice. Auxiliary cache and residency intent are unchanged.
+- Implicit model output ceilings fit the actual prepared prompt within an existing child admission limit. Explicit request and saved user output budgets still reject over-budget requests. Main chat without a delegation limit retains the model cap; no arbitrary cap is added. Final effective telemetry reports the admitted cap.
 - `top_q` is unsupported, not an alias for `top_p` or `top_k`.
 
 ## Path audit

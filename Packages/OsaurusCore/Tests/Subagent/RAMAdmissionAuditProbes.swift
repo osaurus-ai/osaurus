@@ -7,6 +7,27 @@ import Testing
 // Regressions reproduced during the RAM admission cross-function audit.
 @Suite("RAM admission cross-function audit")
 struct RAMAdmissionAuditProbes {
+    @Test("Implicit bundle caps fit remaining admitted context; explicit budgets remain strict")
+    func implicitOutputCapUsesRemainingPositions() throws {
+        #expect(try AdmissionPositionLimit.resolveOutputTokens(
+            promptTokens: 512, outputTokens: 1_048_576, limit: 8192, isExplicit: false) == 7680)
+        #expect(try AdmissionPositionLimit.resolveOutputTokens(
+            promptTokens: 512, outputTokens: 256, limit: 8192, isExplicit: false) == 256)
+        #expect(try AdmissionPositionLimit.resolveOutputTokens(
+            promptTokens: 512, outputTokens: 1_048_576, limit: nil, isExplicit: false) == 1_048_576)
+        #expect(throws: AdmissionPositionLimit.self) {
+            try AdmissionPositionLimit.resolveOutputTokens(
+                promptTokens: 512, outputTokens: 1_048_576, limit: 8192, isExplicit: true)
+        }
+        for (prompt, output, limit) in [(8192, 1, 8192), (-1, 1, 8192), (0, 0, 8192),
+            (Int.max, 1, Int.min)] {
+            #expect(throws: AdmissionPositionLimit.self) {
+                try AdmissionPositionLimit.resolveOutputTokens(
+                    promptTokens: prompt, outputTokens: output, limit: limit, isExplicit: false)
+            }
+        }
+    }
+
     @Test("a free engine slot must not be subtracted again by sibling reservations")
     func engineAvailabilityIsNotAnAggregateCeiling() async {
         let admission = SubagentAdmission()
