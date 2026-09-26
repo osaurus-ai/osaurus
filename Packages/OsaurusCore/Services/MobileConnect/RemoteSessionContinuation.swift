@@ -48,8 +48,8 @@ enum RemoteSessionContinuation {
     static func append(_ messages: [ChatMessage], to sessionId: UUID, model: String?) async {
         let turns = ChatHistoryWriter.turns(from: messages)
         guard !turns.isEmpty else { return }
-        MobileConnectLog.write(
-            "hosted-run: continuation appending \(turns.count) turn(s) to \(sessionId) after the run "
+        MobileConnectLog.hostedRun(
+            "continuation appending \(turns.count) turn(s) to \(sessionId) after the run "
                 + "(open in a window=\(ChatWindowManager.shared.session(forSessionId: sessionId) != nil))"
         )
 

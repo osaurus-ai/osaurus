@@ -1205,8 +1205,8 @@ final class ChatWindowState: ObservableObject {
             let liveSession = liveTask.chatSession
         {
             if isHostedRow {
-                MobileConnectLog.write(
-                    "hosted-run: window opened \(sessionData.id) on the live task \(liveTask.id) "
+                MobileConnectLog.hostedRun(
+                    "window opened \(sessionData.id) on the live task \(liveTask.id) "
                         + "(turns=\(liveSession.turns.count), streaming=\(liveSession.isStreaming))"
                 )
             }
@@ -1217,7 +1217,7 @@ final class ChatWindowState: ObservableObject {
             for: sessionData.id
         ) {
             if isHostedRow {
-                MobileConnectLog.write("hosted-run: window opened \(sessionData.id) on another surface's live session")
+                MobileConnectLog.hostedRun("window opened \(sessionData.id) on another surface's live session")
             }
             // Another surface owns a live
             // instance of this conversation: attach that exact object so
@@ -1231,16 +1231,16 @@ final class ChatWindowState: ObservableObject {
             // brand-new session so the two never share transcript state.
             installFreshSession(agentId: targetAgentId, loading: resolvedData)
             if isHostedRow {
-                MobileConnectLog.write(
-                    "hosted-run: window opened \(sessionData.id) from disk into a fresh session "
+                MobileConnectLog.hostedRun(
+                    "window opened \(sessionData.id) from disk into a fresh session "
                         + "(turns=\(resolvedData.turns.count)); no live task for it"
                 )
             }
         } else {
             session.load(from: resolvedData)
             if isHostedRow {
-                MobileConnectLog.write(
-                    "hosted-run: window opened \(sessionData.id) from disk (turns=\(resolvedData.turns.count)); "
+                MobileConnectLog.hostedRun(
+                    "window opened \(sessionData.id) from disk (turns=\(resolvedData.turns.count)); "
                         + "no live task for it"
                 )
             }

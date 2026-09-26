@@ -9408,8 +9408,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if loop.inEventLoop { block() } else { loop.execute(block) }
                 }
                 let requestMessages = req.messages
-                MobileConnectLog.write(
-                    "hosted-run: run \(requestId) agent=\(agentId) messages=\(requestMessages.count) "
+                MobileConnectLog.hostedRun(
+                    "run \(requestId) agent=\(agentId) messages=\(requestMessages.count) "
                         + "osaurus_session_id=\(req.osaurus_session_id ?? "none") "
                         + "session_id=\(req.session_id ?? "none")"
                 )

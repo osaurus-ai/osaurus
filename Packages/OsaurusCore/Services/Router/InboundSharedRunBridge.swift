@@ -163,8 +163,8 @@ final class InboundSharedRunBridge {
             // Why no row was reused: same-key rows whose history isn't a
             // prefix of this request (a caller sending only its new message).
             let sameKey = sessions.sessions.filter { $0.externalSessionKey == externalKey }
-            MobileConnectLog.write(
-                "hosted-run: no reusable row (incoming turns=\(turns.count), rows with this key=\(sameKey.count): "
+            MobileConnectLog.hostedRun(
+                "no reusable row (incoming turns=\(turns.count), rows with this key=\(sameKey.count): "
                     + sameKey.map { row in
                         let stored =
                             manager.taskState(for: row.id)?.chatSession?.turns.count
@@ -178,8 +178,8 @@ final class InboundSharedRunBridge {
         {
             session.appendHostedTurns(Array(turns.dropFirst(session.turns.count)))
             session.save()
-            MobileConnectLog.write(
-                "hosted-run: reused live task \(task.id) (session turns=\(session.turns.count), "
+            MobileConnectLog.hostedRun(
+                "reused live task \(task.id) (session turns=\(session.turns.count), "
                     + "shown in a window=\(ChatWindowManager.shared.session(forSessionId: rowId) === session))"
             )
             return (task.id, session)
@@ -226,8 +226,8 @@ final class InboundSharedRunBridge {
         } else {
             executionContext = ExecutionContext(reattaching: data)
         }
-        MobileConnectLog.write(
-            "hosted-run: \(existingRowId == nil ? "new row" : "reattached row") \(data.id) "
+        MobileConnectLog.hostedRun(
+            "\(existingRowId == nil ? "new row" : "reattached row") \(data.id) "
                 + "(turns=\(data.turns.count), adopted a window's session=\(shownInWindow != nil))"
         )
         let session = executionContext.chatSession
@@ -280,8 +280,8 @@ final class InboundSharedRunBridge {
             streamingTurns[handle.runKey] = turn.id
             session.appendHostedTurns([turn])
             let shown = session.sessionId.flatMap { ChatWindowManager.shared.session(forSessionId: $0) }
-            MobileConnectLog.write(
-                "hosted-run: first delta of run \(handle.runKey) into session \(session.sessionId?.uuidString ?? "nil") "
+            MobileConnectLog.hostedRun(
+                "first delta of run \(handle.runKey) into session \(session.sessionId?.uuidString ?? "nil") "
                     + "(task \(handle.taskId)); a window shows this chat=\(shown != nil), "
                     + "same object as the stream=\(shown === session)"
             )
@@ -385,8 +385,8 @@ final class InboundSharedRunBridge {
     /// a no-op on the (already cancelled) task.
     func finish(_ handle: Handle, success: Bool, summary: String) {
         guard live.removeValue(forKey: handle.runKey) != nil else { return }
-        MobileConnectLog.write(
-            "hosted-run: finished run \(handle.runKey) success=\(success) "
+        MobileConnectLog.hostedRun(
+            "finished run \(handle.runKey) success=\(success) "
                 + "(session turns=\(manager.taskState(for: handle.taskId)?.chatSession?.turns.count ?? -1))"
         )
         let session = manager.taskState(for: handle.taskId)?.chatSession

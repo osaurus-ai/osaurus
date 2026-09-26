@@ -39,6 +39,25 @@ enum MobileConnectLog {
 
     private static let queue = DispatchQueue(label: "com.osaurus.mobile-connect-log", qos: .utility)
 
+    /// Defaults key that turns on the hosted-run trace (`hostedRun(_:)`):
+    /// `defaults write com.dinoki.osaurus OsaurusHostedRunTrace -bool YES`,
+    /// then relaunch; `-bool NO` or `defaults delete` turns it off.
+    static let hostedRunTraceDefaultsKey = "OsaurusHostedRunTrace"
+
+    /// Read once per launch: the trace is for a debugging session, not a
+    /// setting that changes under a running app.
+    static let isHostedRunTraceEnabled = UserDefaults.standard.bool(forKey: hostedRunTraceDefaultsKey)
+
+    /// One line of the hosted-run trace: how a remote run (the paired
+    /// phone's, or a teammate's) finds its chat, where its reply streams, and
+    /// how a window opens that chat. Off unless switched on (see
+    /// `hostedRunTraceDefaultsKey`); the message isn't even built then, as
+    /// some lines read chats from disk to describe them.
+    static func hostedRun(_ message: @autoclosure () -> String) {
+        guard isHostedRunTraceEnabled else { return }
+        write("hosted-run: \(message())")
+    }
+
     /// Appends one line, timestamped. Safe from any thread; never throws.
     static func write(_ message: String) {
         ConsoleLogFile.append("[MobileConnect] \(message)")
