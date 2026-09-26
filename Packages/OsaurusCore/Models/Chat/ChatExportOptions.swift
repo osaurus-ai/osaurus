@@ -52,6 +52,9 @@ extension ChatSessionData {
                 || turn.completedAt != nil
                 || turn.generationTokenCount != nil
                 || turn.timeToFirstToken != nil
+                || turn.generationTokensPerSecond != nil
+                || turn.modelLoadSeconds != nil
+                || turn.lastOutputAt != nil
         }
     }
 }

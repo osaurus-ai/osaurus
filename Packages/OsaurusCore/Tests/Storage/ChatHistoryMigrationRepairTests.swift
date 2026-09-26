@@ -476,6 +476,49 @@ struct ChatHistoryMigrationRepairTests {
         }
     }
 
+    @Test
+    func generationMetricsUpgradeAndReopenPreserveLegacyTurns() async throws {
+        try await runWithPlaintextRoot {
+            let session = ChatSessionData(
+                title: "metrics",
+                turns: [
+                    ChatTurnData(role: .assistant, content: "legacy answer")
+                ]
+            )
+            let initial = ChatHistoryDatabase()
+            try initial.open()
+            try initial.saveSession(session)
+            initial.close()
+            // Recreate the previous schema's missing columns in this private fixture.
+            try self.seedChatHistoryDB([
+                "ALTER TABLE turns DROP COLUMN generation_tokens_per_second",
+                "ALTER TABLE turns DROP COLUMN model_load_seconds",
+                "ALTER TABLE turns DROP COLUMN last_output_at",
+                "PRAGMA user_version = 18",
+            ])
+            let upgraded = ChatHistoryDatabase()
+            try upgraded.open()
+            var loaded = try #require(upgraded.loadSession(id: session.id))
+            #expect(loaded.turns[0].content == "legacy answer")
+            #expect(loaded.turns[0].generationTokensPerSecond == nil)
+            #expect(loaded.turns[0].modelLoadSeconds == nil)
+            #expect(loaded.turns[0].lastOutputAt == nil)
+            loaded.turns[0].generationTokensPerSecond = 106.6
+            loaded.turns[0].modelLoadSeconds = 0.4
+            loaded.turns[0].lastOutputAt = Date(timeIntervalSince1970: 1002)
+            try upgraded.saveSession(loaded)
+            upgraded.close()
+            let reopened = ChatHistoryDatabase()
+            try reopened.open()
+            defer { reopened.close() }
+            let restored = try #require(reopened.loadSession(id: session.id)?.turns[0])
+            #expect(restored.generationTokensPerSecond == 106.6)
+            #expect(restored.modelLoadSeconds == 0.4)
+            #expect(restored.lastOutputAt == Date(timeIntervalSince1970: 1002))
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
+        }
+    }
+
     // MARK: - Helpers
 
     /// Run `body` with an isolated temp root in plaintext storage posture,

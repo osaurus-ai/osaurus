@@ -172,7 +172,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 18
+    static let latestSchemaVersion = 19
 
     /// Forward-compatibility invariant. Every chat-history migration is
     /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
@@ -221,7 +221,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             migrateToV1, migrateToV2, migrateToV3, migrateToV4, migrateToV5, migrateToV6,
             migrateToV7, migrateToV8, migrateToV9, migrateToV10, migrateToV11, migrateToV12,
             migrateToV13, migrateToV14, migrateToV15, migrateToV16, migrateToV17,
-            migrateToV18,
+            migrateToV18, migrateToV19,
         ]
     }
 
@@ -263,7 +263,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         "created_at", "completed_at", "generation_token_count", "time_to_first_token",
         "tool_call_durations", "thinking_duration", "router_billing",
         "terminal_stop_reason", "model_context_excluded", "tool_call_logs",
-        "injected_context_prefix",
+        "injected_context_prefix", "generation_tokens_per_second", "model_load_seconds", "last_output_at",
     ]
 
     private func assertWritableSchema() throws {
@@ -562,6 +562,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV18() throws {
         try addColumnIfMissing("turns", "injected_context_prefix", "TEXT")
         try setSchemaVersion(18)
+    }
+
+    /// v19: retain displayed generation metrics and the pre-finalization output boundary.
+    private func migrateToV19() throws {
+        try addColumnIfMissing("turns", "generation_tokens_per_second", "REAL")
+        try addColumnIfMissing("turns", "model_load_seconds", "REAL")
+        try addColumnIfMissing("turns", "last_output_at", "REAL")
+        try setSchemaVersion(19)
     }
 
     // MARK: - Public API: sessions
@@ -1509,6 +1517,15 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if let ttft = turn.timeToFirstToken {
             hasher.update(data: Data(String(ttft).utf8))
         }
+        if let rate = turn.generationTokensPerSecond {
+            hasher.update(data: Data("generation_rate:\(rate)".utf8))
+        }
+        if let loadSeconds = turn.modelLoadSeconds {
+            hasher.update(data: Data("model_load:\(loadSeconds)".utf8))
+        }
+        if let lastOutputAt = turn.lastOutputAt {
+            hasher.update(data: Data("last_output:\(lastOutputAt.timeIntervalSince1970)".utf8))
+        }
         if let stopReason = turn.terminalStopReason {
             hasher.update(data: Data(stopReason.utf8))
         }
@@ -1628,8 +1645,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
              tool_calls, tool_call_id, tool_results, thinking, content_hash,
              created_at, completed_at, generation_token_count, time_to_first_token,
              tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-             model_context_excluded, tool_call_logs, injected_context_prefix)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+             model_context_excluded, tool_call_logs, injected_context_prefix,
+             generation_tokens_per_second, model_load_seconds, last_output_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -1652,7 +1670,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             terminal_stop_reason   = excluded.terminal_stop_reason,
             model_context_excluded = excluded.model_context_excluded,
             tool_call_logs         = excluded.tool_call_logs,
-            injected_context_prefix = excluded.injected_context_prefix
+            injected_context_prefix = excluded.injected_context_prefix,
+            generation_tokens_per_second = excluded.generation_tokens_per_second,
+            model_load_seconds = excluded.model_load_seconds,
+            last_output_at = excluded.last_output_at
         """
 
     private static let selectTurnsSQL = """
@@ -1660,7 +1681,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                tool_calls, tool_call_id, tool_results, thinking,
                created_at, completed_at, generation_token_count, time_to_first_token,
                tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-               model_context_excluded, tool_call_logs, injected_context_prefix
+               model_context_excluded, tool_call_logs, injected_context_prefix,
+               generation_tokens_per_second, model_load_seconds, last_output_at
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -1767,8 +1789,11 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             thinking: thinking,
             createdAt: createdAt,
             completedAt: completedAt,
+            lastOutputAt: readNullableDate(stmt, index: 22),
             generationTokenCount: tokenCount,
             timeToFirstToken: timeToFirstToken,
+            generationTokensPerSecond: readNullableDouble(stmt, index: 20),
+            modelLoadSeconds: readNullableDouble(stmt, index: 21),
             terminalStopReason: terminalStopReason,
             modelContextExcluded: modelContextExcluded,
             routerBilling: routerBilling,
@@ -1822,6 +1847,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         sqlite3_bind_int(stmt, 21, turn.modelContextExcluded ? 1 : 0)
         bindText(stmt, index: 22, value: turn.toolCallLogs.isEmpty ? nil : encodeJSON(turn.toolCallLogs))
         bindText(stmt, index: 23, value: turn.injectedContextPrefix)
+        bindNullableDouble(stmt, index: 24, value: turn.generationTokensPerSecond)
+        bindNullableDouble(stmt, index: 25, value: turn.modelLoadSeconds)
+        bindNullableDouble(stmt, index: 26, value: turn.lastOutputAt?.timeIntervalSince1970)
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

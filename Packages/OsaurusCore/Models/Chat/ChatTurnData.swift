@@ -45,6 +45,10 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Seconds from request start to first visible token, for latency
     /// reporting. Nil when unknown.
     public var timeToFirstToken: TimeInterval?
+    /// The rate displayed during generation, preserving the provider's measurement semantics.
+    public var generationTokensPerSecond: Double?
+    /// Cold model loading inside the first-token window. Nil when unavailable.
+    public var modelLoadSeconds: TimeInterval?
     /// Authoritative runtime finish reason (`stop`, `length`, etc.). Nil for
     /// legacy turns and providers that do not report one.
     public var terminalStopReason: String?
@@ -89,6 +93,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         lastOutputAt: Date? = nil,
         generationTokenCount: Int? = nil,
         timeToFirstToken: TimeInterval? = nil,
+        generationTokensPerSecond: Double? = nil,
+        modelLoadSeconds: TimeInterval? = nil,
         terminalStopReason: String? = nil,
         reasoningItemId: String? = nil,
         reasoningEncrypted: String? = nil,
@@ -116,6 +122,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.lastOutputAt = lastOutputAt
         self.generationTokenCount = generationTokenCount
         self.timeToFirstToken = timeToFirstToken
+        self.generationTokensPerSecond = generationTokensPerSecond
+        self.modelLoadSeconds = modelLoadSeconds
         self.terminalStopReason = terminalStopReason
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
@@ -148,6 +156,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         lastOutputAt = try container.decodeIfPresent(Date.self, forKey: .lastOutputAt)
         generationTokenCount = try container.decodeIfPresent(Int.self, forKey: .generationTokenCount)
         timeToFirstToken = try container.decodeIfPresent(TimeInterval.self, forKey: .timeToFirstToken)
+        generationTokensPerSecond = try container.decodeIfPresent(Double.self, forKey: .generationTokensPerSecond)
+        modelLoadSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .modelLoadSeconds)
         terminalStopReason = try container.decodeIfPresent(String.self, forKey: .terminalStopReason)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
@@ -195,6 +205,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(lastOutputAt, forKey: .lastOutputAt)
         try container.encodeIfPresent(generationTokenCount, forKey: .generationTokenCount)
         try container.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
+        try container.encodeIfPresent(generationTokensPerSecond, forKey: .generationTokensPerSecond)
+        try container.encodeIfPresent(modelLoadSeconds, forKey: .modelLoadSeconds)
         try container.encodeIfPresent(terminalStopReason, forKey: .terminalStopReason)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
@@ -217,6 +229,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case toolCalls, toolCallId, toolResults, toolCallDurations, toolCallLogs, thinking
         case thinkingDuration
         case createdAt, completedAt, lastOutputAt, generationTokenCount, timeToFirstToken
+        case generationTokensPerSecond, modelLoadSeconds
         case terminalStopReason
         case reasoningItemId, reasoningEncrypted, responsesOutputItems
         case inputTokenCount, cachedInputTokenCount
@@ -262,6 +275,8 @@ extension ChatTurnData {
         self.lastOutputAt = turn.lastOutputAt
         self.generationTokenCount = turn.generationTokenCount
         self.timeToFirstToken = turn.timeToFirstToken
+        self.generationTokensPerSecond = turn.generationTokensPerSecond
+        self.modelLoadSeconds = turn.modelLoadSeconds
         self.terminalStopReason = turn.terminalStopReason
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
@@ -299,6 +314,8 @@ extension ChatTurn {
         self.lastOutputAt = data.lastOutputAt
         self.generationTokenCount = data.generationTokenCount
         self.timeToFirstToken = data.timeToFirstToken
+        self.generationTokensPerSecond = data.generationTokensPerSecond
+        self.modelLoadSeconds = data.modelLoadSeconds
         self.terminalStopReason = data.terminalStopReason
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted

@@ -391,9 +391,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// (the overwhelmingly common case, and the one that must look unchanged).
     var modelLoadSeconds: TimeInterval?
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
-    /// remote APIs). Ephemeral — not persisted. The exporter recomputes
-    /// it from token count and stream duration when needed, which
-    /// avoids storing a number whose precision varies by provider.
+    /// remote APIs). Persisted as displayed; do not recompute it from a
+    /// wall-clock interval that includes prefill or cache finalization.
     var generationTokensPerSecond: Double?
     /// Total tokens generated in this turn. Persisted with the turn.
     var generationTokenCount: Int?
