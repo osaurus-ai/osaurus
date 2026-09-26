@@ -281,20 +281,33 @@ struct SecureChannelE2ETests {
     }
 
     @Test func secureRun_builtInAgent_stillRejectedInsideChannel() async throws {
-        let server = try await startSecureTestServer(trustLoopback: true)
+        // A caller that doesn't own this Mac: an agent-scoped key. Owner
+        // callers (a master-scoped key like the paired phone's, or loopback)
+        // may run the built-in agent (docs/MOBILE_PROTOCOL.md §18); everyone
+        // else is still refused, the channel notwithstanding.
+        let scopedKey = try TokenBuilder.build(
+            privateKey: agentKey,
+            iss: agentAddress,
+            aud: agentAddress
+        )
+        let validator = APIKeyValidator.forAlice(
+            agentAddress: agentAddress,
+            extraWhitelist: [agentAddress]
+        )
+        let server = try await startSecureTestServer(trustLoopback: true, validator: validator)
         defer { Task { await server.shutdown() } }
         let session = try establishSession()
 
         // The channel satisfies the 426 gate, but the built-in Default agent
-        // remains locked to in-app surfaces: a remote (relay-origin) caller
-        // must still get the 403 guard envelope — now encrypted.
+        // remains locked to owner surfaces: a non-owner remote (relay-origin)
+        // caller must still get the 403 guard envelope — now encrypted.
         let chatBody = Data(
             #"{"model":"fake","stream":true,"messages":[{"role":"user","content":"hi"}]}"#.utf8
         )
         let inner = SecureChannel.InnerRequest(
             method: "POST",
             path: "/agents/\(Agent.defaultId.uuidString)/run",
-            authorization: "Bearer \(TestAuth.bearerToken)",
+            authorization: "Bearer \(scopedKey)",
             contentType: "application/json",
             body: chatBody.base64urlEncoded
         )

@@ -1044,7 +1044,12 @@ struct HTTPHandlerChatStreamingTests {
             #expect(!body.contains("\u{FFFE}tool:"))
             #expect(!body.contains("\u{FFFE}args:"))
             #expect(!body.contains("\u{FFFE}done:"))
-            #expect(!body.contains("agent-run sentinel test"))
+            // A loopback caller owns this Mac, so its tool events carry the
+            // call's arguments (the owner detail the paired phone renders).
+            // They must never leak into the reply itself: any line carrying
+            // them is an `osaurus_agent_tool` event, not content.
+            let argumentLines = body.split(separator: "\n").filter { $0.contains("agent-run sentinel test") }
+            #expect(argumentLines.allSatisfy { $0.contains("\"osaurus_agent_tool\"") })
         }
     }
 
