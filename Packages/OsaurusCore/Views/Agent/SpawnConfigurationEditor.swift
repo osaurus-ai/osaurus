@@ -196,7 +196,7 @@ struct SpawnConfigurationEditor: View {
             !selected.contains(candidate.id)
                 && (query.isEmpty
                     || candidate.name.localizedCaseInsensitiveContains(query)
-                    || candidate.description.localizedCaseInsensitiveContains(query))
+                    || candidate.displayDescription.localizedCaseInsensitiveContains(query))
         }
         return VStack(alignment: .leading, spacing: 8) {
             SearchField(
@@ -213,8 +213,8 @@ struct SpawnConfigurationEditor: View {
                         ForEach(filtered) { candidate in
                             addRow(
                                 title: candidate.name,
-                                subtitle: candidate.description.isEmpty
-                                    ? nil : candidate.description
+                                subtitle: candidate.displayDescription.isEmpty
+                                    ? nil : candidate.displayDescription
                             ) {
                                 setAgent(candidate.id, included: true)
                             }
