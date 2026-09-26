@@ -170,8 +170,32 @@ enum ChatHistoryWriter {
     /// inference surface (HTTP / plugin rows written here, and the live
     /// transcript `InboundSharedRunBridge` keeps for a remote caller's run of
     /// a shared agent). System messages are dropped; tool results stay as
-    /// their own `.tool` turns, keyed by `tool_call_id`.
+    /// their own `.tool` turns, keyed by `tool_call_id`, and are also recorded
+    /// on the assistant turn that made the call, as a Mac chat records them.
     static func turns(from messages: [ChatMessage]) -> [ChatTurnData] {
+        foldingToolResults(mappedTurns(from: messages))
+    }
+
+    /// Records each `.tool` turn's result on the assistant turn that made the
+    /// call (`toolResults[call id]`), where a Mac chat keeps it and where its
+    /// window reads it: without it the call draws as still running forever.
+    /// A Mac chat does both as the run goes; turns written from raw messages
+    /// have only the `.tool` turns. Results already there are left alone.
+    static func foldingToolResults(_ turns: [ChatTurnData]) -> [ChatTurnData] {
+        var folded = turns
+        for (index, turn) in turns.enumerated() where turn.role == .tool {
+            guard let callId = turn.toolCallId,
+                let owner = folded[..<index].lastIndex(where: { candidate in
+                    candidate.role == .assistant && (candidate.toolCalls?.contains { $0.id == callId } ?? false)
+                }),
+                folded[owner].toolResults[callId] == nil
+            else { continue }
+            folded[owner].toolResults[callId] = turn.content
+        }
+        return folded
+    }
+
+    private static func mappedTurns(from messages: [ChatMessage]) -> [ChatTurnData] {
         messages
             .filter { $0.role != "system" }
             .map { msg in

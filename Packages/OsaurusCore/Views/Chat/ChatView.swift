@@ -3518,7 +3518,10 @@ final class ChatSession: ObservableObject {
         // the user just picked a model.
         restorePersistedModelSelection(data.selectedModel)
 
-        turns = data.turns.map { ChatTurn(from: $0) }
+        // Folded so a chat written from raw messages before its tool results
+        // were recorded on the call (a phone or HTTP run) doesn't draw those
+        // calls as still running; a no-op for the Mac's own chats.
+        turns = ChatHistoryWriter.foldingToolResults(data.turns).map { ChatTurn(from: $0) }
         // Restore the LLM compaction summary and drop it immediately when it
         // no longer lines up with the restored transcript.
         conversationSummary = data.conversationSummary
