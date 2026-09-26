@@ -184,3 +184,50 @@ SSM option retains architecture-specific companion state for hybrid models.
 - **Server → Concurrency & Batching → Prompt Prefill Chunk Size** sets how many prompt tokens are processed per prefill step. Empty uses the engine default. This is not the context window or the response token limit.
 
 Search settings or ask Settings Help using either exact control name to navigate directly to it.
+
+## Distributed Inference (preview)
+
+Settings → Distributed Inference prepares Macs for running one model across
+several Macs with tensor parallelism over Thunderbolt 5. It is a preview: the
+checks are live, but no ranks start and no weights load from this page. It is
+different from **Server → Share my models for inference**, which serves whole
+models to other devices over the network, and from cloud **Providers**.
+
+- **Refresh Status** re-reads everything on this page.
+- **This Mac** shows the Mac's name, Osaurus version, memory, whether **RDMA
+  over Thunderbolt** is enabled, and the RDMA devices macOS reports with their
+  port state. Rank is always "Not assigned" in the preview.
+- **Thunderbolt Links** lists every Thunderbolt port, its network interface
+  (for example Thunderbolt 2 · en6), the measured link rate, and the Mac cabled
+  directly to it. Docks and Macs behind a dock are not Mac-to-Mac links.
+  **Local Interface Diagnostics** shows the raw port, domain ID and RDMA data.
+- **Nodes & Ranks**: turn on **Make This Mac Discoverable** on every Mac, then
+  use **Check for TB5 Nodes**. The scan runs for 8 seconds and can be
+  cancelled. A found Mac shows **Cable verified** only when its Thunderbolt ID
+  is the one cabled to this Mac; any other Mac cannot carry tensor traffic.
+  Found Macs are not authenticated and are not assigned ranks. Discoverable is
+  off by default, shares the Mac's name, Osaurus version, memory, RDMA state,
+  Thunderbolt IDs and selected model, and accepts no connections. It reads
+  "Discoverable" only after this Mac sees its own advertisement on the
+  network; if macOS asks to let Osaurus find devices on local networks, choose
+  Allow on every Mac, otherwise the Mac stays invisible.
+- **Model & Placement**: **Distributed Model** lists models this Mac finds in
+  its own Osaurus models folder and imported locations. Each Mac checks its own
+  copy; folders may differ between Macs. The panel shows the bundle's location,
+  architecture, quantization, shard count and a **Bundle identity** hash of its
+  config, generation defaults, tokenizer, chat template, quantization metadata,
+  shard index and tensor headers (tensor bytes are not hashed). Macs with a
+  different identity cannot be used together. Nothing is downloaded or
+  converted.
+- **SSD Cache** shows this Mac's configured prompt-cache folder (from Server →
+  Cache), its volume, physical device, whether macOS reports it as an SSD, free
+  space, the effective cache quota and bytes used. If the folder is on an
+  external disk that is not connected, the panel says so; the cache is never
+  moved to another disk. **Configure SSD Cache** opens Server → Cache → Disk
+  Cache Directory; **Show Cache in Finder** is available once the folder exists.
+- **Setup & Permissions** checks the cable, RDMA, Local Network access, other
+  Osaurus Macs and the cache location. **Setup Guide** explains the steps;
+  **Open Privacy & Security** opens macOS privacy settings (choose Local
+  Network and turn on Osaurus — macOS offers no direct link to that pane) and
+  **Open System Settings** opens System Settings. Osaurus never enables RDMA, changes networking, installs software
+  or restarts the Mac for you.

@@ -1611,6 +1611,136 @@ public enum SettingsSearchIndex {
             keywords: ["cloud models", "provider", "api key", "openai", "anthropic", "openrouter", "xai"],
             declarativeSection: "providers"
         ),
+
+        // MARK: Distributed Inference tab (preview)
+        .init(
+            id: "distributed.refresh",
+            tab: .distributed,
+            section: "Distributed Inference",
+            title: "Refresh Status",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "recheck", "rdma status"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.thisMac",
+            tab: .distributed,
+            section: "Distributed Inference",
+            title: "This Mac",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "rdma", "rdma devices", "ibv", "rank", "memory"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.links",
+            tab: .distributed,
+            section: "Distributed Inference",
+            title: "Thunderbolt Links",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "tb5", "thunderbolt 5", "cable", "link speed", "80 gb/s"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.interfaces",
+            tab: .distributed,
+            section: "Thunderbolt Links",
+            title: "Local Interface Diagnostics",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "network interfaces", "thunderbolt bridge", "domain uuid", "hardware ports"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.nodes",
+            tab: .distributed,
+            section: "Distributed Inference",
+            title: "Nodes & Ranks",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "peers", "nodes", "ranks", "discovery"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.discoverable",
+            tab: .distributed,
+            section: "Nodes & Ranks",
+            title: "Make This Mac Discoverable",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "advertise", "bonjour", "find this mac"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.scan",
+            tab: .distributed,
+            section: "Nodes & Ranks",
+            title: "Check for TB5 Nodes",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "scan", "find macs", "tb5", "thunderbolt nodes", "jaccl"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.modelSection",
+            tab: .distributed,
+            section: "Distributed Inference",
+            title: "Model & Placement",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "sharding", "placement", "qwen flash next", "jang"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.model",
+            tab: .distributed,
+            section: "Model & Placement",
+            title: "Distributed Model",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "model identity", "bundle fingerprint", "qwen flash next", "jang"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.cache",
+            tab: .distributed,
+            section: "Distributed Inference",
+            title: "SSD Cache",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "cache volume", "ssd", "external drive", "cache quota"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.configureCache",
+            tab: .distributed,
+            section: "SSD Cache",
+            title: "Configure SSD Cache",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "disk cache directory", "cache location"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.revealCache",
+            tab: .distributed,
+            section: "SSD Cache",
+            title: "Show Cache in Finder",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "open cache folder", "reveal cache"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.setup",
+            tab: .distributed,
+            section: "Distributed Inference",
+            title: "Setup & Permissions",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "rdma setup", "enable rdma", "checklist", "permissions"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.guide",
+            tab: .distributed,
+            section: "Setup & Permissions",
+            title: "Setup Guide",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "how to connect macs", "rdma instructions"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.localNetwork",
+            tab: .distributed,
+            section: "Setup & Permissions",
+            title: "Open Privacy & Security",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "local network permission", "open local network settings", "privacy", "bonjour denied"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
+        .init(
+            id: "distributed.systemSettings",
+            tab: .distributed,
+            section: "Setup & Permissions",
+            title: "Open System Settings",
+            keywords: ["distributed inference", "tensor parallel", "multi-mac", "cluster", "enable rdma", "system settings"],
+            disambiguation: "Splits one model across Thunderbolt-cabled Macs. Not Share my models for inference (whole models over the LAN) and not cloud Providers."
+        ),
         .init(
             id: "knowledge.overview",
             tab: .knowledge,

@@ -329,6 +329,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Configure local notifications
         NotificationService.shared.configureOnLaunch()
 
+        // Resume the opt-in Distributed Inference advertisement. Off unless the
+        // user turned on Make This Mac Discoverable; it accepts no connections.
+        DistributedNodeAdvertiser.shared.startIfEnabled()
+
         // Welcome-credit auto-claim: instantiating the singleton installs its
         // identity/app-activation observers, and the bootstrap retries a
         // claim a previous (e.g. offline) session couldn't finish. The claim

@@ -39,7 +39,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .general:
             [.settings, .chat, .voice, .themes, .credits, .workspaces, .connect, .identity, .permissions, .privacy]
-        case .models: [.models, .providers, .imageGeneration]
+        case .models: [.models, .providers, .distributed, .imageGeneration]
         case .agents: [.orchestrator, .agents, .agentChannels]
         case .capabilities: [.search, .knowledge, .memory, .tools, .skills, .commands]
         case .automation: [.schedules, .watchers, .computerUse, .browser]
@@ -59,6 +59,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case orchestrator
     case models
     case providers
+    case distributed
     case imageGeneration
     case agents
     case agentChannels
@@ -94,7 +95,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .settings, .chat, .voice, .themes, .credits, .workspaces, .connect, .identity, .permissions, .privacy:
             .general
-        case .models, .providers, .imageGeneration: .models
+        case .models, .providers, .distributed, .imageGeneration: .models
         case .orchestrator, .agents, .agentChannels: .agents
         case .search, .knowledge, .memory, .tools, .skills, .commands: .capabilities
         case .schedules, .watchers, .computerUse, .browser: .automation
@@ -123,6 +124,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .connect: "iphone.radiowaves.left.and.right"
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
+        case .distributed: "point.3.connected.trianglepath.dotted"
         case .agents: "person.2.fill"
         case .agentChannels: "bubble.left.and.bubble.right.fill"
         case .sandbox: "shippingbox.fill"
@@ -157,6 +159,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .connect: L("Osaurus Connect")
         case .models: L("Local Models")
         case .providers: L("Providers")
+        case .distributed: L("Distributed Inference")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
         case .sandbox: L("Sandbox")
