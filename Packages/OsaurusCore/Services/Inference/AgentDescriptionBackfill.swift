@@ -28,8 +28,10 @@ public final class AgentDescriptionBackfill {
     /// Short so a roster-time decline does not block the post-chat trigger.
     var declineRetryInterval: TimeInterval = 15
 
-    private var inFlight: Set<UUID> = []
-    private var retryAfter: [UUID: Date] = [:]
+    // Track the prompt, not just the agent: a save during generation must
+    // queue its replacement while duplicate requests for that prompt coalesce.
+    private var inFlight: [UUID: String] = [:]
+    private var retryAfter: [UUID: (promptHash: String, until: Date)] = [:]
     private var queue: [(id: UUID, fallbackModel: String?)] = []
     private var drainTask: Task<Void, Never>?
 
@@ -62,8 +64,9 @@ public final class AgentDescriptionBackfill {
     public func scheduleIfNeeded(_ id: UUID, fallbackModel: String? = nil) {
         guard isEnabled, let agent = AgentManager.shared.agent(for: id) else { return }
         guard Self.needsGeneration(agent) else { return }
-        guard !inFlight.contains(id), !queue.contains(where: { $0.id == id }) else { return }
-        if let until = retryAfter[id], until > Date() { return }
+        let hash = AgentDescriptionPolicy.promptHash(agent.systemPrompt)
+        guard inFlight[id] != hash, !queue.contains(where: { $0.id == id }) else { return }
+        if let retry = retryAfter[id], retry.promptHash == hash, retry.until > Date() { return }
         queue.append((id, fallbackModel))
         drainIfNeeded()
     }
@@ -109,10 +112,13 @@ public final class AgentDescriptionBackfill {
 
     private func run(_ id: UUID, fallbackModel: String?) async {
         guard let agent = AgentManager.shared.agent(for: id), Self.needsGeneration(agent) else { return }
-        inFlight.insert(id)
-        defer { inFlight.remove(id) }
         let prompt = AgentDescriptionPolicy.normalized(agent.systemPrompt)
         let hash = AgentDescriptionPolicy.promptHash(prompt)
+        // A queued replacement can be edited back to a prompt that just
+        // failed. Respect that prompt's cooldown when the queue drains too.
+        if let retry = retryAfter[id], retry.promptHash == hash, retry.until > Date() { return }
+        inFlight[id] = hash
+        defer { inFlight[id] = nil }
         do {
             // Save/roster triggers do not know the chat model. Borrow whatever
             // is already resident so an unset or unavailable core model still
@@ -127,7 +133,7 @@ public final class AgentDescriptionBackfill {
             else { return }
             let normalized = AgentDescriptionPolicy.normalized(summary)
             guard !normalized.isEmpty else {
-                retryAfter[id] = Date().addingTimeInterval(retryInterval)
+                retryAfter[id] = (hash, Date().addingTimeInterval(retryInterval))
                 return
             }
             current.generatedDescription = normalized
@@ -142,13 +148,13 @@ public final class AgentDescriptionBackfill {
             // turn has a resident model.
             switch error {
             case .backgroundWouldEvictUserModel, .modelUnavailable, .circuitBreakerOpen:
-                retryAfter[id] = Date().addingTimeInterval(declineRetryInterval)
+                retryAfter[id] = (hash, Date().addingTimeInterval(declineRetryInterval))
             case .timedOut, .unresponsive:
-                retryAfter[id] = Date().addingTimeInterval(retryInterval)
+                retryAfter[id] = (hash, Date().addingTimeInterval(retryInterval))
             }
             logger.debug("description backfill skipped for \(id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
         } catch {
-            retryAfter[id] = Date().addingTimeInterval(retryInterval)
+            retryAfter[id] = (hash, Date().addingTimeInterval(retryInterval))
             logger.debug("description backfill failed for \(id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
