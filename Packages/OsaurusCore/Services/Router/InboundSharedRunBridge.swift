@@ -159,11 +159,29 @@ final class InboundSharedRunBridge {
             return observed.map { Self.isUnchangedPrefix($0.turns, of: turns) } ?? false
         }
         let existingRowId = candidate?.id
+        if candidate == nil {
+            // Why no row was reused: same-key rows whose history isn't a
+            // prefix of this request (a caller sending only its new message).
+            let sameKey = sessions.sessions.filter { $0.externalSessionKey == externalKey }
+            MobileConnectLog.write(
+                "hosted-run: no reusable row (incoming turns=\(turns.count), rows with this key=\(sameKey.count): "
+                    + sameKey.map { row in
+                        let stored =
+                            manager.taskState(for: row.id)?.chatSession?.turns.count
+                            ?? ChatSessionStore.load(id: row.id)?.turns.count ?? -1
+                        return "\(row.id) turns=\(stored) busy=\(runsByTask[row.id]?.isEmpty == false)"
+                    }.joined(separator: ", ") + ")"
+            )
+        }
         if let rowId = existingRowId, let task = manager.taskState(for: rowId), task.isInboundRun,
             let session = manager.reviveInboundRun(task.id)
         {
             session.appendHostedTurns(Array(turns.dropFirst(session.turns.count)))
             session.save()
+            MobileConnectLog.write(
+                "hosted-run: reused live task \(task.id) (session turns=\(session.turns.count), "
+                    + "shown in a window=\(ChatWindowManager.shared.session(forSessionId: rowId) === session))"
+            )
             return (task.id, session)
         }
 
@@ -201,12 +219,17 @@ final class InboundSharedRunBridge {
         data.capabilities = SessionCapability.derive(from: turns)
 
         let executionContext: ExecutionContext
-        if let shown = ChatWindowManager.shared.session(forSessionId: data.id) {
+        let shownInWindow = ChatWindowManager.shared.session(forSessionId: data.id)
+        if let shown = shownInWindow {
             shown.load(from: data)
             executionContext = ExecutionContext(adopting: shown)
         } else {
             executionContext = ExecutionContext(reattaching: data)
         }
+        MobileConnectLog.write(
+            "hosted-run: \(existingRowId == nil ? "new row" : "reattached row") \(data.id) "
+                + "(turns=\(data.turns.count), adopted a window's session=\(shownInWindow != nil))"
+        )
         let session = executionContext.chatSession
         // The session id must equal the task id for retained-tab hydration.
         session.sessionId = data.id
@@ -253,6 +276,12 @@ final class InboundSharedRunBridge {
             let turn = ChatTurnData(role: .assistant, content: "", createdAt: Date())
             streamingTurns[handle.runKey] = turn.id
             session.appendHostedTurns([turn])
+            let shown = session.sessionId.flatMap { ChatWindowManager.shared.session(forSessionId: $0) }
+            MobileConnectLog.write(
+                "hosted-run: first delta of run \(handle.runKey) into session \(session.sessionId?.uuidString ?? "nil") "
+                    + "(task \(handle.taskId)); a window shows this chat=\(shown != nil), "
+                    + "same object as the stream=\(shown === session)"
+            )
         }
         guard let turn = session.turns.first(where: { $0.id == streamingTurns[handle.runKey] }) else { return }
         turn.appendContent(content)
@@ -322,6 +351,10 @@ final class InboundSharedRunBridge {
     /// a no-op on the (already cancelled) task.
     func finish(_ handle: Handle, success: Bool, summary: String) {
         guard live.removeValue(forKey: handle.runKey) != nil else { return }
+        MobileConnectLog.write(
+            "hosted-run: finished run \(handle.runKey) success=\(success) "
+                + "(session turns=\(manager.taskState(for: handle.taskId)?.chatSession?.turns.count ?? -1))"
+        )
         manager.taskState(for: handle.taskId)?.chatSession?.save()
         streamingTurns.removeValue(forKey: handle.runKey)
         lastStreamSave.removeValue(forKey: handle.runKey)

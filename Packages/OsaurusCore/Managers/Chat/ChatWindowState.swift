@@ -1200,15 +1200,25 @@ final class ChatWindowState: ObservableObject {
         // in-memory session instead of hydrating a stale copy from disk —
         // the stream keeps rendering into the reopened view, and disk state
         // lags behind the in-flight turns.
+        let isHostedRow = sessionData.source == .workspace
         if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: sessionData.id),
             let liveSession = liveTask.chatSession
         {
+            if isHostedRow {
+                MobileConnectLog.write(
+                    "hosted-run: window opened \(sessionData.id) on the live task \(liveTask.id) "
+                        + "(turns=\(liveSession.turns.count), streaming=\(liveSession.isStreaming))"
+                )
+            }
             releaseSharedSessionIfNeeded()
             detachRunningSessionIfNeeded()
             attachSession(liveSession, registryTaskId: liveTask.id)
         } else if let sharedSession = LiveChatSessionRegistry.shared.liveSession(
             for: sessionData.id
         ) {
+            if isHostedRow {
+                MobileConnectLog.write("hosted-run: window opened \(sessionData.id) on another surface's live session")
+            }
             // Another surface owns a live
             // instance of this conversation: attach that exact object so
             // both surfaces render one session and never race saves.
@@ -1220,8 +1230,20 @@ final class ChatWindowState: ObservableObject {
             // keeps running in the background; the target loads into a
             // brand-new session so the two never share transcript state.
             installFreshSession(agentId: targetAgentId, loading: resolvedData)
+            if isHostedRow {
+                MobileConnectLog.write(
+                    "hosted-run: window opened \(sessionData.id) from disk into a fresh session "
+                        + "(turns=\(resolvedData.turns.count)); no live task for it"
+                )
+            }
         } else {
             session.load(from: resolvedData)
+            if isHostedRow {
+                MobileConnectLog.write(
+                    "hosted-run: window opened \(sessionData.id) from disk (turns=\(resolvedData.turns.count)); "
+                        + "no live task for it"
+                )
+            }
         }
         reconcileRemoteMode()
         refreshSessions()

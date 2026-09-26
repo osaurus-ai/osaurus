@@ -48,6 +48,10 @@ enum RemoteSessionContinuation {
     static func append(_ messages: [ChatMessage], to sessionId: UUID, model: String?) async {
         let turns = ChatHistoryWriter.turns(from: messages)
         guard !turns.isEmpty else { return }
+        MobileConnectLog.write(
+            "hosted-run: continuation appending \(turns.count) turn(s) to \(sessionId) after the run "
+                + "(open in a window=\(ChatWindowManager.shared.session(forSessionId: sessionId) != nil))"
+        )
 
         // The Mac may be replying in this same chat. Splicing the phone's
         // turns in now would put them ahead of that reply, in the transcript
