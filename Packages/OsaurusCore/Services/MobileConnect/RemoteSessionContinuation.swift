@@ -48,13 +48,6 @@ enum RemoteSessionContinuation {
     static func append(_ messages: [ChatMessage], to sessionId: UUID, model: String?) async {
         let turns = ChatHistoryWriter.turns(from: messages)
         guard !turns.isEmpty else { return }
-        let imageCount = turns.reduce(0) { $0 + $1.attachments.filter(\.isImage).count }
-        let sentImages = messages.reduce(0) { $0 + $1.imageUrls.count }
-        print(
-            "[RemoteSessionContinuation] appending \(turns.count) turn(s) to \(sessionId): "
-                + "\(sentImages) image part(s) sent, \(imageCount) kept as attachments, "
-                + "open window: \(ChatWindowManager.shared.session(forSessionId: sessionId) != nil)"
-        )
 
         // The Mac may be replying in this same chat. Splicing the phone's
         // turns in now would put them ahead of that reply, in the transcript
