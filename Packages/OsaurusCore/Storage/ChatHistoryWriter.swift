@@ -179,6 +179,11 @@ enum ChatHistoryWriter {
                     id: UUID(),
                     role: MessageRole(rawValue: msg.role) ?? .assistant,
                     content: msg.content ?? "",
+                    // Images the client sent inline (data URLs) are kept, as a
+                    // Mac chat keeps its own; otherwise the saved chat loses
+                    // the photo the model was shown. Large ones spill to the
+                    // blob store when the turn is written.
+                    attachments: msg.imageDataFromParts.map(Attachment.image),
                     toolCalls: msg.tool_calls,
                     toolCallId: msg.tool_call_id,
                     toolResults: [:],
