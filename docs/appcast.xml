@@ -3,6 +3,53 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.13</title>
+            <pubDate>Sat, 26 Sep 2026 01:26:07 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.13</sparkle:version>
+            <sparkle:shortVersionString>0.25.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.13/Osaurus-0.25.13.dmg" length="78909784" type="application/octet-stream" sparkle:edSignature="/Cn3bCbpVK645sLNa+JCQG6sl69K5ZtTsvs1AYUyiAdosZpHy58lp8WJfUZgSBcq8Ck3kda+12ndw94kcwfrBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Make agent description optional again with background backfill (#2892) by @tpae
+- Retire Raptor v0.5 and shorten the What's New notes (#2882) by @tpae
+- Make cancellation and runtime-settings tests deterministic (#2885) by @jjang-ai
+- Reuse canonical prefill checkpoints and preserve current model discovery (#2884) by @jjang-ai
+- Use qualified Raptor q6 decode fusion (#2883) by @jjang-ai
+- Reuse completed prefill chunks in batched cache finalization (#2881) by @jjang-ai
+- Fuse Spark large-prefill activation through the vmlx runtime pin (#2879) by @jjang-ai
+- Pin vMLX batched rotating checkpoint prefix reuse (#2876) by @jjang-ai
+- Give core CI tests a separate budget from cold compilation (#2877) by @jjang-ai
+- Generate missing agent descriptions from system prompts (#2869) by @jjang-ai
+- Require agent descriptions and guide legacy agents through repair (#2867) by @jjang-ai
+- Add full DMG build with bundled Raptor 0.6 (light + full releases) (#2868) by @tpae
+- Enable MiMo native capabilities and bound resident allocator reuse (#2863) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Report consistent logical lines in file read and search tools (#2894) by @jjang-ai
+- Fix integer setting editing and persistence, search, and follow-up parsing (#2893) by @jjang-ai
+- Wait on scan barriers without a Task.sleep poll (#2895) by @tpae
+- Preserve streamed tool names and align agent execution contracts (#2889) by @jjang-ai
+- Preserve native generation defaults and admitted output budgets (#2890) by @jjang-ai
+- Check official model updates during menu-only startup (#2888) by @jjang-ai
+- Show when legacy models need revision verification (#2878) by @jjang-ai
+- Preserve native thinking defaults for agent and tool requests (#2874) by @jjang-ai
+- Require saving SSD cache directory changes before clearing (#2873) by @jjang-ai
+- Clear the saved custom SSD cache when prefix reuse is disabled (#2872) by @jjang-ai
+- Keep agent purpose metadata current across remote and voice consumers (#2870) by @jjang-ai
+- Bind inherited worker models to the headless DefaultAgent eval target (#2871) by @jjang-ai
+- Preserve app runtime policy in isolated eval runs (#2865) by @jjang-ai
+- Fix: Prevent main thread hang when opening MarkdownLinkText URLs (#2864) by @[sentry[bot]](https://github.com/apps/sentry)
+- Stop quoting a settings shortcut that is not bound (#2862) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.12...0.25.13
+]]></description>
+        </item>
+        <item>
             <title>0.25.12</title>
             <pubDate>Wed, 23 Sep 2026 07:48:33 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

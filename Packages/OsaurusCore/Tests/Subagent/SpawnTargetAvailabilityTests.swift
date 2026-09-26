@@ -266,39 +266,42 @@ struct SpawnTargetAvailabilityTests {
         #expect(snapshot.agents.map(\.modelId) == ["local/helper-write", "local/helper-read"])
         #expect(snapshot.agents.map(\.description) == ["Writable helper", "Read-only helper"])
     }
-    @Test("missing descriptions exclude local and workspace targets without losing identity")
-    func descriptionRepairGatesAvailability() {
+    @Test("missing descriptions never exclude local or workspace targets")
+    func blankDescriptionsStayRunnable() {
         let modelID = "local/description-fixture"
-        for description in ["", "   ", String(repeating: "x", count: 161)] {
+        for description in ["", "   "] {
             let snapshot = resolve(
                 agents: [researcherID],
                 sources: [.init(id: researcherID, name: "Legacy Helper", description: description, modelId: modelID)],
                 locals: [localModel(modelID)], localAuthoritative: true)
             #expect(snapshot.agentTargets.first?.descriptor.id == researcherID)
-            #expect(snapshot.agentTargets.first?.state == .descriptionRequired)
-            #expect(snapshot.agents.isEmpty)
-            #expect(snapshot.runnableAgentIDs.isEmpty)
+            #expect(snapshot.agentTargets.first?.state == .runnable)
+            #expect(snapshot.agentTargets.first?.descriptor.description == nil)
+            #expect(snapshot.runnableAgentIDs == [researcherID])
         }
         let ref = WorkspaceAgentRef(workspaceId: "description-test", agentAddress: "0x0123456789abcdef0123456789abcdef01234567")
-        let invalid = SpawnDescriptors.resolveWorkspaceTargets(configured: [ref], sources: [
+        let blank = SpawnDescriptors.resolveWorkspaceTargets(configured: [ref], sources: [
             .init(ref: ref, name: "Remote Helper", description: "", workspaceName: "Team", ownerName: "Owner")
         ])
-        #expect(invalid.first?.state == .descriptionRequired)
-        #expect(invalid.first?.descriptor.ref == ref)
-        let repaired = SpawnDescriptors.resolveWorkspaceTargets(configured: [ref], sources: [
+        #expect(blank.first?.state == .runnable)
+        #expect(blank.first?.descriptor.ref == ref)
+        #expect(blank.first?.descriptor.description == nil)
+        let described = SpawnDescriptors.resolveWorkspaceTargets(configured: [ref], sources: [
             .init(ref: ref, name: "Remote Helper", description: "Reviews research sources.", workspaceName: "Team", ownerName: "Owner")
         ])
-        #expect(repaired.first?.state == .runnable)
+        #expect(described.first?.state == .runnable)
+        #expect(described.first?.descriptor.description == "Reviews research sources.")
     }
 
-    @Test("optional workspace blurbs do not hide a usable paired description")
+    @Test("blank workspace blurbs do not hide a usable paired description")
     func workspaceDescriptionFallback() {
         let host = "Reviews supplied research sources."
-        let oldBlurbs: [String?] = [nil, "", "   ", String(repeating: "x", count: 161), "bad\nmetadata"]
-        for listed in oldBlurbs {
+        let blankBlurbs: [String?] = [nil, "", "   "]
+        for listed in blankBlurbs {
             #expect(SpawnDescriptors.workspaceRoutingDescription(listed: listed, paired: host) == host)
         }
         #expect(SpawnDescriptors.workspaceRoutingDescription(listed: "  Reviews code.  ", paired: host) == "Reviews code.")
+        #expect(SpawnDescriptors.workspaceRoutingDescription(listed: "two\nlines", paired: host) == "two lines")
         #expect(SpawnDescriptors.workspaceRoutingDescription(listed: "", paired: " ") == "")
         #expect(SpawnDescriptors.workspaceRoutingDescription(listed: nil, paired: nil) == "")
     }

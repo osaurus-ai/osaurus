@@ -41,7 +41,8 @@ struct ConcurrencySection: View {
                 text: $maxConcurrentText,
                 range: SpawnBatchConcurrencyContract.bounds,
                 step: 1,
-                defaultValue: effectiveBatchEngineLimit
+                defaultValue: effectiveBatchEngineLimit,
+                anchorId: "settings.server.concurrentSessions"
             )
             .onChange(of: maxConcurrentText) { _, _ in commitMaxConcurrent() }
 
@@ -60,7 +61,8 @@ struct ConcurrencySection: View {
                 label: "Prompt Prefill Chunk Size",
                 placeholder: "Empty = engine default",
                 help: "How many prompt tokens are prefilled per step.",
-                value: $draft.concurrency.prefillStepSize
+                value: $draft.concurrency.prefillStepSize,
+                anchorId: "settings.server.prefillChunkSize"
             )
 
         }

@@ -366,17 +366,16 @@ public final class AgentManager: ObservableObject {
     @discardableResult
     public func create(
         name: String,
-        description: String,
+        description: String = "",
         systemPrompt: String = "",
         themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil
-    ) throws -> Agent {
-        let description = try AgentDescriptionPolicy.validated(description)
+    ) -> Agent {
         let agent = Self.newCustomAgentRecord(
             name: name,
-            description: description,
+            description: AgentDescriptionPolicy.normalized(description),
             systemPrompt: systemPrompt,
             themeId: themeId,
             defaultModel: defaultModel,
@@ -430,6 +429,8 @@ public final class AgentManager: ObservableObject {
             id: UUID(),
             name: name,
             description: agent.description,
+            generatedDescription: agent.generatedDescription,
+            generatedDescriptionPromptHash: agent.generatedDescriptionPromptHash,
             systemPrompt: agent.systemPrompt,
             themeId: agent.themeId,
             defaultModel: agent.defaultModel,
@@ -481,6 +482,7 @@ public final class AgentManager: ObservableObject {
             object: nil,
             userInfo: ["agentId": agent.id]
         )
+        AgentDescriptionBackfill.shared.scheduleIfNeeded(agent.id)
     }
 
     /// Restore a preserved legacy agent backup and publish it like a newly
@@ -585,6 +587,16 @@ public final class AgentManager: ObservableObject {
         }
         var updated = agent
         updated.updatedAt = Date()
+        // A background summary describes one system prompt. If this save
+        // changed the prompt, the summary is stale routing metadata: drop it
+        // here so no caller (Configure, declarative apply, tools) can leave
+        // it behind; the backfill below regenerates it.
+        if updated.generatedDescription != nil,
+            updated.generatedDescriptionPromptHash != AgentDescriptionPolicy.promptHash(updated.systemPrompt)
+        {
+            updated.generatedDescription = nil
+            updated.generatedDescriptionPromptHash = nil
+        }
         AgentStore.save(updated)
         refresh()
         // Push the storage limit + soft-warn threshold down to any
@@ -600,6 +612,7 @@ public final class AgentManager: ObservableObject {
             percent: updated.settings.limits.storageWarnPercent
         )
         NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
+        AgentDescriptionBackfill.shared.scheduleIfNeeded(agent.id)
     }
 
     /// Derive and assign a cryptographic address for an agent.
@@ -937,12 +950,12 @@ public final class AgentManager: ObservableObject {
         for template in templates where template != .blank {
             let name = template.defaultName
             guard !existing.contains(name.lowercased()) else { continue }
-            guard let agent = try? create(
+            let agent = create(
                 name: name,
                 description: template.routingDescription,
                 systemPrompt: template.systemPrompt,
                 defaultModel: model
-            ) else { continue }
+            )
             created.append(agent)
         }
         return created

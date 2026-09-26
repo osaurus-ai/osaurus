@@ -180,7 +180,7 @@ struct OrchestratorSchemaBudgetTests {
         }
         #expect(rows.count == agents.count)
         for agent in agents {
-            #expect(AgentDescriptionPolicy.violation(in: try #require(agent.description)) == nil)
+            #expect(!(try #require(agent.description)).isEmpty)
             #expect(rows.contains { $0["id"] == agent.id.uuidString && $0["description"] == agent.description })
         }
         print("[Orchestrator schema] ten described workers ≈ \(tokens(first)) tokens; routing payload \(payload.utf8.count) bytes")

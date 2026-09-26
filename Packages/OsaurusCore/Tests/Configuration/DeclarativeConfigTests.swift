@@ -660,7 +660,7 @@ struct ConfigPlannerPruneIntegrityTests {
     private func withSeededAgent(
         _ body: (Agent) async throws -> Void
     ) async throws {
-        let agent = try AgentManager.shared.create(
+        let agent = AgentManager.shared.create(
             name: "Prune Probe Agent \(UUID().uuidString.prefix(6))",
             description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         do {
@@ -816,7 +816,7 @@ struct ConfigPlanFidelityTests {
 
     @Test
     func equivalentFrequencySpellings_doNotPlanAnUpdate() async throws {
-        let agent = try AgentManager.shared.create(
+        let agent = AgentManager.shared.create(
             name: "Fidelity Probe Agent \(UUID().uuidString.prefix(6))",
             description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         let schedule = ScheduleManager.shared.create(
@@ -854,7 +854,7 @@ struct ConfigPlanFidelityTests {
     func floatStoredTemperature_doesNotDiffAgainstYAMLDouble() async throws {
         // Live agent temperatures are Float; 0.7 as YAML Double differs in
         // the last bits. The planner must treat them as equal.
-        var agent = try AgentManager.shared.create(
+        var agent = AgentManager.shared.create(
             name: "Fidelity Probe Agent \(UUID().uuidString.prefix(6))",
             description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         agent.temperature = Float(0.7)

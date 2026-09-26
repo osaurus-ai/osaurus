@@ -1174,13 +1174,34 @@ struct ModelDetailView: View, Identifiable {
 
     private var manifestStatus: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let check = modelManager.manifestChecks[model.id] {
+            if let check = modelManager.manifestChecks[model.id.lowercased()] {
                 if let version = check.local.manifest?.modelVersion {
                     Text("Installed model revision: \(version)", bundle: .module)
                 }
                 if check.updateAvailable, let version = check.remote?.manifest?.modelVersion {
                     Text("Model update available: revision \(version)", bundle: .module)
                         .foregroundStyle(theme.accentColor)
+                }
+                switch check.status {
+                case .unversionedPublisher:
+                    Text("No versioned updates published. Repair can verify this repository's files.", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                case .verificationRequired:
+                    Text("Installed revision unknown. Verify files to check for updates.", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                case .current:
+                    Text("Published revision matches the installed revision.", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                case .installedNewer:
+                    Text("Installed revision is newer than the published revision.", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                case .invalidLocal:
+                    if case .invalid(let failure) = check.local {
+                        Text(failure.localizedDescription)
+                            .foregroundStyle(theme.errorColor)
+                    }
+                case .unavailable, .updateAvailable:
+                    EmptyView()
                 }
                 if let required = check.remote?.manifest?.requiredOsaurusVersion {
                     Text("Requires Osaurus \(required) or later", bundle: .module)
@@ -1189,7 +1210,7 @@ struct ModelDetailView: View, Identifiable {
                     Text("Could not check for model updates: \(error)", bundle: .module)
                         .foregroundStyle(theme.secondaryText)
                 }
-                if isExternalModel, check.updateAvailable {
+                if isExternalModel, check.updateAvailable || check.verificationRequired {
                     Text("Update this model in the application that manages its files.", bundle: .module)
                 }
             }
@@ -1198,7 +1219,7 @@ struct ModelDetailView: View, Identifiable {
             } label: {
                 Text("Check for Model Updates", bundle: .module)
             }
-            .disabled(modelManager.manifestChecksInFlight.contains(model.id))
+            .disabled(modelManager.manifestChecksInFlight.contains(model.id.lowercased()))
         }
         .font(.system(size: 12))
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1381,7 +1402,10 @@ struct ModelDetailView: View, Identifiable {
 
                 Button(action: { modelManager.downloadService.repair(model) }) {
                     Text(
-                        modelManager.manifestChecks[model.id]?.updateAvailable == true ? "Update Model" : "Repair",
+                        modelManager.manifestChecks[model.id.lowercased()]?.updateAvailable == true
+                            ? "Update Model"
+                            : modelManager.manifestChecks[model.id.lowercased()]?.verificationRequired == true
+                                ? "Verify Model" : "Repair",
                         bundle: .module
                     )
                     .font(.system(size: 13, weight: .medium))

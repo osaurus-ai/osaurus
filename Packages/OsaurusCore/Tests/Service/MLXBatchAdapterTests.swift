@@ -360,6 +360,32 @@ struct MLXBatchAdapterTests {
         #expect(!effective.compiledBatchDecode)
     }
 
+    @Test("Reloaded bundle output aliases preserve request and saved-setting precedence")
+    func outputAliasReloadAndPrecedence() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for cap in [1_048_576, 512] {
+            try Data("{\"max_tokens\":\(cap),\"temperature\":0.7,\"top_p\":0.9,\"top_k\":32}".utf8)
+                .write(to: root.appendingPathComponent("generation_config.json"))
+            let bundle = LocalGenerationDefaults.load(fromDirectory: root)
+            for saved in [nil, 128] as [Int?] {
+                for explicit in [false, true] {
+                    let effective = MLXBatchAdapter.effectiveGenerationSettings(
+                        modelName: "output-alias-probe",
+                        generation: GenerationParameters(temperature: nil, maxTokens: 64,
+                            maxTokensExplicit: explicit),
+                        runtimeDefaults: VMLXServerGenerationDefaults(maxTokens: saved),
+                        maxBatchSize: 1, modelDefaults: bundle)
+                    #expect(effective.maxTokens == (explicit ? 64 : saved ?? cap))
+                    #expect(effective.temperature == 0.7)
+                    #expect(effective.topP == 0.9)
+                    #expect(effective.topK == 32)
+                }
+            }
+        }
+    }
+
     /// Settings → Sampling Defaults must actually change sampling.
     ///
     /// The panel's own copy promises it: every field reads "Blank = model

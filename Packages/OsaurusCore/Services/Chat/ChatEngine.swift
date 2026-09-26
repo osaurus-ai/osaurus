@@ -187,14 +187,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             return value
         }()
 
-        // An agent/tool run must not inherit a toggleable template's
-        // reasoning-on default merely because the caller stayed silent. That
-        // made every Ornith tool step spend thousands of hidden tokens before
-        // trivial calls. Detect the contract from the installed bundle rather
-        // than a model-name alias, and preserve every explicit UI/API choice.
-        // A schema paired with OpenAI `tool_choice: none` is an ordinary
-        // no-tool request, not an agent turn. Explicit agent markers still
-        // win because cap finalizers intentionally remove their tool schema.
+        // Keep UI/API choices explicit. An omitted reasoning control preserves
+        // the same bundle/template default on ordinary, agent and tool turns.
         let hasEnabledToolSurface =
             request.tools?.isEmpty == false
             && Self.allowsLocalToolDispatch(request.tool_choice)
@@ -249,6 +243,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             temperature: temperature,
             maxTokens: maxTokens,
             maxTokensExplicit: request.resolvedMaxTokens != nil,
+            admissionOutputTokensAreImplicit: request.admissionOutputTokensAreImplicit,
             topPOverride: request.top_p,
             topKOverride: request.top_k,
             minPOverride: request.min_p,

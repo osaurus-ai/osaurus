@@ -158,7 +158,7 @@ struct WatcherDuplicatePathAdvisoryTests {
 
     @Test
     func samePathDifferentNameCreateCarriesTheAdvisory_andStillCreates() async throws {
-        let agent = try AgentManager.shared.create(
+        let agent = AgentManager.shared.create(
             name: "Dup Advisory Agent \(UUID().uuidString.prefix(6))",
             description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         // The planner validates that a watcher path is an existing directory,

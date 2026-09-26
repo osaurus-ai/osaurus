@@ -2031,15 +2031,14 @@ private struct AgentPicker: View {
 
     private var selectedAgentDescription: String? {
         if let option = selectedWorkspaceOption {
-            let purpose = (try? AgentDescriptionPolicy.validated(option.description ?? ""))
-                ?? L("Description required")
-            return "\(option.subtitle) — \(purpose)"
+            let purpose = AgentDescriptionPolicy.normalized(option.description ?? "")
+            return purpose.isEmpty ? option.subtitle : "\(option.subtitle) — \(purpose)"
         }
         if selectedAgentId == nil {
             return L("Uses the default system behavior")
         }
-        return (try? AgentDescriptionPolicy.validated(selectedAgent?.description ?? ""))
-            ?? L("Description required — open Configure")
+        let desc = selectedAgent?.routingDescription ?? ""
+        return desc.isEmpty ? nil : desc
     }
 
     private var hasDescription: Bool {
@@ -2138,8 +2137,7 @@ private struct AgentPicker: View {
                     ForEach(agents, id: \.id) { agent in
                         AgentOptionRow(
                             name: agent.name,
-                            description: (try? AgentDescriptionPolicy.validated(agent.description))
-                                ?? L("Description required — open Configure"),
+                            description: agent.routingDescription,
                             isSelected: selectedAgentId == agent.id,
                             action: {
                                 selectedTarget = .local(agent.id)
@@ -2162,7 +2160,7 @@ private struct AgentPicker: View {
                     ForEach(workspaceAgents) { option in
                         AgentOptionRow(
                             name: option.name,
-                            description: "\(option.subtitle) — \((try? AgentDescriptionPolicy.validated(option.description ?? "")) ?? L("Description required"))",
+                            description: option.description.map { "\(option.subtitle) — \($0)" } ?? option.subtitle,
                             isSelected: selectedTarget?.workspaceRef == option.ref,
                             presence: option.presence,
                             action: {

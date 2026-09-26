@@ -363,7 +363,7 @@ final class ConfigureAIState: ObservableObject {
 
     /// Parameter-count floor that marks the large-RAM upgrade lane (Gemma 12B,
     /// Ornith 35B). Comfortable models at or above this beat the preferred
-    /// Raptor 0.6 default. v0.5's 8B name sits below this on purpose.
+    /// Raptor 0.6 default.
     static let largeRAMOnboardingParameterFloor = 12.0
 
     /// Pure, testable core of the onboarding default pick. Given the curated
@@ -376,7 +376,7 @@ final class ConfigureAIState: ObservableObject {
     /// curated Top Pick with the **largest base parameter count** that
     /// comfortably fits; equal-size variants prefer the larger resident
     /// footprint. Top Picks are the maintained onboarding recommendation
-    /// set. Raptor v0.5 8B-A1B stays a Top Pick but is not the auto-default.
+    /// set. Raptor v0.5 8B-A1B is retired from the catalog entirely.
     /// Dense Bonsai 27B, LFM2.5 8B, and dense Ornith 1.5 9B remain catalog
     /// choices rather than first-run defaults. When nothing is comfortable
     /// (very low RAM), fall back to the smallest candidate overall so

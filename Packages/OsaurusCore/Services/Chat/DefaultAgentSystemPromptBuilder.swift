@@ -58,7 +58,17 @@ public enum DefaultAgentSystemPromptBuilder {
     /// (`prefersCompactPrompt`) — same tool surface, trimmed prose.
     /// Each compact variant memoizes on its own cache slot so
     /// switching model size mid-app doesn't thrash the other.
-    public static func render(compact: Bool = false) -> String {
+    public static func render(compact: Bool = false, toolsAvailable: Bool = true) -> String {
+        // A disabled tool surface cannot satisfy the orchestrator's mandatory
+        // help/configuration/delegation workflow. Keep its identity truthful
+        // instead of instructing the model to call unavailable functions.
+        guard toolsAvailable else {
+            return """
+                # Osaurus
+
+                You are Osaurus's assistant. Tools are unavailable in this request. Answer directly from the conversation and your knowledge. Explain when a request needs tool access; do not claim to have inspected configuration, changed files, or delegated work.
+                """
+        }
         let generation = ConfigurationDomainRegistry.shared.generation
         let key = "\(compact)"
         if let slot = cache[key], slot.generation == generation {

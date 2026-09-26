@@ -142,7 +142,6 @@ public struct SpawnWorkspaceAgentDescriptor: Sendable, Equatable {
 /// or removed in Settings.
 enum SpawnTargetState: Sendable, Equatable {
     case runnable
-    case descriptionRequired
     case checking
     case disconnected
     case missing
@@ -153,7 +152,7 @@ struct SpawnAgentTarget: Sendable, Equatable {
     let state: SpawnTargetState
 }
 
-/// A workspace target is `runnable`, `descriptionRequired`, or `missing` (never `checking` /
+/// A workspace target is `runnable` or `missing` ONLY (never `checking` /
 /// `disconnected`): membership is durable state that changes by user action
 /// (unshare, leave workspace, router off), like deleting a local agent.
 struct SpawnWorkspaceAgentTarget: Sendable, Equatable {
@@ -370,8 +369,7 @@ public enum SpawnDescriptors {
                     providerName: locality.providerName,
                     workingFolderPath: source.workingFolderPath
                 ),
-                state: AgentDescriptionPolicy.violation(in: description) == nil
-                    ? (modelState ?? .missing) : .descriptionRequired
+                state: modelState ?? .missing
             )
         }
 
@@ -415,8 +413,7 @@ public enum SpawnDescriptors {
                     workspaceName: source.workspaceName,
                     ownerName: source.ownerName
                 ),
-                state: AgentDescriptionPolicy.violation(in: description) == nil
-                    ? .runnable : .descriptionRequired
+                state: .runnable
             )
         }
     }
@@ -470,12 +467,13 @@ public enum SpawnDescriptors {
         }
     }
 
-    /// The optional public roster blurb can predate required descriptions.
-    /// Prefer it when usable, otherwise use the paired host's description.
-    /// An unusable blurb must not hide a valid description supplied by the host.
+    /// Prefer the public roster blurb; fall back to the paired host's
+    /// description. Both are optional, so an empty blurb must not hide a
+    /// description supplied by the host.
     static func workspaceRoutingDescription(listed: String?, paired: String?) -> String {
         for candidate in [listed, paired].compactMap({ $0 }) {
-            if let valid = try? AgentDescriptionPolicy.validated(candidate) { return valid }
+            let normalized = AgentDescriptionPolicy.normalized(candidate)
+            if !normalized.isEmpty { return normalized }
         }
         return ""
     }
@@ -521,7 +519,7 @@ public enum SpawnDescriptors {
             AgentSource(
                 id: agent.id,
                 name: agent.name,
-                description: agent.description,
+                description: agent.routingDescription,
                 modelId: AgentManager.shared.effectiveModel(for: agent.id),
                 // Same source of truth as the dispatch-folder fallback
                 // (`BackgroundTaskManager.resolveDispatchFolder`), so the

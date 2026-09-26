@@ -3116,6 +3116,12 @@ public struct SystemPromptComposer: Sendable {
         let allowedAgentIDs =
             currentTargets.runnableAgentIDs
             .filter { $0 != snapshot.agentId }
+        // A target with no purpose line is still delegatable; queue a
+        // background summary so the next composed turn can carry one. This
+        // turn's roster bytes are unchanged.
+        for target in currentTargets.agents where target.description == nil {
+            AgentDescriptionBackfill.shared.scheduleIfNeeded(target.id)
+        }
         // Workspace targets enter the enum by ADDRESS (durable), never by
         // presence or provider state — see `SpawnDescriptors` and the
         // prefix-cache invariant in `WorkspaceAgentLiveness`.
@@ -3618,9 +3624,17 @@ public struct SystemPromptComposer: Sendable {
         let basePrompt: String
         switch profile {
         case .osaurusAssistant:
-            let prefersCompact = ContextSizeResolver.resolve(modelId: snapshot.model)
-                .prefersCompactPrompt
-            let addendum = DefaultAgentSystemPromptBuilder.render(compact: prefersCompact)
+            let window = ContextSizeResolver.resolve(modelId: snapshot.model)
+            let toolsOff = resolveEffectiveToolsOff(
+                toolsDisabled: snapshot.toolsDisabled,
+                globalToolsDisabled: snapshot.globalToolsDisabled,
+                sizeClassDisablesTools: window.sizeClass.disablesTools,
+                executionMode: executionMode
+            )
+            let addendum = DefaultAgentSystemPromptBuilder.render(
+                compact: window.prefersCompactPrompt,
+                toolsAvailable: !toolsOff
+            )
             let userPersona = snapshot.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             basePrompt = userPersona.isEmpty ? addendum : addendum + "\n\n" + snapshot.systemPrompt
         case .customAgent:

@@ -89,7 +89,7 @@ struct SpawnPoolAutoAddTests {
     }
 
     private func managerCreateBody() async throws {
-        let agent = try AgentManager.shared.create(
+        let agent = AgentManager.shared.create(
             name: "Pool Create Probe \(UUID().uuidString.prefix(6))",
             description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         #expect(
@@ -459,7 +459,7 @@ struct SpawnPoolSeedMigrationTests {
 
         // A seeded install with one custom agent in the pool (create
         // auto-adds it; the sentinel is what a real seeded install carries).
-        let agent = try AgentManager.shared.create(
+        let agent = AgentManager.shared.create(
             name: "Export Roundtrip \(UUID().uuidString.prefix(6))",
             description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         _ = SubagentConfigurationStore.mutate { $0.spawnPoolSeeded = true }

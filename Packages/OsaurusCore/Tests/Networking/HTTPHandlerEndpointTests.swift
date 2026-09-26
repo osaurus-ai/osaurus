@@ -411,15 +411,17 @@ struct HTTPHandlerEndpointTests {
             #expect(obj?["id"] as? String == hostAgentId.uuidString)
             #expect(obj?["default_model"] as? String == "fake-metadata-model")
             #expect(obj?["description"] as? String == "")
-            #expect(obj?["description_required"] as? Bool == true)
-            #expect(obj?["description_validation"] as? String == AgentDescriptionPolicy.Violation.required.message)
+            // A blank description is not an error state.
+            #expect(obj?["description_required"] == nil)
+            #expect(obj?["description_validation"] == nil)
             let (listData, listResponse) = try await URLSession.shared.data(
                 from: URL(string: "http://\(server.host):\(server.port)/agents")!)
             #expect((listResponse as? HTTPURLResponse)?.statusCode == 200)
             let list = try JSONSerialization.jsonObject(with: listData) as? [String: Any]
             let rows = list?["agents"] as? [[String: Any]]
             let listed = rows?.first { $0["id"] as? String == hostAgentId.uuidString }
-            #expect(listed?["description_required"] as? Bool == true)
+            #expect(listed != nil)
+            #expect(listed?["description_required"] == nil)
 
 
             // An address with no registry mapping still fails closed.
@@ -475,7 +477,7 @@ struct HTTPHandlerEndpointTests {
             #expect((resp as? HTTPURLResponse)?.statusCode == 200)
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             #expect(obj?["description"] as? String == "Explains and summarizes documents.")
-            #expect(obj?["description_required"] as? Bool == false)
+            #expect(obj?["description_required"] == nil)
             #expect(obj?["description_validation"] == nil)
             let wireActions = obj?["chat_quick_actions"] as? [[String: Any]]
             #expect(wireActions?.count == 2)
@@ -587,16 +589,19 @@ struct HTTPHandlerEndpointTests {
     @MainActor
     private func withOverriddenRuntimeSettingsDirectory(
         _ dir: URL,
-        _ body: () async throws -> Void
+        _ body: @MainActor @Sendable () async throws -> Void
     ) async throws {
-        let previous = ServerRuntimeSettingsStore.overrideDirectory
-        ServerRuntimeSettingsStore.overrideDirectory = dir
-        ServerRuntimeSettingsStore.invalidateSnapshot()
-        defer {
-            ServerRuntimeSettingsStore.overrideDirectory = previous
+        try await ServerConfigStoreTestLock.shared.run {
+            let previous = ServerRuntimeSettingsStore.overrideDirectory
+            ServerRuntimeSettingsStore.overrideDirectory = dir
             ServerRuntimeSettingsStore.invalidateSnapshot()
-            try? FileManager.default.removeItem(at: dir)
+            defer {
+                ServerRuntimeSettingsStore.overrideDirectory = previous
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+                try? FileManager.default.removeItem(at: dir)
+            }
+            try await body()
+
         }
-        try await body()
     }
 }

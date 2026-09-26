@@ -319,6 +319,10 @@ struct MetalGateTests {
     @Test func alreadyCancelledAcquireThrowsImmediately() async {
         let gate = MetalGate.makeForTesting()
         let task = Task { () -> Bool in
+            // Establish cancellation before admission. Cancelling from the
+            // parent races with this task completing on the idle gate.
+            withUnsafeCurrentTask { $0?.cancel() }
+            #expect(Task.isCancelled)
             do {
                 try await gate.enterGeneration(model: "never-ran")
                 await gate.exitGeneration(model: "never-ran")
@@ -327,7 +331,6 @@ struct MetalGateTests {
                 return error is CancellationError
             }
         }
-        task.cancel()
         let threwCancellation = await task.value
         #expect(threwCancellation)
     }

@@ -25,6 +25,35 @@ import Testing
 @MainActor
 struct ModelPickerItemCacheTests {
 
+    /// These ordering tests need a fixed catalog, not an in-progress scan of
+    /// this Mac's model folders or fixtures being changed by another suite.
+    private func withStableCatalog(
+        _ body: @MainActor @Sendable () async throws -> Void
+    ) async rethrows {
+        try await StoragePathsTestLock.shared.run {
+            try await RemoteProviderTestLock.shared.run {
+                let previousScan = ModelManager.scanLocalModelsOverrideForTests
+                let previousExternal = ExternalModelLocator.testRootsOverride
+                defer {
+                    ModelManager.scanLocalModelsOverrideForTests = previousScan
+                    ExternalModelLocator.testRootsOverride = previousExternal
+                    ExternalModelLocator.invalidateInMemory()
+                    ModelManager.invalidateLocalModelsCache()
+                }
+                ExternalModelLocator.testRootsOverride = []
+                ExternalModelLocator.invalidateInMemory()
+                ExternalModelLocator.rescan()
+                ModelManager.scanLocalModelsOverrideForTests = { _ in
+                    [MLXModel(id: "fixture/stable-chat-model", name: "Stable Chat",
+                              description: "fixture", downloadURL: "https://example.invalid/chat")]
+                }
+                ModelManager.invalidateLocalModelsCache()
+                await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+                try await body()
+            }
+        }
+    }
+
     /// Hammer the cache from many concurrent tasks. Because the underlying
     /// state (foundation availability, local models, remote providers) does
     /// not change during the test, every concurrent caller MUST observe the
@@ -34,7 +63,7 @@ struct ModelPickerItemCacheTests {
     /// order, so callers could disagree about whether remote models were
     /// present.
     @Test func concurrentCallers_returnIdenticalResults() async throws {
-        await RemoteProviderTestLock.shared.run {
+        try await withStableCatalog {
             // Establish a baseline so we know what to compare against, and so
             // any work needed to populate the cache (e.g. local model
             // discovery) doesn't perturb the concurrent run below.
@@ -73,15 +102,13 @@ struct ModelPickerItemCacheTests {
     /// asserts the invariant that, once populated, `items` never goes
     /// empty across rebuilds.
     @Test func notificationBurst_doesNotTransientlyEmptyItems() async throws {
-        await RemoteProviderTestLock.shared.run {
+        try await withStableCatalog {
             let cache = ModelPickerItemCache.shared
 
-            // Make sure we start populated. If this machine has no foundation
-            // model, no local MLX models, and no connected remote providers,
-            // the invariant is trivially satisfied - skip in that case so CI
-            // doesn't false-positive.
+            // The fixed fixture guarantees this test exercises a populated
+            // list on CI as well as Macs with installed models.
             _ = await cache.buildModelPickerItems()
-            guard !cache.items.isEmpty else { return }
+            try #require(!cache.items.isEmpty)
             let initialCount = cache.items.count
 
             // Spam many notifications. Each one schedules an observer Task

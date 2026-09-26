@@ -171,9 +171,8 @@ struct AgentChannelDispatchRoutingEditor: View {
     /// "Name · Workspace" plus a presence glyph so the picker shows at a
     /// glance whether the teammate's Mac is currently reachable.
     private func localLabel(_ agent: Agent) -> String {
-        let purpose = (try? AgentDescriptionPolicy.validated(agent.description))
-            ?? L("Description required")
-        return "\(agent.name) — \(purpose)"
+        let purpose = agent.routingDescription
+        return purpose.isEmpty ? agent.name : "\(agent.name) — \(purpose)"
     }
 
     private func workspaceLabel(_ option: WorkspaceAgentPickerOption) -> String {
@@ -183,9 +182,9 @@ struct AgentChannelDispatchRoutingEditor: View {
         case .offline: glyph = "○"
         case .unknown: glyph = "◌"
         }
-        let purpose = (try? AgentDescriptionPolicy.validated(option.description ?? ""))
-            ?? L("Description required")
-        return "\(glyph) \(option.name) · \(option.workspaceName) — \(purpose)"
+        let base = "\(glyph) \(option.name) · \(option.workspaceName)"
+        let purpose = AgentDescriptionPolicy.normalized(option.description ?? "")
+        return purpose.isEmpty ? base : "\(base) — \(purpose)"
     }
 
     private func routeRow(_ route: Binding<AgentChannelDispatchRoute>) -> some View {

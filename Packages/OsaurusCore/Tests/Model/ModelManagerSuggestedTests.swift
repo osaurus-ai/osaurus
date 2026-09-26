@@ -121,9 +121,8 @@ struct ModelManagerSuggestedTests {
             let suggested = ModelManager().suggestedModels
             #expect(!suggested.contains { $0.id.lowercased().contains("ling-2.6") })
             // `suggestedModels` is RAM-tiered (the Top Pick can be filtered on a small
-            // runner); the unfiltered curated id list must still carry both Raptors.
+            // runner); the unfiltered curated id list must still carry Raptor 0.6.
             #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-0.6-4b-jang_6m"))
-            #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-v0.5-8b-a1b-jang_6m"))
         }
     }
 
@@ -143,19 +142,25 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func raptorV05Entry_remainsTopPick() async {
-        await withIsolatedModelSizeCache {
-            let suggested = ModelManager().suggestedModels
-            let raptor = suggested.first {
-                $0.id == "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
-            }
+    /// Raptor v0.5 8B-A1B is superseded by 0.6 and retired: it is neither
+    /// curated nor allowed back in through the OsaurusAI org auto-fetch.
+    @Test @MainActor func raptorV05Entry_isRetired() async {
+        let v05 = "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+        #expect(!ModelManager.curatedSuggestedIds.contains(v05.lowercased()))
+        #expect(ModelManager.retiredOsaurusOrgIds.contains(v05.lowercased()))
 
-            #expect(raptor != nil)
-            #expect(raptor?.modelType == "bailing_hybrid")
-            #expect(raptor?.isTopSuggestion == true)
-            #expect(raptor?.useCase == .general)
-            #expect(raptor?.downloadSizeBytes == 6_783_354_784)
-            #expect(raptor?.releasedAt != nil)
+        await withIsolatedModelSizeCache {
+            let manager = ModelManager()
+            #expect(!manager.suggestedModels.contains { $0.id == v05 })
+
+            let resurfaced = MLXModel(
+                id: v05,
+                name: "Raptor v0.5",
+                description: "From OsaurusAI on Hugging Face.",
+                downloadURL: "https://huggingface.co/\(v05)"
+            )
+            manager.applyOsaurusOrgFetch(autoFetched: [resurfaced])
+            #expect(!manager.suggestedModels.contains { $0.id == v05 })
         }
     }
 
@@ -306,14 +311,12 @@ struct ModelManagerSuggestedTests {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
             // Recommendation spine: Raptor 0.6 4B for 8 GB through mainstream
-            // RAM (v0.5 stays a sibling Top Pick), Ornith 1.5 35B-A3B MXFP8
-            // for the larger tiers, official OsaurusAI Gemma 4 for the VL
-            // tiers, and Nanbeige 4.2 3B JANG_6M as the text-quality
-            // exception (JANG_6M beats that family's MXFP8). These are the
-            // ONLY Top Picks.
+            // RAM (v0.5 is retired), Ornith 1.5 35B-A3B MXFP8 for the larger
+            // tiers, official OsaurusAI Gemma 4 for the VL tiers, and
+            // Nanbeige 4.2 3B JANG_6M as the text-quality exception (JANG_6M
+            // beats that family's MXFP8). These are the ONLY Top Picks.
             let expectedTopPicks: Set<String> = [
                 "OsaurusAI/Raptor-0.6-4B-JANG_6M",
-                "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
                 "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
                 "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
                 "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -322,7 +325,7 @@ struct ModelManagerSuggestedTests {
             ]
             #expect(
                 topIds == expectedTopPicks,
-                "Top Picks should be exactly both Raptors + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
+                "Top Picks should be exactly Raptor 0.6 + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
             )
             // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / Bonsai, are
             // catalog-only — installable and selectable, just not part of the
@@ -377,6 +380,7 @@ struct ModelManagerSuggestedTests {
             "osaurusai/qwen3.5-35b-a3b-jang_2s",
             "osaurusai/ornith-1.0-9b-mxfp8",
             "osaurusai/ornith-1.0-35b-mxfp8",
+            "osaurusai/raptor-v0.5-8b-a1b-jang_6m",
         ] {
             #expect(!ids.contains(retired), "expected \(retired) to be removed")
         }
@@ -581,10 +585,6 @@ struct ModelManagerSuggestedTests {
             #expect(sixteenGB?.id == raptorId)
             #expect(eighteenGB?.id == raptorId)
             #expect(twentyFourGB?.id == raptorId)
-
-            // v0.5 remains a Top Pick and parses as 8B, but must not beat
-            // the 0.6 default on machines where 0.6 comfortably fits.
-            #expect(candidates.contains { $0.id == "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M" })
         }
     }
 }

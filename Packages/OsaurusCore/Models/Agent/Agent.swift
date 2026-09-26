@@ -196,11 +196,21 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     /// Display name of the agent
     public var name: String
-    /// Brief description of what this agent does
+    /// Brief, optional, user-authored description of what this agent does.
     public var description: String
-    /// Legacy/imported records stay accessible while their owner repairs them.
-    public var requiresDescriptionRepair: Bool {
-        AgentDescriptionPolicy.violation(in: description) != nil
+    /// Routing summary generated in the background from `systemPrompt` when
+    /// `description` is blank. Never shown as the user's own text; see
+    /// `AgentDescriptionBackfill`.
+    public var generatedDescription: String?
+    /// `AgentDescriptionPolicy.promptHash` of the system prompt that
+    /// `generatedDescription` was produced from, so a prompt edit invalidates it.
+    public var generatedDescriptionPromptHash: String?
+    /// What the orchestrator and every agent picker see: the user's text when
+    /// present, otherwise the background-generated summary, otherwise "".
+    public var routingDescription: String {
+        let manual = AgentDescriptionPolicy.normalized(description)
+        if !manual.isEmpty { return manual }
+        return AgentDescriptionPolicy.normalized(generatedDescription ?? "")
     }
     /// System prompt prepended to all chat sessions with this agent
     public var systemPrompt: String
@@ -308,6 +318,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         id: UUID = UUID(),
         name: String,
         description: String = "",
+        generatedDescription: String? = nil,
+        generatedDescriptionPromptHash: String? = nil,
         systemPrompt: String = "",
         themeId: UUID? = nil,
         defaultModel: String? = nil,
@@ -342,6 +354,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.id = id
         self.name = name
         self.description = description
+        self.generatedDescription = generatedDescription
+        self.generatedDescriptionPromptHash = generatedDescriptionPromptHash
         self.systemPrompt = systemPrompt
         self.themeId = themeId
         self.defaultModel = defaultModel
@@ -499,6 +513,9 @@ extension Agent {
         id = try c.decode(UUID.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        generatedDescription = try c.decodeIfPresent(String.self, forKey: .generatedDescription)
+        generatedDescriptionPromptHash = try c.decodeIfPresent(
+            String.self, forKey: .generatedDescriptionPromptHash)
         systemPrompt = try c.decode(String.self, forKey: .systemPrompt)
         themeId = try c.decodeIfPresent(UUID.self, forKey: .themeId)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)

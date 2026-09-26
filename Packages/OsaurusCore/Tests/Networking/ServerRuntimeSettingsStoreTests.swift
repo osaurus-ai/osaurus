@@ -854,16 +854,19 @@ struct ServerRuntimeSettingsStoreTests {
     @MainActor
     private func withOverriddenDirectory(
         _ dir: URL,
-        _ body: () async throws -> Void
+        _ body: @MainActor @Sendable () async throws -> Void
     ) async throws {
-        let previous = ServerRuntimeSettingsStore.overrideDirectory
-        ServerRuntimeSettingsStore.overrideDirectory = dir
-        ServerRuntimeSettingsStore.invalidateSnapshot()
-        defer {
-            ServerRuntimeSettingsStore.overrideDirectory = previous
+        try await ServerConfigStoreTestLock.shared.run {
+            let previous = ServerRuntimeSettingsStore.overrideDirectory
+            ServerRuntimeSettingsStore.overrideDirectory = dir
             ServerRuntimeSettingsStore.invalidateSnapshot()
-            try? FileManager.default.removeItem(at: dir)
+            defer {
+                ServerRuntimeSettingsStore.overrideDirectory = previous
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+                try? FileManager.default.removeItem(at: dir)
+            }
+            try await body()
+
         }
-        try await body()
     }
 }

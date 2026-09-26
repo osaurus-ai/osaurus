@@ -134,6 +134,18 @@ enum FolderToolError: LocalizedError {
 
 /// Shared utilities for folder tools
 enum FolderToolHelpers {
+    /// Lines of file content, not separator-delimited fields. A final line
+    /// terminator does not introduce another empty line; CRLF is one newline.
+    /// Keep the existing single editable-line representation of an empty file.
+    static func contentLines(_ text: String) -> [String] {
+        var lines = text.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline })
+            .map(String.init)
+        if text.last?.isNewline == true, lines.count > 1 {
+            lines.removeLast()
+        }
+        return lines
+    }
+
     /// Resolve a tool's `path` argument under the working folder.
     /// Accepts a relative path under root (e.g. `src/app.py`) or an
     /// absolute path that lives inside root (e.g. `/Users/x/proj/src/app.py`
@@ -1236,7 +1248,7 @@ struct FileReadTool: OsaurusTool {
                 ext: ext
             )
         }
-        let lines = content.text.components(separatedBy: .newlines)
+        let lines = FolderToolHelpers.contentLines(content.text)
 
         // `tail_lines` (last N lines, for logs) overrides an explicit
         // start/end range; `max_chars` optionally tightens the per-call
@@ -1444,7 +1456,7 @@ struct FileReadTool: OsaurusTool {
         // dropped the trailing newline, failing a byte-for-byte check by one
         // byte). Only stated when the read actually reached the end of file.
         if content.rawRead?.truncatedByByteLimit != true {
-            result["ends_with_newline"] = content.text.hasSuffix("\n")
+            result["ends_with_newline"] = content.text.last?.isNewline == true
         }
         if let partialLine {
             result["partial_line"] = partialLine
@@ -4065,7 +4077,7 @@ struct FileSearchTool: OsaurusTool {
         guard let rootPath else { return .skipped(.undecodable) }
         let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
 
-        let lines = content.components(separatedBy: .newlines)
+        let lines = FolderToolHelpers.contentLines(content)
         var matches: [String] = []
 
         for (index, line) in lines.enumerated() {

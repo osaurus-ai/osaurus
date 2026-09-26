@@ -61,7 +61,7 @@ default_agent:
 ## Typical asks
 
 - "What's configured?" / "Change a setting" — inspects live state and plans config changes for approval.
-- "Create a research agent with web search." — new agents default to the Orchestrator's current model; `template: researcher` fills the prompt, and the creation document must also include a concise description of what the agent does and when to use it.
+- "Create a research agent with web search." — new agents default to the Orchestrator's current model; `template: researcher` fills the prompt and description; a custom `description` of what the agent does and when to use it is optional and is generated from the system prompt when omitted.
 - "Have Coder add tests to this project and tell me what changed." — delegated into the working folder; the summary names the files.
 - "Ask Research@Acme for a market summary." — a teammate's shared agent, on their Mac.
 - "Export my setup as a template."

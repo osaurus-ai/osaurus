@@ -37,6 +37,28 @@ final class ContextWindowUserCapTests: XCTestCase {
 
     // MARK: - Lowering
 
+    func testSavedContextCapSurvivesDecodingAndStillConstrainsTheModel() throws {
+        for cap: Int? in [nil, 8_192, 131_072] {
+            let original = ChatConfiguration(
+                hotkey: nil, systemPrompt: "", contextLength: 128_000,
+                contextLengthCap: cap)
+            let decoded = try JSONDecoder().decode(
+                ChatConfiguration.self, from: JSONEncoder().encode(original))
+            XCTAssertEqual(decoded.contextLengthCap, cap)
+            XCTAssertEqual(decoded.contextLength, 128_000)
+            let effective = AgentLoopBudget.applyingUserCap(
+                resolution(222_000, .bundleMetadata), cap: decoded.contextLengthCap)
+            XCTAssertEqual(effective.tokens, cap ?? 222_000)
+        }
+    }
+
+    func testOlderSettingsWithoutACapContinueFollowingTheModel() throws {
+        let legacy = Data(#"{"systemPrompt":"","contextLength":128000}"#.utf8)
+        let decoded = try JSONDecoder().decode(ChatConfiguration.self, from: legacy)
+        XCTAssertNil(decoded.contextLengthCap)
+        XCTAssertEqual(decoded.contextLength, 128_000)
+    }
+
     func testCapLowersAModelDeclaredWindow() {
         let capped = AgentLoopBudget.applyingUserCap(
             resolution(222_000, .bundleMetadata), cap: 32_000)

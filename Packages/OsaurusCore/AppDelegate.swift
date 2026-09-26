@@ -252,6 +252,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // cache here rather than racing that read from `ModelDownloadService`.
         HuggingFaceAuth.preloadInBackground()
 
+        // The menu-only launch may never create a Chat or Models view. Start
+        // the shared metadata scheduler here too; its first sweep is delayed
+        // and respects the persisted opt-out. No model weights are loaded.
+        _ = ModelManager.shared
+
         // Warm the chat-history database too: the first chat window's
         // synchronous session load otherwise pays the encrypted SQLite open
         // on the main thread during launch.

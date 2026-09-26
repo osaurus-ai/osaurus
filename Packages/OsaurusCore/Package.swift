@@ -313,9 +313,14 @@ let package = Package(
         // to conversation chains, and reports current-chat capacity pressure.
         // vmlx-swift#493 adds native MiMo V2.6 mixed-quant/media runtime,
         // resident expert dispatch, and correct post-answer cache boundaries.
+        // vmlx-swift#508 fuses exact BF16 Spark GELU/multiply for large
+        // prefill shapes; short/decode shapes retain the reference expression.
+        // #512 validates persisted architecture state before granting SSD hits
+        // and serializes validation with MLX disk I/O. #513 honors validated
+        // max_tokens bundle aliases with max_new_tokens precedence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "63a10f3ab61c36cb978fcd7d74208c746930006d"
+            revision: "934dd5c8dc052cc6c8b4b960fe1bffd6badf0998"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

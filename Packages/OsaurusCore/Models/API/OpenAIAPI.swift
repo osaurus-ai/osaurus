@@ -819,6 +819,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     var cacheStableSystemPrefix: String? = nil
     /// Local admission contract, checked against exact prepared tokens before prefill.
     var admissionPositionLimit: Int? = nil
+    /// Internal delegation ceiling, not a user output reservation. Never decoded from API JSON.
+    var admissionOutputTokensAreImplicit: Bool = false
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on

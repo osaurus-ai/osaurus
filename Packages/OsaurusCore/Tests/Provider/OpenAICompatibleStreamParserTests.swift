@@ -77,6 +77,63 @@ struct OpenAICompatibleStreamParserTests {
         #expect(yielded.contains { StreamingToolHint.decode($0) == "sandbox_write_file" })
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func parser_ignoresEmptyToolNameDeltaWithoutLosingNameOrArguments(
+        namedFirst: Bool,
+        splitArguments: Bool
+    ) throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+        // Captured compatible-server shape: slot/id arrive with an empty name;
+        // the real name follows in a later delta for the same slot. Also verify
+        // a later empty placeholder never replaces a name received first.
+        var names = namedFirst ? ["file_read", ""] : ["", "file_read"]
+        var arguments = ["", #"{"path":"CHANGELOG.md"}"#]
+        if splitArguments {
+            names.append("")
+            arguments = ["", #"{"path":"#, #""CHANGELOG.md"}"#]
+        }
+        for index in names.indices {
+            let event: [String: Any] = [
+                "choices": [[
+                    "index": 0,
+                    "delta": ["tool_calls": [[
+                        "index": 0,
+                        "id": "call_3fa8be2a",
+                        "type": "function",
+                        "function": ["name": names[index], "arguments": arguments[index]],
+                    ]]],
+                ]],
+            ]
+            let outcome = try OpenAICompatibleStreamParser.handleEvent(
+                jsonData: JSONSerialization.data(withJSONObject: event),
+                options: .strict,
+                state: &state,
+                yield: { yielded.append($0) }
+            )
+            guard case .continue = outcome else {
+                Issue.record("Expected name/argument delta to continue, got \(outcome)")
+                return
+            }
+        }
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#.utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        guard case .finishWithToolCall(let invocations) = finish, let invocation = invocations.first else {
+            Issue.record("Expected named tool invocation, got \(finish)")
+            return
+        }
+        #expect(invocations.count == 1)
+        #expect(invocation.toolName == "file_read")
+        #expect(invocation.toolCallId == "call_3fa8be2a")
+        #expect(invocation.jsonArguments == #"{"path":"CHANGELOG.md"}"#)
+        #expect(yielded.compactMap { StreamingToolHint.decode($0) } == ["file_read"])
+        #expect(yielded.compactMap { StreamingToolHint.decodeArgs($0) }.joined() == #"{"path":"CHANGELOG.md"}"#)
+    }
+
     @Test func parser_foldsContinuationChunksWithoutIndexIntoSameSlot() throws {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: true)
         var yielded: [String] = []

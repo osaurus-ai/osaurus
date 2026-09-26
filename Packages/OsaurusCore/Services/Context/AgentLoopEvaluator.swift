@@ -578,6 +578,18 @@ struct AgentLoopStepProgressTracker: Sendable {
 @MainActor
 public enum AgentLoopEvaluator {
 
+    /// A processed-call cancellation fixture specifies an exact interruption
+    /// boundary, which cannot be observed after parallel dispatch has already
+    /// executed all siblings. Exercise the production serial loop for this
+    /// fixture only. Ordinary evals retain the production parallel executor;
+    /// real batch cancellation is covered separately by task-cancellation tests.
+    static func applyProcessedCallCancellation(
+        to hooks: inout AgentLoopHooks,
+        after count: Int?
+    ) {
+        if count != nil { hooks.executeBatch = nil }
+    }
+
     private static func emitStepProgress(_ message: String) {
         FileHandle.standardError.write(Data("\(message)\n".utf8))
     }
@@ -1557,6 +1569,8 @@ public enum AgentLoopEvaluator {
                 }
             }
         )
+
+        applyProcessedCallCancellation(to: &hooks, after: cancelAfterToolCalls)
 
         hooks.recordExitDiagnostics = { diagnostics in
             exitDiagnostics = diagnostics

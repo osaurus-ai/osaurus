@@ -146,6 +146,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         contextLength: Int? = nil,
+        contextLengthCap: Int? = nil,
         topPOverride: Float? = nil,
         maxToolAttempts: Int? = nil,
         defaultModel: String? = nil,
@@ -163,6 +164,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.contextLength = contextLength
+        self.contextLengthCap = contextLengthCap
         self.topPOverride = topPOverride
         self.maxToolAttempts = maxToolAttempts
         self.defaultModel = defaultModel
@@ -183,6 +185,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         temperature = try container.decodeIfPresent(Float.self, forKey: .temperature)
         maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens)
         contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength)
+        contextLengthCap = try container.decodeIfPresent(Int.self, forKey: .contextLengthCap)
         topPOverride = try container.decodeIfPresent(Float.self, forKey: .topPOverride)
         maxToolAttempts = try container.decodeIfPresent(Int.self, forKey: .maxToolAttempts)
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)

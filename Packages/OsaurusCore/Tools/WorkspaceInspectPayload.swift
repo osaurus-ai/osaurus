@@ -118,11 +118,8 @@ enum WorkspaceInspectPayload {
         }
         let name = AgentTargetResolver.displayName(for: ref)
         let description = AgentDescriptionPolicy.normalized(agent.description ?? "")
-        let descriptionViolation = AgentDescriptionPolicy.violation(in: description)
         var row: [String: Any] = [
             "name": name,
-            "description_required": descriptionViolation != nil,
-            "description_validation": descriptionViolation?.message ?? "",
             // The spelling that works everywhere: `spawn_agent.agent`,
             // `delegation.spawnable_workspace_agents`, the target resolver.
             "target": AgentTargetResolver.qualifiedDisplayName(for: ref),

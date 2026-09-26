@@ -40,7 +40,12 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
 /// Download orchestration is handled by ModelDownloadService.
 @MainActor
 public final class ModelManager: NSObject, ObservableObject {
-    static let shared = ModelManager()
+    static let shared: ModelManager = {
+        let manager = ModelManager()
+        manager.ownsModelUpdatePolling = true
+        if !RuntimeEnvironment.isUnderTests { manager.restartModelUpdatePolling() }
+        return manager
+    }()
 
     /// Diagnostics logger usable from the `nonisolated static` discovery paths.
     nonisolated static let discoveryLog = Logger(
@@ -214,6 +219,17 @@ public final class ModelManager: NSObject, ObservableObject {
     @Published var manifestChecks: [String: ModelManifestCheck] = [:]
     @Published var manifestChecksInFlight: Set<String> = []
     var pendingManifestChecks: [String: MLXModel] = [:]
+    @Published var automaticallyChecksModelUpdates =
+        UserDefaults.standard.object(forKey: "AutomaticallyCheckModelUpdates") as? Bool ?? true
+    {
+        didSet {
+            UserDefaults.standard.set(automaticallyChecksModelUpdates, forKey: "AutomaticallyCheckModelUpdates")
+            restartModelUpdatePolling()
+        }
+    }
+    var ownsModelUpdatePolling = false
+    var modelUpdatePollingTask: Task<Void, Never>?
+    let automaticModelUpdateSweep = ModelUpdateSweep()
     @Published var deprecationNotices: [DeprecationNotice] = []
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
@@ -244,7 +260,10 @@ public final class ModelManager: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshDownloadStates()
-                Task { await self?.refreshModelUpdates(force: true) }
+                Task {
+                    await self?.refreshCachedManifestLocalState()
+                    await self?.refreshAutomaticModelUpdates()
+                }
             }
             .store(in: &cancellables)
 
@@ -742,10 +761,11 @@ extension ModelManager {
         // controls the first-run shortlist; the memory-fit selector below still
         // refuses to auto-default into the `.tight` band:
         //   • 8 GB through mainstream RAM → Raptor 0.6 4B JANG_6M (Spark-X2.5
-        //                      dense, ~3.41 GiB). v0.5 8B-A1B stays a Top Pick
-        //                      so existing installs can keep it, but it is not
-        //                      the auto-default. LFM2.5 8B and dense Ornith
-        //                      1.5 9B remain catalog-only.
+        //                      dense, ~3.41 GiB). Raptor v0.5 8B-A1B is
+        //                      retired from the catalog (`retiredOsaurusOrgIds`);
+        //                      existing installs keep it via the local scan.
+        //                      LFM2.5 8B and dense Ornith 1.5 9B remain
+        //                      catalog-only.
         //   • Larger RAM     → Ornith 1.5 35B-A3B MXFP8 (below), or Gemma 4
         //                      12B-it-MXFP8 when that comfortably fits first.
         //   • Smaller RAM fallback → official OsaurusAI Gemma 4 at the highest
@@ -902,18 +922,9 @@ extension ModelManager {
             useCase: .general
         ),
 
-        // MARK: Raptor v0.5 (Ling 3 / BailingMoeV3 — Top Pick, not the default)
-
-        curated(
-            id: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
-            description:
-                "Raptor v0.5 8B-A1B text model on the Ling 3 architecture. JANG_6M — fast agentic tool use with ~1B active parameters. 128K context.",
-            isTopSuggestion: true,
-            bootstrapDownloadSizeBytes: 6_783_354_784,
-            modelType: "bailing_hybrid",
-            releasedAt: date("2026-08-25"),
-            useCase: .general
-        ),
+        // Raptor v0.5 8B-A1B (Ling 3 / BailingMoeV3) was retired from the
+        // catalog once 0.6 shipped — see `retiredOsaurusOrgIds`. Installed
+        // copies still load from the local scan.
 
         // MARK: Ornith 1.5 (Qwen 3.5 hybrid backbone)
         //
@@ -1382,6 +1393,10 @@ extension ModelManager {
         // a re-upload or stale org listing cannot re-surface a dead download.
         "osaurusai/ornith-1.0-9b-mxfp8",
         "osaurusai/ornith-1.0-35b-mxfp8",
+        // Raptor v0.5 8B-A1B is superseded by Raptor 0.6 4B (smaller, faster,
+        // better quality). Hidden from the catalog; installed copies still
+        // load from the local scan.
+        "osaurusai/raptor-v0.5-8b-a1b-jang_6m",
     ]
 
     /// HF `pipeline_tag` values that mark a repo as chat-capable (text or
@@ -1951,6 +1966,8 @@ extension ModelManager {
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
+    nonisolated(unsafe) static var localModelsScanFinishedForTests: (@Sendable () -> Void)?
+    nonisolated(unsafe) static var localModelsDispatchWaitingForTests: (@Sendable () -> Void)?
 
     public nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -1995,10 +2012,11 @@ extension ModelManager {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 localModelsCacheCondition.lock()
-                if cachedLocalModels == nil && !localModelsScanInFlight {
-                    startLocalModelsScanLocked()
-                }
-                while cachedLocalModels == nil && localModelsScanInFlight {
+                while cachedLocalModels == nil {
+                    if !localModelsScanInFlight {
+                        startLocalModelsScanLocked()
+                    }
+                    localModelsDispatchWaitingForTests?()
                     localModelsCacheCondition.wait()
                 }
                 localModelsCacheCondition.unlock()
@@ -2085,10 +2103,20 @@ extension ModelManager {
     /// `localModelsCacheCondition` with `localModelsScanInFlight == false`.
     private nonisolated static func startLocalModelsScanLocked() {
         localModelsScanInFlight = true
+        // Invalidation starts a new catalog generation without waiting for old
+        // filesystem work. Only the scan that still owns this generation may
+        // publish or clear the current in-flight flag.
+        let scanGeneration = localModelsCacheGen
+        let finishedForTests = localModelsScanFinishedForTests
         DispatchQueue.global(qos: .utility).async {
+            defer { finishedForTests?() }
             let scanned = scanLocalModels()
 
             localModelsCacheCondition.lock()
+            guard localModelsCacheGen == scanGeneration else {
+                localModelsCacheCondition.unlock()
+                return
+            }
             cachedLocalModels = scanned
             localModelsScanInFlight = false
             localModelsCacheGen &+= 1

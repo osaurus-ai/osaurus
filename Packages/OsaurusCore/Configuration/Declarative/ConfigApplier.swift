@@ -156,9 +156,7 @@ enum ConfigApplier {
             config: SubagentConfigurationStore.snapshot(),
             perAgentEnabled: caps.spawnDelegationEnabled,
             perAgentTargets: caps.spawnableAgentIDs
-        ).filter {
-            $0 != agentId && AgentManager.shared.agent(for: $0)?.requiresDescriptionRepair == false
-        }
+        ).filter { $0 != agentId }
     }
 
     /// An apply that grows the launching conversation's spawn pool (an agent
@@ -190,9 +188,10 @@ enum ConfigApplier {
                 AgentManager.shared.agent(for: $0)?.name
             }
             let descriptions = allowedAgentIDs.compactMap { id -> SpawnAgentDescriptor? in
-                guard let agent = AgentManager.shared.agent(for: id), !agent.requiresDescriptionRepair else { return nil }
+                guard let agent = AgentManager.shared.agent(for: id) else { return nil }
+                let routing = agent.routingDescription
                 return SpawnAgentDescriptor(
-                    id: agent.id, name: agent.name, description: agent.description,
+                    id: agent.id, name: agent.name, description: routing.isEmpty ? nil : routing,
                     modelId: agent.defaultModel, isLocal: nil, providerName: nil
                 )
             }
@@ -342,15 +341,10 @@ enum ConfigApplier {
                         == entry.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 }
                 // Every validation failure must preserve an existing match
-                // during prune, including invalid templates/descriptions.
+                // during prune, including invalid templates.
                 if let agent = existing { matchedIds.insert(agent.id) }
-                if let snapshot = entry.generatedDescriptionSnapshot, !snapshot.matches(existing) {
-                    return ConfigApplyResult(
-                        section: "agents", target: entry.name, status: .failed,
-                        message: "The agent changed after its description was generated. Review a new plan before applying.")
-                }
-                // A template seeds behavior, never the required user-authored
-                // routing description. Existing descriptions survive patches.
+                // `template:` seeds description + prompt for a one-line
+                // agent; explicit fields in the entry still win.
                 if let rawTemplate = entry.template?.trimmingCharacters(in: .whitespacesAndNewlines),
                     !rawTemplate.isEmpty
                 {
@@ -363,14 +357,10 @@ enum ConfigApplier {
                                 + AgentStarterTemplate.configTemplateIds.joined(separator: ", ") + ".")
                     }
                     if entry.systemPrompt?.isEmpty ?? true { entry.systemPrompt = template.systemPrompt }
+                    if entry.description?.isEmpty ?? true { entry.description = template.routingDescription }
                 }
-                if entry.description != nil || existing == nil {
-                    if let violation = AgentDescriptionPolicy.violation(in: entry.description ?? "") {
-                        return ConfigApplyResult(
-                            section: "agents", target: entry.name, status: .failed,
-                            message: "description: \(violation.message)")
-                    }
-                    entry.description = AgentDescriptionPolicy.normalized(entry.description ?? "")
+                if let description = entry.description {
+                    entry.description = AgentDescriptionPolicy.normalized(description)
                 }
                 let rawModel = entry.model.valueOrNil?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -407,28 +397,16 @@ enum ConfigApplier {
                     // that disappears from the next turn's runnable pool.
                     let chatModel = ChatExecutionContext.currentChatSessionBox?.session?
                         .selectedModel?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let createdAgent: Agent
-                    do {
-                        createdAgent = try AgentManager.shared.create(
-                            name: entry.name,
-                            description: entry.description ?? "",
-                            systemPrompt: entry.systemPrompt ?? "",
-                            defaultModel: entry.model.valueOrNil
-                                ?? (chatModel?.isEmpty == false ? chatModel : nil)
-                                ?? AgentManager.shared.orchestratorModelForNewAgents(),
-                            temperature: entry.temperature.valueOrNil.map(Float.init),
-                            maxTokens: entry.maxTokens.valueOrNil
-                        )
-                    } catch let violation as AgentDescriptionPolicy.Violation {
-                        return ConfigApplyResult(
-                            section: "agents", target: entry.name, status: .failed,
-                            message: "description: \(violation.message)")
-                    } catch {
-                        return ConfigApplyResult(
-                            section: "agents", target: entry.name, status: .failed,
-                            message: error.localizedDescription)
-                    }
-                    var agent = createdAgent
+                    var agent = AgentManager.shared.create(
+                        name: entry.name,
+                        description: entry.description ?? "",
+                        systemPrompt: entry.systemPrompt ?? "",
+                        defaultModel: entry.model.valueOrNil
+                            ?? (chatModel?.isEmpty == false ? chatModel : nil)
+                            ?? AgentManager.shared.orchestratorModelForNewAgents(),
+                        temperature: entry.temperature.valueOrNil.map(Float.init),
+                        maxTokens: entry.maxTokens.valueOrNil
+                    )
                     matchedIds.insert(agent.id)
                     if entry.capabilities != nil {
                         patch(&agent, from: entry)

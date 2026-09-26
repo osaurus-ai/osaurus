@@ -263,10 +263,14 @@ actor HuggingFaceService {
 
     /// A missing sidecar is a legacy repo. Authentication, transport and parsing
     /// failures stay errors, so the UI never misreports a failed check as current.
-    func fetchModelManifest(repoId: String, revision: String? = nil) async throws -> ManifestSnapshot {
+    func fetchModelManifest(repoId: String, revision: String? = nil, previous: ManifestSnapshot? = nil) async throws -> ManifestSnapshot {
+        try Task.checkCancellation()
         let pinned: String
         if let revision { pinned = revision } else { pinned = try await resolveRevision(repoId: repoId) }
         guard pinned.count == 40, pinned.allSatisfy(\.isHexDigit) else { throw URLError(.badURL) }
+        // Contents at a commit are immutable, including an absent sidecar.
+        // Resolve main each time, but do not redownload unchanged metadata.
+        if let previous, previous.revision == pinned { return previous }
         var components = URLComponents()
         components.scheme = "https"
         components.host = "huggingface.co"

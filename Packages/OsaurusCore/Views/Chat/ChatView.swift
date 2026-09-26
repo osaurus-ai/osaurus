@@ -4348,6 +4348,7 @@ final class ChatSession: ObservableObject {
         save()
         maybeGenerateAutoTitle()
         maybeGenerateFollowUps()
+        maybeBackfillAgentDescriptions()
         if !suppressQueuedSendFlushForCurrentRun {
             flushQueuedSendIfEligible()
         }
@@ -4411,6 +4412,14 @@ final class ChatSession: ObservableObject {
     /// attempt — but a failed generation re-arms it, so a transient miss
     /// (timeout, background-load refusal while another model is resident,
     /// open breaker) gets one fresh attempt on each later clean completion.
+    /// A clean chat run means a model is resident (or remote) right now, which
+    /// is the cheapest moment to summarize legacy agents that still have no
+    /// description. Best-effort housekeeping; see `AgentDescriptionBackfill`.
+    private func maybeBackfillAgentDescriptions() {
+        guard source == .chat, !stopRequested, lastStreamError == nil else { return }
+        AgentDescriptionBackfill.shared.scheduleAll(fallbackModel: selectedModel)
+    }
+
     private func maybeGenerateAutoTitle() {
         guard let sid = sessionId else { return }
         let decision = Self.autoTitleDecision(
@@ -6818,6 +6827,8 @@ final class ChatSession: ObservableObject {
                                         var effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
                                             for: effectiveAgentId
                                         )
+                    let admissionOutputTokensAreImplicit = self.delegationBudget != nil
+                        && effectiveMaxTokensForAgent == nil
                     if let delegationBudget = self.delegationBudget {
                         // Delegated child: the contract's per-generation
                         // response ceiling is ENFORCED here (admission
@@ -7825,6 +7836,7 @@ final class ChatSession: ObservableObject {
                                 session_id: self.sessionId?.uuidString
                             )
                             req.admissionPositionLimit = self.delegationBudget?.contextPositions
+                            req.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
                             req.samplingParametersAreImplicit = true
                             req.claudeCodeOptions = self.claudeCodeRunOptions(for: turnAgentId)
                             // Mode 2 routing signal: tells `RemoteProviderService`
@@ -8403,6 +8415,7 @@ final class ChatSession: ObservableObject {
                                     session_id: sessionId?.uuidString
                                 )
                                 finalReq.admissionPositionLimit = self.delegationBudget?.contextPositions
+                                finalReq.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
                                 finalReq.samplingParametersAreImplicit = true
                                 finalReq.claudeCodeOptions = claudeCodeRunOptions(for: turnAgentId)
                                 finalReq.runAsRemoteAgent = isRemoteAgentTarget
@@ -9855,11 +9868,6 @@ struct ChatView: View {
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, Self.composerHorizontalInset)
                             }
-
-                            AgentDescriptionRepairNotice()
-                                .padding(.horizontal, Self.composerHorizontalInset)
-                                .frame(maxWidth: 1100)
-                                .frame(maxWidth: .infinity)
 
                             ChatPersistenceNotice(sessionId: observedSession.sessionId)
                                 .padding(.horizontal, Self.composerHorizontalInset)

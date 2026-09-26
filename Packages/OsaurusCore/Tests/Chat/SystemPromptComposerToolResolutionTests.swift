@@ -1737,17 +1737,19 @@ struct SystemPromptComposerToolResolutionTests {
     /// config stays stable while we read the delegation-gated schema.
     private func withSubagentSandbox(_ body: @MainActor @Sendable () async -> Void) async {
         let lease = await acquireSubagentStoreSandbox("composer-delegation")
-        let previousRuntimeDirectory = ServerRuntimeSettingsStore.overrideDirectory
-        ServerRuntimeSettingsStore.overrideDirectory = lease.sandbox
-        ServerRuntimeSettingsStore.invalidateSnapshot()
-        defer {
-            ServerRuntimeSettingsStore.overrideDirectory = previousRuntimeDirectory
+        defer { lease.release() }
+        await ServerConfigStoreTestLock.shared.run {
+            let previousRuntimeDirectory = ServerRuntimeSettingsStore.overrideDirectory
+            ServerRuntimeSettingsStore.overrideDirectory = lease.sandbox
             ServerRuntimeSettingsStore.invalidateSnapshot()
-            lease.release()
+            defer {
+                ServerRuntimeSettingsStore.overrideDirectory = previousRuntimeDirectory
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+            }
+            saveServerBatchLimit(3)
+            SubagentConfigurationStore.save(SubagentConfiguration())
+            await body()
         }
-        saveServerBatchLimit(3)
-        SubagentConfigurationStore.save(SubagentConfiguration())
-        await body()
     }
 
     private func saveServerBatchLimit(_ value: Int) {

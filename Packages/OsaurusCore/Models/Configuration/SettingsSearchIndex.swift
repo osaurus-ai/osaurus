@@ -651,6 +651,23 @@ public enum SettingsSearchIndex {
             subTab: "concurrency"
         ),
         .init(
+            id: "settings.server.concurrentSessions",
+            tab: .server,
+            section: "Concurrency & Batching",
+            title: "Concurrent Sessions",
+            keywords: ["parallel", "batch engine", "local subagents", "maximum requests"],
+            subTab: "concurrency",
+            disambiguation: "Shared engine ceiling for same-model local work; memory safety and Continuous Batching can reduce the effective limit."
+        ),
+        .init(
+            id: "settings.server.prefillChunkSize",
+            tab: .server,
+            section: "Concurrency & Batching",
+            title: "Prompt Prefill Chunk Size",
+            keywords: ["prompt processing", "prefill step", "tokens per step", "chunk"],
+            subTab: "concurrency"
+        ),
+        .init(
             id: "server.proxy",
             tab: .server,
             section: "Global Proxy",
@@ -1485,9 +1502,9 @@ public enum SettingsSearchIndex {
         .init(
             id: "agents.description",
             tab: .agents,
-            title: "Agent description (required)",
-            keywords: ["descriptions required", "agent description", "purpose", "routing", "legacy agent", "repair", "helper", "Suggest from system prompt", "suggest description", "core model description"],
-            disambiguation: "Open an agent's Configure tab to supply its required routing description, or suggest one from its system prompt when the description is empty.",
+            title: "Brief description (optional)",
+            keywords: ["agent description", "purpose", "routing", "delegation", "auto-generated description", "generated description"],
+            disambiguation: "Optional one-line summary shown to the orchestrator when it chooses a delegation target. Left blank, Osaurus generates one in the background from the agent's system prompt; typing your own overrides it.",
             declarativeSection: "agents"
         ),
         .init(
@@ -1573,6 +1590,13 @@ public enum SettingsSearchIndex {
         ),
 
         // MARK: Tab-level rows for Management areas that had zero search hits
+        .init(
+            id: "models.automaticUpdates",
+            tab: .models,
+            title: "Automatically Check Model Updates",
+            keywords: ["background model updates", "huggingface", "model revision", "automatic checks", "offline"],
+            disambiguation: "Checks installed OsaurusAI model metadata only. Does not update the Osaurus application or download model files."
+        ),
         .init(
             id: "models.overview",
             tab: .models,

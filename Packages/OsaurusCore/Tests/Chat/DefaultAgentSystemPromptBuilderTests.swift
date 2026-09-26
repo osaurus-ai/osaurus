@@ -39,6 +39,51 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
+    func toolsDisabledDoesNotAdvertiseUnavailableOrchestratorFunctions() {
+        for compact in [false, true] {
+            let enabled = DefaultAgentSystemPromptBuilder.render(compact: compact)
+            let disabled = DefaultAgentSystemPromptBuilder.render(compact: compact, toolsAvailable: false)
+            #expect(disabled.contains("Tools are unavailable"))
+            for name in ["spawn_agent", "osaurus_help", "osaurus_config", "osaurus_inspect"] {
+                #expect(!disabled.contains(name))
+                #expect(enabled.contains(name))
+            }
+            #expect(DefaultAgentSystemPromptBuilder.render(compact: compact) == enabled)
+        }
+    }
+
+    @Test
+    func defaultChatDisabledToolGatesAlsoGateItsPersona() {
+        let cases: [(Bool, Bool, String?, ExecutionMode)] = [
+            (true, false, nil, .none),
+            (false, true, nil, .none),
+            (false, true, nil, .sandbox),
+            (false, false, "foundation", .none),
+        ]
+        for (agentDisabled, globalDisabled, model, mode) in cases {
+            let snapshot = AgentConfigSnapshot(
+                agentId: Agent.defaultId,
+                toolsDisabled: agentDisabled,
+                globalToolsDisabled: globalDisabled,
+                memoryDisabled: true,
+                autonomousConfig: nil,
+                toolMode: .auto,
+                model: model,
+                manualToolNames: nil,
+                systemPrompt: "User persona survives.",
+                dbEnabled: false
+            )
+            let rendered = SystemPromptComposer.forChat(
+                snapshot: snapshot, agentId: Agent.defaultId, executionMode: mode
+            ).render()
+            #expect(rendered.contains("Tools are unavailable"))
+            #expect(rendered.contains("User persona survives."))
+            #expect(!rendered.contains("spawn_agent"))
+            #expect(!rendered.contains("osaurus_help"))
+        }
+    }
+
+    @Test
     func render_listsEveryDomainWriteTool() {
         let domains = [
             Self.probe(id: "providers", writeToolNames: ["osaurus_provider"]),

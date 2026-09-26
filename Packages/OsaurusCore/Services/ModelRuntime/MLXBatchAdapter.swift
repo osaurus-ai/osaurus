@@ -132,7 +132,7 @@ struct MLXBatchAdapter {
     struct EffectiveGenerationSettings: Equatable, Sendable {
         let stage: String
         let temperature: Float
-        let maxTokens: Int
+        var maxTokens: Int
         let topP: Float
         let topK: Int
         let minP: Float
@@ -1570,7 +1570,7 @@ struct MLXBatchAdapter {
         // shape (hybrid companion slots deny compile) rather than only the
         // name matcher; also reused for the KV-mode resolution below.
         let cacheTopology = await container.cacheTopologySnapshot()
-        let effective = Self.effectiveGenerationSettings(
+        var effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
             runtimeDefaults: runtime.generation,
@@ -1583,10 +1583,12 @@ struct MLXBatchAdapter {
             stage: "submitted_to_batch_engine"
         )
         do {
-            try AdmissionPositionLimit.validate(
+            effective.maxTokens = try AdmissionPositionLimit.resolveOutputTokens(
                 promptTokens: prepared.promptTokens.count,
                 outputTokens: effective.maxTokens,
-                limit: generation.admissionPositionLimit
+                limit: generation.admissionPositionLimit,
+                isExplicit: (generation.maxTokensExplicit && !generation.admissionOutputTokensAreImplicit)
+                    || runtime.generation.maxTokens != nil
             )
         } catch {
             if let soloLease { await soloLease.release() }
