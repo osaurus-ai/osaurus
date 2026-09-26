@@ -80,13 +80,23 @@ struct AgentDescriptionBackfillTests {
             defer { SubagentStoreTestLock.shared.release() }
             let recorder = Recorder()
             let backfill = makeBackfill(recorder)
+            let manualPrompt = "Manual prompt \(UUID())"
+            let generatedPrompt = "Companion prompt \(UUID())"
             let agent = AgentManager.shared.create(
-                name: "Manual \(UUID())", description: "Mine.", systemPrompt: "Review Swift code.")
+                name: "Manual \(UUID())", description: "Mine.", systemPrompt: manualPrompt)
+            let companion = AgentManager.shared.create(name: "Automatic \(UUID())", systemPrompt: generatedPrompt)
             backfill.scheduleIfNeeded(agent.id)
             backfill.scheduleAll()
             await backfill.drain()
-            #expect(recorder.prompts.isEmpty)
+            // scheduleAll also services unrelated eligible agents (including
+            // starter fixtures). Assert this agent is excluded, not that the
+            // entire manager had no work; prove eligible work still ran.
+            #expect(!recorder.prompts.contains(manualPrompt))
+            #expect(recorder.prompts.filter { $0 == generatedPrompt }.count == 1)
+            #expect(AgentManager.shared.agent(for: agent.id)?.generatedDescription == nil)
             #expect(AgentManager.shared.agent(for: agent.id)?.routingDescription == "Mine.")
+            #expect(AgentManager.shared.agent(for: companion.id)?.generatedDescription == "Generated purpose.")
+            _ = await AgentManager.shared.delete(id: companion.id)
             _ = await AgentManager.shared.delete(id: agent.id)
         }
     }
