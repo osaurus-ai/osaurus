@@ -434,10 +434,11 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         isBuiltIn ? LCached(name) : name
     }
 
-    /// Display description for UI rendering. Same rules as `displayName`.
+    /// Display purpose without turning a generated summary into authored text.
+    /// Built-in authored descriptions follow the same localization as `displayName`.
     public var displayDescription: String {
-        guard isBuiltIn, !description.isEmpty else { return description }
-        return LCached(description)
+        if AgentDescriptionPolicy.normalized(description).isEmpty { return routingDescription }
+        return isBuiltIn ? LCached(description) : description
     }
 
     // MARK: - Built-in Agents

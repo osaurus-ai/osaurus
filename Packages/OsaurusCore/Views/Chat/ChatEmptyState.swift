@@ -178,7 +178,7 @@ struct ChatEmptyState: View {
         {
             return LocalizedStringKey(custom)
         }
-        let description = activeAgent.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = activeAgent.displayDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         if !description.isEmpty {
             return LocalizedStringKey(description)
         }

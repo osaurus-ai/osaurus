@@ -467,8 +467,8 @@ struct MemoryAgentRow: View {
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(theme.primaryText)
 
-                        if !agent.routingDescription.isEmpty {
-                            Text(agent.routingDescription)
+                        if !agent.displayDescription.isEmpty {
+                            Text(agent.displayDescription)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .lineLimit(1)

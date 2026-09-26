@@ -407,7 +407,7 @@ struct AgentSwitcherPopover: View {
                         row(
                             mascotId: agent.avatar,
                             name: agent.name,
-                            subtitle: agent.routingDescription,
+                            subtitle: agent.displayDescription,
                             customImageURL: agent.customAvatarURL,
                             isRemote: false,
                             isCurrent: agent.id == currentLocalAgentId,

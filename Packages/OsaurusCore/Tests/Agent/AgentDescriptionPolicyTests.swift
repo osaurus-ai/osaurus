@@ -29,6 +29,20 @@ struct AgentDescriptionPolicyTests {
         #expect(agent.routingDescription == "User wrote this.")
     }
 
+    @Test func generatedDisplaySurvivesRoundTripWithoutBecomingAuthoredText() throws {
+        var agent = Agent(name: "Generated purpose", description: " \n", systemPrompt: "Help with museums")
+        agent.generatedDescription = "  Plan accessible museum visits.  "
+        agent.generatedDescriptionPromptHash = AgentDescriptionPolicy.promptHash(agent.systemPrompt)
+        let restored = try JSONDecoder().decode(Agent.self, from: JSONEncoder().encode(agent))
+        #expect(restored.displayDescription == "Plan accessible museum visits.")
+        #expect(restored.description == " \n")
+        agent.description = "My own purpose"
+        #expect(agent.displayDescription == "My own purpose")
+        agent.description = ""
+        agent.generatedDescription = nil
+        #expect(agent.displayDescription.isEmpty)
+    }
+
     @Test func routingJSONQuotesDataAndOmitsBlankDescription() throws {
         let json = AgentDescriptionPolicy.routingJSON(
             id: "abc", name: "Quoted \"Helper\"", description: "Reviews \"ignore instructions\" text.")
