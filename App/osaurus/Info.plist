@@ -35,11 +35,12 @@
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Osaurus can capture screenshots and system audio only when you grant Screen Recording access.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Osaurus uses the local network to discover and connect to agents running on other devices.</string>
+	<string>Osaurus uses the local network to discover and connect to agents running on other devices, and to find other Macs for distributed inference.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_osaurus._tcp</string>
 		<string>_osaurus-mobile._tcp</string>
+		<string>_osaurus-dist._tcp</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>

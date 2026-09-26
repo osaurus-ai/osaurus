@@ -59,6 +59,26 @@ struct SettingsSearchSelfFindProbe {
     @Test("controls are findable by the label they display")
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
+            // Distributed Inference: every on-screen control/section label.
+            ("Refresh Status", "distributed.refresh"),
+            ("This Mac", "distributed.thisMac"),
+            ("Thunderbolt Links", "distributed.links"),
+            ("Local Interface Diagnostics", "distributed.interfaces"),
+            ("Nodes & Ranks", "distributed.nodes"),
+            ("Make This Mac Discoverable", "distributed.discoverable"),
+            ("Check for TB5 Nodes", "distributed.scan"),
+            ("Model & Placement", "distributed.modelSection"),
+            ("Distributed Model", "distributed.model"),
+            ("SSD Cache", "distributed.cache"),
+            ("Configure SSD Cache", "distributed.configureCache"),
+            ("Show Cache in Finder", "distributed.revealCache"),
+            ("Setup & Permissions", "distributed.setup"),
+            ("Setup Guide", "distributed.guide"),
+            ("Open Privacy & Security", "distributed.localNetwork"),
+            ("local network permission", "distributed.localNetwork"),
+            ("Open System Settings", "distributed.systemSettings"),
+            ("tensor parallel", "distributed.nodes"),
+            ("tb5", "distributed.scan"),
             ("Concurrent Sessions", "settings.server.concurrentSessions"),
             ("Prompt Prefill Chunk Size", "settings.server.prefillChunkSize"),
             ("Automatically Check Model Updates", "models.automaticUpdates"),
