@@ -9866,11 +9866,18 @@ struct ChatView: View {
                                 .frame(maxWidth: 1100)
                                 .frame(maxWidth: .infinity)
 
-                            composerLockNotice
-                                .padding(.horizontal, Self.composerHorizontalInset)
-                                .frame(maxWidth: 1100)
-                                .frame(maxWidth: .infinity)
-                                .animation(theme.springAnimation(), value: composerLock)
+                            // Spaced from the notice above (the repair banner),
+                            // and from the window edge when there is no input
+                            // card below it to do that.
+                            if composerLock != nil {
+                                composerLockNotice
+                                    .padding(.horizontal, Self.composerHorizontalInset)
+                                    .padding(.top, 8)
+                                    .padding(.bottom, isReadOnlyConversation ? 12 : 0)
+                                    .frame(maxWidth: 1100)
+                                    .frame(maxWidth: .infinity)
+                                    .animation(theme.springAnimation(), value: composerLock)
+                            }
 
                             // Run-liveness notice (slow / stalled) so a run
                             // with no visible progress reads as a knowable
