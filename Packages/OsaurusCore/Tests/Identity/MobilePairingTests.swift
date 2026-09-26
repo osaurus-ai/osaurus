@@ -19,7 +19,7 @@ struct PairingCodeTests {
         for _ in 0 ..< 200 {
             let code = PairingCode.generate()
             #expect(code.count == 6)
-            #expect(code.allSatisfy(\.isNumber))
+            #expect(code.allSatisfy { $0.isNumber })
         }
     }
 
@@ -203,6 +203,7 @@ struct MobilePairingServiceTests {
     }
 }
 
+@MainActor
 struct MobileConnectRelayTests {
     @Test func relayURLFollowsTheDocumentedFormat() {
         #expect(
