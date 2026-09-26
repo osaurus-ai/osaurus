@@ -266,6 +266,8 @@ final class InboundSharedRunBridge {
     private var streamingTurns: [String: UUID] = [:]
     private var lastStreamSave: [String: Date] = [:]
     private var lastStreamRender: [String: Date] = [:]
+    /// Runs with a trailing redraw scheduled (see `renderStreamed`).
+    private var pendingStreamRender: Set<String> = []
 
     /// Awaited by the request loop: content is visible immediately and partial
     /// output is checkpointed throughout generation, including reasoning.
@@ -290,17 +292,35 @@ final class InboundSharedRunBridge {
         turn.lastOutputAt = Date()
         turn.notifyContentChanged()
         session.markHostedTranscriptChanged()
-        // A window draws blocks, which hold a copy of the text; the Mac's own
-        // streaming rebuilds them as text lands. Without this the reply stayed
-        // an empty header until the run's finished turns were appended. At
-        // most ten times a second; the completed turn's append draws the rest.
-        if Date().timeIntervalSince(lastStreamRender[handle.runKey] ?? .distantPast) >= 0.1 {
-            session.rebuildVisibleBlocks()
-            lastStreamRender[handle.runKey] = Date()
-        }
+        renderStreamed(handle, session)
         if Date().timeIntervalSince(lastStreamSave[handle.runKey] ?? .distantPast) >= 0.25 {
             session.save()
             lastStreamSave[handle.runKey] = Date()
+        }
+    }
+
+    /// Redraws the window's blocks for streamed text. Blocks hold a copy of
+    /// the text, so the Mac's own streaming rebuilds them as text lands;
+    /// without this the reply stayed an empty header. At most ten times a
+    /// second, and never dropping the tail: a delta inside the window schedules
+    /// one redraw at its end, or the last words of a reply (often one quick
+    /// burst before the provider's closing pause) went undrawn.
+    private func renderStreamed(_ handle: Handle, _ session: ChatSession) {
+        let interval: TimeInterval = 0.1
+        let since = Date().timeIntervalSince(lastStreamRender[handle.runKey] ?? .distantPast)
+        if since >= interval {
+            session.rebuildVisibleBlocks()
+            lastStreamRender[handle.runKey] = Date()
+            return
+        }
+        guard !pendingStreamRender.contains(handle.runKey) else { return }
+        pendingStreamRender.insert(handle.runKey)
+        let wait = interval - since
+        Task { @MainActor [weak self, weak session] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self, self.pendingStreamRender.remove(handle.runKey) != nil, let session else { return }
+            session.rebuildVisibleBlocks()
+            self.lastStreamRender[handle.runKey] = Date()
         }
     }
 
@@ -350,9 +370,13 @@ final class InboundSharedRunBridge {
             streamingTurns.removeValue(forKey: handle.runKey)
             lastStreamSave.removeValue(forKey: handle.runKey)
             lastStreamRender.removeValue(forKey: handle.runKey)
+            pendingStreamRender.remove(handle.runKey)
         }
         session.appendHostedTurns(turns)
         session.markHostedTranscriptChanged()
+        // The completed step, drawn whole: `appendHostedTurns` draws nothing
+        // when the step's text was all streamed and there is no turn to add.
+        session.rebuildVisibleBlocks()
         session.save()
     }
 
@@ -365,10 +389,14 @@ final class InboundSharedRunBridge {
             "hosted-run: finished run \(handle.runKey) success=\(success) "
                 + "(session turns=\(manager.taskState(for: handle.taskId)?.chatSession?.turns.count ?? -1))"
         )
-        manager.taskState(for: handle.taskId)?.chatSession?.save()
+        let session = manager.taskState(for: handle.taskId)?.chatSession
+        session?.save()
+        // Whatever streamed since the last redraw, drawn before the run ends.
+        session?.rebuildVisibleBlocks()
         streamingTurns.removeValue(forKey: handle.runKey)
         lastStreamSave.removeValue(forKey: handle.runKey)
         lastStreamRender.removeValue(forKey: handle.runKey)
+        pendingStreamRender.remove(handle.runKey)
         SubagentInterruptCenter.shared.unregister(handle.runKey)
         var remaining = runsByTask[handle.taskId] ?? []
         remaining.remove(handle.runKey)
