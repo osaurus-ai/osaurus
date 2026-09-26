@@ -265,6 +265,7 @@ final class InboundSharedRunBridge {
 
     private var streamingTurns: [String: UUID] = [:]
     private var lastStreamSave: [String: Date] = [:]
+    private var lastStreamRender: [String: Date] = [:]
 
     /// Awaited by the request loop: content is visible immediately and partial
     /// output is checkpointed throughout generation, including reasoning.
@@ -289,6 +290,14 @@ final class InboundSharedRunBridge {
         turn.lastOutputAt = Date()
         turn.notifyContentChanged()
         session.markHostedTranscriptChanged()
+        // A window draws blocks, which hold a copy of the text; the Mac's own
+        // streaming rebuilds them as text lands. Without this the reply stayed
+        // an empty header until the run's finished turns were appended. At
+        // most ten times a second; the completed turn's append draws the rest.
+        if Date().timeIntervalSince(lastStreamRender[handle.runKey] ?? .distantPast) >= 0.1 {
+            session.rebuildVisibleBlocks()
+            lastStreamRender[handle.runKey] = Date()
+        }
         if Date().timeIntervalSince(lastStreamSave[handle.runKey] ?? .distantPast) >= 0.25 {
             session.save()
             lastStreamSave[handle.runKey] = Date()
@@ -340,6 +349,7 @@ final class InboundSharedRunBridge {
             streamed.notifyContentChanged()
             streamingTurns.removeValue(forKey: handle.runKey)
             lastStreamSave.removeValue(forKey: handle.runKey)
+            lastStreamRender.removeValue(forKey: handle.runKey)
         }
         session.appendHostedTurns(turns)
         session.markHostedTranscriptChanged()
@@ -358,6 +368,7 @@ final class InboundSharedRunBridge {
         manager.taskState(for: handle.taskId)?.chatSession?.save()
         streamingTurns.removeValue(forKey: handle.runKey)
         lastStreamSave.removeValue(forKey: handle.runKey)
+        lastStreamRender.removeValue(forKey: handle.runKey)
         SubagentInterruptCenter.shared.unregister(handle.runKey)
         var remaining = runsByTask[handle.taskId] ?? []
         remaining.remove(handle.runKey)
