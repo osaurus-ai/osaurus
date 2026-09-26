@@ -46,12 +46,10 @@ public enum CoreModelError: Error, LocalizedError, Equatable {
 
 /// Who is waiting on a `CoreModelService` call.
 ///
-/// This matters because the runtime is strictly single-model: loading model B
-/// evicts resident model A, and a new load cancels an in-flight one. A call the
-/// user is waiting on has earned that right. A housekeeping call — memory
-/// distillation, voice-transcript cleanup, a greeting — has not: it must never
-/// evict the model the user is chatting with, nor cancel the load they are
-/// staring at a spinner for.
+/// Single-model policy may evict another resident model or cancel its pending
+/// load; flexible policy may evict to satisfy its memory budget. Housekeeping
+/// calls decline before either action. They may still load a model when
+/// admission permits it without displacing another resident or pending load.
 public enum CoreModelIntent: Sendable {
     /// The user is waiting on this call. May load/evict as needed.
     case interactive
