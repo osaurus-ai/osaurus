@@ -83,7 +83,8 @@ final class MobilePairingService: ObservableObject {
     private static let relayManagedAgentsKey = "mobileConnectRelayManagedAgents"
     static let wireVersion = 1
     private static let pairedDeviceDefaultsKey = "mobileConnectPairedDevice"
-    private static let keyLabel = "Osaurus Connect"
+    /// Label of every pairing key; phone chats keep it as their caller name.
+    nonisolated static let keyLabel = "Osaurus Connect"
 
     enum RedeemOutcome: Equatable, Sendable {
         case paired(MobilePairResponse, deviceName: String)
