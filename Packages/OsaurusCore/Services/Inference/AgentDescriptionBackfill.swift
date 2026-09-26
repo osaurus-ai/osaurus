@@ -8,10 +8,11 @@ private let logger = Logger(subsystem: "ai.osaurus", category: "agent_descriptio
 /// purpose line beside the name. The user's text always wins; a generated
 /// summary is regenerated only when the system prompt changes.
 ///
-/// Every call is best-effort housekeeping: it never blocks a save, never
-/// loads or evicts a model (`CoreModelIntent.background`), and stays silent
-/// when the core model is unavailable. Triggers are agent save/create, a clean
-/// chat run completing (a model is resident then), and spawn roster composition.
+/// Every call is best-effort housekeeping and never blocks a save. Background
+/// admission may load the core model when policy permits, but refuses loads
+/// that would evict a resident model or cancel another model's pending load.
+/// Unavailable models are silent declines. Triggers are agent save/create,
+/// a clean chat run completing, and spawn roster composition.
 @MainActor
 public final class AgentDescriptionBackfill {
     public static let shared = AgentDescriptionBackfill()
@@ -24,7 +25,7 @@ public final class AgentDescriptionBackfill {
     var generator: Generator
     /// How long to wait before retrying an agent after a real failure.
     var retryInterval: TimeInterval = 10 * 60
-    /// Cooldown after a quiet decline (no resident model, breaker open).
+    /// Cooldown after a quiet decline (residency conflict, unavailable model, or breaker open).
     /// Short so a roster-time decline does not block the post-chat trigger.
     var declineRetryInterval: TimeInterval = 15
 
@@ -143,7 +144,7 @@ public final class AgentDescriptionBackfill {
         } catch is CancellationError {
             // Nothing persisted; the next trigger reschedules.
         } catch let error as CoreModelError {
-            // Declines (no resident model, breaker open, unset core model)
+            // Declines (residency conflict, unavailable model, or open breaker)
             // are expected and silent. Try again soon; the next clean chat
             // turn has a resident model.
             switch error {

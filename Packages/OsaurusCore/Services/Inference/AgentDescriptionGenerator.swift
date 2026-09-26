@@ -2,7 +2,8 @@ import Foundation
 
 /// One-shot core-model summary of an agent's system prompt, used only to fill
 /// `Agent.generatedDescription` when the user left `description` blank.
-/// Runs as a background call: it never loads or evicts a model on its own.
+/// Uses background admission: it may load a model without evicting a resident
+/// model or cancelling another model's pending load.
 enum AgentDescriptionGenerator {
     static func generate(systemPrompt: String, fallbackModel: String? = nil) async throws -> String {
         let prompt = AgentDescriptionPolicy.normalized(systemPrompt)
