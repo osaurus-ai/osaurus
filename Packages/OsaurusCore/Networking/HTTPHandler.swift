@@ -982,6 +982,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleListProjectsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/sessions" {
                 handleListSessionsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path.hasPrefix("/sessions/"), path.contains("/images/") {
+                // Before the `/sessions/{id}` catch-all below.
+                handleSessionImageEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path.hasPrefix("/sessions/"), path.hasSuffix("/truncate") {
                 handleSessionTruncateEndpoint(
                     head: head,
@@ -6653,15 +6662,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let thinking: String?
         let thinking_duration_ms: Int?
         /// A document attached to a user turn: what the model was given,
-        /// so a client can show and open it. Images are still only counted.
+        /// so a client can show and open it.
         struct AttachmentDTO: Encodable {
             let filename: String
             let file_size: Int
             let content: String
         }
+        /// An image attached to a turn. Listed, not inlined: a few camera
+        /// photos would make the whole chat megabytes to open. The bytes are
+        /// at `GET /sessions/{id}/turns/{turn id}/images/{index}`.
+        struct ImageDTO: Encodable {
+            let index: Int
+            let byte_count: Int
+        }
         let tool_calls: [ToolCallDTO]?
         let attachment_count: Int
         let attachments: [AttachmentDTO]?
+        let images: [ImageDTO]?
         let created_at: String?
         let completed_at: String?
         let token_count: Int?
@@ -7118,6 +7135,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             return SessionTurnDTO.AttachmentDTO(filename: filename, file_size: size, content: content)
         }
+        // Images by position among the turn's images, the index the image
+        // endpoint takes. Sizes come from the record, nothing is read here.
+        let images: [SessionTurnDTO.ImageDTO] = turn.attachments.filter(\.isImage).enumerated().map { index, image in
+            let size: Int
+            switch image.kind {
+            case .image(let data): size = data.count
+            case .imageRef(_, let byteCount): size = byteCount
+            default: size = 0
+            }
+            return SessionTurnDTO.ImageDTO(index: index, byte_count: size)
+        }
         return SessionTurnDTO(
             id: turn.id.uuidString,
             role: turn.role.rawValue,
@@ -7127,10 +7155,118 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             tool_calls: (calls?.isEmpty ?? true) ? nil : calls,
             attachment_count: turn.attachments.count,
             attachments: documents.isEmpty ? nil : documents,
+            images: images.isEmpty ? nil : images,
             created_at: turn.createdAt.map(sessionDateFormatter.string(from:)),
             completed_at: turn.completedAt.map(sessionDateFormatter.string(from:)),
             token_count: turn.generationTokenCount
         )
+    }
+
+    /// GET /sessions/{id}/turns/{turn id}/images/{index} — one image a turn
+    /// carries, as listed in `GET /sessions/{id}` (`images[].index`).
+    /// Owner-only, like the chat it belongs to. Spilled images are read back
+    /// from the blob store.
+    private func handleSessionImageEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        guard components.count == 6, components[0] == "sessions", components[2] == "turns",
+            components[4] == "images",
+            let sessionId = UUID(uuidString: String(components[1])),
+            let turnId = UUID(uuidString: String(components[3])),
+            let index = Int(components[5]), index >= 0
+        else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: #"{"error":"invalid_image_path"}"#
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let images = await ChatSessionStore.loadAsync(id: sessionId)?
+                .turns.first { $0.id == turnId }?
+                .attachments.filter(\.isImage)
+            guard let images, images.indices.contains(index), let data = images[index].loadImageData() else {
+                hop {
+                    let body = #"{"error":"image_not_found"}"#
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: body
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: body,
+                        responseStatus: 404,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            let contentType = Self.imageContentType(forData: data)
+            hop {
+                let context = ctx.value
+                var head2 = HTTPResponseHead(version: head.version, status: .ok)
+                var headers = HTTPHeaders()
+                headers.add(name: "Content-Type", value: contentType)
+                headers.add(name: "Content-Length", value: String(data.count))
+                headers.add(name: "Cache-Control", value: "no-store")
+                for (name, value) in cors { headers.add(name: name, value: value) }
+                head2.headers = headers
+                var buffer = context.channel.allocator.buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                context.write(NIOAny(HTTPServerResponsePart.head(head2)), promise: nil)
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)), promise: nil)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "<\(data.count) bytes \(contentType)>",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// The image type from its first bytes: attachments carry no filename.
+    static func imageContentType(forData data: Data) -> String {
+        let bytes = [UInt8](data.prefix(12))
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "image/png" }
+        if bytes.starts(with: [0x47, 0x49, 0x46]) { return "image/gif" }
+        if bytes.count >= 12, bytes[0 ..< 4] == [0x52, 0x49, 0x46, 0x46], bytes[8 ..< 12] == [0x57, 0x45, 0x42, 0x50] {
+            return "image/webp"
+        }
+        if bytes.count >= 12, bytes[4 ..< 8] == [0x66, 0x74, 0x79, 0x70] { return "image/heic" }
+        return "application/octet-stream"
     }
 
     /// Parses `?a=b&c=d` from a request URI.

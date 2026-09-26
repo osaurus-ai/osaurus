@@ -961,6 +961,7 @@ The same fields plus `turns`, in the Mac's block shape:
                           "result":"…","duration_ms":1250}],
            "attachment_count":1,
            "attachments":[{"filename":"budget.md","file_size":664,"content":"…"}],
+           "images":[{"index":0,"byte_count":284113}],
            "created_at":"…","completed_at":"…","token_count":42}]}
 ```
 
@@ -968,9 +969,14 @@ Tool-result turns are folded into the assistant turn that called them, so a
 client renders one timeline per turn. `attachment_count` counts everything
 attached; `attachments` carries the documents among them with their text —
 what the model was given — so a phone away from the Mac can open them.
-Images, audio and video are counted only. Absent when the turn has no
-documents.
+Absent when the turn has no documents. `images` lists the turn's images
+without their bytes (§14.9 serves them); absent when there are none. Audio
+and video are counted only.
 `404 session_not_found` for an unknown id.
+
+Images a client sends in a §14.5 run (`image_url` data URLs) are stored on
+the user turn they came with, as a Mac chat stores its own, so they come
+back in `images`.
 
 ### 14.3 `PATCH /sessions/{id}`
 
@@ -1040,6 +1046,14 @@ showing the chat drops the turns live; otherwise History refreshes.
 unknown id or a workspace chat served for a teammate (the chats §14.5 would
 ignore), `404 turn_not_found` when the turn is not in the chat, and
 `409 session_busy` while the Mac is running that chat. Owner-only.
+
+### 14.9 `GET /sessions/{id}/turns/{turn id}/images/{index}`
+
+The bytes of one image from §14.2's `images`, `index` being its position
+there. `Content-Type` is the image's own (`image/jpeg`, `image/png`, …, read
+from its first bytes; `application/octet-stream` when unrecognised).
+`404 image_not_found` when the chat, turn or index doesn't exist,
+`400 invalid_image_path` for a malformed path. Owner-only.
 
 ---
 
