@@ -268,7 +268,7 @@ public enum ChatSessionExporter {
                 // excluding cache finalization when the output boundary is known.
                 let duration = completed.timeIntervalSince(created)
                 if duration > 0, let tokens = turn.generationTokenCount, tokens > 0 {
-                    parens.append(String(format: "%.1f tok/s", Double(tokens) / duration))
+                    parens.append(String(format: "%.1f tok/s estimated", Double(tokens) / duration))
                 }
             }
         }

@@ -80,10 +80,11 @@ struct ChatGenerationMetricsPersistenceTests {
             )
         }
         #expect(export(turn).contains("106.6 tok/s"))
+        #expect(!export(turn).contains("tok/s estimated"))
         turn.generationTokensPerSecond = nil
-        #expect(export(turn).contains("10.0 tok/s"))
+        #expect(export(turn).contains("10.0 tok/s estimated"))
         turn.lastOutputAt = nil
-        #expect(export(turn).contains("5.0 tok/s"))
+        #expect(export(turn).contains("5.0 tok/s estimated"))
         turn.generationTokenCount = nil
         #expect(!export(turn).contains("tok/s"))
         #expect(!ChatSessionExporter.markdown(for: ChatSessionData(title: "metrics", turns: [turn])).contains("tok/s"))
