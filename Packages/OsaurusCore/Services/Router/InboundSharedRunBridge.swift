@@ -102,10 +102,17 @@ final class InboundSharedRunBridge {
         requestMessages: [ChatMessage],
         stop: @escaping @Sendable () -> Void
     ) -> Handle {
-        let agentName = AgentManager.shared.agent(for: agentId)?.name ?? "Shared agent"
-        let callerName = context.callerLabel ?? "Teammate"
-        let title = "\(callerName) → \(agentName)"
         let turns = ChatHistoryWriter.turns(from: requestMessages)
+        // The owner's own phone chats are titled from what was asked, like
+        // any chat; "caller → agent" names a teammate's conversation, and on
+        // every phone chat it left History with rows that all read the same.
+        let title: String
+        if RemoteSessionContinuation.isFromPairedPhone(context) {
+            title = ChatSessionData.generateTitle(from: turns)
+        } else {
+            let agentName = AgentManager.shared.agent(for: agentId)?.name ?? "Shared agent"
+            title = "\(context.callerLabel ?? "Teammate") → \(agentName)"
+        }
 
         let (taskId, session) = resolveHostedSession(
             agentId: agentId,
@@ -167,7 +174,13 @@ final class InboundSharedRunBridge {
         var data: ChatSessionData
         if let rowId = existingRowId, let stored = ChatSessionStore.load(id: rowId) {
             data = stored
-            data.title = stored.title == "New Chat" ? title : stored.title
+            // A phone chat still titled the old way ("Osaurus Connect → …")
+            // takes its real title on its next run.
+            let staleTitle =
+                stored.title == "New Chat"
+                || (RemoteSessionContinuation.isFromPairedPhone(context)
+                    && stored.title.hasPrefix("\(MobilePairingService.keyLabel) → "))
+            data.title = staleTitle ? title : stored.title
         } else {
             data = ChatSessionData(
                 id: UUID(),

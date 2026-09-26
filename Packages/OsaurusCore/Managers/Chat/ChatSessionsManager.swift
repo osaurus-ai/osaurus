@@ -279,6 +279,27 @@ final class ChatSessionsManager: ObservableObject {
         upsertInMemory(session)
     }
 
+    /// Phone chats saved before they were titled from their first message
+    /// all read "Osaurus Connect → <agent>", in History here and in the
+    /// phone's list. Retitles them once from what was asked; the transcript
+    /// is read off the main thread, and `updatedAt` is left alone.
+    func retitleLegacyPhoneChats() {
+        let legacyPrefix = "\(MobilePairingService.keyLabel) → "
+        let stale = sessions.filter {
+            $0.title.hasPrefix(legacyPrefix) && RemoteSessionContinuation.isFromPairedPhone($0)
+        }.map(\.id)
+        guard !stale.isEmpty else { return }
+        Task {
+            for id in stale {
+                guard let data = await ChatSessionStore.loadAsync(id: id) else { continue }
+                let title = ChatSessionData.generateTitle(from: data.turns)
+                guard title != "New Chat" else { continue }
+                renameQuietly(id: id, title: title)
+                ChatWindowManager.shared.syncOpenSessions(id: id) { $0.title = title }
+            }
+        }
+    }
+
     /// Toggle a session's archive flag. Same in-memory-first lookup as
     /// `rename` because a freshly created chat may not be in the store yet.
     /// Does not touch `updatedAt` so an archive doesn't bubble the row to

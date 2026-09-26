@@ -231,6 +231,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // service does both in its init, which otherwise waited for Settings
         // → Osaurus Connect or the first pairing request to touch it.
         _ = MobilePairingService.shared
+        // Phone chats from before they were titled by content, once.
+        ChatSessionsManager.shared.retitleLegacyPhoneChats()
 
         // Warm the GitHub API token cache off the main thread so the first
         // plugin browse/import/update doesn't pay a synchronous keychain read
