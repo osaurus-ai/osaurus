@@ -320,7 +320,7 @@ let package = Package(
         // max_tokens bundle aliases with max_new_tokens precedence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "6827ef1153efa434f04ebeff801d9d6b0ce3e6bd"
+            revision: "2f973dc63d14eaf85adfcb99ce76e4f60f9068a6"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
