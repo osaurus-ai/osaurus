@@ -9100,6 +9100,14 @@ struct ChatView: View {
         return windowState.composerLock
     }
 
+    /// A conversation this Mac hosted for someone else (a teammate, or its
+    /// own paired iPhone): read here, continued where it started, so there
+    /// is no input card to show.
+    private var isReadOnlyConversation: Bool {
+        if case .teammateConversation = composerLock { return true }
+        return false
+    }
+
     /// One-line explanation of the composer lock with its action (Retry /
     /// Open Workspaces), in the style of `remoteAgentConnectionNotice`. Auto-
     /// clears when the lock lifts (presence flips online, connect lands).
@@ -9886,109 +9894,114 @@ struct ChatView: View {
                             // input is the obvious place to type, and
                             // accidental sends here can't race the
                             // prompt resolution.
-                            FloatingInputCard(
-                                text: $observedSession.input,
-                                selectedModel: $observedSession.selectedModel,
-                                pendingAttachments: $observedSession.pendingAttachments,
-                                isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
-                                voiceInputState: $observedSession.voiceInputState,
-                                showVoiceOverlay: $observedSession.showVoiceOverlay,
-                                pickerItems: filteredPickerItems,
-                                activeModelOptions: $observedSession.activeModelOptions,
-                                isStreaming: observedSession.isSendActiveForComposer,
-                                // Hide Stop ONLY while the redaction review
-                                // sheet is actually on screen (the sheet owns
-                                // its own Cancel and the streaming Task is
-                                // suspended in its continuation). Crucially
-                                // this is NOT gated on the broader
-                                // "before first token" window, so Stop stays
-                                // available during model load / prefill — the
-                                // long pause a big model spends loading from
-                                // disk while the typing-indicator shimmer is up.
-                                isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
-                                supportsImages: observedSession.selectedModelSupportsImages,
-                                estimatedContextTokens: observedSession.estimatedContextTokens,
-                                appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
-                                contextBreakdown: observedSession.estimatedContextBreakdown,
-                                sessionSpendMicro: observedSession.sessionRouterSpendMicro,
-                                sessionCachedInputLabel: {
-                                    let stats = observedSession.sessionRouterCacheStats
-                                    return OsaurusRouter.formatCachedInputLabel(
-                                        cachedTokens: stats.cachedInputTokens,
-                                        inputTokens: stats.inputTokens
-                                    )
-                                }(),
-                                isRouterBilledSession: observedSession.isOsaurusRouterSession,
-                                workspacePoolLabel: workspacePoolLabel,
-                                workspacePoolId: activeWorkspaceId,
-                                imageComposerSettings: $observedSession.imageComposerSettings,
-                                onSend: { manualText in
-                                    if let manualText = manualText {
-                                        observedSession.input = manualText
-                                    }
-                                    if observedSession.isSendActiveForComposer {
-                                        observedSession.enqueueSend(
-                                            observedSession.input,
-                                            attachments: observedSession.pendingAttachments
+                            // Hidden on a read-only conversation (a teammate's, or one
+                            // from the paired iPhone): nothing can be sent there, and the
+                            // notice above says where it continues.
+                            if !isReadOnlyConversation {
+                                FloatingInputCard(
+                                    text: $observedSession.input,
+                                    selectedModel: $observedSession.selectedModel,
+                                    pendingAttachments: $observedSession.pendingAttachments,
+                                    isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
+                                    voiceInputState: $observedSession.voiceInputState,
+                                    showVoiceOverlay: $observedSession.showVoiceOverlay,
+                                    pickerItems: filteredPickerItems,
+                                    activeModelOptions: $observedSession.activeModelOptions,
+                                    isStreaming: observedSession.isSendActiveForComposer,
+                                    // Hide Stop ONLY while the redaction review
+                                    // sheet is actually on screen (the sheet owns
+                                    // its own Cancel and the streaming Task is
+                                    // suspended in its continuation). Crucially
+                                    // this is NOT gated on the broader
+                                    // "before first token" window, so Stop stays
+                                    // available during model load / prefill — the
+                                    // long pause a big model spends loading from
+                                    // disk while the typing-indicator shimmer is up.
+                                    isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
+                                    supportsImages: observedSession.selectedModelSupportsImages,
+                                    estimatedContextTokens: observedSession.estimatedContextTokens,
+                                    appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
+                                    contextBreakdown: observedSession.estimatedContextBreakdown,
+                                    sessionSpendMicro: observedSession.sessionRouterSpendMicro,
+                                    sessionCachedInputLabel: {
+                                        let stats = observedSession.sessionRouterCacheStats
+                                        return OsaurusRouter.formatCachedInputLabel(
+                                            cachedTokens: stats.cachedInputTokens,
+                                            inputTokens: stats.inputTokens
                                         )
-                                    } else {
-                                        observedSession.sendCurrent(directUserSend: true)
-                                    }
-                                },
-                                onStop: { observedSession.stop() },
-                                focusTrigger: focusTrigger,
-                                agentId: windowState.agentId,
-                                windowId: windowState.windowId,
-                                isCompact: windowState.showSidebar,
-                                isEmptyChat: !observedSession.hasVisibleThreadMessages,
-                                onClearChat: { observedSession.reset() },
-                                onDraftChange: { observedSession.noteComposerDraft($0) },
-                                onWillRehydrate: { observedSession.promoteComposerDraft() },
-                                modelSwitchContinuityWarning:
-                                    observedSession.modelSwitchContinuityWarning,
-                                onDismissModelSwitchContinuityWarning: {
-                                    observedSession.modelSwitchContinuityWarning = nil
-                                },
-                                onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
-                                onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
-                                onSkillSelected: { skillId in
-                                    observedSession.pendingOneOffSkillId = skillId
-                                },
-                                pendingSkillId: $observedSession.pendingOneOffSkillId,
-                                autoSpeakAssistant: $observedSession.autoSpeakAssistant,
-                                queuedSend: $observedSession.queuedSend,
-                                onSendNow: { observedSession.sendNowInterrupting() },
-                                onCancelQueued: { observedSession.cancelQueuedSend() },
-                                onAddCredits: { showTopUpSheet = true },
-                                isModelPinned: isRemoteAgentChrome,
-                                pinnedModelLabel: pinnedModelChipLabel,
-                                remoteConnectionPending: windowState.remoteAgentConnectionPhase
-                                    == .connecting,
-                                composerLock: composerLock,
-                                isRemoteAgentRun: isRemoteAgentChrome,
-                                inputHistoryProvider: { [weak observedSession] in
-                                    guard let observedSession else { return [] }
-                                    return ChatInputHistory.entries(from: observedSession.turns)
-                                },
-                                inputHistoryKey: observedSession.sessionId,
-                                compactionState: observedSession.compactionState,
-                                canCompactConversation: observedSession
-                                    .canManuallyCompactConversation,
-                                onCompactConversation: {
-                                    observedSession.requestManualCompaction()
-                                },
-                                warmupController: observedSession.warmupController,
-                                folderState: observedSession.folderState
-                            )
-                            // Passed through the environment rather than as
-                            // an init argument: the initializer above is at
-                            // the type-checker's limit already.
-                            .environment(\.composerGeneration, observedSession.composerGeneration)
-                            .frame(maxWidth: 1100)
-                            .frame(maxWidth: .infinity)
-                            .opacity(isPromptOverlayActive ? 0.55 : 1.0)
-                            .allowsHitTesting(!isPromptOverlayActive)
-                            .animation(theme.springAnimation(), value: isPromptOverlayActive)
+                                    }(),
+                                    isRouterBilledSession: observedSession.isOsaurusRouterSession,
+                                    workspacePoolLabel: workspacePoolLabel,
+                                    workspacePoolId: activeWorkspaceId,
+                                    imageComposerSettings: $observedSession.imageComposerSettings,
+                                    onSend: { manualText in
+                                        if let manualText = manualText {
+                                            observedSession.input = manualText
+                                        }
+                                        if observedSession.isSendActiveForComposer {
+                                            observedSession.enqueueSend(
+                                                observedSession.input,
+                                                attachments: observedSession.pendingAttachments
+                                            )
+                                        } else {
+                                            observedSession.sendCurrent(directUserSend: true)
+                                        }
+                                    },
+                                    onStop: { observedSession.stop() },
+                                    focusTrigger: focusTrigger,
+                                    agentId: windowState.agentId,
+                                    windowId: windowState.windowId,
+                                    isCompact: windowState.showSidebar,
+                                    isEmptyChat: !observedSession.hasVisibleThreadMessages,
+                                    onClearChat: { observedSession.reset() },
+                                    onDraftChange: { observedSession.noteComposerDraft($0) },
+                                    onWillRehydrate: { observedSession.promoteComposerDraft() },
+                                    modelSwitchContinuityWarning:
+                                        observedSession.modelSwitchContinuityWarning,
+                                    onDismissModelSwitchContinuityWarning: {
+                                        observedSession.modelSwitchContinuityWarning = nil
+                                    },
+                                    onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
+                                    onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
+                                    onSkillSelected: { skillId in
+                                        observedSession.pendingOneOffSkillId = skillId
+                                    },
+                                    pendingSkillId: $observedSession.pendingOneOffSkillId,
+                                    autoSpeakAssistant: $observedSession.autoSpeakAssistant,
+                                    queuedSend: $observedSession.queuedSend,
+                                    onSendNow: { observedSession.sendNowInterrupting() },
+                                    onCancelQueued: { observedSession.cancelQueuedSend() },
+                                    onAddCredits: { showTopUpSheet = true },
+                                    isModelPinned: isRemoteAgentChrome,
+                                    pinnedModelLabel: pinnedModelChipLabel,
+                                    remoteConnectionPending: windowState.remoteAgentConnectionPhase
+                                        == .connecting,
+                                    composerLock: composerLock,
+                                    isRemoteAgentRun: isRemoteAgentChrome,
+                                    inputHistoryProvider: { [weak observedSession] in
+                                        guard let observedSession else { return [] }
+                                        return ChatInputHistory.entries(from: observedSession.turns)
+                                    },
+                                    inputHistoryKey: observedSession.sessionId,
+                                    compactionState: observedSession.compactionState,
+                                    canCompactConversation: observedSession
+                                        .canManuallyCompactConversation,
+                                    onCompactConversation: {
+                                        observedSession.requestManualCompaction()
+                                    },
+                                    warmupController: observedSession.warmupController,
+                                    folderState: observedSession.folderState
+                                )
+                                // Passed through the environment rather than as
+                                // an init argument: the initializer above is at
+                                // the type-checker's limit already.
+                                .environment(\.composerGeneration, observedSession.composerGeneration)
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+                                .opacity(isPromptOverlayActive ? 0.55 : 1.0)
+                                .allowsHitTesting(!isPromptOverlayActive)
+                                .animation(theme.springAnimation(), value: isPromptOverlayActive)
+                            }
                         } else {
                             // No models empty state
                             ChatEmptyState(
