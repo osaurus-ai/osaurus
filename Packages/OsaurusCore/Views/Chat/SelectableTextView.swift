@@ -1023,6 +1023,17 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Context-menu Copy and Edit > Copy prefer the cross-block selection
+    /// (see `copyCrossSelectionIfActive`).
+    override func copy(_ sender: Any?) {
+        if copyCrossSelectionIfActive() { return }
+        super.copy(sender)
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        crossSelectionEnablesCopy(item) || super.validateUserInterfaceItem(item)
+    }
+
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result { needsDisplay = true }

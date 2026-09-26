@@ -1091,6 +1091,16 @@ final class CellTextView: NSTextView, CrossSelectableTextView {
         }
     }
 
+    /// See SelectableNSTextView.copy — the cross-block selection wins.
+    override func copy(_ sender: Any?) {
+        if copyCrossSelectionIfActive() { return }
+        super.copy(sender)
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        crossSelectionEnablesCopy(item) || super.validateUserInterfaceItem(item)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         drawCrossSelectionHighlight()
         super.draw(dirtyRect)
