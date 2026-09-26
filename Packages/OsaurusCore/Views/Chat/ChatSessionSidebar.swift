@@ -3383,8 +3383,15 @@ private struct SessionRow: View {
 
     /// Compact icon-only badge that surfaces the session's `SessionSource`
     /// (plugin / http / schedule / watcher). Chat-source rows hide it.
+    /// A chat from the paired iPhone. Stored as a `.workspace` row (it runs
+    /// through the shared-agent path), but it is the owner's own chat, not a
+    /// teammate's, and is shown as the iPhone's.
+    private var isFromPairedPhone: Bool {
+        RemoteSessionContinuation.isFromPairedPhone(session)
+    }
+
     private var sourceBadge: some View {
-        Image(systemName: session.source.iconName)
+        Image(systemName: isFromPairedPhone ? "iphone" : session.source.iconName)
             .font(.system(size: 8.5, weight: .semibold))
             .foregroundColor(sourceBadgeColor)
             .frame(width: 14, height: 14)
@@ -3399,6 +3406,12 @@ private struct SessionRow: View {
     /// dimension is glanceable without expanding the row.
     private var metadataLine: String {
         var parts: [String] = [formatRelativeDate(session.updatedAt)]
+        // A phone chat's key is the pairing key's nonce plus the phone's own
+        // id: noise to a reader, so it names the iPhone and stops there.
+        if isFromPairedPhone {
+            parts.append("via iPhone")
+            return parts.joined(separator: " · ")
+        }
         let pluginName = session.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
         if let origin = session.source.originLabel(pluginDisplayName: pluginName) {
             parts.append(origin)
@@ -3453,6 +3466,9 @@ private struct SessionRow: View {
         case .delegation:
             return Text("Orchestrator", bundle: .module)
         case .workspace:
+            if isFromPairedPhone {
+                return Text("Osaurus Connect", bundle: .module)
+            }
             if let caller = session.workspace?.callerLabel {
                 return Text(verbatim: "Workspace · \(caller)")
             }

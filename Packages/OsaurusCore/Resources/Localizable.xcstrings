@@ -245085,6 +245085,62 @@
         }
       }
     },
+    "This chat is from your iPhone. Continue it there." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Chat stammt von deinem iPhone. Setze ihn dort fort."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 채팅은 iPhone에서 시작되었습니다. iPhone에서 계속하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот чат начат на вашем iPhone. Продолжите его там."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此聊天来自你的 iPhone，请在 iPhone 上继续。"
+          }
+        }
+      }
+    },
+    "Your iPhone is using %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dein iPhone verwendet %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone에서 %@ 사용 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваш iPhone использует %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 iPhone 正在使用 %@"
+          }
+        }
+      }
+    },
     "This is %@'s conversation with %@ through your shared agent — read-only here." : {
       "localizations" : {
         "de" : {

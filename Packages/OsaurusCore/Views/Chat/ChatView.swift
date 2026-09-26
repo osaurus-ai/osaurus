@@ -9119,7 +9119,9 @@ struct ChatView: View {
                     sessionId: observedSession.sessionId,
                     callerName: callerName,
                     agentName: agentName,
-                    isWorkspace: isWorkspace
+                    isWorkspace: isWorkspace,
+                    isFromPairedPhone: observedSession.workspaceContext
+                        .map(RemoteSessionContinuation.isFromPairedPhone) ?? false
                 )
             } else {
                 sharedAgentStatusNotice(status, identity: identity)
