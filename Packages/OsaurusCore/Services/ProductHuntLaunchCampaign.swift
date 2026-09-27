@@ -98,7 +98,7 @@ public final class ProductHuntLaunchCampaign {
     init(
         defaults: UserDefaults = .standard,
         now: @escaping () -> Date = Date.init,
-        isPostponed: Bool = Self.isPostponed
+        isPostponed: Bool = ProductHuntLaunchCampaign.isPostponed
     ) {
         self.defaults = defaults
         self.now = now
