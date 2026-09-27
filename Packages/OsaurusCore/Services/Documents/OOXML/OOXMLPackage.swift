@@ -374,12 +374,11 @@ extension XMLElement {
             existing.stringValue = value
             return
         }
-        let node: XMLNode
-        if let uri {
-            node = XMLNode.attribute(withName: name, uri: uri, stringValue: value) as! XMLNode
-        } else {
-            node = XMLNode.attribute(withName: name, stringValue: value) as! XMLNode
-        }
+        // `XMLNode.attribute(...)` is typed `Any` but always yields a node.
+        let made: Any =
+            uri.map { XMLNode.attribute(withName: name, uri: $0, stringValue: value) }
+            ?? XMLNode.attribute(withName: name, stringValue: value)
+        guard let node = made as? XMLNode else { return }
         addAttribute(node)
     }
 
@@ -424,7 +423,9 @@ extension XMLElement {
         if prefix.isEmpty {
             prefix = "r"
             let root = rootDocument?.rootElement() ?? self
-            root.addNamespace(XMLNode.namespace(withName: prefix, stringValue: uri) as! XMLNode)
+            if let namespace = XMLNode.namespace(withName: prefix, stringValue: uri) as? XMLNode {
+                root.addNamespace(namespace)
+            }
         }
         setAttr("\(prefix):id", rid, uri: uri)
     }
@@ -434,6 +435,9 @@ extension XMLElement {
     }
 
     func deepCopy() -> XMLElement {
-        copy() as! XMLElement
+        guard let clone = copy() as? XMLElement else {
+            preconditionFailure("XMLElement.copy() returned a non-element")
+        }
+        return clone
     }
 }
