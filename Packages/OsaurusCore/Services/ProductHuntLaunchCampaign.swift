@@ -17,6 +17,13 @@
 //  type only owns the time gates and the persisted flags so both are
 //  trivially unit-testable with an injected clock and defaults suite.
 //
+//  POSTPONED: the launch has been pushed back again with no new date, so
+//  `isPostponed` is `true` and neither dialog is ever eligible in shipping
+//  builds. To reschedule: set the new `launchOpensAt` / `launchClosesAt`
+//  instants, flip `isPostponed` back to `false`, and bump `campaignId` +
+//  the seen-key namespace so users who already saw a teaser are eligible
+//  again for the new campaign.
+//
 
 import Foundation
 
@@ -32,6 +39,13 @@ public final class ProductHuntLaunchCampaign {
         /// Launch-day dialog, eligible for `launchOpensAt <= now < launchClosesAt`.
         case launch
     }
+
+    /// Kill switch. While `true` no phase is ever eligible — not the teaser
+    /// before `launchOpensAt`, not the launch dialog inside the window —
+    /// regardless of the clock or seen flags. Kept as a constant (not a
+    /// remote flag) so the shipped behavior is decided at build time and
+    /// covered by `ProductHuntLaunchCampaignTests`.
+    nonisolated public static let isPostponed = true
 
     /// 2026-09-28T07:01:00Z — 12:01am Pacific on launch day, Monday
     /// (PDT = UTC-7). Stored as an absolute epoch instant so a user in
@@ -62,6 +76,7 @@ public final class ProductHuntLaunchCampaign {
 
     private let defaults: UserDefaults
     private let now: () -> Date
+    private let isPostponed: Bool
 
     /// True while a dialog is on screen. In-memory only: repeated
     /// activation notifications during a presentation must not stack a
@@ -77,11 +92,17 @@ public final class ProductHuntLaunchCampaign {
         var bypassPhaseForDebug: Phase?
     #endif
 
-    /// `shared` uses the standard defaults and wall clock; tests inject an
-    /// isolated suite and a fixed instant.
-    init(defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
+    /// `shared` uses the standard defaults, wall clock, and the build-time
+    /// `isPostponed` switch; tests inject an isolated suite and a fixed
+    /// instant, and pass `isPostponed: false` to exercise the time gates.
+    init(
+        defaults: UserDefaults = .standard,
+        now: @escaping () -> Date = Date.init,
+        isPostponed: Bool = Self.isPostponed
+    ) {
         self.defaults = defaults
         self.now = now
+        self.isPostponed = isPostponed
     }
 
     /// Whether the user has already been shown this phase's dialog (any
@@ -102,9 +123,12 @@ public final class ProductHuntLaunchCampaign {
 
     /// The dialog that may be presented right now, or `nil`. Purely the
     /// campaign's own gates — the caller layers UI-coordination deferrals
-    /// on top. A phase whose window has passed can never become eligible
-    /// again, and a seen phase stays hidden even inside its window.
+    /// on top. A postponed campaign is never eligible (the DEBUG bypass
+    /// included, so the dock items can't show stale launch copy either).
+    /// A phase whose window has passed can never become eligible again,
+    /// and a seen phase stays hidden even inside its window.
     var eligiblePhase: Phase? {
+        guard !isPostponed else { return nil }
         guard !isPresenting else { return nil }
         #if DEBUG
             if let forced = bypassPhaseForDebug {

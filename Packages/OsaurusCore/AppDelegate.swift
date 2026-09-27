@@ -2846,6 +2846,7 @@ extension AppDelegate {
 
         let campaign = ProductHuntLaunchCampaign.shared
         guard let phase = campaign.eligiblePhase else {
+            if ProductHuntLaunchCampaign.isPostponed { return "campaign postponed" }
             return campaign.isPresenting ? "already presenting" : "no eligible phase (outside window or already seen)"
         }
 

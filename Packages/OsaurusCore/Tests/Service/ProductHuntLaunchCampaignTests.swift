@@ -23,17 +23,73 @@ struct ProductHuntLaunchCampaignTests {
     typealias Phase = ProductHuntLaunchCampaign.Phase
 
     /// A campaign pinned to a fixed instant and an isolated defaults suite.
+    /// Not postponed by default so the time-gate contract below stays
+    /// locked while the shipped switch is off; `postponed_*` cover the
+    /// shipped configuration.
     private func makeCampaign(
-        now: Date
+        now: Date,
+        isPostponed: Bool = false
     ) -> (campaign: ProductHuntLaunchCampaign, defaults: UserDefaults, cleanup: () -> Void) {
         let suiteName = "ph-raptor-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
-        let campaign = ProductHuntLaunchCampaign(defaults: defaults, now: { now })
+        let campaign = ProductHuntLaunchCampaign(defaults: defaults, now: { now }, isPostponed: isPostponed)
         return (campaign, defaults, { defaults.removePersistentDomain(forName: suiteName) })
     }
 
     private var open: Date { ProductHuntLaunchCampaign.launchOpensAt }
     private var close: Date { ProductHuntLaunchCampaign.launchClosesAt }
+
+    // MARK: - Postponed (shipped configuration)
+
+    /// The launch is postponed with no new date: the shipped switch must be
+    /// on, and `shared` (standard defaults + wall clock, the production
+    /// instance) must therefore never resolve to a phase.
+    @Test func shipped_campaign_is_postponed() {
+        #expect(ProductHuntLaunchCampaign.isPostponed)
+        #expect(ProductHuntLaunchCampaign.shared.eligiblePhase == nil)
+    }
+
+    /// While postponed, no instant — before open, inside the window, or
+    /// after close — yields a dialog, with or without seen flags. The
+    /// window itself is still reported so the time gates stay observable.
+    @Test func postponed_is_never_eligible_in_any_window() {
+        for instant in [
+            open.addingTimeInterval(-30 * 86400), open.addingTimeInterval(-1), open,
+            open.addingTimeInterval(3600), close.addingTimeInterval(-1), close, close.addingTimeInterval(86400),
+        ] {
+            let (campaign, defaults, cleanup) = makeCampaign(now: instant, isPostponed: true)
+            defer { cleanup() }
+            #expect(campaign.eligiblePhase == nil)
+            for phase in Phase.allCases {
+                #expect(defaults.object(forKey: ProductHuntLaunchCampaign.seenDefaultsKey(for: phase)) == nil)
+            }
+        }
+    }
+
+    /// Postponing must not fake a dismissal: a user who never saw a dialog
+    /// keeps clean flags, so lifting the postponement later shows the
+    /// (new) campaign to everyone as intended.
+    @Test func postponed_leaves_seen_flags_untouched() {
+        let (campaign, _, cleanup) = makeCampaign(now: open.addingTimeInterval(60), isPostponed: true)
+        defer { cleanup() }
+        _ = campaign.eligiblePhase
+        for phase in Phase.allCases {
+            #expect(!campaign.hasSeen(phase))
+        }
+    }
+
+    #if DEBUG
+        /// The dock-menu bypass must not resurrect a postponed campaign —
+        /// its copy still names the old launch date.
+        @Test func postponed_overrides_debug_bypass() {
+            let (campaign, _, cleanup) = makeCampaign(now: open.addingTimeInterval(-3600), isPostponed: true)
+            defer { cleanup() }
+            for phase in Phase.allCases {
+                campaign.resetForDebugTesting(phase: phase)
+                #expect(campaign.eligiblePhase == nil)
+            }
+        }
+    #endif
 
     // MARK: - Window definition
 
@@ -135,7 +191,11 @@ struct ProductHuntLaunchCampaignTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         // Day before: teaser shows and is dismissed.
-        let before = ProductHuntLaunchCampaign(defaults: defaults, now: { open.addingTimeInterval(-6 * 3600) })
+        let before = ProductHuntLaunchCampaign(
+            defaults: defaults,
+            now: { open.addingTimeInterval(-6 * 3600) },
+            isPostponed: false
+        )
         #expect(before.eligiblePhase == .teaser)
         before.willPresent(.teaser)
         before.didDismiss()
@@ -143,7 +203,11 @@ struct ProductHuntLaunchCampaignTests {
 
         // Launch day (fresh instance, same defaults = same user after a
         // relaunch): the launch dialog is still owed.
-        let launchDay = ProductHuntLaunchCampaign(defaults: defaults, now: { open.addingTimeInterval(60) })
+        let launchDay = ProductHuntLaunchCampaign(
+            defaults: defaults,
+            now: { open.addingTimeInterval(60) },
+            isPostponed: false
+        )
         #expect(launchDay.hasSeen(.teaser))
         #expect(!launchDay.hasSeen(.launch))
         #expect(launchDay.eligiblePhase == .launch)
@@ -187,12 +251,12 @@ struct ProductHuntLaunchCampaignTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let now = open.addingTimeInterval(3600)
 
-        let first = ProductHuntLaunchCampaign(defaults: defaults, now: { now })
+        let first = ProductHuntLaunchCampaign(defaults: defaults, now: { now }, isPostponed: false)
         #expect(first.eligiblePhase == .launch)
         first.willPresent(.launch)
         first.didDismiss()
 
-        let second = ProductHuntLaunchCampaign(defaults: defaults, now: { now })
+        let second = ProductHuntLaunchCampaign(defaults: defaults, now: { now }, isPostponed: false)
         #expect(second.hasSeen(.launch))
         #expect(second.eligiblePhase == nil)
     }
@@ -229,7 +293,7 @@ struct ProductHuntLaunchCampaignTests {
         let suiteName = "ph-raptor-presenting-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let campaign = ProductHuntLaunchCampaign(defaults: defaults, now: { now })
+        let campaign = ProductHuntLaunchCampaign(defaults: defaults, now: { now }, isPostponed: false)
 
         campaign.willPresent(.teaser)
         now = open.addingTimeInterval(1)
