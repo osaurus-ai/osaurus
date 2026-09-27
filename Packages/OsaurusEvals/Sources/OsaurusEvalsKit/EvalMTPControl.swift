@@ -122,18 +122,23 @@ public enum EvalMTPControlState {
         case .off:
             settings.mtp.mode = .off
             settings.mtp.explicitDepth = nil
+            // "Off" means no speculation: a drafter the bundle ships must
+            // not draft either, or the off arm measures DFlash.
+            settings.mtp.bundledDrafter = .off
         case .auto:
             settings.mtp.mode = .auto
             settings.mtp.explicitDepth = nil
+            settings.mtp.bundledDrafter = .auto
         case .forcedDepth(let depth):
             settings.mtp.mode = .forceOn
             settings.mtp.explicitDepth = depth
+            settings.mtp.bundledDrafter = .auto
         }
         ServerRuntimeSettingsStore.overrideSnapshotInMemory(settings)
         requested = control
         FileHandle.standardError.write(
             Data(
-                "[evals] MTP control → requested=\(control.label) pinned mode=\(settings.mtp.mode.rawValue) explicitDepth=\(settings.mtp.explicitDepth.map(String.init) ?? "nil") (process-local)\n"
+                "[evals] MTP control → requested=\(control.label) pinned mode=\(settings.mtp.mode.rawValue) explicitDepth=\(settings.mtp.explicitDepth.map(String.init) ?? "nil") bundledDrafter=\(settings.mtp.bundledDrafter.rawValue) (process-local)\n"
                     .utf8))
     }
 

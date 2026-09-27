@@ -433,6 +433,31 @@ public actor ModelRuntime {
         var admission: NativeMTPAdmission = .init()
     }
 
+    /// Whether the bundle at `directory` ships a DFlash 2 drafter that fits
+    /// it. Reads two small config files; never loads weights.
+    nonisolated static func bundleShipsFittingDrafter(_ directory: URL) -> Bool {
+        guard let drafter = VMLXDFlash2DrafterInfo.bundled(in: directory) else { return false }
+        let config = try? Data(contentsOf: directory.appendingPathComponent("config.json"))
+        return drafter.mismatchReason(configData: config) == nil
+    }
+
+    /// The DFlash 2 width a loaded model actually drafts at, from the engine's
+    /// own resolution. The plan's value is the requested-or-trained width;
+    /// the engine caps the default for targets without recurrent state.
+    nonisolated static func effectiveDFlash2BlockSize(
+        planned: Int?,
+        admission: NativeMTPAdmission,
+        mtp: VMLXServerMTPSettings,
+        container: ModelContainer
+    ) async -> Int? {
+        guard planned != nil, let selection = admission.dflash2Selection(mtp: mtp) else {
+            return planned
+        }
+        return await container.perform { context in
+            selection.effectiveBlockSize(requested: mtp.dflash2BlockSize, model: context.model)
+        }
+    }
+
     /// Sendable wrapper around an immutable snapshot of chat messages.
     ///
     /// `MLXLMCommon.Chat.Message` is not `Sendable`, but our use only ever
@@ -1460,7 +1485,11 @@ public actor ModelRuntime {
                 ),
                 dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
-                nativeMTPReason: holder.nativeMTPReason,
+                // A drafter is re-resolved per request, so its line follows
+                // the current setting rather than the one at load.
+                nativeMTPReason: holder.nativeMTPAdmission.dflash2Status(
+                    mtp: ServerRuntimeSettingsStore.snapshot().mtp
+                ) ?? holder.nativeMTPReason,
                 mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
                 cacheTopology: holder.cacheTopology,
@@ -2427,10 +2456,17 @@ public actor ModelRuntime {
         }
         rememberDiskQuotaBeforeUnload(name: name)
         modelCache[name]?.container.disableCaching()
+        // The drafter a bundle ships serves only that bundle; release its
+        // weights with the model. A selected drafter folder stays cached.
+        let bundledDrafter = modelCache[name]?.nativeMTPAdmission.modelDirectory?
+            .appendingPathComponent(VMLXDFlash2DrafterInfo.bundledFolderName, isDirectory: true)
 
         Stream.gpu.synchronize()
         let didRemove = autoreleasepool {
             modelCache.removeValue(forKey: name) != nil
+        }
+        if didRemove, let bundledDrafter {
+            DFlash2DrafterResolver.shared.evict(path: bundledDrafter)
         }
         residentMetadata.removeValue(forKey: name)
         lastUseSource.removeValue(forKey: name)
@@ -4959,7 +4995,12 @@ public actor ModelRuntime {
                 weightsFingerprint: Self.weightsFingerprint(for: localURL),
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy,
-                dflash2BlockSize: mtpPlan.dflash2BlockSize,
+                dflash2BlockSize: await Self.effectiveDFlash2BlockSize(
+                    planned: mtpPlan.dflash2BlockSize,
+                    admission: mtpPlan.admission,
+                    mtp: serverSettings.mtp,
+                    container: container
+                ),
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
                 nativeMTPAdmission: mtpPlan.admission,
@@ -6517,11 +6558,15 @@ public actor ModelRuntime {
             configData: configData,
             jangConfig: jangConfig,
             status: status,
-            externalDrafterSelected: settings.resolvedDFlash2Selection(configData: configData) != nil
+            externalDrafterSelected: settings.resolvedDFlash2Selection(configData: configData) != nil,
+            modelDirectory: modelDirectory
         )
+        // Any drafter that will draft — selected, or shipped in the bundle —
+        // replaces the native head, so the head's launch refusal is moot.
+        let dflash2Selection = admission.dflash2Selection(mtp: settings.mtp)
         try admission.validateLoad(
             settings: settings,
-            externalDrafterSelected: admission.externalDrafterSelected
+            externalDrafterSelected: dflash2Selection != nil
         )
         let loadConfiguration = settings.resolvedLoadConfiguration(
             base: .osaurusProduction,
@@ -6539,7 +6584,8 @@ public actor ModelRuntime {
         let draftStrategy = unclampedSettings.resolvedMTPDraftStrategy(
             configData: configData,
             jangConfig: jangConfig,
-            status: status
+            status: status,
+            modelDirectory: modelDirectory
         )
         // `DFlash2TokenIterator` resolves its width as
         // `requestedBlockSize ?? config.blockSize`. Mirror exactly that, from
@@ -6547,11 +6593,11 @@ public actor ModelRuntime {
         // drafted rather than a UI-side guess. Nil unless DFlash 2 is what
         // actually resolved — a value here would otherwise imply a drafter is
         // running when none is.
+        // The loaded model refines this for targets without recurrent state
+        // (`effectiveDFlash2BlockSize`), where the runtime caps the default.
         let dflash2BlockSize: Int? = {
-            guard draftStrategy?.dflash2DrafterPath != nil,
-                let selection = settings.resolvedDFlash2Selection(configData: configData)
-            else { return nil }
-            return settings.mtp.dflash2BlockSize ?? selection.blockSize
+            guard draftStrategy?.dflash2DrafterPath != nil, let dflash2Selection else { return nil }
+            return settings.mtp.dflash2BlockSize ?? dflash2Selection.blockSize
         }()
 
         // A width below the runtime's floor cannot draft. `DFlash2TokenIterator`
@@ -6604,7 +6650,8 @@ public actor ModelRuntime {
             draftStrategy: draftStrategy,
             dflash2BlockSize: dflash2BlockSize,
             statusLine: status?.statusLine,
-            reason: launch.reason,
+            reason: draftStrategy?.dflash2DrafterPath == nil
+                ? launch.reason : (admission.dflash2Status(mtp: settings.mtp) ?? launch.reason),
             memorySafetySummary: memorySafetyPlan.displaySummary,
             admission: admission
         )

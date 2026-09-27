@@ -102,6 +102,14 @@ struct MLXBatchAdapter {
         await Registry.shared.lastMTPStatsSnapshot()
     }
 
+    static func recordLastDFlash2Stats(modelName: String, stats: DFlash2GenerationStats?) async {
+        await Registry.shared.recordLastDFlash2Stats(modelName: modelName, stats: stats)
+    }
+
+    static func lastDFlash2StatsSnapshot() async -> [String: DFlash2GenerationStats] {
+        await Registry.shared.lastDFlash2StatsSnapshot()
+    }
+
     /// Record how much of the just-prefilled real request came back from a
     /// cache tier. Reported by the runtime's own `.cacheRestore` progress
     /// event, so a cold request records zero restored tokens rather than
@@ -435,6 +443,7 @@ struct MLXBatchAdapter {
         /// non-MTP family never appears here and the readout for an MTP model
         /// reflects its most recent speculative turn.
         private var lastMTPStats: [String: MTPStatsSummary] = [:]
+        private var lastDFlash2Stats: [String: DFlash2GenerationStats] = [:]
         /// Cache restore of the most recent real request, across models.
         private var lastCacheRestore: CacheRestoreSummary?
         /// Counters from engines and cache coordinators that have left the
@@ -567,6 +576,16 @@ struct MLXBatchAdapter {
 
         func lastMTPStatsSnapshot() -> [String: MTPStatsSummary] {
             lastMTPStats
+        }
+
+        /// `nil` clears the model's entry: its last real turn did not draft
+        /// with DFlash 2, so an old readout must not linger after Off.
+        func recordLastDFlash2Stats(modelName: String, stats: DFlash2GenerationStats?) {
+            lastDFlash2Stats[modelName] = stats
+        }
+
+        func lastDFlash2StatsSnapshot() -> [String: DFlash2GenerationStats] {
+            lastDFlash2Stats
         }
 
         func recordLastCacheRestore(_ summary: CacheRestoreSummary) {
@@ -949,6 +968,12 @@ struct MLXBatchAdapter {
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async {
+        if draftStrategy?.dflash2DrafterPath != nil {
+            await warmupDFlash2AtLoad(
+                modelName: modelName, container: container, modelDefaults: modelDefaults,
+                draftStrategy: draftStrategy, runtime: runtime, maxBatchSize: maxBatchSize)
+            return
+        }
         guard draftStrategy?.usesNativeMTP == true else { return }
         guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
         guard await !Registry.shared.isNativeMTPWarm(modelName: modelName) else { return }
@@ -991,6 +1016,49 @@ struct MLXBatchAdapter {
             await Registry.shared.resetNativeMTPWarmup(modelName: modelName)
             batchAdapterLog.notice(
                 "native MTP load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — falling back to first-request AR warmup"
+            )
+        }
+    }
+
+    /// One short DFlash 2 generation at load: it loads the drafter's weights
+    /// and compiles the verify-width kernels, so the model is ready to draft
+    /// when it reports loaded and the first message is not the slow one. A
+    /// failure only means the first request pays that cost instead.
+    private static func warmupDFlash2AtLoad(
+        modelName: String,
+        container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
+        draftStrategy: MLXLMCommon.DraftStrategy?,
+        runtime: RuntimeConfig,
+        maxBatchSize: Int
+    ) async {
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        do {
+            let prepared = try await generate(
+                modelName: modelName,
+                container: container,
+                modelDefaults: modelDefaults,
+                buildChat: {
+                    [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
+                },
+                buildToolsSpec: { nil },
+                generation: GenerationParameters(
+                    temperature: 0, maxTokens: nativeMTPLoadWarmupVerifierTokens),
+                toolChoice: nil,
+                stopSequences: [],
+                draftStrategy: draftStrategy,
+                runtime: runtime,
+                maxBatchSize: maxBatchSize
+            )
+            for await _ in prepared.stream {}
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            batchAdapterLog.info(
+                "dflash2 load warmup: drafter loaded and verify warmed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms"
+            )
+        } catch {
+            batchAdapterLog.notice(
+                "dflash2 load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — the first request loads the drafter"
             )
         }
     }

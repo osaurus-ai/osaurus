@@ -388,6 +388,7 @@ public enum ServerRuntimeSettingsStore {
         // Retire only defaults whose provenance was recorded by the old family
         // selector, including API-only launches with no chat view present.
         normalized.mtp = NativeMTPSelectionDefault.retiringOwnedDefault(normalized.mtp)
+        normalized.mtp = NativeMTPSelectionDefault.carryingExplicitOffToBundledDrafter(normalized.mtp)
         // Osaurus product default for block-diffusion models: 16 denoising
         // steps (~74 tok/s on diffusiongemma-26B-A4B MXFP4, coherent) vs the
         // bundle's 48 (~37 tok/s). Seeded exactly once; afterwards a blank

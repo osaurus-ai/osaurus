@@ -318,9 +318,12 @@ let package = Package(
         // #512 validates persisted architecture state before granting SSD hits
         // and serializes validation with MLX disk I/O. #513 honors validated
         // max_tokens bundle aliases with max_new_tokens precedence.
+        // vmlx-swift#521 makes Spark2.5 a DFlash 2 target, rolls sliding-window
+        // layers back exactly after a verify, resolves drafters shipped in a
+        // bundle's dflash/ folder, and sets drafting aside while it loses.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "934dd5c8dc052cc6c8b4b960fe1bffd6badf0998"
+            revision: "1fde3d92c991cb5ebdc24b3efba62cdf61f9d2a3"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

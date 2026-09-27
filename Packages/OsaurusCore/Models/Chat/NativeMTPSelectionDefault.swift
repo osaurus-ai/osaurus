@@ -20,6 +20,7 @@ enum NativeMTPSelectionDefault {
             defaults.set(next == .init(mode: .off), forKey: familyDefaultKey)
         } else if previous.mode != next.mode || previous.explicitDepth != next.explicitDepth
             || previous.draftTokenLimit != next.draftTokenLimit
+            || previous.bundledDrafter != next.bundledDrafter
         {
             defaults.set(true, forKey: userChoseKey)
             defaults.set(false, forKey: familyDefaultKey)
@@ -39,5 +40,23 @@ enum NativeMTPSelectionDefault {
                 || settings == .init(mode: .auto)
         else { return settings }
         return .init(mode: .off)
+    }
+
+    static let bundledDrafterMigratedKey = "bundledDrafterFollowsExplicitOff"
+
+    /// A drafter that ships inside a bundle drafts by default and has its own
+    /// switch. Before that switch existed, choosing Off meant no speculation
+    /// at all, so an explicit Off is carried over to it — once, so a user who
+    /// later turns the bundled drafter back on keeps that choice.
+    static func carryingExplicitOffToBundledDrafter(
+        _ settings: VMLXServerMTPSettings,
+        defaults: UserDefaults = .standard
+    ) -> VMLXServerMTPSettings {
+        guard !defaults.bool(forKey: bundledDrafterMigratedKey) else { return settings }
+        defaults.set(true, forKey: bundledDrafterMigratedKey)
+        guard defaults.bool(forKey: userChoseKey), settings.mode == .off else { return settings }
+        var carried = settings
+        carried.bundledDrafter = .off
+        return carried
     }
 }
