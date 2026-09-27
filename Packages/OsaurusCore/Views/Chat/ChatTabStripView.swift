@@ -108,8 +108,10 @@ struct ChatTabStripView: View {
         return max(0, CGFloat(clamped) - (measuredChromeX ?? leadingChromeWidth))
     }
 
+    /// Follows the sidebar actually on screen — while the inspector pushes
+    /// it aside at narrow widths the tabs return to the window's left edge.
     private var leadingInset: CGFloat {
-        windowState.showSidebar ? sidebarOpenInset : 0
+        windowState.isSidebarVisible ? sidebarOpenInset : 0
     }
 
     var body: some View {
@@ -158,7 +160,7 @@ struct ChatTabStripView: View {
                 }
                 .frame(width: 0)
             }
-            .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
+            .animation(windowState.theme.animationQuick(), value: windowState.isSidebarVisible)
             // Leaving the strip ends a close streak: widths relax to fit.
             .onHover { inside in
                 guard !inside, frozenTabWidth != nil else { return }

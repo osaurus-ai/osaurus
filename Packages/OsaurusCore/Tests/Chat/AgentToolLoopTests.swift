@@ -2288,7 +2288,7 @@ struct AgentToolLoopTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let surface = ScriptedLoopSurface(steps: [
-            .toolCalls([inv("file_write", #"{"path":"report.pptx","content":"hello"}"#), inv("never_runs")])
+            .toolCalls([inv("file_write", #"{"path":"report.key","content":"hello"}"#), inv("never_runs")])
         ])
         var hooks = surface.makeHooks()
         hooks.executeTool = { call, _ in
@@ -2305,7 +2305,7 @@ struct AgentToolLoopTests {
         }
         let result = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
         #expect(result.exit == .toolRejected)
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("report.pptx").path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("report.key").path))
     }
 
     @Test func cancellationStopsBetweenToolCalls() async throws {
@@ -3163,7 +3163,7 @@ struct AgentToolLoopParallelBatchTests {
 
     @Test func batchBindsSharedBatchIdForUndoGrouping() async {
         // Multi-call batches bind one `ChatExecutionContext.currentBatchId`
-        // for the whole wave so the file-operation log can group them.
+        // for the whole wave so its tool calls can be correlated.
         actor BatchIds {
             private(set) var ids: [UUID?] = []
             func record(_ id: UUID?) { ids.append(id) }

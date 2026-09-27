@@ -1072,7 +1072,7 @@ struct BuiltinSandboxToolsTests {
         }
     }
 
-    /// Formats with no writer at all (`.pptx`) are refused with a pivot that
+    /// Formats with no writer at all (`.key`) are refused with a pivot that
     /// names what the tool does produce, before any shell command runs.
     @Test @MainActor
     func sandboxWriteFile_rejectsUnsupportedDocumentExtension() async throws {
@@ -1081,7 +1081,7 @@ struct BuiltinSandboxToolsTests {
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_write_file",
-                argumentsJSON: #"{"path":"deck.pptx","content":"not a real package"}"#
+                argumentsJSON: #"{"path":"deck.key","content":"not a real package"}"#
             )
         }
 
@@ -1090,7 +1090,7 @@ struct BuiltinSandboxToolsTests {
         #expect(payload["field"] as? String == "path")
         let message = payload["message"] as? String ?? ""
         #expect(message.contains("presentation format"))
-        #expect(message.contains(".docx"))
+        #expect(message.contains(".pptx"))
         let calls = await runner.calls
         #expect(calls.isEmpty)
     }

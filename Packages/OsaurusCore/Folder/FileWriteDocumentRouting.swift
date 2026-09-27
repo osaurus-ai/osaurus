@@ -3,11 +3,11 @@
 //  osaurus
 //
 //  `file_write` document generation by extension: `.xlsx` from CSV/TSV
-//  text or JSON rows, `.docx` / `.pdf` from Markdown or HTML. Builds the
+//  text or JSON rows, `.docx` / `.pdf` from Markdown or HTML, `.pptx` from
+//  Markdown (one slide per heading). Builds the
 //  `StructuredDocument`, runs it through the registered emitters, and
 //  reports the shape the tool envelope needs (format, counts, bytes).
-//  Sandbox containment, undo logging, and the envelope itself stay in
-//  `FileWriteTool`.
+//  Sandbox containment and the envelope itself stay in `FileWriteTool`.
 //
 
 import CoreGraphics
@@ -18,6 +18,7 @@ enum FileWriteDocumentRouting {
         case xlsx
         case docx
         case pdf
+        case pptx
 
         var formatId: String { rawValue }
 
@@ -28,6 +29,8 @@ enum FileWriteDocumentRouting {
                     "CSV or TSV text (one sheet; delimiter sniffed) or JSON `{\"sheets\":[{\"name\":\"Q1\",\"rows\":[[\"Region\",\"Revenue\"],[\"West\",1200]]}]}`"
             case .docx, .pdf:
                 return "Markdown (headings, lists, tables, code) or HTML"
+            case .pptx:
+                return "Markdown: each `#`/`##` heading starts a slide (its title); lines below are the slide's bullets"
             }
         }
     }
@@ -143,6 +146,23 @@ enum FileWriteDocumentRouting {
                 summary["estimated_pages"] = max(1, Int((Double(content.count) / 3_000).rounded(.up)))
             }
             return Plan(target: target, document: document, summary: summary)
+        case .pptx:
+            let title = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+            let source = RichTextSourceDocument(markup: content, syntax: .markdown, title: title)
+            let document = StructuredDocument(
+                formatId: "pptx",
+                filename: filename,
+                fileSize: 0,
+                representation: AnyStructuredRepresentation(formatId: "pptx", underlying: source),
+                security: .notInspected(formatId: "pptx", fileExtension: "pptx", sourceTrust: .generatedArtifact),
+                textFallback: content
+            )
+            let slides = PPTXEmitter.slides(fromMarkdown: content, fallbackTitle: title)
+            return Plan(
+                target: target,
+                document: document,
+                summary: ["input": "markdown", "slides": slides.count, "slide_titles": slides.prefix(30).map(\.title)]
+            )
         }
     }
 
@@ -167,7 +187,7 @@ enum FileWriteDocumentRouting {
         case .xlsx:
             let result = try await WorkbookWorkflowService.export(plan.document, to: url, registry: registry)
             return Written(bytesWritten: result.bytesWritten)
-        case .docx, .pdf:
+        case .docx, .pdf, .pptx:
             guard let emitter = registry.emitter(for: plan.document) else {
                 throw RoutingError.missingEmitter(plan.target.rawValue)
             }

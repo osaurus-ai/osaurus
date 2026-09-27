@@ -18,18 +18,59 @@ import SwiftUI
 struct HeaderActionButton: View {
     let icon: String
     let help: String
+    /// Toggle state for buttons that open/close a panel: the icon takes the
+    /// accent color and the circle gets a faint accent fill so the open
+    /// pane's button reads as pressed. Default off keeps every plain action
+    /// button unchanged.
+    var isActive: Bool = false
+    /// Small count shown at the top-trailing corner of the circle (e.g.
+    /// files changed). Hidden when nil or zero; never changes the 28pt
+    /// footprint so neighbours keep their spacing.
+    var badge: Int? = nil
     let action: () -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
 
+    init(
+        icon: String,
+        help: String,
+        isActive: Bool = false,
+        badge: Int? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.help = help
+        self.isActive = isActive
+        self.badge = badge
+        self.action = action
+    }
+
+    private var isTinted: Bool { isHovered || isActive }
+
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                .foregroundColor(isTinted ? theme.accentColor : theme.secondaryText)
                 .frame(width: 28, height: 28)
+                .background(
+                    Circle().fill(theme.accentColor.opacity(isActive ? (theme.isDark ? 0.22 : 0.14) : 0))
+                )
                 .liquidGlassCircle()
+                .overlay(alignment: .topTrailing) {
+                    if let badge, badge > 0 {
+                        Text(badge > 99 ? "99+" : "\(badge)")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, badge > 9 ? 4 : 0)
+                            .frame(minWidth: 14, minHeight: 14)
+                            .background(Capsule().fill(theme.accentColor))
+                            .overlay(Capsule().strokeBorder(theme.primaryBackground, lineWidth: 1.5))
+                            .offset(x: 4, y: -3)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .padding(.horizontal, 4)
                 .contentShape(Rectangle())
         }
@@ -41,6 +82,7 @@ struct HeaderActionButton: View {
             }
         }
         .help(Text(LocalizedStringKey(help), bundle: .module))
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
 

@@ -8,9 +8,9 @@
 //  and `file_write` carries text through tokens, so neither can deliver
 //  raw bytes. When a sandbox bridge is bound, an absolute `/workspace/...`
 //  path is the Linux sandbox's VirtioFS share and the copy crosses the
-//  boundary host-side via FileManager. Host-side writes are logged as
-//  `FileOperation.copy` (previous destination bytes captured, any
-//  encoding) so `file_undo` reverts an overwrite exactly.
+//  boundary host-side via FileManager. The file history journal snapshots
+//  the destination before the copy, so `file_undo` reverts an overwrite
+//  byte-for-byte.
 //
 
 import Foundation
@@ -51,18 +51,18 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     /// A host-bound copy mutates the selected folder; the registry's
-    /// checkpoint makes every copy land in the Changes sheet and stay
+    /// checkpoint makes every copy land in the File Changes panel and stay
     /// undoable.
     var mutatesHostFolder: Bool { true }
+
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["destination"])
+    }
 
     /// Same 512 MB precedent as `SandboxManager.maxArtifactDownloadBytes`:
     /// far above any realistic document, but stops a runaway copy of a
     /// disk image / model checkpoint from filling the disk.
     static let defaultMaxCopyBytes = 512 * 1024 * 1024
-
-    /// Overwritten destination bytes above this are not captured for undo
-    /// (the operation is still logged; undo reports it cannot restore).
-    static let maxUndoCaptureBytes = 64 * 1024 * 1024
 
     private let fixedRootPath: URL?
     private let maxCopyBytes: Int
@@ -171,7 +171,6 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
         }
 
         let destinationURL: URL
-        var logRoot: URL? = nil
         switch destinationRoute {
         case .host:
             guard let rootPath else {
@@ -186,7 +185,6 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
                     tool: name
                 )
             }
-            logRoot = rootPath
         case .sandbox:
             destinationURL = try Self.resolveSandboxURL(destination, home: bridge?.home)
         }
@@ -232,21 +230,6 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
             )
         }
 
-        // Capture the overwritten bytes (any encoding) before replacing
-        // them so the copy is undoable byte-for-byte.
-        var previousBytes: Data? = nil
-        var previousCaptured = true
-        if destinationExists, logRoot != nil {
-            let existingSize =
-                (try? FileManager.default.attributesOfItem(atPath: destinationURL.path))?[.size]
-                as? Int64 ?? 0
-            if existingSize <= Int64(Self.maxUndoCaptureBytes) {
-                previousBytes = try? Data(contentsOf: destinationURL)
-            } else {
-                previousCaptured = false
-            }
-        }
-
         do {
             try FileManager.default.createDirectory(
                 at: destinationURL.deletingLastPathComponent(),
@@ -276,32 +259,13 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
                 "exportable": true,
             ],
         ]
-        var warnings: [String] = []
-        if let logRoot, let sessionId = ChatExecutionContext.currentSessionId {
-            let encoded = FileOperation.encodePreviousContent(previousBytes)
-            let operation = FileOperation(
-                type: .copy,
-                path: source,
-                destinationPath: destination,
-                previousContent: encoded.content,
-                previousContentEncoding: encoded.encoding,
-                sessionId: sessionId,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: logRoot.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            result["operation_id"] = operation.id.uuidString
-            if destinationExists, !previousCaptured {
-                warnings.append(
-                    "The overwritten destination was larger than \(Self.formatBytes(Int64(Self.maxUndoCaptureBytes))); "
-                        + "`file_undo` will remove the copy but cannot restore the previous bytes."
-                )
-            }
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            result["operation_id"] = setId.uuidString
         }
         return ToolEnvelope.success(
             tool: name,
             result: result,
-            warnings: warnings.isEmpty ? nil : warnings
+            warnings: nil
         )
     }
 

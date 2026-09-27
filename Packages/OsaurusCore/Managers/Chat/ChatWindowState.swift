@@ -127,6 +127,15 @@ enum ChatTabScope: Hashable {
     }
 }
 
+/// The panes of the chat window's right-hand inspector. One rail, two
+/// contents, both about the tab on screen.
+enum ChatInspectorPane: Hashable {
+    /// This chat's file history: timeline, per-file net state, revert.
+    case fileChanges
+    /// The past chats of this chat's agent (search, filters, import).
+    case history
+}
+
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -192,6 +201,33 @@ final class ChatWindowState: ObservableObject {
     /// immediately; the toolbar toggle still collapses it per window.
     @Published var showSidebar: Bool = true
 
+    /// True while the sidebar is stepping aside for the open inspector
+    /// because the window is too narrow for both (`ChatView` sets it from
+    /// its geometry). Separate from `showSidebar` so the user's choice
+    /// survives and the sidebar returns when the inspector closes.
+    @Published var isSidebarAutoHidden: Bool = false
+
+    /// Whether the sidebar is on screen. The toolbar toggle and the tab
+    /// strip inset read this, not `showSidebar`, so the chrome never claims
+    /// a sidebar that the inspector has pushed aside.
+    var isSidebarVisible: Bool { showSidebar && !isSidebarAutoHidden }
+
+    /// Toolbar button / ⌘B. When the sidebar is stepping aside for the
+    /// inspector, the user asking for it wins: the inspector closes and the
+    /// sidebar (still "shown") comes back — a plain flip would hide nothing
+    /// visible and leave the button looking broken.
+    func toggleSidebar() {
+        if showSidebar && isSidebarAutoHidden {
+            if isProjectPageVisible {
+                showProjectInspector = false
+            } else {
+                inspectorPane = nil
+            }
+            return
+        }
+        showSidebar.toggle()
+    }
+
     /// The project whose detail page currently covers the chat surface, or
     /// nil while the chat is showing. Owned here (not as `ChatView` state)
     /// so window-level actions like ⌘N can both read it and dismiss it.
@@ -201,6 +237,29 @@ final class ChatWindowState: ObservableObject {
     /// the chat surface. Read by the toolbar item views so chat-specific
     /// chrome (agent pill, window pin) hides with it.
     var isProjectPageVisible: Bool { openProjectId != nil }
+
+    /// Whether the right rail shows Project Settings while a project is on
+    /// screen. The same toolbar toggle that opens the chat inspector drives
+    /// it there; the choice is remembered across projects and launches
+    /// (open by default: a project's settings are what the rail is for).
+    @Published var showProjectInspector: Bool =
+        UserDefaults.standard.object(forKey: projectInspectorDefaultsKey) as? Bool ?? true
+    {
+        didSet { UserDefaults.standard.set(showProjectInspector, forKey: Self.projectInspectorDefaultsKey) }
+    }
+
+    static let projectInspectorDefaultsKey = "chatWindow.showProjectInspector"
+
+    /// Toolbar toggle while a project is open (mirror of `toggleInspector()`).
+    func toggleProjectInspector() {
+        showProjectInspector.toggle()
+    }
+
+    /// True when a right rail is on screen for the current content: the
+    /// chat inspector for a chat, Project Settings for a project.
+    var isRightRailOpen: Bool {
+        isProjectPageVisible ? showProjectInspector : isInspectorOpen
+    }
 
     /// True when the current chat was entered FROM its project's detail page
     /// (as opposed to the sidebar's Chats tab). The toolbar's back-to-project
@@ -355,19 +414,110 @@ final class ChatWindowState: ObservableObject {
     /// content renders its own themed header row instead.
     @Published var isFullScreen: Bool = false
 
-    // MARK: - Sandbox Changes State
+    // MARK: - Inspector State
 
-    /// Drives the session-scoped "Changes" sheet (sandbox file changes +
-    /// undo). Presented from `ChatView`, toggled by the toolbar button.
-    @Published var isChangesSheetPresented: Bool = false
+    /// Which pane the right-hand inspector shows, or nil while it is closed.
+    /// Both panes are about the tab on screen: File Changes (this chat's
+    /// history, diffs, revert) and History (the past chats of this chat's
+    /// agent). They share the one rail so both open the same way from the
+    /// toolbar, beside the chat, never as a floating dialog.
+    @Published var inspectorPane: ChatInspectorPane? {
+        didSet { if let inspectorPane { lastInspectorPane = inspectorPane } }
+    }
 
-    /// Number of outstanding sandbox workspace changes tracked for the
-    /// current chat session. Zero hides the toolbar entrypoint.
-    @Published private(set) var sandboxChangesCount: Int = 0
+    /// The pane the inspector reopens on. History by default: a fresh
+    /// window has no file changes to show yet.
+    @Published private(set) var lastInspectorPane: ChatInspectorPane = .history
+
+    /// True once the user picked the pane on purpose (lens bar tap or a
+    /// deep link into File Changes). A pinned pane is shown as asked, even
+    /// when it is empty; an unpinned request is allowed to fall back. The
+    /// pin is about the chat on screen, so every conversation change
+    /// (`refreshFileChanges()` on switch / load / reset) clears it.
+    @Published private(set) var inspectorPanePinned = false
+
+    var isInspectorOpen: Bool { inspectorPane != nil }
+
+    /// The pane the rail actually draws. Pure so the fallback is testable:
+    /// an unpinned File Changes request for a chat with no change sets
+    /// shows History instead of an empty pane, until the first change lands.
+    nonisolated static func effectiveInspectorPane(
+        requested: ChatInspectorPane?,
+        fileChangeSetCount: Int,
+        isPinned: Bool
+    ) -> ChatInspectorPane? {
+        guard requested == .fileChanges, fileChangeSetCount == 0, !isPinned else { return requested }
+        return .history
+    }
+
+    var effectiveInspectorPane: ChatInspectorPane? {
+        Self.effectiveInspectorPane(
+            requested: inspectorPane,
+            fileChangeSetCount: fileChangeSetCount,
+            isPinned: inspectorPanePinned
+        )
+    }
+
+    /// Toolbar button / mirror of `toggleSidebar()`: closes the inspector
+    /// when it is open, otherwise reopens it on the pane it last showed
+    /// (unpinned, so an empty File Changes falls back to History).
+    func toggleInspector() {
+        if inspectorPane == nil {
+            inspectorPanePinned = false
+            inspectorPane = lastInspectorPane
+        } else {
+            inspectorPane = nil
+        }
+    }
+
+    /// Show `pane` (opening the inspector or switching in place) and pin
+    /// it. Deep links such as "N files changed" rows and the rail's own
+    /// lens bar use this; it never closes.
+    func showInspector(_ pane: ChatInspectorPane) {
+        inspectorPanePinned = true
+        inspectorPane = pane
+    }
+
+    func closeInspector() {
+        inspectorPane = nil
+    }
+
+    /// Count shown on the toolbar's inspector toggle: the files this chat
+    /// changed, only while the inspector is closed (open, the lens bar
+    /// carries it), only for local chats (remote agents' files live on
+    /// another machine), and never zero.
+    nonisolated static func inspectorBadgeCount(
+        fileChangesCount: Int,
+        isInspectorOpen: Bool,
+        isRemoteAgentChat: Bool
+    ) -> Int? {
+        guard fileChangesCount > 0, !isInspectorOpen, !isRemoteAgentChat else { return nil }
+        return fileChangesCount
+    }
+
+    var inspectorBadgeCount: Int? {
+        Self.inspectorBadgeCount(
+            fileChangesCount: fileChangesCount,
+            isInspectorOpen: isInspectorOpen,
+            isRemoteAgentChat: selectedDiscoveredAgentProviderId != nil
+        )
+    }
+
+    // MARK: - File Changes State
+
+    /// Change set the inspector should reveal (from an inline card or chip).
+    @Published var changesPanelFocusSetId: UUID?
+
+    /// Files whose current state differs from before this chat touched them.
+    @Published private(set) var fileChangesCount: Int = 0
+
+    /// Change sets recorded for the chat (including reverts). Zero hides
+    /// the toolbar entrypoint.
+    @Published private(set) var fileChangeSetCount: Int = 0
 
     /// True while a background job spawned by the current session may still
     /// be mutating the workspace (undo is disabled meanwhile).
-    @Published private(set) var sandboxChangesHaveActiveJob: Bool = false
+    @Published private(set) var fileChangesHaveActiveJob: Bool = false
 
     // MARK: - Theme State
 
@@ -458,7 +608,7 @@ final class ChatWindowState: ObservableObject {
         observeSessionsManager()
         observeWorkspaceState()
         refreshPairedRelayAgents()
-        refreshSandboxChanges()
+        refreshFileChanges()
         reconcileRemoteMode()
     }
 
@@ -496,7 +646,7 @@ final class ChatWindowState: ObservableObject {
         observeSessionsManager()
         observeWorkspaceState()
         refreshPairedRelayAgents()
-        refreshSandboxChanges()
+        refreshFileChanges()
         reconcileRemoteMode()
     }
 
@@ -593,7 +743,7 @@ final class ChatWindowState: ObservableObject {
             }
             reconcileRemoteMode()
             refreshSessions()
-            refreshSandboxChanges()
+            refreshFileChanges()
             return
         }
         newTab(agentId: newAgentId)
@@ -648,7 +798,7 @@ final class ChatWindowState: ObservableObject {
             stampWorkspaceContext(address: address, workspaceId: workspaceId, on: session)
             reconcileRemoteMode()
             refreshSessions()
-            refreshSandboxChanges()
+            refreshFileChanges()
             return
         }
         // The tab is stamped as the team agent's right below; the hosting
@@ -793,7 +943,7 @@ final class ChatWindowState: ObservableObject {
         } else if workspaceAgentAddress != nil {
             clearRemoteMode()
         }
-        refreshSandboxChanges()
+        refreshFileChanges()
     }
 
     /// Bind remote mode to a workspace agent's paired provider. No-op when
@@ -1110,7 +1260,7 @@ final class ChatWindowState: ObservableObject {
         adoptAgentWorkingFolder()
         reconcileRemoteMode()
         refreshSessions()
-        refreshSandboxChanges()
+        refreshFileChanges()
         // KPI: user started a new chat conversation. Count only.
         FeatureTelemetry.chatSessionStarted()
     }
@@ -1247,7 +1397,7 @@ final class ChatWindowState: ObservableObject {
         }
         reconcileRemoteMode()
         refreshSessions()
-        refreshSandboxChanges()
+        refreshFileChanges()
     }
 
     // MARK: - Tabs API
@@ -1304,7 +1454,7 @@ final class ChatWindowState: ObservableObject {
         }
         reconcileRemoteMode()
         refreshSessions()
-        refreshSandboxChanges()
+        refreshFileChanges()
         hibernateColdTabsIfNeeded()
         // KPI: a new tab starts a new conversation, same as sidebar New Chat
         // (not counted when the tab is about to load an existing chat).
@@ -1586,7 +1736,7 @@ final class ChatWindowState: ObservableObject {
         }
         reconcileRemoteMode()
         refreshSessions()
-        refreshSandboxChanges()
+        refreshFileChanges()
     }
 
     /// Save the active session and flush memory before another tab takes
@@ -1851,29 +2001,52 @@ final class ChatWindowState: ObservableObject {
         return fresh
     }
 
-    // MARK: - Sandbox Changes
+    // MARK: - File Changes
 
-    /// Re-query the tracker for the current session's outstanding sandbox
-    /// change count + active-job flag. Cheap (actor cache hit) and safe to
-    /// call on every chat switch / tracker notification.
-    func refreshSandboxChanges() {
-        // Remote-agent chats never mutate the local sandbox; a new chat has
-        // no session id until the first send.
+    /// Show the File Changes inspector, optionally revealing one change set.
+    private var pendingChangesPanelRequest: (sessionId: String, setId: UUID?, at: Date)?
+
+    func openChangesPanel(focusing setId: UUID? = nil) {
+        changesPanelFocusSetId = setId
+        showInspector(.fileChanges)
+    }
+
+    /// Re-query the journal for the current session's outstanding file
+    /// count, set count, and active-job flag. Cheap (actor cache hit) and
+    /// safe to call on every chat switch / journal notification. Every
+    /// conversation change goes through here, so this is also where the
+    /// inspector's explicit pane pick is forgotten; a journal notification
+    /// for the same chat passes `conversationChanged: false`.
+    func refreshFileChanges(conversationChanged: Bool = true) {
+        if conversationChanged { inspectorPanePinned = false }
+        // Remote-agent chats never mutate local files; a new chat has no
+        // session id until the first send.
+        if let pending = pendingChangesPanelRequest {
+            if Date().timeIntervalSince(pending.at) > 3 {
+                pendingChangesPanelRequest = nil
+            } else if pending.sessionId == session.sessionId?.uuidString {
+                pendingChangesPanelRequest = nil
+                openChangesPanel(focusing: pending.setId)
+            }
+        }
         guard selectedDiscoveredAgentProviderId == nil,
             let sessionId = session.sessionId?.uuidString
         else {
-            sandboxChangesCount = 0
-            sandboxChangesHaveActiveJob = false
+            fileChangesCount = 0
+            fileChangeSetCount = 0
+            fileChangesHaveActiveJob = false
             return
         }
         Task { [weak self] in
-            let count = await SandboxWorkspaceChangeTracker.shared.changeCount(for: sessionId)
-            let hasJob = await SandboxWorkspaceChangeTracker.shared.hasActiveBackgroundJobs(
-                sessionId: sessionId)
+            let journal = FileChangeJournal.shared
+            let count = await journal.outstandingCount(for: sessionId)
+            let setCount = await journal.changeSets(for: sessionId).count
+            let hasJob = await journal.hasActiveBackgroundJobs(sessionId: sessionId)
             await MainActor.run {
                 guard let self, self.session.sessionId?.uuidString == sessionId else { return }
-                self.sandboxChangesCount = count
-                self.sandboxChangesHaveActiveJob = hasJob
+                self.fileChangesCount = count
+                self.fileChangeSetCount = setCount
+                self.fileChangesHaveActiveJob = hasJob
             }
         }
     }
@@ -2394,11 +2567,33 @@ final class ChatWindowState: ObservableObject {
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshSessions() } }
         )
-        // Sandbox change tracking: refresh the toolbar count when the
-        // tracker records/undoes changes for the session this window shows.
+        // Inline cards / chips ask the window showing their chat to open
+        // the File Changes inspector on a specific change set.
         notificationObservers.append(
             NotificationCenter.default.addObserver(
-                forName: .sandboxWorkspaceChangesDidChange,
+                forName: .fileChangesOpenPanel,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                let target = notification.userInfo?["sessionId"] as? String
+                let setId = notification.userInfo?["setId"] as? UUID
+                Task { @MainActor in
+                    guard let self, let target else { return }
+                    if self.session.sessionId?.uuidString == target {
+                        self.openChangesPanel(focusing: setId)
+                    } else {
+                        // The sidebar badge selects the chat first; the switch
+                        // can land after this (e.g. a pending rename commits).
+                        self.pendingChangesPanelRequest = (target, setId, Date())
+                    }
+                }
+            }
+        )
+                // File history: refresh the toolbar count when the journal
+        // records/reverts changes for the session this window shows.
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .fileChangesDidChange,
                 object: nil,
                 queue: .main
             ) { [weak self] notification in
@@ -2408,7 +2603,7 @@ final class ChatWindowState: ObservableObject {
                     guard let current = self.session.sessionId?.uuidString,
                         changed == nil || changed == current
                     else { return }
-                    self.refreshSandboxChanges()
+                    self.refreshFileChanges(conversationChanged: false)
                 }
             }
         )

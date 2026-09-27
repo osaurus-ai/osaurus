@@ -207,7 +207,7 @@ enum WorkspaceWriteSafety {
     private static let largeWriteCharacters = 1_000_000
 
     /// Document extensions `file_write` cannot generate. `.xlsx`, `.docx`,
-    /// and `.pdf` are NOT here — they route through
+    /// `.pdf`, and `.pptx` are NOT here — they route through
     /// `FileWriteDocumentRouting`. Every pivot names what the tool does
     /// produce so the model never learns "file_write is text only".
     private static let structuredTargets: [String: StructuredTarget] = {
@@ -216,7 +216,7 @@ enum WorkspaceWriteSafety {
         let wordPivot =
             "Write the same content as `.docx` or `.pdf` (file_write renders Markdown/HTML into a real document) or as Markdown text."
         let presentationPivot =
-            "Presentation generation is not built in: write the outline as Markdown, `.docx`, or `.pdf` instead, or use the `osaurus.pptx` plugin if it is installed."
+            "Write the deck as `.pptx` instead (file_write builds slides from Markdown: each `#`/`##` heading starts a slide), or as Markdown/`.pdf`."
         var table: [String: StructuredTarget] = [:]
         for ext in ["xlsm", "xltx", "xltm", "xlsb", "xls", "xlt", "ods", "numbers"] {
             table[ext] = StructuredTarget(label: "spreadsheet format", pivot: spreadsheetPivot)
@@ -224,7 +224,7 @@ enum WorkspaceWriteSafety {
         for ext in ["docm", "doc", "dot", "dotx", "dotm", "rtfd", "odt", "pages"] {
             table[ext] = StructuredTarget(label: "word-processing format", pivot: wordPivot)
         }
-        for ext in ["pptx", "pptm", "potx", "potm", "ppsx", "ppsm", "ppt", "pot", "pps", "odp", "key"] {
+        for ext in ["pptm", "potx", "potm", "ppsx", "ppsm", "ppt", "pot", "pps", "odp", "key"] {
             table[ext] = StructuredTarget(label: "presentation format", pivot: presentationPivot)
         }
         return table
@@ -277,14 +277,6 @@ enum WorkspaceWriteSafety {
             retryable: false,
             metadata: ["extension": ext]
         )
-    }
-
-    /// Bytes of an existing file (any content), or `nil` when it does not
-    /// exist. Used by the document write route so an overwrite of a
-    /// binary package is captured for undo instead of refused.
-    static func existingBytes(at fileURL: URL) -> Data? {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        return try? Data(contentsOf: fileURL)
     }
 
     static func existingText(
@@ -424,27 +416,6 @@ enum WorkspaceWriteSafety {
             oldLabel: existed ? "before" : "before (new file)",
             newLabel: "after"
         )
-    }
-
-    static func operationHistoryEntry(_ operation: FileOperation) -> [String: Any] {
-        var entry: [String: Any] = [
-            "id": operation.id.uuidString,
-            "type": operation.type.rawValue,
-            "display_name": operation.type.displayName,
-            "path": operation.path,
-            "timestamp": ISO8601DateFormatter().string(from: operation.timestamp),
-            "can_undo": operation.canUndo,
-        ]
-        if let destinationPath = operation.destinationPath {
-            entry["destination_path"] = destinationPath
-        }
-        if let batchId = operation.batchId {
-            entry["batch_id"] = batchId.uuidString
-        }
-        if let contentKind = operation.contentKind {
-            entry["content_kind"] = contentKind
-        }
-        return entry
     }
 
     private static func riskWarnings(

@@ -390,7 +390,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     public func toggleSidebarInFocusedWindow() {
         guard let state = shortcutTargetState else { return }
         withAnimation(state.theme.animationQuick()) {
-            state.showSidebar.toggle()
+            state.toggleSidebar()
         }
     }
 
@@ -1417,7 +1417,8 @@ private struct ChatWindowRootView: View {
 
 /// Themed replacement for the NSToolbar while in native full screen, where
 /// AppKit's toolbar backdrop can't be themed. Mirrors the toolbar layout:
-/// sidebar toggle leading, agent pill centered, action + pin trailing.
+/// sidebar toggle leading, tab strip centered, the File Changes / History /
+/// Pin row trailing.
 private struct ChatFullScreenHeaderView: View {
     @ObservedObject var windowState: ChatWindowState
 
@@ -1427,7 +1428,6 @@ private struct ChatFullScreenHeaderView: View {
             // Leading-aligned like Chrome: tabs grow left to right, filling the
             // row up to the trailing buttons like the toolbar item does.
             ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
-            ChatToolbarActionView(windowState: windowState)
             ChatToolbarTrailingView(windowState: windowState)
         }
         .padding(.horizontal, 12)
@@ -1519,25 +1519,27 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     /// "ChatToolbar.agent" identifier falls through to `default: nil` if
     /// AppKit ever replays it from stale persisted state.)
     fileprivate static let tabsItem = NSToolbarItem.Identifier("ChatToolbar.tabs")
-    fileprivate static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
-    // The trailing item; hosts the pin (chat) or the settings gear
-    // (project page). Named `pin` for backward identity continuity.
+    /// The trailing item: File Changes, History and Pin as one row of
+    /// identically sized buttons. Named `pin` for backward identity
+    /// continuity. (The retired "ChatToolbar.action" identifier, which
+    /// once held the File Changes chip in its own item, falls through to
+    /// `default: nil` if AppKit replays it from persisted state.)
     fileprivate static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
     /// Layout: sidebar on the leading edge, the tab strip filling the middle,
-    /// action + pin on the trailing edge. The strip item is flexible (see
+    /// the trailing button row on the right. The strip item is flexible (see
     /// `makeTabStripItem`), so it doubles as the space that pushes the
-    /// trailing items to the right edge.
+    /// trailing item to the right edge.
     /// Any stale identifiers AppKit may have persisted in user defaults
     /// fall through to `default: nil` in `itemForItemIdentifier`, which
     /// renders them as no-ops rather than crashing.
-    // The trailing slot is a SINGLE item that shows the pin (chat) or the
-    // settings gear (project page) — they're mutually exclusive. Keeping
-    // them as two items left whichever one was hidden as an empty toolbar
-    // item that AppKit still reserved spacing for, so every chat had a dead
-    // gap at the toolbar's right edge.
+    // The trailing slot is a SINGLE item. Every button that can hide (File
+    // Changes before the chat touches a file, all of them on the project
+    // page) lives inside it: a hidden item of its own would still reserve
+    // AppKit's inter-item spacing and leave a dead gap at the right edge,
+    // and the buttons would not share one spacing rule.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, tabsItem, actionItem, pinItem,
+        sidebarItem, tabsItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -1574,13 +1576,6 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
             return makeTabStripItem(
                 identifier: itemIdentifier,
                 rootView: ChatTabStripView(windowState: windowState)
-            )
-
-        case Self.actionItem:
-            return makeHostingItem(
-                identifier: itemIdentifier,
-                rootView:
-                    ChatToolbarActionView(windowState: windowState)
             )
 
         case Self.pinItem:
@@ -1657,10 +1652,10 @@ private struct ChatToolbarSidebarView: View {
     var body: some View {
         HeaderActionButton(
             icon: "sidebar.left",
-            help: windowState.showSidebar ? "Hide sidebar" : "Show sidebar",
+            help: windowState.isSidebarVisible ? "Hide sidebar" : "Show sidebar",
             action: {
                 withAnimation(windowState.theme.animationQuick()) {
-                    windowState.showSidebar.toggle()
+                    windowState.toggleSidebar()
                 }
             }
         )
@@ -1685,134 +1680,48 @@ extension Notification.Name {
     static let chatSessionProjectDidChange = Notification.Name("chatSessionProjectDidChange")
 }
 
-/// Back button beside the sidebar toggle: shown while the current chat
-/// belongs to a project (and the project page itself is not up); returns to
-/// that project's detail page. Split into outer/inner views for the same
-/// session-replacement reason as `ChatToolbarActionView` below.
-/// Contextual action button: new-chat plus once a conversation exists.
-/// Split into an outer view (observing `windowState`, which republishes when
-/// the window's session is replaced) and an inner content view holding the
-/// `@ObservedObject` session, so the button tracks the CURRENT session's
-/// turns after a chat switch instead of a stale instance.
-private struct ChatToolbarActionView: View {
-    @ObservedObject var windowState: ChatWindowState
-
-    var body: some View {
-        // New-chat/plus is chat chrome; the project page has its own
-        // New Chat entry point.
-        if !windowState.isProjectPageVisible {
-            ChatToolbarActionContent(windowState: windowState, session: windowState.session)
-        }
-    }
-}
-
-private struct ChatToolbarActionContent: View {
-    // Must observe windowState directly: with a plain `let`, SwiftUI sees the
-    // unchanged object reference and skips this view's body when only a
-    // published property (e.g. `sandboxChangesCount` after an undo) changed —
-    // the outer ChatToolbarActionView re-rendering is not enough.
-    @ObservedObject var windowState: ChatWindowState
-    @ObservedObject var session: ChatSession
-
-    var body: some View {
-        HStack(spacing: 0) {
-            // Sandbox "Changes" entrypoint: only when the current chat has
-            // tracked workspace changes, and never for remote-agent chats
-            // (those run on another machine's sandbox).
-            if windowState.sandboxChangesCount > 0,
-                windowState.selectedDiscoveredAgentProviderId == nil
-            {
-                ChatToolbarChangesButton(
-                    count: windowState.sandboxChangesCount,
-                    action: { windowState.isChangesSheetPresented = true }
-                )
-            }
-            // New-chat button retired with the tab strip: its "+" (and ⌘T)
-            // starts a new chat in a new tab, and two adjacent plus buttons
-            // with subtly different semantics read as a mistake.
-            // if !session.turns.isEmpty {
-            //     HeaderActionButton(
-            //         icon: "plus",
-            //         help: "New chat",
-            //         action: { windowState.startNewChatInCurrentProject() }
-            //     )
-            // }
-        }
-        .environment(\.theme, windowState.theme)
-    }
-}
-
-/// Compact icon + count pill for the chat toolbar that opens the
-/// session-scoped sandbox Changes sheet. Neutral chip colors (secondary text
-/// on a tertiary capsule) so it sits quietly beside the `HeaderActionButton`s,
-/// warming to accent on hover like they do.
-private struct ChatToolbarChangesButton: View {
-    let count: Int
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("\(count)")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-            }
-            .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-            .frame(height: 28)
-            .padding(.horizontal, 9)
-            .background(
-                Capsule().fill(theme.tertiaryBackground.opacity(isHovered ? 1 : 0.7))
-            )
-            .overlay(
-                Capsule().stroke(theme.primaryBorder.opacity(0.4), lineWidth: 1)
-            )
-            // The plus and pin buttons live in separate NSToolbarItems, so
-            // AppKit adds ~8pt of inter-item spacing between them on top of
-            // their built-in 4pt paddings (~16pt visual gap). The badge sits
-            // in the same item as the plus, so it must supply that spacing
-            // itself: 12pt here + the plus's own 4pt ≈ the same 16pt gap.
-            .padding(.trailing, 12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-        .help(Text(LocalizedStringKey("File changes"), bundle: .module))
-    }
-}
-
-/// The single trailing toolbar item. Window pinning is chat chrome; the
-/// settings gear only makes sense on the project detail page (the chat
-/// surface reaches settings through the agent pill's gear, which hides with
-/// the rest of the chat chrome while a project is open). The two are
-/// mutually exclusive, so they share one toolbar item — otherwise the
-/// hidden one leaves an empty item that reserves a dead gap at the toolbar's
-/// right edge. Both are `HeaderActionButton`-sized, so the item's footprint
-/// is stable as it swaps.
+/// The single trailing toolbar item: the inspector toggle and Pin Window
+/// as one row of `HeaderActionButton`s with one spacing rule. The toggle
+/// mirrors the sidebar button at the other end of the toolbar: it opens
+/// the right-hand rail (on the pane it last showed; the rail's own lens
+/// bar switches between File Changes and History) or closes it, rendering
+/// active while open. While closed it carries the count of files this chat
+/// changed. Everything hides on the project page, which has no chat to
+/// inspect or pin.
+///
+/// Must observe `windowState` directly: with a plain `let`, SwiftUI sees
+/// the unchanged object reference and skips this body when only a
+/// published property (e.g. `fileChangesCount` after an undo) changed.
 private struct ChatToolbarTrailingView: View {
     @ObservedObject var windowState: ChatWindowState
 
-    // Two chat-only buttons: History (the conversation list, as a dialog)
-    // and Pin Window. Settings moved to the bottom of the sidebar. Both
-    // hide on the project page, which has no chat to list or pin.
     var body: some View {
         HStack(spacing: 8) {
-            if !windowState.isProjectPageVisible {
-                HeaderActionButton(
-                    icon: "clock.arrow.circlepath",
-                    help: "History",
-                    action: { ChatHistoryDialog.present(for: windowState) }
-                )
-                // Tour spotlight anchor (invisible; reports the button's frame).
-                .background(TourAnchorMarker(anchor: .historyButton))
+            // One right-rail toggle for both kinds of content: the chat
+            // inspector for a chat, Project Settings for a project. Only
+            // the window pin is chat-only chrome.
+            let isProject = windowState.isProjectPageVisible
+            let isOpen = windowState.isRightRailOpen
+            HeaderActionButton(
+                icon: "sidebar.right",
+                help: railToggleHelp(isProject: isProject, isOpen: isOpen),
+                isActive: isOpen,
+                badge: isProject ? nil : windowState.inspectorBadgeCount,
+                action: {
+                    withAnimation(windowState.theme.animationQuick()) {
+                        if isProject {
+                            windowState.toggleProjectInspector()
+                        } else {
+                            windowState.toggleInspector()
+                        }
+                    }
+                }
+            )
+            .accessibilityLabel(railToggleAccessibilityLabel(isProject: isProject, isOpen: isOpen))
+            // Tour spotlight anchor (invisible; reports the button's frame).
+            .background(TourAnchorMarker(anchor: .historyButton))
 
+            if !isProject {
                 HeaderActionButton(
                     icon: windowState.isWindowPinned ? "pin.fill" : "pin",
                     help: windowState.isWindowPinned ? "Unpin Window" : "Pin Window",
@@ -1825,6 +1734,22 @@ private struct ChatToolbarTrailingView: View {
             }
         }
         .environment(\.theme, windowState.theme)
+    }
+
+    /// Key of the toggle's tooltip (a `HeaderActionButton.help` string).
+    private func railToggleHelp(isProject: Bool, isOpen: Bool) -> String {
+        switch (isProject, isOpen) {
+        case (true, true): return "Hide project settings"
+        case (true, false): return "Show project settings"
+        case (false, true): return "Hide inspector"
+        case (false, false): return "Show inspector"
+        }
+    }
+
+    private func railToggleAccessibilityLabel(isProject: Bool, isOpen: Bool) -> Text {
+        let base = Text(LocalizedStringKey(railToggleHelp(isProject: isProject, isOpen: isOpen)), bundle: .module)
+        guard !isProject, let count = windowState.inspectorBadgeCount else { return base }
+        return base + Text(", ") + Text("\(count) files changed", bundle: .module)
     }
 }
 

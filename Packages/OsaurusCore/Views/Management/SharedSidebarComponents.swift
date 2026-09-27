@@ -230,6 +230,344 @@ struct SidebarBorder: View {
     }
 }
 
+// MARK: - Sidebar Lens Bar
+
+/// Equal-width segmented lens switcher that opens every rail (Agents |
+/// Projects on the left, File Changes | History on the right). Each
+/// segment is the whole padded rectangle as a hit target, accent-tinted
+/// when selected, with an optional count badge. Views within a pane use
+/// `SidebarFilterChip`s, one level below.
+struct SidebarLensBar<Value: Hashable>: View {
+    struct Segment {
+        let value: Value
+        let label: LocalizedStringKey
+        var icon: String? = nil
+        var badge: Int? = nil
+        var accessibilityLabel: Text? = nil
+    }
+
+    @Binding var selection: Value
+    let segments: [Segment]
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                segmentButton(segment)
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
+        )
+    }
+
+    private func segmentButton(_ segment: Segment) -> some View {
+        let isSelected = selection == segment.value
+        return Button {
+            withAnimation(theme.animationQuick()) {
+                selection = segment.value
+            }
+        } label: {
+            HStack(spacing: 5) {
+                if let icon = segment.icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(segment.label, bundle: .module)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                    .lineLimit(1)
+                if let badge = segment.badge, badge > 0 {
+                    Text(badge > 99 ? "99+" : "\(badge)")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill(
+                                (isSelected ? theme.accentColor : theme.secondaryText)
+                                    .opacity(theme.isDark ? 0.22 : 0.14))
+                        )
+                        .accessibilityHidden(true)
+                }
+            }
+            .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) : .clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .accessibilityLabel(segment.accessibilityLabel ?? Text(segment.label, bundle: .module))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+// MARK: - Sidebar Header Icon Button
+
+/// Plain symbol button for a rail's header row (New Agent, New Project,
+/// Import, Revert All): no chrome, `secondaryText` unless a tint is given,
+/// pointing-hand cursor and a tooltip. One control on both rails.
+struct SidebarHeaderIconButton: View {
+    let icon: String
+    let help: LocalizedStringKey
+    var tint: Color? = nil
+    var size: CGFloat = 13
+    var label: LocalizedStringKey? = nil
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: size, weight: .medium))
+                if let label {
+                    Text(label, bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                }
+            }
+            .foregroundColor(tint ?? theme.secondaryText)
+            .opacity(isEnabled ? 1 : 0.45)
+            // Pad the hit target beyond the glyph without adding chrome.
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .localizedHelp(help)
+    }
+}
+
+// MARK: - Sidebar Filter Chip
+
+/// Pane-level toggle in the rails' chip idiom: a capsule, ghost when off
+/// (hover tints it), accent-tinted when on. One level below the lens bar:
+/// lenses change what a rail lists, chips narrow or re-sort it.
+struct SidebarFilterChip: View {
+    let label: LocalizedStringKey
+    var icon: String? = nil
+    var iconOn: String? = nil
+    let isOn: Bool
+    var help: LocalizedStringKey? = nil
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        let shape = Capsule(style: .continuous)
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let icon {
+                    Image(systemName: isOn ? (iconOn ?? icon) : icon)
+                        .font(.system(size: 9.5, weight: .semibold))
+                }
+                Text(label, bundle: .module)
+                    .font(.system(size: 11, weight: isOn ? .semibold : .medium))
+            }
+            .foregroundColor(isOn ? theme.accentColor : theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                shape.fill(
+                    isOn
+                        ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18)
+                        : (isHovered ? theme.secondaryBackground.opacity(0.5) : Color.clear)
+                )
+            )
+            .contentShape(shape)
+            .pointingHandCursor()
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .modifier(OptionalHelp(help: help))
+    }
+
+    private struct OptionalHelp: ViewModifier {
+        let help: LocalizedStringKey?
+        func body(content: Content) -> some View {
+            if let help { content.localizedHelp(help) } else { content }
+        }
+    }
+}
+
+// MARK: - Sidebar Empty State
+
+/// The rails' one empty-state idiom: a light symbol, a short title and an
+/// optional one-line hint, centred in the space the list would fill.
+struct SidebarEmptyState: View {
+    let icon: String
+    let title: LocalizedStringKey
+    var hint: LocalizedStringKey? = nil
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: icon)
+                .font(.system(size: 28, weight: .light))
+                .foregroundColor(theme.secondaryText.opacity(0.5))
+            Text(title, bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+            if let hint {
+                Text(hint, bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText.opacity(0.7))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
+    }
+}
+
+// MARK: - Sidebar Header Row
+
+/// The row under a rail's lens bar: an optional one-line summary on the
+/// left ("2 files changed · 3 changes", "Content Writer · 12 chats") and
+/// the pane's `SidebarHeaderIconButton`s on the right. Same paddings as
+/// the left rail's header so the two rails line up.
+struct SidebarHeaderRow<Actions: View>: View {
+    var summary: String? = nil
+    @ViewBuilder let actions: () -> Actions
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let summary, !summary.isEmpty {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    // Optically aligned with the lens bar's inner edge.
+                    .padding(.leading, 4)
+            }
+            Spacer(minLength: 8)
+            actions()
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
+        // Constant height whether or not a pane has actions, so the list
+        // below starts at the same y on every pane.
+        .frame(minHeight: 32)
+    }
+}
+
+// MARK: - Sidebar Title Row
+
+/// The top row of a rail that has one pane rather than lenses ("Project
+/// Settings"): a 13pt title where the lens bar would sit, optional actions
+/// on the right. Same vertical insets as `SidebarLensBar`'s row so the two
+/// kinds of rail start their content at the same y.
+struct SidebarTitleRow<Actions: View>: View {
+    let title: LocalizedStringKey
+    @ViewBuilder let actions: () -> Actions
+
+    @Environment(\.theme) private var theme
+
+    init(_ title: LocalizedStringKey, @ViewBuilder actions: @escaping () -> Actions = { EmptyView() }) {
+        self.title = title
+        self.actions = actions
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title, bundle: .module)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .padding(.leading, 4)
+            Spacer(minLength: 8)
+            actions()
+        }
+        .frame(minHeight: 30)
+        .padding(.horizontal, 12)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+    }
+}
+
+// MARK: - Column Resize Handle
+
+/// Draggable divider on a rail's inner edge. A thin visible seam with a
+/// wider invisible hit area straddling the boundary; dragging resizes the
+/// rail and the two-headed cursor telegraphs that it's grabbable. The
+/// left rail uses `.trailing` (drag right widens), the right rail
+/// `.leading` (drag left widens).
+struct ColumnResizeHandle: View {
+    /// Which edge of the rail this handle sits on.
+    let edge: HorizontalEdge
+    /// Allowed rail widths.
+    let range: ClosedRange<Double>
+    /// Persisted width; committed on release.
+    @Binding var storedWidth: Double
+    /// Width while a drag is in flight (nil at rest).
+    @Binding var liveWidth: Double?
+
+    @Environment(\.theme) private var theme
+    @State private var dragAnchor: Double?
+
+    private func clamp(_ raw: Double) -> Double {
+        min(max(raw, range.lowerBound), range.upperBound)
+    }
+
+    var body: some View {
+        // An 11pt-wide interactive strip; the offset pushes half of it past
+        // the border so the seam is grabbable right at the boundary. The
+        // visible seam is a 1pt line at the strip's center.
+        Color.clear
+            .frame(width: 11)
+            .frame(maxHeight: .infinity)
+            .overlay {
+                Rectangle()
+                    .fill(theme.secondaryText.opacity(liveWidth != nil ? 0.55 : 0.12))
+                    .frame(width: 1)
+            }
+            .contentShape(Rectangle())
+            .pointerStyle(.columnResize)
+            .offset(x: edge == .trailing ? 5 : -5)
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { value in
+                        // Anchor to the width at gesture start so the rail
+                        // tracks the cursor 1:1 without accumulating drift.
+                        let anchor = dragAnchor ?? clamp(liveWidth ?? storedWidth)
+                        if dragAnchor == nil {
+                            dragAnchor = anchor
+                        }
+                        let delta = Double(value.translation.width)
+                        liveWidth = clamp(anchor + (edge == .trailing ? delta : -delta))
+                    }
+                    .onEnded { _ in
+                        if let final = liveWidth {
+                            storedWidth = clamp(final)
+                        }
+                        liveWidth = nil
+                        dragAnchor = nil
+                    }
+            )
+    }
+}
+
 // MARK: - Sidebar Search Field
 
 /// Themed search field for sidebar filtering.

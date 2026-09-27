@@ -58,6 +58,11 @@ struct SettingsSearchIndexTests {
                     MemoryTab(rawValue: subTab) != nil,
                     "\(entry.id): \(subTab) is not a MemoryTab raw value"
                 )
+            case .privacy:
+                #expect(
+                    PrivacyTab(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a PrivacyTab raw value"
+                )
             case .agents:
                 // Routed by `AgentsView.routeSettingsLanding` from the landing
                 // id; the subTab must still be a real detail tab raw value.

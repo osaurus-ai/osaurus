@@ -601,6 +601,23 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    /// The folder prompt tells the model to review and undo with these; the
+    /// real request must carry them, not just the five-tool core.
+    @Test
+    func hostFolderSchemaCarriesHistoryCopyAndRedactionTools() {
+        withRegisteredFolderTools { folder in
+            let tools = SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(),
+                executionMode: .hostFolder(folder),
+                query: "Undo the last change to report.docx"
+            )
+            let names = Set(tools.map(\.function.name))
+            for name in ["file_undo", "file_operation_history", "file_copy", "redact_file", "detect_pii"] {
+                #expect(names.contains(name), "missing \(name)")
+            }
+        }
+    }
+
     @Test
     func workspacePreservesEnabledCapabilitiesWithoutQueryHints() {
         withRegisteredFolderTools { folder in
@@ -1403,7 +1420,7 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(
                     propertyNames("file_read") == [
                         "path", "max_depth", "sheet_name", "start_line", "end_line",
-                        "tail_lines", "max_chars", "max_rows", "max_columns",
+                        "tail_lines", "max_chars", "max_rows", "max_columns", "mode",
                     ]
                 )
                 let readDescription = byName["file_read"]?.function.description ?? ""
@@ -1421,7 +1438,7 @@ struct SystemPromptComposerToolResolutionTests {
                 // from the compact schema.
                 #expect(
                     propertyNames("file_edit") == [
-                        "path", "old_string", "new_string", "edits", "replace_all", "dry_run",
+                        "path", "old_string", "new_string", "edits", "replace_all", "dry_run", "operations",
                     ]
                 )
                 #expect(propertyNames("shell_run") == ["command", "timeout"])
@@ -1455,7 +1472,7 @@ struct SystemPromptComposerToolResolutionTests {
                     tools.first { $0.function.name == "file_write" }?.function.description ?? ""
                 #expect(writeDescription.contains(".xlsx"))
                 #expect(writeDescription.contains(".docx"))
-                #expect(writeDescription.contains(".pptx` is not"))
+                #expect(writeDescription.contains("`.pptx` from Markdown"))
 
                 var editProps: [String: JSONValue] = [:]
                 if case .object(let schema)? = tools.first(where: { $0.function.name == "file_edit" })?
@@ -1466,6 +1483,31 @@ struct SystemPromptComposerToolResolutionTests {
                 }
                 #expect(editProps["edits"] != nil)
                 #expect(editProps["replace_all"] != nil)
+                // The VM route can't edit documents in place, so it must not advertise it.
+                #expect(editProps["operations"] == nil)
+            }
+        }
+    }
+
+    @Test
+    func folderMode_compactSchemaAdvertisesInPlaceDocumentEdits() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            withRegisteredFolderTools { folder in
+                let tools = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .hostFolder(folder)
+                )
+                func properties(_ name: String) -> [String: JSONValue] {
+                    guard case .object(let schema)? = tools.first(where: { $0.function.name == name })?.function.parameters,
+                        case .object(let props)? = schema["properties"]
+                    else { return [:] }
+                    return props
+                }
+                #expect(properties("file_edit")["operations"] != nil)
+                #expect(properties("file_read")["mode"] != nil)
+                let editDescription = tools.first { $0.function.name == "file_edit" }?.function.description ?? ""
+                #expect(editDescription.contains("`operations`"))
+                #expect(!editDescription.contains("regenerate with file_write"))
             }
         }
     }

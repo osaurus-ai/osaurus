@@ -49,13 +49,20 @@ struct DelegatedWorkingFolderTests {
     /// the pool assertions in `OrchestratorSpawnDefaultsTests`. Cleanup is
     /// AWAITED (not a fire-and-forget `defer { Task {…} }`) for the same
     /// reason.
+    ///
+    /// Lock order is the canonical Storage → Sandbox (both taken by
+    /// `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking the
+    /// store lease outermost deadlocked the whole suite against
+    /// `OrchestratorSpawnDefaultsTests` / `SpawnPermissionGateTests`, which
+    /// nest it canonically: each side held one lock and waited on the other,
+    /// and every later storage-locked test queued behind them forever.
     private func withAgents(
         _ count: Int,
         _ body: @MainActor ([Agent]) async throws -> Void
     ) async throws {
-        let lease = await acquireSubagentStoreSandbox("delegated-working-folder")
-        defer { lease.release() }
         try await ChatHistoryTestStorage.run {
+            let lease = await acquireSubagentStoreSandbox("delegated-working-folder")
+            defer { lease.release() }
             let agents = (0..<count).map { _ in makeAgent() }
             for agent in agents { AgentManager.shared.add(agent) }
             var thrown: Error?

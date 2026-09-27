@@ -1833,8 +1833,8 @@ enum AgentToolLoop {
             }
         }
 
-        // One batch id for the whole wave so multi-file operations group
-        // in the file-operation undo log (`FileOperation.batchId`).
+        // One batch id for the whole wave so its tool calls can be
+        // correlated downstream.
         let indexed: [(Int, AgentLoopToolExecution)] = await ChatExecutionContext.$currentBatchId
             .withValue(UUID()) {
                 await ChatExecutionContext.$spawnWave.withValue(spawnWave) {

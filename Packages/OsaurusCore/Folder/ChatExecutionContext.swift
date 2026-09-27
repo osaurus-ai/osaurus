@@ -102,7 +102,7 @@ final class WeakChatSessionBox: @unchecked Sendable {
 /// them picks up the right scope without an explicit parameter.
 public enum ChatExecutionContext {
     /// The current chat session id whose tool calls are running. Tools that
-    /// need per-conversation state (todo store, file-op undo log, method
+    /// need per-conversation state (todo store, file history, method
     /// telemetry) key off this.
     @TaskLocal public static var currentSessionId: String?
 
@@ -174,6 +174,11 @@ public enum ChatExecutionContext {
     /// Specific tool invocation id. Used by `speak` so the inline card
     /// can swap its check for a spinner while its audio plays
     @TaskLocal public static var currentToolCallId: String?
+
+    /// File history change set recording the executing tool call (bound by
+    /// the registry's journal capture). Tools report it as `operation_id`
+    /// so `file_undo` can target exactly this call.
+    @TaskLocal public static var currentChangeSetId: UUID?
 
     /// What this request is allowed to EXECUTE, as opposed to what it merely exposed.
     ///

@@ -863,6 +863,14 @@ final class NativeToolCallRowView: NSView {
     /// NO_RESULTS envelope) — first-time users otherwise never see the
     /// remediation hint, which is only in the model-facing result JSON.
     private let searchSettingsButton = NSButton()
+    /// "N files changed" link on a collapsed completed row whose call
+    /// changed files (shell commands, moves, deletes…); opens the File
+    /// Changes inspector on that change set. Write/edit calls get the diff
+    /// card instead.
+    private let fileChangesButton = NSButton()
+    private var fileChangeSet: FileChangeSet?
+    private var fileChangeLookupCallId: String?
+    nonisolated(unsafe) private var fileChangeObservation: NSObjectProtocol?
 
     // Expanded content
     private let contentContainer = NSView()
@@ -973,12 +981,25 @@ final class NativeToolCallRowView: NSView {
                 self?.applyStatusAndShimmer()
             }
         }
+        fileChangeObservation = NotificationCenter.default.addObserver(
+            forName: .fileChangesDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.fileChangeLookupCallId = nil
+                self?.refreshFileChangesLink()
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
         if let observation = ttsObservation {
+            NotificationCenter.default.removeObserver(observation)
+        }
+        if let observation = fileChangeObservation {
             NotificationCenter.default.removeObserver(observation)
         }
     }
@@ -1183,6 +1204,13 @@ final class NativeToolCallRowView: NSView {
                 nameLabel.textColor = NSColor(theme.primaryText)
             }
         }
+
+        if isNew {
+            fileChangeLookupCallId = nil
+            fileChangeSet = nil
+            fileChangesButton.isHidden = true
+        }
+        refreshFileChangesLink(expanded: isExpanded)
 
         // Node colors (status-driven) + running shimmer on the title.
         applyStatusAndShimmer()
@@ -1908,6 +1936,16 @@ final class NativeToolCallRowView: NSView {
         searchSettingsButton.action = #selector(openSearchSettings)
         addSubview(searchSettingsButton)
 
+        fileChangesButton.translatesAutoresizingMaskIntoConstraints = false
+        fileChangesButton.isBordered = false
+        fileChangesButton.bezelStyle = .inline
+        fileChangesButton.focusRingType = .none
+        fileChangesButton.isHidden = true
+        fileChangesButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        fileChangesButton.target = self
+        fileChangesButton.action = #selector(openFileChanges)
+        addSubview(fileChangesButton)
+
         let rowH = Self.rowHeaderHeight
 
         // self-sizing height constraint
@@ -1964,6 +2002,13 @@ final class NativeToolCallRowView: NSView {
             searchSettingsButton.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
             searchSettingsButton.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
             searchSettingsButton.trailingAnchor.constraint(
+                lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+
+            // Search links only appear on search rows, which never change
+            // files, so this can share the same slot.
+            fileChangesButton.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
+            fileChangesButton.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
+            fileChangesButton.trailingAnchor.constraint(
                 lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
 
             chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -2294,5 +2339,58 @@ final class NativeToolCallRowView: NSView {
 
     @objc private func openSearchSettings() {
         AppDelegate.shared?.showManagementWindow(initialTab: .search)
+    }
+
+    // MARK: - File changes link
+
+    private func refreshFileChangesLink(expanded: Bool? = nil) {
+        guard let item = currentItem, item.result != nil, !(expanded ?? isExpanded),
+            !FileDiff.diffProducingToolNames.contains(item.call.function.name)
+        else {
+            fileChangesButton.isHidden = true
+            return
+        }
+        let callId = item.call.id
+        guard fileChangeLookupCallId != callId else {
+            applyFileChangesLink()
+            return
+        }
+        fileChangeLookupCallId = callId
+        Task { @MainActor [weak self] in
+            let set = await FileChangeJournal.shared.changeSet(forToolCallId: callId)
+            guard let self, self.currentItemId == callId else { return }
+            self.fileChangeSet = set
+            self.applyFileChangesLink()
+        }
+    }
+
+    private func applyFileChangesLink() {
+        guard let set = fileChangeSet, !isExpanded, let theme = lastConfiguredTheme,
+            !set.entries.isEmpty || set.status == .untracked
+        else {
+            fileChangesButton.isHidden = true
+            return
+        }
+        let count = set.entries.count
+        var title: String
+        switch set.status {
+        case .untracked: title = L("Changes not tracked")
+        default: title = L("\(count) files changed")
+        }
+        if set.status == .reverted { title += " · " + L("reverted") }
+        fileChangesButton.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor(set.status == .reverted ? theme.tertiaryText : theme.accentColor),
+            ]
+        )
+        fileChangesButton.toolTip = L("Show in File Changes")
+        fileChangesButton.isHidden = false
+    }
+
+    @objc private func openFileChanges() {
+        guard let set = fileChangeSet else { return }
+        FileChangeSummaryStore.requestPanel(sessionId: set.sessionId, focusing: set.id)
     }
 }

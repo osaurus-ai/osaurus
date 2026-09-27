@@ -1508,7 +1508,7 @@ public enum SystemPromptTemplates {
         let shellBullet = sandboxShellBullet(backgroundEnabled: backgroundEnabled)
         return """
             Tool dispatch:
-            - Files: `file_read` (read/list — text, PDF/Word/PowerPoint text, XLSX preview, images), `file_write` (text whole-file/append; `.xlsx` from CSV/JSON rows, `.docx`/`.pdf` from Markdown/HTML), and `file_edit` (exact text replacement).
+            - Files: `file_read` (read/list — text, PDF/Word/PowerPoint text, XLSX preview, images), `file_write` (text whole-file/append; `.xlsx` from CSV/JSON rows, `.docx`/`.pdf`/`.pptx` from Markdown/HTML), and `file_edit` (exact text replacement; documents in place with `operations`).
             - Search: `file_search` with `target="content"` (also inside PDF/Word/PowerPoint/XLSX) or `target="files"`.
             \(shellBullet)
             - Multi-line code/scripts: `file_write` the script, then `shell_run` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
@@ -1578,7 +1578,7 @@ public enum SystemPromptTemplates {
             : "`shell_run` (single-line)"
         return """
             Tool dispatch:
-            - Files: `file_read` (read/list; opens text, PDF/Word/PowerPoint, XLSX preview, images — call it on the document), `file_write` (text whole-file/append; generates `.xlsx`/`.docx`/`.pdf`), `file_edit` (exact text replacement). Search: `file_search` (`target="content"|"files"`, content also inside documents).
+            - Files: `file_read` (read/list; opens text, PDF/Word/PowerPoint, XLSX preview, images — call it on the document), `file_write` (text whole-file/append; generates `.xlsx`/`.docx`/`.pdf`/`.pptx`), `file_edit` (exact text replacement; documents in place with `operations`). Search: `file_search` (`target="content"|"files"`, content also inside documents).
             - Shell: \(shell). Multi-line code: `file_write` a script then `shell_run` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
             - Install deps with `sandbox_install` (\(sandboxInstallManagers)); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
@@ -1799,17 +1799,17 @@ public enum SystemPromptTemplates {
         - Search: `file_search` for content (case-insensitive substring; also inside PDF/Word/PowerPoint/XLSX), or `target:"files"` to find files by name (case-insensitive substring, e.g. `q4`).
         - Find a file by name: use `file_search` with `target:"files"` and a short distinctive token from the name (not the whole phrase).
         - Edit: `file_edit` for targeted in-place text edits (`replace_all`, batch `edits`), `file_write` for new files or full rewrites.
-        - Documents: `file_write` generates them by extension — `.xlsx` from CSV/TSV or JSON rows, `.docx`/`.pdf` from Markdown or HTML — no converter, script, or `shell_run` check needed (`.pptx` is not supported). To change a document, `file_read` it, edit the text, and `file_write` it again.
+        - Documents: `file_write` generates them by extension — `.xlsx` from CSV/TSV or JSON rows, `.docx`/`.pdf` from Markdown or HTML, `.pptx` from Markdown (one slide per heading) — no converter, script, or `shell_run` check needed. To change an existing `.docx`/`.xlsx`/`.pptx`/`.pdf`, call `file_read` with `mode:"structure"` to see its numbered paragraphs/cells/slides/pages, then `file_edit` with `operations` — this keeps formatting; don't regenerate it.
         - Copy: `file_copy(source, destination)` duplicates any file byte-for-byte (binary-safe, undoable) — version a file before editing it.
-        - Shell: `shell_run` for builds, tests, git, processes, and `mv` / `rm` / `mkdir` (simple forms join the undo log; complex commands warn that they don't).
-        - Undo: `file_undo` reverts logged operations; `file_operation_history` shows what is revertible.
+        - Shell: `shell_run` for builds, tests, git, processes, and `mv` / `rm` / `mkdir` (the file changes it makes are recorded and undoable).
+        - Undo: `file_undo` reverts this chat's file changes (latest, one `operation_id`, or one `path`); `file_operation_history` lists them.
         """
 
     /// Folder-mode-specific reminder: filesystem changes ARE visible to
     /// the user (unlike sandbox), but only `share_artifact` surfaces an
     /// artifact card in the chat thread.
     static let folderArtifactReminder = """
-        **Files land in the working folder, not in chat.** When you create or edit a file with `file_write` / `file_edit`, the user can see it on disk and in the operations log. If the user needs the deliverable to appear in the chat thread (an image, chart, generated text, report, code blob), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.
+        **Files land in the working folder, not in chat.** When you create or edit a file with `file_write` / `file_edit`, the user can see it on disk and in the chat's file changes. If the user needs the deliverable to appear in the chat thread (an image, chart, generated text, report, code blob), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.
         """
 
     // MARK: - Combined Sandbox + Host-Read

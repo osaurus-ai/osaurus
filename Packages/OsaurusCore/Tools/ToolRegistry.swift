@@ -36,6 +36,57 @@ private final class ToolBodyRaceState: @unchecked Sendable {
     private var continuation: CheckedContinuation<String, Never>?
     private var bodyTask: Task<Void, Never>?
     private var timeoutTimer: DispatchSourceTimer?
+    private var bodyFinished = false
+    private var graceContinuation: CheckedContinuation<Bool, Never>?
+
+    /// The body task exited (whatever won the race). Wakes a grace waiter.
+    func markBodyFinished() {
+        lock.lock()
+        bodyFinished = true
+        let waiter = graceContinuation
+        graceContinuation = nil
+        lock.unlock()
+        waiter?.resume(returning: true)
+    }
+
+    /// Wait up to `seconds` for the body to exit after the race was lost
+    /// (timeout/cancellation), so file writes it still completes land
+    /// inside the caller's journal capture. Returns false when it didn't.
+    func waitForBody(graceSeconds seconds: TimeInterval, queue: DispatchQueue) async -> Bool {
+        if isBodyFinished() { return true }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            if !armGrace(continuation) {
+                continuation.resume(returning: true)
+                return
+            }
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + .nanoseconds(max(0, Int(seconds * 1_000_000_000))))
+            timer.setEventHandler { [self] in
+                lock.lock()
+                let waiter = graceContinuation
+                graceContinuation = nil
+                lock.unlock()
+                waiter?.resume(returning: false)
+                timer.cancel()
+            }
+            timer.resume()
+        }
+    }
+
+    private func isBodyFinished() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return bodyFinished
+    }
+
+    /// Registers the grace waiter; false when the body already exited.
+    private func armGrace(_ continuation: CheckedContinuation<Bool, Never>) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if bodyFinished { return false }
+        graceContinuation = continuation
+        return true
+    }
 
     func install(continuation: CheckedContinuation<String, Never>) {
         lock.lock()
@@ -713,7 +764,8 @@ public final class ToolRegistry: ObservableObject {
         guard case .ready(let effectiveArgumentsJSON) = Self.preflight(
             argumentsJSON: normalized,
             schema: tool.parameters,
-            toolName: name
+            toolName: name,
+            hint: tool.argumentHint
         ) else { return }
         try await runPermissionGate(
             tool: tool,
@@ -1320,7 +1372,8 @@ public final class ToolRegistry: ObservableObject {
         switch Self.preflight(
             argumentsJSON: normalizedArguments,
             schema: tool.parameters,
-            toolName: name
+            toolName: name,
+            hint: tool.argumentHint
         ) {
         case .rejected(let envelopeJSON):
             return envelopeJSON
@@ -1388,51 +1441,28 @@ public final class ToolRegistry: ObservableObject {
             // mode, leaving plain folder + plain sandbox modes untouched.
             let policy = combinedHostReadPolicy
             let sandboxAgent = activeSandboxAgentName
-            // Sandbox change tracking: wrap mutation-capable sandbox tools
-            // in a workspace checkpoint so every file the call creates,
-            // edits, deletes, or moves lands in the owning chat's Changes
-            // list. Only when the call is attributable (session id bound)
-            // and a sandbox agent identity is resolvable.
+            // File history: wrap mutating calls in a journal capture so
+            // every file the call creates, edits, or deletes lands in the
+            // owning chat's history (and can be reverted). Only when the
+            // call is attributable (session id bound). Sandbox tools capture
+            // the sandbox roots; host-folder tools capture the EXECUTING
+            // chat's folder (TaskLocal, never a process-wide folder) and, in
+            // writable combined mode, the bridged sandbox roots too — a
+            // `/workspace/...` path routes through the bridge.
             let readBridge = combinedSandboxReadBridge
-            // Sandbox tools checkpoint the sandbox roots; host-folder tools
-            // checkpoint the user-selected folder. In WRITABLE combined mode
-            // the unified `file_write`/`file_edit` can mutate EITHER
-            // filesystem (a `/workspace/...` path routes through the sandbox
-            // bridge), so they take both checkpoints — the untouched side
-            // diffs to zero rows and costs one manifest scan.
-            var changeCheckpoints: [SandboxWorkspaceChangeTracker.CheckpointToken] = []
-            if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
-                if tool.mutatesSandboxWorkspace, let agentName = sandboxAgent {
-                    changeCheckpoints.append(
-                        await SandboxWorkspaceChangeTracker.shared.beginCheckpoint(
-                            sessionId: sessionId,
-                            agentName: agentName,
-                            sourceTool: name
-                        )
-                    )
-                } else if tool.mutatesHostFolder {
-                    // The EXECUTING chat's folder root (TaskLocal, bound by
-                    // the send/run surface) — never a process-wide folder, so
-                    // concurrent chats checkpoint their own roots.
-                    if let folderRoot = ChatExecutionContext.currentFolderRoot {
-                        changeCheckpoints.append(
-                            await SandboxWorkspaceChangeTracker.shared.beginHostCheckpoint(
-                                sessionId: sessionId,
-                                folderPath: folderRoot.standardizedFileURL.path,
-                                sourceTool: name
-                            )
-                        )
-                    }
-                    if let bridge = readBridge {
-                        changeCheckpoints.append(
-                            await SandboxWorkspaceChangeTracker.shared.beginCheckpoint(
-                                sessionId: sessionId,
-                                agentName: bridge.agentName,
-                                sourceTool: name
-                            )
-                        )
-                    }
-                }
+            var captureContext: FileChangeCapture.Context?
+            if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty,
+                tool.mutatesSandboxWorkspace || tool.mutatesHostFolder
+            {
+                captureContext = FileChangeCapture.Context(
+                    sessionId: sessionId,
+                    toolName: name,
+                    toolCallId: ChatExecutionContext.currentToolCallId,
+                    turnId: ChatExecutionContext.currentAssistantTurnId,
+                    folderRoot: ChatExecutionContext.currentFolderRoot,
+                    sandboxAgent: tool.mutatesSandboxWorkspace ? sandboxAgent : nil,
+                    bridgeAgent: tool.mutatesHostFolder ? readBridge?.agentName : nil
+                )
             }
             // Count real tool work for the run, so `todo` can tell progress
             // from assertion. Recorded at dispatch rather than on success: a
@@ -1441,9 +1471,8 @@ public final class ToolRegistry: ObservableObject {
             // the Todo tool acts on.
             ChatExecutionContext.agentTodoRunScope?.recordToolExecution(name: name)
 
-            let result: String
-            do {
-                result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
+            let runBody: () async throws -> String = {
+                try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
                     try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
                         try await ChatExecutionContext.$allowHostFolderWrites.withValue(policy.allowFolderWrites) {
                             try await ChatExecutionContext.$sandboxReadBridge.withValue(readBridge) {
@@ -1478,17 +1507,17 @@ public final class ToolRegistry: ObservableObject {
                         }
                     }
                 }
-            } catch {
-                // Bodies normally fold errors into envelopes, but the
-                // checkpoints must still reconcile whatever was written
-                // before a throw (e.g. cancellation mid-write).
-                for checkpoint in changeCheckpoints {
-                    await SandboxWorkspaceChangeTracker.shared.endCheckpoint(checkpoint)
-                }
-                throw error
             }
-            for checkpoint in changeCheckpoints {
-                await SandboxWorkspaceChangeTracker.shared.endCheckpoint(checkpoint)
+            let result: String
+            if let captureContext {
+                result = try await FileChangeCapture.run(
+                    tool: tool,
+                    argumentsJSON: effectiveArgumentsJSON,
+                    context: captureContext,
+                    body: runBody
+                )
+            } else {
+                result = try await runBody()
             }
             if PrefillDebugLog.shared.isEnabled, name.hasPrefix("capabilities_") {
                 let flat = result.replacingOccurrences(of: "\n", with: " ")
@@ -1647,7 +1676,7 @@ public final class ToolRegistry: ObservableObject {
 
     /// Outcome of `preflight`: either the cleaned arguments to dispatch
     /// with, or a ready-to-return failure envelope JSON string.
-    private enum PreflightOutcome {
+    enum PreflightOutcome {
         case ready(argumentsJSON: String)
         case rejected(envelopeJSON: String)
     }
@@ -1670,10 +1699,13 @@ public final class ToolRegistry: ObservableObject {
     /// fall through unchanged: parsing is best-effort, and tool bodies
     /// keep their richer `requireXxx` helpers as the second line of
     /// defence.
-    nonisolated private static func preflight(
+    /// Internal (not private) so the test helper exercises the exact
+    /// coerce → validate → hint path the dispatcher uses.
+    nonisolated static func preflight(
         argumentsJSON: String,
         schema: JSONValue?,
-        toolName: String
+        toolName: String,
+        hint: ((String) -> String?)? = nil
     ) -> PreflightOutcome {
         guard let schema,
             let data = argumentsJSON.data(using: .utf8),
@@ -1682,7 +1714,13 @@ public final class ToolRegistry: ObservableObject {
 
         let coerced = SchemaValidator.coerceArguments(parsed, against: schema)
         let result = SchemaValidator.validate(arguments: coerced, against: schema)
-        if !result.isValid, let message = result.errorMessage {
+        if !result.isValid, var message = result.errorMessage {
+            // Tools can explain where a misplaced key belongs (e.g. `sheet`
+            // inside a `file_edit` operation). Guidance only — the call is
+            // still rejected, never rewritten.
+            if let field = result.field, let extra = hint?(field) {
+                message += (message.hasSuffix(".") ? " " : ". ") + extra
+            }
             return .rejected(
                 envelopeJSON: ToolEnvelope.failure(
                     kind: .invalidArgs,
@@ -1828,10 +1866,17 @@ public final class ToolRegistry: ObservableObject {
     /// The timeout branch also uses a dedicated GCD timer queue rather than
     /// `Task.sleep`, because a saturated Swift executor can otherwise delay
     /// the "wall-clock" timeout behind unrelated async work.
+    /// After a timeout or cancellation wins the race, how long to wait for
+    /// the (cancelled) body to actually exit before returning. The caller's
+    /// file-history capture ends when this returns, so writes the body
+    /// finishes inside this window are still journaled and undoable.
+    nonisolated static let defaultBodyGraceSeconds: TimeInterval = 5
+
     nonisolated internal static func runToolBody(
         _ tool: OsaurusTool,
         argumentsJSON: String,
-        timeoutSeconds: TimeInterval
+        timeoutSeconds: TimeInterval,
+        bodyGraceSeconds: TimeInterval = defaultBodyGraceSeconds
     ) async throws -> String {
         let toolName = tool.name
         let timeoutEnvelope = ToolEnvelope.failure(
@@ -1849,7 +1894,7 @@ public final class ToolRegistry: ObservableObject {
         )
         let race = ToolBodyRaceState()
 
-        return await withTaskCancellationHandler {
+        let result = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 race.install(continuation: continuation)
                 let timeoutTimer = DispatchSource.makeTimerSource(queue: toolBodyTimeoutQueue)
@@ -1861,6 +1906,7 @@ public final class ToolRegistry: ObservableObject {
                 timeoutTimer.resume()
 
                 let bodyTask = Task {
+                    defer { race.markBodyFinished() }
                     do {
                         let result = try await tool.execute(argumentsJSON: argumentsJSON)
                         race.complete(result)
@@ -1875,6 +1921,16 @@ public final class ToolRegistry: ObservableObject {
         } onCancel: {
             race.complete(cancellationEnvelope)
         }
+        // A lost race means the body may still be running. Give it a bounded
+        // window to exit so late writes stay inside the journal capture.
+        if bodyGraceSeconds > 0 {
+            let finished = await race.waitForBody(graceSeconds: bodyGraceSeconds, queue: toolBodyTimeoutQueue)
+            if !finished {
+                Logger(subsystem: "ai.osaurus", category: "tools").warning(
+                    "tool \(toolName, privacy: .public) still running \(Int(bodyGraceSeconds))s after timeout/cancel; later writes are not journaled")
+            }
+        }
+        return result
     }
 
     // MARK: - Listing / Enablement
@@ -2398,7 +2454,7 @@ public final class ToolRegistry: ObservableObject {
     /// The write subset of the folder tools that joined the schema in
     /// legacy WRITABLE combined mode. Only the file writers — never
     /// `shell_run` / git / `file_undo`, so exec stayed sandbox-only and
-    /// undo stayed in the Changes sheet.
+    /// undo stayed in the File Changes panel.
     static let folderWriteToolNames: Set<String> = [
         "file_write", "file_edit",
     ]
@@ -2605,6 +2661,20 @@ public final class ToolRegistry: ObservableObject {
     static let redactionToolNames: Set<String> = [
         "detect_pii", "redact_file",
     ]
+
+    /// File-history tools join the host-folder schema by default: the folder
+    /// prompt promises every change is reversible and reviewable with them,
+    /// and a model that has to discover them first improvises `cp` backups
+    /// or claims it cannot undo.
+    static let hostFolderHistoryToolNames: Set<String> = [
+        "file_undo", "file_operation_history",
+    ]
+
+    /// Everything the host-folder schema carries beyond the five-tool core:
+    /// redaction, file history, and the host-only workspace tools.
+    static var hostFolderExtraToolNames: Set<String> {
+        redactionToolNames.union(hostFolderHistoryToolNames).union(hostWorkspaceOnlyToolNames)
+    }
 
     /// Resolve the active execution mode for a chat send. Single source of
     /// truth: callers pass the user's explicit intent (autonomous toggle +

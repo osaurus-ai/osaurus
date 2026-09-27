@@ -90,6 +90,11 @@ public final class ManagementStateManager: ObservableObject {
     /// this and resets it to nil after applying.
     @Published public var memorySubTabRequest: String?
 
+    /// One-shot request to focus a specific sub-tab inside `PrivacyView`
+    /// (raw value of `PrivacyTab`, e.g. "storage"). `PrivacyView` observes
+    /// this and resets it to nil after applying.
+    @Published public var privacySubTabRequest: String?
+
     /// One-shot request to focus a specific sub-tab inside `ImageGenerationView`
     /// (raw value of `ImageGenerationTab`, e.g. "Models"). `ImageGenerationView`
     /// observes this and resets it to nil after applying.

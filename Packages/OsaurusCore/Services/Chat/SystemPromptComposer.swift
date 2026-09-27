@@ -3171,17 +3171,17 @@ public struct SystemPromptComposer: Sendable {
                 )
                 allowed.formUnion(ToolRegistry.coreWorkspaceToolNames)
             }
-            // Redaction tools join the schema only when a HOST folder is
-            // active: they resolve the chat's folder root directly and have
-            // no sandbox bridge, so VM-only mode must not offer them.
+            // Redaction, file-history, and host-only workspace tools join the
+            // schema only when a HOST folder is active: they resolve the
+            // chat's folder root directly and have no sandbox bridge, so
+            // VM-only mode must not offer them.
             if executionMode.usesHostFolderTools {
+                let hostOnly = ToolRegistry.hostFolderExtraToolNames
                 add(
-                    ToolRegistry.shared.specs(
-                        forTools: Array(ToolRegistry.redactionToolNames)
-                    ),
+                    ToolRegistry.shared.specs(forTools: Array(hostOnly)),
                     replacingExisting: true
                 )
-                allowed.formUnion(ToolRegistry.redactionToolNames)
+                allowed.formUnion(hostOnly)
             }
             if snapshot.dbEnabled { allowed.formUnion(agentDBToolNames) }
             if snapshot.renderChartEnabled { allowed.insert("render_chart") }
@@ -3299,6 +3299,17 @@ public struct SystemPromptComposer: Sendable {
         let description: String
         var properties: [String: JSONValue]
         let required: [String]
+        // Document-edit arguments are copied from the tool's own schema so
+        // the compact contract can't drift from what the tool accepts. VM
+        // paths aren't edited in place, so the sandbox route never gets them.
+        var fullProperties: [String: JSONValue] = [:]
+        if !executionMode.usesSandboxTools,
+            case .object(let schema)? = tool.function.parameters,
+            case .object(let props)? = schema["properties"]
+        {
+            fullProperties = props
+        }
+        let editsDocuments = fullProperties["operations"] != nil
         switch tool.function.name {
         case "file_read":
             // One contract on every route: documents and images under the
@@ -3348,18 +3359,21 @@ public struct SystemPromptComposer: Sendable {
                     "description": .string("Optional XLSX columns per row (max 30)"),
                 ]),
             ]
+            if let mode = fullProperties["mode"] {
+                properties["mode"] = mode
+            }
             required = ["path"]
         case "file_write":
             description =
                 "Create/overwrite text or code, or generate a document by extension: `.xlsx` from "
-                + "CSV/TSV text or JSON rows, `.docx`/`.pdf` from Markdown or HTML — built in, so pass the "
-                + "content directly instead of writing a script or looking for pandoc/reportlab. `.pptx` is "
-                + "not supported. Append adds text without replacing the file (text only); dry_run previews."
+                + "CSV/TSV text or JSON rows, `.docx`/`.pdf` from Markdown or HTML, `.pptx` from Markdown (one "
+                + "slide per heading) — built in, so pass the content directly instead of writing a script or "
+                + "looking for pandoc/reportlab. Append adds text without replacing the file (text only); dry_run previews."
             properties = [
                 "path": .object([
                     "type": .string("string"),
                     "description": .string(
-                        "Relative file path; the extension selects text vs. .xlsx/.docx/.pdf generation"
+                        "Relative file path; the extension selects text vs. .xlsx/.docx/.pdf/.pptx generation"
                     ),
                 ]),
                 "content": .object([
@@ -3367,7 +3381,7 @@ public struct SystemPromptComposer: Sendable {
                     "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
                     "description": .string(
                         "File text (at most \(WorkspaceToolContract.maxWriteContentCharacters) characters). "
-                            + "For .xlsx: CSV/TSV rows or {\"sheets\":[{\"name\",\"rows\"}]}; for .docx/.pdf: Markdown or HTML"
+                            + "For .xlsx: CSV/TSV rows or {\"sheets\":[{\"name\",\"rows\"}]}; for .docx/.pdf: Markdown or HTML; for .pptx: Markdown"
                     ),
                 ]),
                 "mode": .object([
@@ -3386,8 +3400,12 @@ public struct SystemPromptComposer: Sendable {
         case "file_edit":
             description =
                 "Replace exact text in a UTF-8 file: one unique `old_string`, every occurrence with "
-                + "`replace_all`, or several atomic `edits`. Documents (.docx/.pdf/.xlsx) are not "
-                + "edited in place: read with file_read, then regenerate with file_write."
+                + "`replace_all`, or several atomic `edits`. "
+                + (editsDocuments
+                    ? "Existing .docx/.xlsx/.pptx/.pdf are edited in place with `operations` (keeps formatting; "
+                        + "`file_read` with mode \"structure\" lists the numbered parts) — don't regenerate them."
+                    : "Documents (.docx/.pdf/.xlsx/.pptx) are not edited in place: read with file_read, then "
+                        + "regenerate with file_write.")
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3426,6 +3444,9 @@ public struct SystemPromptComposer: Sendable {
                     "description": .string("Preview without editing (host paths only)"),
                 ]),
             ]
+            if let operations = fullProperties["operations"] {
+                properties["operations"] = operations
+            }
             required = ["path"]
         case "file_copy":
             description =

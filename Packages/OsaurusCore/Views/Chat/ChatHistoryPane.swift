@@ -1,71 +1,88 @@
 //
-//  ChatHistoryDialog.swift
+//  ChatHistoryPane.swift
 //  osaurus
 //
-//  "See History" dialog: the selected agent's conversations, presented as a
-//  themed alert from the toolbar's overflow menu. Tapping a row loads that
-//  conversation into the window and dismisses the dialog.
+//  History pane of the chat inspector: the past chats of the agent behind
+//  the tab on screen, with search, the Filter popover (origin, project,
+//  workspace, plugin, capability, archived), New Chat and Import. Like the
+//  File Changes pane beside it, it is scoped by the current tab — so it
+//  needs no agent picker; the header names the scope instead. Tapping a
+//  row loads that conversation in the current tab; the rail stays up.
 //
 
 import AppKit
 import SwiftUI
 
-enum ChatHistoryDialog {
-    /// Request id of the history dialog each window last presented. The
-    /// dialog hosts nested alerts, so presenting it again while it is open
-    /// would push a second copy on top instead of replacing it. A stale id
-    /// is harmless: the alert stack is checked before trusting it.
-    @MainActor private static var openRequestIds: [ThemedAlertScope: UUID] = [:]
+/// The row actions a chat window gives a `ChatHistoryList`: the History
+/// pane and the project view host the same list, so they share one set of
+/// handlers that keep the window's live session in step with the store.
+struct ChatHistoryWindowActions {
+    let windowState: ChatWindowState
+    let scope: ThemedAlertScope
 
-    /// Present the history dialog scoped to `windowState`'s window. A no-op
-    /// while that window already shows it (including under a nested alert).
     @MainActor
-    static func present(for windowState: ChatWindowState) {
-        let scope = ThemedAlertScope.chat(windowState.windowId)
-        if let openId = openRequestIds[scope],
-            ThemedAlertCenter.shared.stack(for: scope).contains(where: { $0.id == openId })
-        {
-            return
+    func delete(_ id: UUID) {
+        // Cancel a registry-owned run, detach this window, then delete.
+        if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+            BackgroundTaskManager.shared.cancelTask(liveTask.id)
         }
-        let requestId = UUID()
-        openRequestIds[scope] = requestId
-        let dismiss = { ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId) }
-        let content = ChatHistoryDialogContent(
-            windowState: windowState,
-            scope: scope,
-            // Selecting a chat opens it in its own tab (or focuses the tab
-            // that already shows it) rather than replacing the active chat.
-            onSelect: { session in
-                dismiss()
-                windowState.openSessionInNewTab(session)
-            },
-            onOpenInNewTab: { session in
-                dismiss()
-                windowState.openSessionInNewTab(session)
-            }
-        )
-        ThemedAlertCenter.shared.present(
-            ThemedAlertRequest(
-                id: requestId,
-                title: "History",
-                message: nil,
-                showsHeaderIcon: false,
-                buttons: [.cancel(L("Close"))],
-                showsCloseButton: true,
-                customContent: AnyView(content),
-                width: 470,
-                // Row actions raise their own alerts (delete confirmation,
-                // export chooser + progress). Those stack over this dialog
-                // and return to it, instead of replacing it.
-                hostsNestedAlerts: true,
-                onDismiss: dismiss
-            ),
-            scope: scope
-        )
+        windowState.prepareForSessionDeletion(id: id)
+        ChatSessionsManager.shared.delete(id: id)
+        windowState.refreshSessions()
+    }
+
+    @MainActor
+    func rename(_ id: UUID, _ title: String) {
+        ChatSessionsManager.shared.rename(id: id, title: title)
+        if windowState.session.sessionId == id { windowState.session.title = title }
+        windowState.refreshSessions()
+    }
+
+    @MainActor
+    func setArchived(_ id: UUID, _ archived: Bool) {
+        ChatSessionsManager.shared.setArchived(id: id, archived: archived)
+        if windowState.session.sessionId == id { windowState.session.archived = archived }
+        windowState.refreshSessions()
+    }
+
+    @MainActor
+    func setPinned(_ id: UUID, _ pinned: Bool) {
+        ChatSessionsManager.shared.setPinned(id: id, pinned: pinned)
+        if windowState.session.sessionId == id { windowState.session.pinned = pinned }
+        windowState.refreshSessions()
+    }
+
+    @MainActor
+    func setProject(_ id: UUID, _ projectId: UUID?) {
+        ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
+        if windowState.session.sessionId == id { windowState.session.projectId = projectId }
+        windowState.refreshSessions()
+    }
+
+    @MainActor
+    func export(_ metadata: ChatSessionData, _ format: ChatSessionSidebar.ExportFormat) {
+        ChatSessionExportCoordinator.run(metadataSession: metadata, format: format, scope: scope)
+    }
+
+    @MainActor
+    func stop(_ id: UUID) {
+        if windowState.session.sessionId == id {
+            windowState.session.stop()
+        } else {
+            SessionActivityMonitor.shared.stop(sessionId: id)
+        }
+    }
+
+    @MainActor
+    func openInNewWindow(_ data: ChatSessionData) {
+        ChatWindowManager.shared.createWindow(agentId: data.agentId, sessionData: data)
     }
 }
 
-private struct ChatHistoryDialogContent: View {
+/// History pane content. Row actions raise their own alerts (delete
+/// confirmation, export chooser + progress, import guide) through the
+/// window's `ThemedAlertScope`, so they present over the whole window.
+struct ChatHistoryPaneView: View {
     @ObservedObject var windowState: ChatWindowState
     let scope: ThemedAlertScope
     let onSelect: (ChatSessionData) -> Void
@@ -78,14 +95,8 @@ private struct ChatHistoryDialogContent: View {
     /// Names for the Workspaces submenu (sessions only carry the id).
     @ObservedObject private var workspacesService = WorkspacesService.shared
 
-    /// Which agent's chats the list shows. nil until the user picks one,
-    /// so the initial lens tracks the window's agent (see `activeFilter`).
-    @State private var agentFilter: ChatHistoryAgentFilter?
-    @State private var showAgentPicker = false
-    @State private var isAgentButtonHovered = false
-
     /// Origin lens (Chat / Plugin / Schedule / ...), picked in the Filter
-    /// popover. Composes with the agent lens and the archived chip.
+    /// popover. Composes with the archived toggle there.
     @State private var sourceFilter: ChatHistorySourceFilter = .all
     /// Project lens (a project id), picked in the Filter popover's submenu.
     @State private var projectFilter: UUID?
@@ -104,107 +115,53 @@ private struct ChatHistoryDialogContent: View {
     @State private var isFilterButtonHovered = false
     /// Archived lens: on lists only archived chats, off hides them.
     @State private var showArchived = false
-    @State private var isArchivedChipHovered = false
 
-    /// Opens on the window's agent, the Default (orchestrator) agent
-    /// included: the sidebar scopes that agent's row to its own chats, and
-    /// the dialog should match it. "All Chats" stays one pick away.
-    private var activeFilter: ChatHistoryAgentFilter {
-        agentFilter ?? .agent(windowState.agentId)
+    /// The current tab's agent's chats (untagged ones count as the Default
+    /// agent), both archived states; `ChatHistoryList` applies the lenses.
+    private var visibleSessions: [ChatSessionData] {
+        sessionsManager.sessions.filter { ($0.agentId ?? Agent.defaultId) == windowState.agentId }
     }
 
-    private var visibleSessions: [ChatSessionData] {
-        switch activeFilter {
-        case .all:
-            return sessionsManager.sessions
-        case .agent(let id):
-            return sessionsManager.sessions.filter { ($0.agentId ?? Agent.defaultId) == id }
-        }
+    private var agent: Agent? { agentManager.agent(for: windowState.agentId) }
+
+    private var actions: ChatHistoryWindowActions {
+        ChatHistoryWindowActions(windowState: windowState, scope: scope)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                agentDropdown
-                if visibleSessions.contains(where: \.archived) {
-                    archivedChip
+        VStack(alignment: .leading, spacing: 0) {
+            // Header: the scope on the left (whose chats these are — the
+            // agent of the tab on screen), New Chat and Import on the
+            // right. Same row the File Changes pane puts its summary in.
+            HStack(spacing: 4) {
+                scopeLabel
+                Spacer(minLength: 8)
+                SidebarHeaderIconButton(icon: "square.and.pencil", help: "New Chat") {
+                    windowState.startNewChat()
                 }
-                Spacer()
-                filterButton
-                Button {
+                SidebarHeaderIconButton(icon: "square.and.arrow.down", help: "Import Conversations") {
                     requestImport()
-                } label: {
-                    // The tray glyph sits low on its baseline; centre the
-                    // icon on the text's cap height instead of the line box
-                    // so the two read as one aligned unit.
-                    HStack(alignment: .center, spacing: 5) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 11, weight: .medium))
-                            .offset(y: -1)
-                        Text("Import", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .contentShape(Rectangle())
-                    // Cursor on the label: the button chrome itself has no
-                    // hover surface inside the alert overlay.
-                    .pointingHandCursor()
                 }
-                .buttonStyle(.plain)
-                .localizedHelp("Import Conversations")
+                .accessibilityLabel(Text("Import Conversations", bundle: .module))
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 2)
+            .padding(.bottom, 8)
+            .frame(minHeight: 32)
 
             ChatHistoryList(
                 sessions: visibleSessions,
                 currentSessionId: windowState.session.sessionId,
                 scope: scope,
                 onSelect: onSelect,
-                onDelete: { id in
-                    // Same semantics as the sidebar: cancel a registry-owned
-                    // run, detach this window, then delete.
-                    if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
-                        BackgroundTaskManager.shared.cancelTask(liveTask.id)
-                    }
-                    windowState.prepareForSessionDeletion(id: id)
-                    ChatSessionsManager.shared.delete(id: id)
-                    windowState.refreshSessions()
-                },
-                onRename: { id, title in
-                    ChatSessionsManager.shared.rename(id: id, title: title)
-                    if windowState.session.sessionId == id { windowState.session.title = title }
-                    windowState.refreshSessions()
-                },
-                onSetArchived: { id, archived in
-                    ChatSessionsManager.shared.setArchived(id: id, archived: archived)
-                    if windowState.session.sessionId == id { windowState.session.archived = archived }
-                    windowState.refreshSessions()
-                },
-                onSetPinned: { id, pinned in
-                    ChatSessionsManager.shared.setPinned(id: id, pinned: pinned)
-                    if windowState.session.sessionId == id { windowState.session.pinned = pinned }
-                    windowState.refreshSessions()
-                },
-                onSetProject: { id, projectId in
-                    ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
-                    if windowState.session.sessionId == id { windowState.session.projectId = projectId }
-                    windowState.refreshSessions()
-                },
-                onExport: { metadata, format in
-                    ChatSessionExportCoordinator.run(
-                        metadataSession: metadata, format: format, scope: scope)
-                },
-                onStop: { id in
-                    if windowState.session.sessionId == id {
-                        windowState.session.stop()
-                    } else {
-                        SessionActivityMonitor.shared.stop(sessionId: id)
-                    }
-                },
-                onOpenInNewWindow: { data in
-                    ChatWindowManager.shared.createWindow(agentId: data.agentId, sessionData: data)
-                },
+                onDelete: actions.delete,
+                onRename: actions.rename,
+                onSetArchived: actions.setArchived,
+                onSetPinned: actions.setPinned,
+                onSetProject: actions.setProject,
+                onExport: actions.export,
+                onStop: actions.stop,
+                onOpenInNewWindow: actions.openInNewWindow,
                 onOpenInNewTab: { data in
                     onOpenInNewTab(data)
                 },
@@ -216,55 +173,52 @@ private struct ChatHistoryDialogContent: View {
                 scheduleFilter: scheduleFilter,
                 watcherFilter: watcherFilter,
                 capabilityFilter: capabilityFilter,
-                onClearFilters: clearFilters
+                onClearFilters: clearFilters,
+                listMaxHeight: nil,
+                searchAccessory: AnyView(filterButton)
             )
+            .padding(.horizontal, 12)
+            .frame(maxHeight: .infinity, alignment: .top)
         }
-        // Switching the agent lens is a context change, like the sidebar's
-        // agent switch: drop the origin lens so the new agent starts on
-        // "All" instead of inheriting a bucket it may not even have.
-        .onChange(of: activeFilter) { _, _ in
-            sourceFilter = .all
+        // Switching agents is a context change: the lenses belong to the
+        // previous agent's list.
+        .onChange(of: windowState.agentId) { _, _ in
+            clearFilters()
         }
-        // Unarchiving the last archived chat removes the chip; make sure the
-        // lens does not stay stuck on an empty, now-uncontrollable state.
+        // Unarchiving the last archived chat: make sure the lens does not
+        // stay stuck on an empty, now-pointless state.
         .onChange(of: visibleSessions.contains(where: \.archived)) { _, hasArchived in
             if !hasArchived { showArchived = false }
         }
     }
 
-    // MARK: - Archived chip
+    // MARK: - Scope label
 
-    /// Toggle for the archived lens, in the sidebar's chip idiom: ghost when
-    /// off, accent-tinted when on. Only rendered while the current agent
-    /// lens has at least one archived chat.
-    private var archivedChip: some View {
-        let shape = Capsule(style: .continuous)
-        return Button {
-            withAnimation(theme.animationQuick()) { showArchived.toggle() }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
-                    .font(.system(size: 9.5, weight: .semibold))
-                Text("Archived", bundle: .module)
-                    .font(.system(size: 11, weight: showArchived ? .semibold : .medium))
-            }
-            .foregroundColor(showArchived ? theme.accentColor : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                shape.fill(
-                    showArchived
-                        ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18)
-                        : (isArchivedChipHovered ? theme.secondaryBackground.opacity(0.5) : Color.clear)
-                )
+    /// Avatar + agent name + "· N chats": a static indicator of what the
+    /// list is scoped to, not a control (pick agents in the sidebar).
+    private var scopeLabel: some View {
+        HStack(spacing: 6) {
+            AgentAvatarView(
+                mascotId: agent?.avatar,
+                name: agent?.displayName ?? "",
+                tint: agentColorFor(agent?.name ?? ""),
+                diameter: 16,
+                customImageURL: agent?.customAvatarURL,
+                monogramFontSize: 7,
+                borderWidth: 0
             )
-            .contentShape(shape)
-            .pointingHandCursor()
+            Text(verbatim: agent?.displayName ?? windowState.cachedAgentDisplayName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(verbatim: "· " + L("\(visibleSessions.filter { !$0.archived }.count) chats"))
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
         }
-        .buttonStyle(.plain)
-        .onHover { isArchivedChipHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isArchivedChipHovered)
-        .localizedHelp("Show archived chats")
+        .padding(.leading, 4)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Filter button
@@ -288,28 +242,39 @@ private struct ChatHistoryDialogContent: View {
         showArchived = false
     }
 
-    /// Opens the filter popover. Reads as the Import button's sibling, and
-    /// switches to the accent tint + filled glyph while any lens is active.
+    /// Opens the filter popover, beside the search field. Switches to the
+    /// accent tint + filled glyph while any lens is active.
     private var filterButton: some View {
         let isActive = activeFilterCount > 0
         let isRaised = isActive || isFilterButtonHovered || showSourcePicker
         return Button {
             showSourcePicker.toggle()
         } label: {
-            HStack(alignment: .center, spacing: 5) {
+            HStack(alignment: .center, spacing: 4) {
                 Image(
                     systemName: isActive
                         ? "line.3.horizontal.decrease.circle.fill"
                         : "line.3.horizontal.decrease.circle"
                 )
-                .font(.system(size: 11, weight: .medium))
-                sourceFilterTitle
-                    .font(.system(size: 11, weight: isActive ? .semibold : .medium))
-                    .lineLimit(1)
+                .font(.system(size: 12, weight: .medium))
+                if isActive {
+                    Text(verbatim: "\(activeFilterCount)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .monospacedDigit()
+                }
             }
             .foregroundColor(isActive ? theme.accentColor : (isRaised ? theme.primaryText : theme.secondaryText))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 7)
+            // Matches the search field's height so the row reads as one.
+            .frame(minHeight: 28)
+            .background(
+                RoundedRectangle(cornerRadius: SidebarStyle.searchFieldCornerRadius, style: .continuous)
+                    .fill(
+                        isActive
+                            ? theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12)
+                            : (theme.isDark
+                                ? theme.primaryBackground.opacity(0.5) : theme.tertiaryBackground.opacity(0.8)))
+            )
             .contentShape(Rectangle())
             .pointingHandCursor()
         }
@@ -317,6 +282,7 @@ private struct ChatHistoryDialogContent: View {
         .onHover { isFilterButtonHovered = $0 }
         .animation(.easeOut(duration: 0.15), value: isFilterButtonHovered)
         .localizedHelp("Filter chats by source, project, or archived state")
+        .accessibilityLabel(filterAccessibilityLabel)
         .popover(isPresented: $showSourcePicker, arrowEdge: .bottom) {
             ChatHistoryFilterPicker(
                 sessions: visibleSessions,
@@ -335,93 +301,12 @@ private struct ChatHistoryDialogContent: View {
         }
     }
 
-    private var sourceFilterTitle: Text {
+    private var filterAccessibilityLabel: Text {
         if activeFilterCount == 0 { return Text("Filter", bundle: .module) }
         return Text("Filter (\(activeFilterCount))", bundle: .module)
     }
 
-    // MARK: - Agent dropdown
-
-    /// Avatar + name + chevron, opening the agent picker popover. Changing
-    /// the lens only re-filters this list; the window's agent is untouched
-    /// until the user opens a chat (which adopts that chat's agent).
-    private var agentDropdown: some View {
-        Button {
-            showAgentPicker.toggle()
-        } label: {
-            // Pill: avatar flush to the leading edge, name, chevron. Reads
-            // as a raised control (soft fill, hairline edge, faint shadow)
-            // that lifts a touch more on hover / while the picker is open.
-            let isRaised = isAgentButtonHovered || showAgentPicker
-            HStack(spacing: 7) {
-                ChatHistoryAgentFilterAvatar(filter: activeFilter, agentManager: agentManager, diameter: 20)
-                activeFilterTitle
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(isRaised ? theme.primaryText : theme.secondaryText)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundColor(isRaised ? theme.accentColor : theme.tertiaryText)
-                    .rotationEffect(.degrees(showAgentPicker ? 180 : 0))
-                    .padding(.trailing, 2)
-            }
-            .padding(.leading, 4)
-            .padding(.trailing, 9)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(
-                        isRaised
-                            ? theme.secondaryBackground.opacity(theme.isDark ? 0.9 : 1.0)
-                            : theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.7)
-                    )
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        isRaised
-                            ? theme.accentColor.opacity(0.35)
-                            : theme.primaryBorder.opacity(theme.isDark ? 0.35 : 0.25),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(isRaised ? 0.18 : 0.08),
-                radius: isRaised ? 6 : 3,
-                x: 0,
-                y: isRaised ? 2 : 1
-            )
-            .contentShape(Capsule())
-            .pointingHandCursor()
-        }
-        .buttonStyle(.plain)
-        .onHover { isAgentButtonHovered = $0 }
-        .animation(.easeOut(duration: 0.15), value: isAgentButtonHovered)
-        .animation(.easeOut(duration: 0.15), value: showAgentPicker)
-        .localizedHelp("Choose which agent's chats to show")
-        .popover(isPresented: $showAgentPicker, arrowEdge: .bottom) {
-            ChatHistoryAgentPicker(
-                agents: agentManager.agents,
-                sessions: sessionsManager.sessions,
-                selected: activeFilter,
-                onSelect: { filter in
-                    agentFilter = filter
-                    showAgentPicker = false
-                }
-            )
-        }
-    }
-
-    private var activeFilterTitle: Text {
-        switch activeFilter {
-        case .all:
-            return Text("All Chats", bundle: .module)
-        case .agent(let id):
-            return Text(verbatim: agentManager.agent(for: id)?.displayName ?? windowState.cachedAgentDisplayName)
-        }
-    }
-
-    /// Same Import flow the old sidebar had: first-time provider guide,
+    /// Same Import flow the sidebar always had: first-time provider guide,
     /// then the picker; scoped to the selected agent (Default agent imports
     /// unscoped). A single imported conversation opens immediately.
     private func requestImport() {
@@ -481,288 +366,9 @@ enum ChatHistorySourceFilter: Equatable {
     }
 }
 
-// MARK: - Agent filter
-
-/// Which agent's conversations the History dialog lists.
-enum ChatHistoryAgentFilter: Equatable {
-    /// Every conversation, regardless of agent.
-    case all
-    /// Conversations tagged with this agent (untagged ones count as Default).
-    case agent(UUID)
-}
-
-/// The avatar for a filter: the agent's own, or a tray glyph for "All Chats".
-private struct ChatHistoryAgentFilterAvatar: View {
-    let filter: ChatHistoryAgentFilter
-    @ObservedObject var agentManager: AgentManager
-    let diameter: CGFloat
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        switch filter {
-        case .all:
-            ZStack {
-                Circle().fill(theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12))
-                Image(systemName: "tray.full")
-                    .font(.system(size: diameter * 0.5, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-            }
-            .frame(width: diameter, height: diameter)
-        case .agent(let id):
-            let agent = agentManager.agent(for: id)
-            AgentAvatarView(
-                mascotId: agent?.avatar,
-                name: agent?.displayName ?? "",
-                tint: agentColorFor(agent?.name ?? ""),
-                diameter: diameter,
-                customImageURL: agent?.customAvatarURL,
-                monogramFontSize: diameter * 0.45,
-                borderWidth: 0
-            )
-        }
-    }
-}
-
-// MARK: - Agent picker popover
-
-/// Agent chooser for the History dialog, in the model picker's idiom:
-/// titled header with a count pill, search field, then one row per agent
-/// with its chat count, the active lens marked with a checkmark. "All
-/// Chats" is pinned first.
-private struct ChatHistoryAgentPicker: View {
-    let agents: [Agent]
-    let sessions: [ChatSessionData]
-    let selected: ChatHistoryAgentFilter
-    let onSelect: (ChatHistoryAgentFilter) -> Void
-
-    @Environment(\.theme) private var theme
-    @ObservedObject private var agentManager = AgentManager.shared
-    @State private var searchText = ""
-    /// Tracks IME composition so the placeholder hides while composing.
-    @State private var isSearchComposing = false
-
-    private var isSearching: Bool {
-        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var filteredAgents: [Agent] {
-        guard isSearching else { return agents }
-        return agents.filter { SearchService.matches(query: searchText, in: $0.displayName) }
-    }
-
-    /// Chat count per agent id (untagged chats count as Default).
-    private var countsByAgent: [UUID: Int] {
-        var counts: [UUID: Int] = [:]
-        for session in sessions {
-            counts[session.agentId ?? Agent.defaultId, default: 0] += 1
-        }
-        return counts
-    }
-
-    private static let rowHeight: CGFloat = 40
-    private static let chromeHeight: CGFloat = 96
-
-    var body: some View {
-        let rows = filteredAgents
-        let counts = countsByAgent
-        let rowCount = rows.count + (isSearching ? 0 : 1)
-        VStack(spacing: 0) {
-            header
-            Divider().background(theme.primaryBorder.opacity(0.3))
-            searchField
-            Divider().background(theme.primaryBorder.opacity(0.3))
-
-            if rows.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        if !isSearching {
-                            row(
-                                filter: .all,
-                                title: Text("All Chats", bundle: .module),
-                                count: sessions.count
-                            )
-                        }
-                        ForEach(rows) { agent in
-                            row(
-                                filter: .agent(agent.id),
-                                title: Text(verbatim: agent.displayName),
-                                count: counts[agent.id] ?? 0
-                            )
-                        }
-                    }
-                    .padding(.vertical, 6)
-                }
-                .scrollIndicators(.hidden)
-            }
-        }
-        .frame(
-            width: 300,
-            height: min(CGFloat(max(rowCount, 1)) * Self.rowHeight + Self.chromeHeight + 12, 420)
-        )
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.primaryBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [theme.glassEdgeLight.opacity(0.2), theme.primaryBorder.opacity(0.15)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Text("Agents", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Text("\(agents.count)")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(theme.secondaryBackground))
-
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-
-            ZStack(alignment: .leading) {
-                if searchText.isEmpty && !isSearchComposing {
-                    Text("Search agents...", bundle: .module)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                        .allowsHitTesting(false)
-                }
-                IMEAwareTextField(
-                    text: $searchText,
-                    isComposing: $isSearchComposing,
-                    font: .systemFont(ofSize: 13),
-                    textColor: NSColor(theme.primaryText)
-                )
-                .frame(height: 17)
-            }
-
-            if !searchText.isEmpty {
-                Button(action: { searchText = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
-        .animation(.easeOut(duration: 0.15), value: searchText.isEmpty)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 24))
-                .foregroundColor(theme.tertiaryText)
-            Text("No agents found", bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
-    }
-
-    private func row(filter: ChatHistoryAgentFilter, title: Text, count: Int) -> some View {
-        AgentPickerRow(
-            filter: filter,
-            title: title,
-            count: count,
-            isSelected: filter == selected,
-            agentManager: agentManager,
-            action: { onSelect(filter) }
-        )
-    }
-
-    /// One agent row; owns its hover state like the model picker's rows.
-    private struct AgentPickerRow: View {
-        let filter: ChatHistoryAgentFilter
-        let title: Text
-        let count: Int
-        let isSelected: Bool
-        @ObservedObject var agentManager: AgentManager
-        let action: () -> Void
-
-        @Environment(\.theme) private var theme
-        @State private var isHovering = false
-
-        var body: some View {
-            Button(action: action) {
-                HStack(spacing: 10) {
-                    ChatHistoryAgentFilterAvatar(filter: filter, agentManager: agentManager, diameter: 22)
-                    title
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text("\(count)")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(isSelected ? theme.accentColor.opacity(0.9) : theme.tertiaryText)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1.5)
-                        .background(
-                            Capsule().fill(
-                                isSelected ? theme.accentColor.opacity(0.12) : theme.secondaryBackground)
-                        )
-                    if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.accentColor)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(
-                            isSelected
-                                ? theme.accentColor.opacity(0.12)
-                                : (isHovering ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
-                        )
-                )
-                .padding(.horizontal, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.12)) {
-                    isHovering = hovering
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Filter popover
 
-/// Filter panel for the History dialog: one flat list of toggles. Origin
+/// Filter panel for the History pane: one flat list of toggles. Origin
 /// rows (API, Channel, Self-scheduled, ...) each select or clear the source
 /// lens. "Chat" is the default and has no row; Plugin, Workspace, Schedule
 /// and Watcher have none either, since the submenus below cover every chat
@@ -775,7 +381,7 @@ private struct ChatHistoryAgentPicker: View {
 /// the bottom. Rows carry chat counts. The panel stays open across picks
 /// so lenses can be combined; click outside to close.
 private struct ChatHistoryFilterPicker: View {
-    /// Sessions already narrowed by the agent lens (both archived states).
+    /// The selected agent's sessions (both archived states).
     let sessions: [ChatSessionData]
     let projects: [Project]
     let workspaces: [OsaurusRouterWorkspaceSummary]

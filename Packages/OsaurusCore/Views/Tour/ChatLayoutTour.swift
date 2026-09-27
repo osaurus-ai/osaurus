@@ -61,8 +61,10 @@ extension ChatTourStop {
             ChatTourStop(
                 id: "history",
                 anchor: .historyButton,
-                title: L("Your chat history"),
-                body: L("View and search past chats with this agent.")
+                title: L("Past chats and file changes"),
+                body: L(
+                    "Open the inspector to search past chats with this agent and review, or undo, every file a chat changed."
+                )
             ),
         ]
     }

@@ -140,6 +140,11 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// Default on, like `autoGenerateChatTitles`.
     public var generateFollowUpSuggestions: Bool
 
+    // MARK: - File History
+    /// How long per-chat file change history (the undo journal) is kept.
+    /// Default keeps it until the chat is deleted, with no size cap.
+    public var fileHistoryRetention: FileHistoryRetention
+
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
@@ -157,7 +162,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
         autoGenerateChatTitles: Bool = true,
-        generateFollowUpSuggestions: Bool = true
+        generateFollowUpSuggestions: Bool = true,
+        fileHistoryRetention: FileHistoryRetention = .keepUntilChatDeleted
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -176,6 +182,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.warmModelsOnLoad = warmModelsOnLoad
         self.autoGenerateChatTitles = autoGenerateChatTitles
         self.generateFollowUpSuggestions = generateFollowUpSuggestions
+        self.fileHistoryRetention = fileHistoryRetention
     }
 
     public init(from decoder: Decoder) throws {
@@ -201,6 +208,9 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? true
         generateFollowUpSuggestions =
             try container.decodeIfPresent(Bool.self, forKey: .generateFollowUpSuggestions) ?? true
+        fileHistoryRetention =
+            try container.decodeIfPresent(FileHistoryRetention.self, forKey: .fileHistoryRetention)
+            ?? .keepUntilChatDeleted
     }
 
     public static var `default`: ChatConfiguration {

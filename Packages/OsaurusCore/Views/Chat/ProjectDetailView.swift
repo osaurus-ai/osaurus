@@ -2,19 +2,20 @@
 //  ProjectDetailView.swift
 //  osaurus
 //
-//  Full-content project page: name, shared instructions, and the
-//  conversations grouped under the project. Shown in the chat window's
-//  content area when a project is opened from the sidebar's Projects tab.
+//  A project, opened in the chat window's content area from the Projects
+//  lens: a folder of chats. The header names the folder; the list below is
+//  the same `ChatHistoryList` the inspector's History pane uses (same
+//  rows, search and multi-select), scoped to the project's members. The
+//  project's settings live in the right rail (`ProjectInspectorPanel`).
 //
 
-import AppKit
 import SwiftUI
 
 struct ProjectDetailView: View {
     let project: Project
-    /// The hosting window's active agent — the effective default when the
-    /// project hasn't pinned one.
-    let currentAgentId: UUID?
+    /// The hosting window: the chat list's row actions keep its live
+    /// session in step, and New Chat starts inside this project there.
+    @ObservedObject var windowState: ChatWindowState
     /// Open a conversation (the host closes this page and loads it).
     let onOpenSession: (ChatSessionData) -> Void
     /// Start a new chat inside this project.
@@ -26,304 +27,101 @@ struct ProjectDetailView: View {
     @Environment(\.theme) private var theme
     @Environment(\.themedAlertScope) private var alertScope
     @ObservedObject private var sessionsManager = ChatSessionsManager.shared
-    @ObservedObject private var knowledgeManager = KnowledgeManager.shared
-    @ObservedObject private var agentManager = AgentManager.shared
-    /// Draft of the instructions editor. Auto-saved (debounced) as the
-    /// user types; `autoSaveTask` holds the pending write and the
-    /// `justSaved` flash gives quiet confirmation.
-    @State private var instructionsDraft: String = ""
-    @State private var instructionsAutoSaveTask: Task<Void, Never>?
-    @State private var instructionsJustSaved: Bool = false
-    @State private var loadedProjectId: UUID?
-    @State private var searchQuery: String = ""
-    @FocusState private var isSearchFocused: Bool
-    /// Member session ids whose message bodies match the query, resolved
-    /// asynchronously against the chat-history database (debounced per
-    /// keystroke), mirroring the sidebar's content search.
-    @State private var contentMatchedSessionIds: Set<UUID> = []
-    @State private var contentSearchTask: Task<Void, Never>?
-    @State private var isContentSearchInFlight: Bool = false
-    @State private var isAgentPickerPresented = false
-    /// A few lines of this project's shared memory, for the at-a-glance
-    /// snippet on the page (the full view lives in Memory settings).
-    @State private var memoryPreviewLines: [String] = []
-    @State private var memoryItemCount: Int = 0
-    /// Display path of the project's working folder, mirrored from the model
-    /// so the section updates the instant the user picks or clears one.
-    @State private var folderDisplayPath: String?
 
+    /// Readable width of the folder column, like a chat thread's.
+    private let contentMaxWidth: CGFloat = 640
+
+    /// The project's chats, both archived states; the list applies its
+    /// own lenses.
     private var memberSessions: [ChatSessionData] {
-        sessionsManager.sessions.filter { $0.projectId == project.id && !$0.archived }
+        sessionsManager.sessions.filter { $0.projectId == project.id }
     }
 
-    /// Members after applying the search query (title + full-text content).
-    private var visibleSessions: [ChatSessionData] {
-        let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return memberSessions }
-        return memberSessions.filter { session in
-            SearchService.matches(query: trimmed, in: session.title)
-                || contentMatchedSessionIds.contains(session.id)
-        }
+    private var activeMemberCount: Int {
+        memberSessions.filter { !$0.archived }.count
     }
-
-    /// Debounced full-text lookup, same contract as the sidebar's: the
-    /// in-memory sessions are metadata-only, so content matching goes to
-    /// the chat-history database.
-    private func scheduleContentSearch(_ query: String) {
-        contentSearchTask?.cancel()
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else {
-            contentMatchedSessionIds = []
-            isContentSearchInFlight = false
-            return
-        }
-        isContentSearchInFlight = true
-        contentSearchTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            let ids = await ChatSessionStore.sessionIds(withContentContaining: trimmed)
-            guard !Task.isCancelled else { return }
-            contentMatchedSessionIds = ids
-            isContentSearchInFlight = false
-        }
-    }
-
-    private var hasEdits: Bool {
-        instructionsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-            != project.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Below this content width the two columns would each be too cramped,
-    /// so the page falls back to a single stacked column.
-    private let twoColumnBreakpoint: CGFloat = 760
-    /// Fixed width of the right-hand settings column in two-column mode.
-    private let settingsColumnWidth: CGFloat = 360
 
     var body: some View {
-        GeometryReader { geo in
-            Group {
-                if geo.size.width >= twoColumnBreakpoint {
-                    twoColumnLayout
-                } else {
-                    singleColumnLayout
+        VStack(alignment: .leading, spacing: 0) {
+            // Same insets as the History pane: the header's folder circle
+            // sits over the rows' avatars (12pt rail inset + 10pt row inset).
+            header
+                .padding(.horizontal, 22)
+                .padding(.bottom, 16)
+
+            // Same row the rails put their actions in: New Chat and Add
+            // Chats on the right, nothing to summarise on the left (the
+            // header already counts the chats).
+            SidebarHeaderRow {
+                SidebarHeaderIconButton(icon: "square.and.pencil", help: "New Chat", action: onNewChat)
+                SidebarHeaderIconButton(icon: "text.badge.plus", help: "Add Chats") {
+                    requestAddExistingChats()
                 }
+                .accessibilityLabel(Text("Add Chats", bundle: .module))
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.primaryBackground)
+
+            ChatHistoryList(
+                sessions: memberSessions,
+                currentSessionId: nil,
+                scope: alertScope,
+                onSelect: onOpenSession,
+                onDelete: actions.delete,
+                onRename: actions.rename,
+                onSetArchived: actions.setArchived,
+                onSetPinned: actions.setPinned,
+                onSetProject: actions.setProject,
+                onExport: actions.export,
+                onStop: actions.stop,
+                onOpenInNewWindow: actions.openInNewWindow,
+                onOpenInNewTab: { data in
+                    windowState.openProjectId = nil
+                    windowState.enteredChatFromProjectPage = true
+                    windowState.openSessionInNewTab(data)
+                },
+                listMaxHeight: nil,
+                emptyHint: "Chats started here or added to the project appear here."
+            )
+            .padding(.horizontal, 12)
+            .frame(maxHeight: .infinity, alignment: .top)
         }
-        .onAppear { syncDraft() }
-        // The knowledge registry loads lazily off-main (launch-hang fix);
-        // in a chat window this page may be its first consumer, so settle
-        // it here or the Knowledge section stays hidden behind an empty
-        // `collections`.
-        .task { await knowledgeManager.ensureLoaded() }
-        // Same view instance can be repointed at another project (sidebar
-        // click while the page is open) — reload the draft for the new one.
-        .onChange(of: project.id) { _, _ in syncDraft() }
+        .frame(maxWidth: contentMaxWidth)
+        .padding(.horizontal, 20)
+        .padding(.top, 40)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.primaryBackground)
     }
 
-    // MARK: - Layouts
-
-    /// Wide layout, mirroring Claude's projects page: the chats live on the
-    /// left as the primary content; the project's configuration
-    /// (instructions, knowledge, default agent) sits in a fixed-width panel
-    /// on the right. Each column scrolls independently.
-    private var twoColumnLayout: some View {
-        HStack(alignment: .top, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    header
-                    conversationsSection
-                }
-                // Keep the chats content at its original readable width
-                // instead of stretching across the whole left column.
-                .frame(maxWidth: 640, alignment: .leading)
-                .padding(.horizontal, 32)
-                .padding(.top, 64)
-                .padding(.bottom, 24)
-                .frame(maxWidth: .infinity, alignment: .center)
-            }
-            .scrollIndicators(.hidden)
-            .frame(maxWidth: .infinity)
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    instructionsSection
-                    knowledgeSection
-                    folderSection
-                    memorySection
-                    defaultAgentSection
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 64)
-                .padding(.bottom, 24)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .scrollIndicators(.hidden)
-            .frame(width: settingsColumnWidth)
-            .background(theme.secondaryBackground.opacity(theme.isDark ? 0.18 : 0.3))
-        }
-    }
-
-    /// Narrow fallback: everything stacked in one scrolling column.
-    private var singleColumnLayout: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 36) {
-                header
-                instructionsSection
-                knowledgeSection
-                folderSection
-                memorySection
-                defaultAgentSection
-                conversationsSection
-            }
-            .frame(maxWidth: 640)
-            .padding(.horizontal, 32)
-            .padding(.top, 64)
-            .padding(.bottom, 24)
-            .frame(maxWidth: .infinity)
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    private func syncDraft() {
-        guard loadedProjectId != project.id else { return }
-        loadedProjectId = project.id
-        instructionsDraft = project.instructions
-        searchQuery = ""
-        contentSearchTask?.cancel()
-        contentMatchedSessionIds = []
-        isContentSearchInFlight = false
-        folderDisplayPath = project.folderPath
-        loadMemoryPreview()
-    }
-
-    /// Load a small snippet of the project's shared memory for the page.
-    /// Prefers curated facts, then episode summaries, then raw turns, so the
-    /// snippet reads as cleanly as what's available. Off-main (DB reads).
-    private func loadMemoryPreview() {
-        let key = MemoryNamespace.project(project.id).key
-        Task.detached {
-            let facts = (try? MemoryDatabase.shared.loadPinnedFacts(agentId: key, limit: 20)) ?? []
-            let episodes =
-                (try? MemoryDatabase.shared.loadEpisodes(agentId: key, days: 3650, limit: 20)) ?? []
-            let transcripts =
-                (try? MemoryDatabase.shared.loadTranscript(agentId: key, days: 3650, limit: 20)) ?? []
-            let count = facts.count + episodes.count + transcripts.count
-
-            var raw: [String] = facts.map(\.content)
-            if raw.count < 3 { raw += episodes.map(\.summary) }
-            if raw.count < 3 { raw += transcripts.map(\.content) }
-            let lines = raw.prefix(3).map { line -> String in
-                let t = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                return t.count > 110 ? String(t.prefix(110)) + "…" : t
-            }
-
-            await MainActor.run {
-                memoryItemCount = count
-                memoryPreviewLines = Array(lines)
-            }
-        }
-    }
-
-    private func openProjectMemory() {
-        ManagementStateManager.shared.pendingMemoryProjectPreview =
-            MemoryNamespace.project(project.id).key
-        AppDelegate.shared?.showManagementWindow(initialTab: .memory)
-    }
-
-    // MARK: - Shared Memory
-
-    /// At-a-glance snippet of what the project's chats have learned, with a
-    /// jump into the full view in Memory settings. Surfaces project memory
-    /// on the page instead of burying it in Settings → Memory → Agents.
-    private var memorySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Shared Memory", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Button(action: openProjectMemory) {
-                    HStack(spacing: 3) {
-                        Text("Open in Memory", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-
-            Text("What chats in this project have learned, shared across every agent.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-
-            if memoryPreviewLines.isEmpty {
-                Text("Chats in this project will build shared memory here.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
-                    )
-            } else {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(Array(memoryPreviewLines.enumerated()), id: \.offset) { _, line in
-                        HStack(alignment: .top, spacing: 7) {
-                            Circle()
-                                .fill(theme.accentColor.opacity(0.6))
-                                .frame(width: 4, height: 4)
-                                .padding(.top, 6)
-                            Text(verbatim: line)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.primaryText)
-                                .lineLimit(2)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
-                )
-            }
-        }
+    private var actions: ChatHistoryWindowActions {
+        ChatHistoryWindowActions(windowState: windowState, scope: alertScope)
     }
 
     // MARK: - Header
 
+    /// The folder's identity, in the rail rows' anatomy one step up: 26pt
+    /// folder circle, 15pt name, 11pt count, `ellipsis` for rename/delete.
     private var header: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(theme.accentColor.opacity(theme.isDark ? 0.2 : 0.14))
-                    .frame(width: 48, height: 48)
+                Circle()
+                    .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.12))
+                    .frame(width: 26, height: 26)
                 Image(systemName: "folder.fill")
-                    .font(.system(size: 20, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.accentColor)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: project.name)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
-                Text("\(memberSessions.count) chats", bundle: .module)
+                Text(L("\(activeMemberCount) chats"))
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Menu {
                 Button(action: requestRename) { Text("Rename", bundle: .module) }
@@ -333,560 +131,15 @@ struct ProjectDetailView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(theme.secondaryBackground.opacity(0.5)))
-                    .contentShape(Circle())
+                    .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-        }
-    }
-
-    // MARK: - Instructions
-
-    private var instructionsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Instructions", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                if instructionsJustSaved {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("Saved", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                    .transition(.opacity)
-                }
-            }
-
-            Text("Shared context added to every chat in this project.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-
-            TextEditor(text: $instructionsDraft)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 90, maxHeight: 180)
-                .padding(8)
-                // TextEditor has no prompt; overlay one until text arrives.
-                // allowsHitTesting(false) keeps clicks landing in the editor.
-                .overlay(alignment: .topLeading) {
-                    if instructionsDraft.isEmpty {
-                        Text(
-                            "Add instructions the assistant should follow in every chat in this project…",
-                            bundle: .module
-                        )
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 8)
-                        .allowsHitTesting(false)
-                    }
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
-                )
-                // Debounced auto-save: writes ~0.6s after the user stops
-                // typing, so instructions can never be lost by navigating
-                // away without hitting a Save button.
-                .onChange(of: instructionsDraft) { _, _ in scheduleInstructionsAutoSave() }
-        }
-        .animation(theme.animationQuick(), value: instructionsJustSaved)
-        // Persist immediately if the user leaves before the debounce fires.
-        .onDisappear { flushInstructionsSave() }
-    }
-
-    private func scheduleInstructionsAutoSave() {
-        guard hasEdits else { return }
-        instructionsJustSaved = false
-        instructionsAutoSaveTask?.cancel()
-        instructionsAutoSaveTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            guard !Task.isCancelled, hasEdits else { return }
-            saveInstructions()
-        }
-    }
-
-    private func flushInstructionsSave() {
-        instructionsAutoSaveTask?.cancel()
-        instructionsAutoSaveTask = nil
-        if hasEdits { saveInstructions() }
-    }
-
-    private func saveInstructions() {
-        var updated = project
-        updated.instructions = instructionsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        ProjectManager.shared.update(updated)
-        withAnimation(theme.animationQuick()) { instructionsJustSaved = true }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            withAnimation(theme.animationQuick()) { instructionsJustSaved = false }
-        }
-    }
-
-    // MARK: - Default Agent
-
-    /// Picker for the agent new chats in this project start with. A nudge
-    /// toward one-agent projects (shared memory, consistent capabilities),
-    /// never a restriction — chats from any agent can still be moved in.
-    private var defaultAgentSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Default Agent", bundle: .module)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Text("New chats started from this project use this agent.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-
-            // Button + popover rather than Menu: macOS measures a Menu's
-            // label at its image's intrinsic size, which blows a resizable
-            // mascot up to full resolution regardless of frames (the agent
-            // pill avoids Menu for the same reason).
-            Button {
-                isAgentPickerPresented.toggle()
-            } label: {
-                HStack(spacing: 8) {
-                    if let agent = effectiveDefaultAgent {
-                        AgentAvatarView(
-                            mascotId: agent.avatar,
-                            name: agent.name,
-                            tint: theme.accentColor,
-                            diameter: 18,
-                            customImageURL: agent.customAvatarURL,
-                            monogramFontSize: 8,
-                            borderWidth: 0
-                        )
-                        Text(verbatim: agent.displayName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity)
-                .frame(height: 32)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(theme.secondaryText.opacity(0.15), lineWidth: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-            .popover(isPresented: $isAgentPickerPresented, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(selectableAgents) { agent in
-                        defaultAgentPickerRow(agent)
-                    }
-                }
-                .padding(6)
-                .frame(minWidth: 280)
-            }
-        }
-    }
-
-    private func defaultAgentPickerRow(_ agent: Agent) -> some View {
-        let isSelected = agent.id == effectiveDefaultAgent?.id
-        return Button {
-            isAgentPickerPresented = false
-            setDefaultAgent(agent.id)
-        } label: {
-            HStack(spacing: 8) {
-                AgentAvatarView(
-                    mascotId: agent.avatar,
-                    name: agent.name,
-                    tint: theme.accentColor,
-                    diameter: 18,
-                    customImageURL: agent.customAvatarURL,
-                    monogramFontSize: 8,
-                    borderWidth: 0
-                )
-                Text(verbatim: agent.displayName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-    }
-
-    /// Agents offered as project defaults: the built-in Osaurus setup agent
-    /// is excluded — it exists to configure the app, not to own project work.
-    private var selectableAgents: [Agent] {
-        agentManager.agents.filter { $0.id != Agent.defaultId }
-    }
-
-    /// What the dropdown shows ticked: the pinned default when set and
-    /// still existing, otherwise the hosting window's current agent.
-    private var effectiveDefaultAgent: Agent? {
-        if let id = project.defaultAgentId,
-            let pinned = agentManager.agents.first(where: { $0.id == id })
-        {
-            return pinned
-        }
-        guard let currentAgentId else { return nil }
-        return agentManager.agents.first { $0.id == currentAgentId }
-    }
-
-    private func setDefaultAgent(_ agentId: UUID?) {
-        var updated = project
-        updated.defaultAgentId = agentId
-        ProjectManager.shared.update(updated)
-    }
-
-    // MARK: - Knowledge
-
-    /// Toggle rows granting knowledge collections to this project. Granted
-    /// collections are searchable from every chat in the project (unioned
-    /// with the agent's own grants at request time).
-    private var knowledgeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Knowledge", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Button {
-                    // One-shot request consumed by KnowledgeView so the create
-                    // sheet pops as soon as the tab shows, saving a click. The
-                    // created collection is named after this project and
-                    // granted to it automatically.
-                    ManagementStateManager.shared.pendingKnowledgeCreate = .init(
-                        prefillName: "\(project.name) Collection",
-                        grantProjectId: project.id
-                    )
-                    AppDelegate.shared?.showManagementWindow(initialTab: .knowledge)
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("New Collection", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-
-            Text("Collections every chat in this project can search.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-
-            if knowledgeManager.collections.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "books.vertical")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                    Text(
-                        "No collections yet. Create one to give this project's chats shared knowledge.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
-                )
-            } else {
-                VStack(spacing: 2) {
-                    ForEach(knowledgeManager.collections) { collection in
-                        knowledgeToggleRow(collection)
-                    }
-                }
-            }
-        }
-    }
-
-    private func knowledgeToggleRow(_ collection: KnowledgeCollection) -> some View {
-        let isGranted = project.knowledgeCollectionIds.contains(collection.id)
-        return Button {
-            toggleCollection(collection.id)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: isGranted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(isGranted ? theme.accentColor : theme.secondaryText.opacity(0.6))
-                Image(systemName: "books.vertical")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 16)
-                Text(verbatim: collection.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                Spacer()
-                Button {
-                    ManagementStateManager.shared.pendingKnowledgeDetailId = collection.id
-                    AppDelegate.shared?.showManagementWindow(initialTab: .knowledge)
-                } label: {
-                    // A plain chevron, not the filled circle variant: the
-                    // circular glyph read as a second selection control next
-                    // to the leading checkmark. Tertiary gray keeps it a quiet
-                    // "opens detail" affordance.
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp("View collection details")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            // The leading checkmark already signals selection; a fill tint
-            // on top of it was redundant.
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func toggleCollection(_ id: UUID) {
-        var updated = project
-        if let index = updated.knowledgeCollectionIds.firstIndex(of: id) {
-            updated.knowledgeCollectionIds.remove(at: index)
-        } else {
-            updated.knowledgeCollectionIds.append(id)
-        }
-        ProjectManager.shared.update(updated)
-    }
-
-    // MARK: - Working Folder
-
-    /// Picker for the folder new chats in this project open with. A default,
-    /// not a lock: chats can still pick their own folder, and existing chats
-    /// are untouched. Answers the "select a folder every time" gripe.
-    private var folderSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Working Folder", bundle: .module)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            // Spell out the sandbox side effect: a chat works in either its
-            // folder or the sandbox, never both, so applying this folder
-            // turns the sandbox off for the chat's agent (same as the
-            // composer's folder chip).
-            Text(
-                "New chats in this project open with this folder. Their agent's sandbox is turned off, since a chat uses either a folder or the sandbox.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
-
-            if let path = folderDisplayPath, !path.isEmpty {
-                HStack(spacing: 10) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(verbatim: (path as NSString).lastPathComponent)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-                        Text(verbatim: (path as NSString).abbreviatingWithTildeInPath)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.secondaryText.opacity(0.85))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    Spacer()
-                    Button(action: chooseFolder) {
-                        Text("Change", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                    .pointingHandCursor()
-                    Button(action: clearFolder) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .frame(width: 20, height: 20)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .pointingHandCursor()
-                    .localizedHelp("Remove folder")
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
-                )
-            } else {
-                Button(action: chooseFolder) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "folder.badge.plus")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                        Text("Choose Folder…", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-        }
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.title = L("Select Working Directory")
-        panel.message = L("Choose a folder new chats in this project open with")
-        panel.prompt = L("Select")
-
-        let projectId = project.id
-        let complete: (NSApplication.ModalResponse) -> Void = { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in
-                if let path = await ProjectManager.shared.setFolder(url, for: projectId) {
-                    folderDisplayPath = path
-                }
-            }
-        }
-        if let window = NSApp.keyWindow {
-            panel.beginSheetModal(for: window, completionHandler: complete)
-        } else {
-            complete(panel.runModal())
-        }
-    }
-
-    private func clearFolder() {
-        ProjectManager.shared.clearFolder(for: project.id)
-        folderDisplayPath = nil
-    }
-
-    // MARK: - Conversations
-
-    private var conversationsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Chats", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Button(action: requestAddExistingChats) {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp("Add existing chats")
-                Button(action: onNewChat) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp("New Chat")
-            }
-
-            if !memberSessions.isEmpty {
-                SidebarSearchField(
-                    text: $searchQuery,
-                    placeholder: "Search chats...",
-                    isFocused: $isSearchFocused,
-                    isSearching: isContentSearchInFlight,
-                    showsRestingBorder: true
-                )
-                .padding(.vertical, 6)
-                .onChange(of: searchQuery) { _, query in
-                    scheduleContentSearch(query)
-                }
-            }
-
-            if memberSessions.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.system(size: 22))
-                        .foregroundColor(theme.secondaryText.opacity(0.5))
-                    Text("No chats yet", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText.opacity(0.7))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
-            } else if visibleSessions.isEmpty, isContentSearchInFlight {
-                // Don't claim "no matches" while the async content lookup
-                // is still running.
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Searching chats…", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText.opacity(0.8))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
-            } else if visibleSessions.isEmpty {
-                Text("No matches found", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText.opacity(0.7))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 28)
-            } else {
-                VStack(spacing: 2) {
-                    ForEach(visibleSessions) { session in
-                        ProjectConversationRow(
-                            session: session,
-                            onOpen: { onOpenSession(session) },
-                            onRemove: {
-                                ChatSessionsManager.shared.setProject(
-                                    id: session.id, projectId: nil)
-                            }
-                        )
-                    }
-                }
-            }
+            .localizedHelp("More")
         }
     }
 
@@ -894,7 +147,7 @@ struct ProjectDetailView: View {
 
     /// Pop a multi-select picker of ungrouped chats so the user can pull
     /// several into the project at once, instead of moving them one by one
-    /// from the sidebar.
+    /// from the History pane.
     private func requestAddExistingChats() {
         let requestId = UUID()
         let scope = alertScope
@@ -904,7 +157,7 @@ struct ProjectDetailView: View {
         let sheet = AddChatsToProjectSheet(candidates: candidates) { ids in
             ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
             for id in ids {
-                ChatSessionsManager.shared.setProject(id: id, projectId: project.id)
+                actions.setProject(id, project.id)
             }
         }
         ThemedAlertCenter.shared.present(
@@ -975,85 +228,5 @@ struct ProjectDetailView: View {
             ),
             scope: scope
         )
-    }
-}
-
-// MARK: - Conversation Row
-
-private struct ProjectConversationRow: View {
-    let session: ChatSessionData
-    let onOpen: () -> Void
-    /// Detach this chat from the project (the chat itself is kept).
-    let onRemove: () -> Void
-
-    @Environment(\.theme) private var theme
-    @ObservedObject private var agentManager = AgentManager.shared
-    @State private var isHovered = false
-    @State private var isRemoveHovered = false
-
-    /// The chat's agent, surfaced on the row because a project can mix
-    /// agents with different capabilities — the variance should be visible.
-    private var agent: Agent? {
-        guard let agentId = session.agentId else { return nil }
-        return agentManager.agents.first { $0.id == agentId }
-    }
-
-    var body: some View {
-        Button(action: onOpen) {
-            HStack(spacing: 10) {
-                if let agent {
-                    AgentAvatarView(
-                        mascotId: agent.avatar,
-                        name: agent.name,
-                        tint: theme.accentColor,
-                        diameter: 24,
-                        customImageURL: agent.customAvatarURL,
-                        monogramFontSize: 10,
-                        borderWidth: 0
-                    )
-                } else {
-                    Image(systemName: "bubble.left")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 24, height: 24)
-                }
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(verbatim: session.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                    if let agent {
-                        Text(verbatim: agent.displayName)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.secondaryText.opacity(0.85))
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer()
-
-                Button(action: onRemove) {
-                    Image(systemName: "folder.badge.minus")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isRemoveHovered ? .red : theme.secondaryText)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .onHover { isRemoveHovered = $0 }
-                .localizedHelp("Remove from Project")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHovered ? theme.secondaryBackground.opacity(0.5) : .clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
     }
 }

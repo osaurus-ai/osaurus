@@ -1,0 +1,50 @@
+{
+  "id": "agent_loop.undo-document-edit",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 edit a .pptx, then undo it with file_undo (byte-exact restore)",
+  "query": "Replace Lisbon with Lyon in deck.pptx. Then undo that change so the deck is back to exactly how it was, and confirm.",
+  "notes": "Every file change is journaled per chat. file_undo must restore the original package byte-for-byte (sha256 of Fixtures/Documents/deck.pptx), not re-edit the text back.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "deck.pptx",
+        "contentsFromFixture": "Documents/deck.pptx"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 7,
+      "maxToolCalls": 6,
+      "mustCallTools": [
+        "file_edit",
+        "file_undo"
+      ],
+      "mustNotCallTools": [
+        "shell_run",
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 1,
+          "argsMustContain": "Lyon"
+        },
+        {
+          "tool": "file_undo",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0
+        }
+      ],
+      "commands": [
+        {
+          "command": "shasum -a 256 deck.pptx | grep -q '^9b536bbf952857cd76ad9dcc03596cad80e545d5d4845e94a1dedb026ddec4cf '",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

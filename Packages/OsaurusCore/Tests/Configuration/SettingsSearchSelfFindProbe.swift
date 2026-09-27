@@ -187,6 +187,9 @@ struct SettingsSearchSelfFindProbe {
             ("Shortcuts", "agents.appleApps.shortcuts"),
             ("imessage", "agents.appleApps.messages"),
             ("apple_apps", "agents.appleApps"),
+            ("Keep File History", "storage.fileHistory.retention"),
+            ("file history retention", "storage.fileHistory.retention"),
+            ("File History Size Limit", "storage.fileHistory.sizeLimit"),
         ]
 
         let missed = labels.filter { label in

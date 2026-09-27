@@ -75,6 +75,7 @@ struct PrivacyView: View {
     @ObservedObject private var rampartManager = RampartModelManager.shared
     @ObservedObject private var providerManager = RemoteProviderManager.shared
     @StateObject private var saveDebouncer = PrivacyViewSaveDebouncer()
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -159,6 +160,7 @@ struct PrivacyView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             configuration = PrivacyFilterStore.snapshot()
+            applySubTabRequest(managementState.privacySubTabRequest)
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -171,6 +173,9 @@ struct PrivacyView: View {
             // can't reach the MainActor from there, so the
             // disappear path is the canonical hook.
             saveDebouncer.flush()
+        }
+        .onChange(of: managementState.privacySubTabRequest) { _, newValue in
+            applySubTabRequest(newValue)
         }
         .onReceive(NotificationCenter.default.publisher(for: .privacyFilterConfigurationChanged)) { _ in
             configuration = PrivacyFilterStore.snapshot()
@@ -193,6 +198,12 @@ struct PrivacyView: View {
             )
             .environment(\.theme, themeManager.currentTheme)
         }
+    }
+
+    private func applySubTabRequest(_ requested: String?) {
+        guard let requested, let tab = PrivacyTab(rawValue: requested) else { return }
+        selectedTab = tab
+        managementState.privacySubTabRequest = nil
     }
 
     // MARK: - Header
@@ -349,7 +360,7 @@ struct PrivacyView: View {
 ///
 /// `Hashable` is synthesized from the `String` raw value, which is
 /// what `AnimatedTabItem`'s `ForEach(id: \.self)` needs.
-private enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
+enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
     case overview
     case rules
     case providers

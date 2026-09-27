@@ -2012,13 +2012,17 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "
         + "context lines if needed; it fails if `old_string` is missing or matches multiple locations. "
         + "Text of any extension is written as UTF-8; `.xlsx` is generated from CSV/TSV or JSON rows and "
-        + "`.docx`/`.pdf` from Markdown or HTML (`content` only — documents are regenerated whole, not edited). "
-        + "`.pptx` is not supported. "
+        + "`.docx`/`.pdf` from Markdown or HTML, `.pptx` from Markdown (one slide per heading) — `content` only; "
+        + "documents are regenerated whole here (in-place document edits are a working-folder `file_edit` feature). "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial mutation."
     let agentName: String
     let home: String
 
     var mutatesSandboxWorkspace: Bool { true }
+
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
 
     var parameters: JSONValue? {
         .object([
@@ -2080,7 +2084,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
         let ext = URL(fileURLWithPath: resolved).pathExtension.lowercased()
 
-        // Generated documents (.xlsx/.docx/.pdf) are rendered host-side into
+        // Generated documents (.xlsx/.docx/.pdf/.pptx) are rendered host-side into
         // the VirtioFS share — the shell pipeline below only carries text.
         // An in-place edit of a document is refused with the
         // read-then-regenerate pivot, like host `file_edit`.
@@ -2365,6 +2369,9 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             ],
         ]
         dict.merge(extra) { _, new in new }
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            dict["operation_id"] = setId.uuidString
+        }
         var diffTruncated = false
         if let before, let after {
             let diff = WorkspaceWriteSafety.unifiedDiffText(
@@ -2605,16 +2612,16 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     command: command
                 )
                 // The job's file mutations land after this tool call
-                // returns, so the foreground checkpoint can't see them.
-                // Record a pending pre-manifest now; the tracker
-                // reconciles when the job exits/is killed (or after
-                // relaunch for jobs that died with the previous run).
+                // returns, so the foreground capture can't see them.
+                // Open a write-ahead capture now; the journal finalizes
+                // it when the job exits/is killed (or after relaunch for
+                // jobs that died with the previous run).
                 if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
-                    await SandboxWorkspaceChangeTracker.shared.registerBackgroundJob(
+                    await FileChangeJournal.shared.beginBackgroundJob(
                         sessionId: sessionId,
                         agentName: agentName,
                         pid: pid,
-                        sourceTool: name
+                        toolName: name
                     )
                 }
                 // Tee the log file into the chat UI so background jobs
@@ -2812,8 +2819,8 @@ private func registerBackgroundLiveExec(
                 statusBox.send(killedByUser ? .killed(reason: "user") : .exited(0))
                 tailer.stop()
                 // Fold the finished job's workspace mutations into the
-                // owning chat's tracked change set.
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                // owning chat's file history.
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -3037,7 +3044,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if !alive {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -3072,7 +3079,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if exited {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -3099,7 +3106,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let dead = killResult.stdout.contains("dead")
             if dead {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )

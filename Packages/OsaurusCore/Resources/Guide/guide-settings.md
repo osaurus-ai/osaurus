@@ -36,7 +36,7 @@ When the description is blank and the agent has a system prompt, Osaurus generat
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies live on the Tools tab.
 - Osaurus Connect: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
-- Identity, Privacy → Storage (encryption/backup), Channels credentials.
+- Identity, Privacy → Storage (encryption/backup, and **File History**: **Keep File History** — until the chat is deleted (default), 90 days, or 30 days — and **File History Size Limit**, which clears the oldest changes first but always keeps the most recent one; history that is cleared can no longer be reverted, and deleting a chat always deletes its file history), Channels credentials.
 - Secrets of any kind (API keys, tokens) are always entered in native secure fields, never chat.
 
 ## Common names that are different controls

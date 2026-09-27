@@ -868,7 +868,9 @@ struct FileReadTool: OsaurusTool {
         + "Call it on the document itself — never unzip, convert, or shell out first. Files return "
         + "text with `N|` line-number prefixes plus `format`/`source` metadata; bound large reads with "
         + "start_line/end_line, tail_lines, or max_chars. Directories return a listing; bound with "
-        + "max_depth. Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
+        + "max_depth. Pass `mode: \"structure\"` on a .docx/.xlsx/.pptx/.pdf to get the numbered paragraphs, "
+        + "cells, slides/shapes, or pages (and form fields) that `file_edit` `operations` address. "
+        + "Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -910,6 +912,13 @@ struct FileReadTool: OsaurusTool {
             "max_columns": .object([
                 "type": .string("integer"),
                 "description": .string("Optional XLSX preview column cap per row (default 8, max 30)"),
+            ]),
+            "mode": .object([
+                "type": .string("string"),
+                "enum": .array([.string("content"), .string("structure")]),
+                "description": .string(
+                    "Optional. `structure` returns a .docx/.xlsx/.pptx/.pdf outline with the ids `file_edit` operations use (default: content)"
+                ),
             ]),
         ]),
         "required": .array([.string("path")]),
@@ -1180,6 +1189,30 @@ struct FileReadTool: OsaurusTool {
                 entries: listing.entries,
                 truncated: listing.truncated
             )
+        }
+
+        if let mode = (args["mode"] as? String)?.lowercased(), mode == "structure" {
+            guard DocumentEditService.isEditable(ext), !isDirectory.boolValue else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`mode: \"structure\"` outlines .docx, .xlsx, .pptx and .pdf files; read other files normally.",
+                    field: "mode",
+                    expected: "a .docx/.xlsx/.pptx/.pdf path, or omit `mode`",
+                    tool: name
+                )
+            }
+            do {
+                var outline = try await DocumentEditService.structure(of: fileURL)
+                outline["path"] = relativePath
+                return ToolEnvelope.success(tool: name, result: outline)
+            } catch {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: "Couldn't outline \(relativePath): \(error.localizedDescription)",
+                    field: "path",
+                    tool: name
+                )
+            }
         }
 
         let sheetName: String?
@@ -2116,8 +2149,10 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         "Create, overwrite, or append to a text file, or generate a document by extension — always pass `path` (that exact key) as the FIRST argument, before `content`. "
         + "Parent directories are created automatically. You MUST provide the file contents in the "
         + "`content` parameter. Text/code of any extension is written as UTF-8. Documents are generated from text: "
-        + "`.xlsx` from CSV/TSV rows or JSON `{\"sheets\":[{\"name\":..,\"rows\":[[..]]}]}`; `.docx` and `.pdf` from Markdown or HTML. "
-        + "`.pptx` and other presentation/legacy formats are not supported (write Markdown, `.docx`, or `.pdf` instead). "
+        + "`.xlsx` from CSV/TSV rows or JSON `{\"sheets\":[{\"name\":..,\"rows\":[[..]]}]}`; `.docx` and `.pdf` from Markdown or HTML; "
+        + "`.pptx` from Markdown (each `#`/`##` heading starts a slide, the lines below become its bullets). "
+        + "Legacy formats (.doc/.xls/.ppt/.key/…) are not supported. To change part of an existing .docx/.xlsx/.pptx/.pdf, "
+        + "use `file_edit` `operations` instead of regenerating it (that keeps its formatting). "
         + "Use `mode: \"append\"` for any additive change to a text file so existing content remains intact "
         + "(documents are regenerated whole; append is refused). For a large text file, keep calls bounded: write the first chunk normally, "
         + "then pass `mode: \"append\"` for later chunks. Pass `dry_run: true` to preview the diff (text) or the document summary without writing. "
@@ -2159,6 +2194,10 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
+
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
 
     private let fixedRootPath: URL?
     private let documentRegistry: DocumentFormatRegistry
@@ -2336,17 +2375,8 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         // Write content
         try proposedContent.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        if let sessionId = ChatExecutionContext.currentSessionId {
-            let operation = FileOperation(
-                type: previousContent == nil ? .create : .write,
-                path: relativePath,
-                previousContent: previousContent,
-                sessionId: sessionId,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: rootPath.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            preview.payload["operation_id"] = operation.id.uuidString
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            preview.payload["operation_id"] = setId.uuidString
         }
         preview.payload["file_reference"] = [
             "kind": "workspace_file",
@@ -2390,7 +2420,6 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             mode: mode,
             dryRun: dryRun,
             relativePath: resolved.sandboxPath,
-            logPath: resolved.shareRelativePath,
             fileURL: resolved.hostURL,
             rootPath: WorkspaceShareRoute.shareRoot,
             area: "sandbox"
@@ -2422,19 +2451,15 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     }
 
     /// Generated-document route for `.xlsx` / `.docx` / `.pdf`. Builds the
-    /// document from the model's text, previews it on `dry_run`, and on a
-    /// real write captures the previous bytes (any encoding) so `file_undo`
-    /// restores an overwritten package exactly. `logPath` is the path
-    /// relative to `rootPath` recorded for undo (defaults to
-    /// `relativePath`; differs on the `/workspace` share route where the
-    /// model-facing path is absolute).
+    /// document from the model's text and previews it on `dry_run`. The
+    /// file history journal snapshots the previous bytes, so `file_undo`
+    /// restores an overwritten package exactly.
     private func writeDocument(
         target: FileWriteDocumentRouting.Target,
         content: String,
         mode: String,
         dryRun: Bool,
         relativePath: String,
-        logPath: String? = nil,
         fileURL: URL,
         rootPath: URL,
         area: String = "workspace"
@@ -2474,8 +2499,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             )
         }
 
-        let previousBytes = WorkspaceWriteSafety.existingBytes(at: fileURL)
-        let existed = previousBytes != nil
+        let existed = FileManager.default.fileExists(atPath: fileURL.path)
         let parentDir = fileURL.deletingLastPathComponent()
         let createsParentDirectories = !FileManager.default.fileExists(atPath: parentDir.path)
 
@@ -2490,8 +2514,11 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         }
         var warnings: [String] = []
         if existed {
+            // Only promise an undo when this call is inside a journal capture.
             warnings.append(
-                "Overwrites the existing .\(ext) at '\(relativePath)' (previous bytes are captured for `file_undo`)."
+                ChatExecutionContext.currentChangeSetId != nil
+                    ? "Overwrites the existing .\(ext) at '\(relativePath)' (previous bytes are captured for `file_undo`)."
+                    : "Overwrites the existing .\(ext) at '\(relativePath)'."
             )
         }
         if createsParentDirectories {
@@ -2536,19 +2563,8 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             )
         }
 
-        if let sessionId = ChatExecutionContext.currentSessionId {
-            let encoded = FileOperation.encodePreviousContent(previousBytes)
-            let operation = FileOperation(
-                type: existed ? .write : .create,
-                path: logPath ?? relativePath,
-                previousContent: encoded.content,
-                previousContentEncoding: encoded.encoding,
-                sessionId: sessionId,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: rootPath.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            payload["operation_id"] = operation.id.uuidString
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            payload["operation_id"] = setId.uuidString
         }
 
         payload["kind"] = "document_write_result"
@@ -2592,8 +2608,11 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "For many distinct replacements pass `edits`: an array of {old_string, new_string} applied "
         + "atomically in one call — if any edit fails to match, nothing is written. Prefer one `edits` "
         + "call over many single-edit calls; for large pattern rewrites consider `shell_run` with `sed`. "
-        + "Documents (.pdf/.docx/.xlsx/.pptx …) are not edited in place: read them with `file_read`, change the text, "
-        + "and regenerate with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/JSON rows). "
+        + "Documents (.docx/.xlsx/.pptx/.pdf) are edited in place with `operations` (formatting, styles, media and "
+        + "untouched content are kept): call `file_read` with `mode: \"structure\"` first to get paragraph numbers, "
+        + "cell refs, slides/shapes, or pages; on .docx/.pptx a plain old_string/new_string also works (text is "
+        + "matched across formatting runs). Other document types (.doc/.xls/.odt/…) are read with `file_read` and "
+        + "regenerated with `file_write`. "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial edit. "
         + "Pass `dry_run: true` to preview the diff without modifying the file. "
         + "Example: {\"path\": \"config.py\", \"old_string\": \"debug = True\", \"new_string\": \"debug = False\"}"
@@ -2637,6 +2656,34 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     "required": .array([.string("old_string"), .string("new_string")]),
                 ]),
             ]),
+            "operations": .object([
+                "type": .string("array"),
+                "description": .string(
+                    "Document edits for .docx/.xlsx/.pptx/.pdf, applied in order and atomically (all or nothing), each {\"op\": name, …}; `op` may be left out when the keys name a content edit (e.g. {old_string, new_string} or {cells}). "
+                        + "`sheet`, `slide`, `cells`, `page` and every other operation key go INSIDE the operation object, never at the top level of the call. "
+                        + ".docx: replace_text {old_string, new_string, replace_all?}, insert_paragraph {text, after|before, style?}, delete_paragraph {index}, "
+                        + "set_table_cell {table, row, column, text}, append_markdown {markdown}. "
+                        + "Example: {\"path\": \"brief.docx\", \"operations\": [{\"op\": \"replace_text\", \"old_string\": \"Q3\", \"new_string\": \"Q4\", \"replace_all\": true}]}. "
+                        + ".xlsx: set_cells {sheet?, cells: {\"B3\": 42, \"C3\": \"=SUM(B1:B2)\", \"D3\": null}}, insert_rows / delete_rows {sheet?, at, count?}, "
+                        + "add_sheet {name}, rename_sheet {sheet, name}, delete_sheet {sheet}. "
+                        + "Example: {\"path\": \"q3.xlsx\", \"operations\": [{\"op\": \"set_cells\", \"sheet\": \"Summary\", \"cells\": {\"B2\": 1200, \"B3\": \"=B2*1.1\"}}]}. "
+                        + ".pptx: replace_text {old_string, new_string, replace_all?, slide?}, set_slide_text {slide, shape: title|subtitle|body|number, text}, "
+                        + "duplicate_slide {slide}, delete_slide {slide}, reorder_slides {order}. "
+                        + "Example: {\"path\": \"deck.pptx\", \"operations\": [{\"op\": \"set_slide_text\", \"slide\": 2, \"shape\": \"title\", \"text\": \"Roadmap\"}]}. "
+                        + ".pdf: delete_pages {pages}, reorder_pages {order}, rotate_pages {pages?, degrees}, merge {files}, fill_form {fields}, "
+                        + "add_text {page, text, x?, y?}, add_note {page, text}, highlight {text, page?}. "
+                        + "Example: {\"path\": \"report.pdf\", \"operations\": [{\"op\": \"rotate_pages\", \"pages\": [1], \"degrees\": 90}]}. Numbers are 1-based."
+                ),
+                "items": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "op": .object([
+                            "type": .string("string"),
+                            "enum": .array(DocumentEditService.allOperationNames.map { .string($0) }),
+                        ])
+                    ]),
+                ]),
+            ]),
             "dry_run": .object([
                 "type": .string("boolean"),
                 "description": .string(
@@ -2650,6 +2697,35 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
+
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
+
+    /// Keys models put at the top level that belong inside an `operations`
+    /// entry, with the operation they usually mean. Guidance only.
+    static let operationKeyHints: [String: String] = [
+        "sheet": "{\"op\": \"set_cells\", \"sheet\": \"Q3\", \"cells\": {\"B2\": 42}}",
+        "cells": "{\"op\": \"set_cells\", \"cells\": {\"B2\": 42}}",
+        "slide": "{\"op\": \"replace_text\", \"slide\": 3, \"old_string\": \"old\", \"new_string\": \"new\"}",
+        "shape": "{\"op\": \"set_slide_text\", \"slide\": 2, \"shape\": \"title\", \"text\": \"…\"}",
+        "page": "{\"op\": \"add_note\", \"page\": 1, \"text\": \"…\"}",
+        "pages": "{\"op\": \"delete_pages\", \"pages\": [3]}",
+        "op": "{\"op\": \"replace_text\", \"old_string\": \"old\", \"new_string\": \"new\"}",
+        "text": "{\"op\": \"insert_paragraph\", \"text\": \"…\", \"after\": 3}",
+        "markdown": "{\"op\": \"append_markdown\", \"markdown\": \"…\"}",
+        "fields": "{\"op\": \"fill_form\", \"fields\": {\"Name\": \"…\"}}",
+        "order": "{\"op\": \"reorder_slides\", \"order\": [2, 1, 3]}",
+    ]
+
+    func argumentHint(_ property: String) -> String? {
+        guard let example = Self.operationKeyHints[property] else { return nil }
+        var hint = "`\(property)` belongs inside an `operations` entry: {\"path\": \"…\", \"operations\": [\(example)]}."
+        if property == "slide" || property == "sheet" || property == "page" {
+            hint += " A plain text swap needs no `\(property)`: top-level `old_string`/`new_string` searches the whole document."
+        }
+        return hint
+    }
 
     /// Cap on `edits` entries per call so a runaway batch can't produce an
     /// unreviewably large atomic change.
@@ -2677,6 +2753,23 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 
         let dryRun = coerceBool(args["dry_run"]) ?? false
         let replaceAll = coerceBool(args["replace_all"]) ?? false
+
+        let documentExtension = URL(fileURLWithPath: relativePath).pathExtension.lowercased()
+        if DocumentEditService.isEditable(documentExtension) {
+            return try await editDocument(
+                args: args, relativePath: relativePath, ext: documentExtension,
+                dryRun: dryRun, replaceAll: replaceAll)
+        }
+        if args["operations"] != nil {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`operations` edits .docx, .xlsx, .pptx and .pdf documents. For this file use `old_string`/`new_string` (or `edits`).",
+                field: "operations",
+                expected: "old_string/new_string for text files",
+                tool: name
+            )
+        }
 
         // Resolve the requested edits: either the batch `edits` array or the
         // single `old_string`/`new_string` pair. Both funnel into one ordered
@@ -2767,7 +2860,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 fileExtension: URL(fileURLWithPath: relativePath).pathExtension.lowercased(),
                 toolName: name,
                 regenerateHint:
-                    "regenerate the whole document with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/TSV or JSON rows)."
+                    "regenerate the whole document with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/TSV or JSON rows, `.pptx` from Markdown)."
             ) {
                 return rejected
             }
@@ -2823,7 +2916,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             fileExtension: fileURL.pathExtension.lowercased(),
             toolName: name,
             regenerateHint:
-                "regenerate the whole document with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/TSV or JSON rows)."
+                "regenerate the whole document with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/TSV or JSON rows, `.pptx` from Markdown)."
         ) {
             return rejected
         }
@@ -2923,18 +3016,8 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         }
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        // Log for undo parity with `file_write`. Skipped when no session.
-        if let sid = ChatExecutionContext.currentSessionId {
-            let operation = FileOperation(
-                type: .fileEdit,
-                path: relativePath,
-                previousContent: originalContent,
-                sessionId: sid,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: rootPath.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            preview.payload["operation_id"] = operation.id.uuidString
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            preview.payload["operation_id"] = setId.uuidString
         }
         preview.payload["file_reference"] = [
             "kind": "workspace_file",
@@ -2947,6 +3030,158 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             result: preview.payload,
             warnings: preview.warnings
         )
+    }
+
+    /// In-place document edit: explicit `operations`, or old/new text
+    /// mapped onto run-aware `replace_text` for .docx/.pptx. Validated in a
+    /// staged copy before the original is swapped (see DocumentEditService).
+    private func editDocument(
+        args: [String: Any],
+        relativePath: String,
+        ext: String,
+        dryRun: Bool,
+        replaceAll: Bool
+    ) async throws -> String {
+        if combinedFileRoute(path: relativePath) == .sandbox, ChatExecutionContext.sandboxReadBridge != nil {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    (FolderToolHelpers.resolveRoot(fixed: fixedRootPath) == nil
+                        ? "In-place document edits work on host files, and this chat has no working folder — `/workspace/...` sandbox paths can't be edited in place. "
+                            + "Regenerate the document with `file_write`, or select a working folder and edit it there."
+                        : "In-place document edits work on files in the working folder, not `/workspace/...` sandbox paths. "
+                            + "Regenerate the document with `file_write`, or edit a copy in the working folder."),
+                field: "path",
+                expected: "a working-folder document path",
+                tool: name,
+                retryable: false
+            )
+        }
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
+        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
+            return FolderToolHelpers.secretWriteRefusalEnvelope(relativePath: relativePath, tool: name)
+        }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw FolderToolError.fileNotFound(relativePath)
+        }
+
+        let operations: [[String: Any]]
+        if let raw = args["operations"] {
+            guard let list = raw as? [[String: Any]], !list.isEmpty else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`operations` must be a non-empty array of {\"op\": …} objects.",
+                    field: "operations",
+                    expected: "array of operation objects",
+                    tool: name
+                )
+            }
+            operations = list
+        } else if args["old_string"] != nil || args["edits"] != nil {
+            guard ext == "docx" || ext == "pptx" else {
+                let hint =
+                    ext == "pdf"
+                    ? "PDF body text can't be rewritten in place. Edit the source document and export again, or regenerate with `file_write`; `operations` can still delete/reorder/rotate pages, fill forms, and add text boxes or highlights."
+                    : "Use `operations` with `set_cells` (e.g. {\"op\": \"set_cells\", \"cells\": {\"B3\": 42}}); `file_read` with `mode: \"structure\"` lists the cells."
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "old_string/new_string text edits aren't supported for .\(ext). \(hint)",
+                    field: "old_string",
+                    expected: "`operations` for .\(ext)",
+                    tool: name
+                )
+            }
+            var pairs: [(String, String)] = []
+            if let edits = args["edits"] as? [[String: Any]] {
+                for (index, edit) in edits.enumerated() {
+                    guard let old = edit["old_string"] as? String, !old.isEmpty, let new = edit["new_string"] as? String else {
+                        return ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message: "`edits[\(index)]` needs a non-empty `old_string` and a `new_string`.",
+                            field: "edits",
+                            expected: "{old_string, new_string}",
+                            tool: name
+                        )
+                    }
+                    pairs.append((old, new))
+                }
+            } else if let old = args["old_string"] as? String, !old.isEmpty, let new = args["new_string"] as? String {
+                pairs.append((old, new))
+            } else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Pass a non-empty `old_string` and a `new_string`.",
+                    field: "old_string",
+                    expected: "document text to replace",
+                    tool: name
+                )
+            }
+            operations = pairs.map { ["op": "replace_text", "old_string": $0.0, "new_string": $0.1, "all": replaceAll] }
+        } else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Pass `operations` to edit this .\(ext) (\(DocumentEditService.operationNames(for: ext).joined(separator: ", "))). "
+                    + "Call `file_read` with `mode: \"structure\"` to see what can be addressed.",
+                field: "operations",
+                expected: "`operations` array",
+                tool: name
+            )
+        }
+
+        let prepared: DocumentEditService.PreparedEdit
+        do {
+            prepared = try await DocumentEditService.prepare(
+                fileURL: fileURL,
+                displayPath: relativePath,
+                operations: operations,
+                resolvePath: { try FolderToolHelpers.resolvePath($0, rootPath: rootPath) }
+            )
+        } catch let error as DocumentEditError {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: error.message + (error.message.contains("unchanged") ? "" : " Nothing was changed."),
+                field: "operations",
+                expected: "operations valid for this document",
+                tool: name
+            )
+        }
+
+        var payload: [String: Any] = [
+            "path": relativePath,
+            "format": ext,
+            "action": "update",
+            "dry_run": dryRun,
+            "operations_applied": prepared.summaries,
+        ]
+        if let diff = prepared.diffText {
+            payload["diff"] = diff
+            payload["diff_truncated"] = prepared.diffTruncated
+        }
+        var warnings = prepared.warnings
+        if dryRun {
+            prepared.discard()
+            warnings.append(
+                "PREVIEW ONLY - nothing was written. The document is unchanged. Repeat the same call WITHOUT dry_run to apply it.")
+            return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
+        }
+        do {
+            try prepared.commit()
+        } catch let error as DocumentEditError {
+            return ToolEnvelope.failure(kind: .executionError, message: error.message, field: "path", tool: name)
+        }
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            payload["operation_id"] = setId.uuidString
+        }
+        payload["file_reference"] = [
+            "kind": "workspace_file",
+            "path": relativePath,
+            "exportable": true,
+        ]
+        return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
     }
 
     /// Truthful diagnosis for a 0-match `old_string`, computed against the
@@ -3083,8 +3318,9 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 struct FileOperationHistoryTool: OsaurusTool {
     let name = "file_operation_history"
     let description =
-        "Show recent file writes/edits made by this chat session. Use this before undo/review "
-        + "or after multi-file work to inspect what changed. Optional `path` filters to one file."
+        "Show recent file changes made by this chat session, newest first: one entry per tool call "
+        + "with every file it created, modified, or deleted. Use this before undo/review or after "
+        + "multi-file work to inspect what changed. Optional `path` filters to one file."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -3102,9 +3338,11 @@ struct FileOperationHistoryTool: OsaurusTool {
     ])
 
     private let fixedRootPath: URL?
+    private let journal: FileChangeJournal
 
-    init(rootPath: URL? = nil) {
+    init(rootPath: URL? = nil, journal: FileChangeJournal = .shared) {
         self.fixedRootPath = rootPath
+        self.journal = journal
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -3120,39 +3358,28 @@ struct FileOperationHistoryTool: OsaurusTool {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
-            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
-        }
-
-        let rawPath = args["path"] as? String
-        let pathFilter: String?
-        if let rawPath {
-            let resolvedURL = try FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
-            pathFilter = Self.relativePath(for: resolvedURL, rootPath: rootPath)
-        } else {
-            pathFilter = nil
-        }
-
+        let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath)
+        let pathFilter = (args["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let limit = min(max(coerceInt(args["limit"]) ?? 20, 1), 100)
-        let operations = await FileOperationLog.shared.operations(for: sessionId)
+        let sets = await journal.changeSets(for: sessionId)
         let filtered =
-            pathFilter.map { path in
-                operations.filter { $0.path == path || $0.destinationPath == path }
-            } ?? operations
+            pathFilter.flatMap { $0.isEmpty ? nil : $0 }.map { raw in
+                sets.filter { set in
+                    set.entries.contains { Self.matches($0, raw: raw, rootPath: rootPath) }
+                }
+            } ?? sets
         let recent = Array(filtered.suffix(limit).reversed())
-        let entries = recent.map(WorkspaceWriteSafety.operationHistoryEntry)
         var payload: [String: Any] = [
             "kind": "file_operation_history",
             "session_id": sessionId,
-            "entries": entries,
+            "entries": recent.map(Self.historyEntry),
             "operation_count": filtered.count,
-            "returned_count": entries.count,
+            "returned_count": recent.count,
             "limit": limit,
         ]
-        if let pathFilter {
+        if let pathFilter, !pathFilter.isEmpty {
             payload["path"] = pathFilter
         }
-
         let warnings =
             filtered.count > limit
             ? ["History truncated to the \(limit) most recent matching operations."]
@@ -3160,8 +3387,41 @@ struct FileOperationHistoryTool: OsaurusTool {
         return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
     }
 
-    fileprivate static func relativePath(for url: URL, rootPath: URL) -> String {
-        FolderToolHelpers.displayPath(for: url, under: rootPath)
+    /// Whether `entry` is the file the model named: a path relative to
+    /// (or absolute under) the host folder, or a sandbox display path.
+    static func matches(_ entry: FileChangeEntry, raw: String, rootPath: URL?) -> Bool {
+        if entry.displayPath == raw || entry.path == FileChangeJournal.normalize(raw) {
+            return true
+        }
+        if entry.rootKind == .hostFolder, let rootPath,
+            case .path(let rel) = FileChangeCapture.resolveHost(raw, folder: rootPath)
+        {
+            return entry.path == rel
+        }
+        return false
+    }
+
+    static func historyEntry(_ set: FileChangeSet) -> [String: Any] {
+        var entry: [String: Any] = [
+            "id": set.id.uuidString,
+            "tool": set.toolName,
+            "origin": set.origin.rawValue,
+            "status": set.status.rawValue,
+            "timestamp": ISO8601DateFormatter().string(from: set.createdAt),
+            "can_undo": set.isRevertible && set.status != .reverted,
+            "files": set.entries.map { e -> [String: Any] in
+                var file: [String: Any] = [
+                    "path": e.rootKind == .hostFolder ? e.path : e.displayPath,
+                    "change": e.kind.rawValue,
+                    "state": e.state.rawValue,
+                ]
+                if let from = e.fromPath { file["renamed_from"] = from }
+                if e.entryType != .file { file["type"] = e.entryType.rawValue }
+                return file
+            },
+        ]
+        if let note = set.note { entry["note"] = note }
+        return entry
     }
 }
 
@@ -3170,12 +3430,12 @@ struct FileOperationHistoryTool: OsaurusTool {
 struct FileUndoTool: OsaurusTool, PermissionedTool {
     let name = "file_undo"
     let description =
-        "Revert file operations made by this chat session. With no arguments it undoes the most "
-        + "recent operation; pass `operation_id` (from `file_operation_history` or a write "
-        + "result) to undo one specific operation, or `path` to revert every logged operation "
-        + "on one file. If both are given, `operation_id` wins (path is checked against that "
-        + "operation's file). Only operations whose history entry shows `can_undo: true` can "
-        + "be reverted. Check `file_operation_history` first when unsure what would be undone."
+        "Revert file changes made by this chat session. With no arguments it undoes the most "
+        + "recent change; pass `operation_id` (from `file_operation_history` or a write result) to "
+        + "undo one specific tool call, or `path` to restore one file to how it was before this "
+        + "chat touched it. If both are given, `operation_id` wins (path is checked against that "
+        + "operation's files). Files changed again since (by the user or another chat) are left "
+        + "untouched and reported. Check `file_operation_history` first when unsure what would be undone."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -3189,7 +3449,7 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
             "path": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Relative file path: undo ALL logged operations on this file, newest first"
+                    "Relative file path: restore this file to its state before this chat changed it"
                 ),
             ]),
         ]),
@@ -3199,14 +3459,15 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     /// Mutates the working folder — same gate class as `file_write`.
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
-    /// Restores coalesce back OUT of the Changes list when the tracker
-    /// re-diffs against the baseline.
-    var mutatesHostFolder: Bool { true }
+    // Not a registry-captured mutation: the journal records each revert
+    // as its own change set (so an undo can itself be undone).
 
     private let fixedRootPath: URL?
+    private let journal: FileChangeJournal
 
-    init(rootPath: URL? = nil) {
+    init(rootPath: URL? = nil, journal: FileChangeJournal = .shared) {
         self.fixedRootPath = rootPath
+        self.journal = journal
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -3221,106 +3482,131 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
-            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
-        }
-
+        let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath)
         let operationIdRaw = (args["operation_id"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let rawPath = (args["path"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sets = await journal.changeSets(for: sessionId)
 
-        do {
-            let undone: [FileOperation]
-            if let operationIdRaw, !operationIdRaw.isEmpty {
-                guard let operationId = UUID(uuidString: operationIdRaw) else {
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message: "`operation_id` is not a valid operation ID.",
-                        field: "operation_id",
-                        expected: "UUID from `file_operation_history`",
-                        tool: name
-                    )
-                }
-                // Both args together are fine when they AGREE — models
-                // routinely echo the path alongside the id (observed live:
-                // gemma-4-12B sent `{"operation_id": …, "path":
-                // "CHANGELOG.md"}`, got the old "not both" rejection, and
-                // spiralled into a blind rewrite instead of the undo).
-                // Only an actual DISAGREEMENT is ambiguous and refused.
-                if let rawPath, !rawPath.isEmpty {
-                    let target = try? FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
-                    let relative = target.map {
-                        FileOperationHistoryTool.relativePath(for: $0, rootPath: rootPath)
-                    }
-                    let op = await FileOperationLog.shared
-                        .operations(for: sessionId)
-                        .first(where: { $0.id == operationId })
-                    if let op, let relative, op.path != relative, op.destinationPath != relative {
-                        return ToolEnvelope.failure(
-                            kind: .invalidArgs,
-                            message:
-                                "`operation_id` \(operationIdRaw) is an operation on "
-                                + "`\(op.path)`, not `\(relative)`. Pass just the "
-                                + "`operation_id`, or just `path` to undo all "
-                                + "operations on that file.",
-                            field: "path",
-                            expected: "arguments that refer to the same file",
-                            tool: name
-                        )
-                    }
-                }
-                let op = try await FileOperationLog.shared.undo(
-                    sessionId: sessionId,
-                    operationId: operationId
+        let scope: FileChangeJournal.RevertScope
+        var undoneSet: FileChangeSet?
+        if let operationIdRaw, !operationIdRaw.isEmpty {
+            guard let operationId = UUID(uuidString: operationIdRaw) else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`operation_id` is not a valid operation ID.",
+                    field: "operation_id",
+                    expected: "UUID from `file_operation_history`",
+                    tool: name
                 )
-                undone = op.map { [$0] } ?? []
-            } else if let rawPath, !rawPath.isEmpty {
-                let resolvedURL = try FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
-                let relative = FileOperationHistoryTool.relativePath(
-                    for: resolvedURL,
-                    rootPath: rootPath
-                )
-                undone = try await FileOperationLog.shared.undoFile(
-                    sessionId: sessionId,
-                    path: relative
-                )
-                if undone.isEmpty {
-                    return ToolEnvelope.failure(
-                        kind: .notFound,
-                        message:
-                            "No logged operations found for `\(relative)` in this session — nothing to undo.",
-                        field: "path",
-                        tool: name
-                    )
-                }
-            } else {
-                let op = try await FileOperationLog.shared.undoLast(sessionId: sessionId)
-                guard let op else {
-                    return ToolEnvelope.failure(
-                        kind: .notFound,
-                        message: "No logged file operations in this session — nothing to undo.",
-                        tool: name
-                    )
-                }
-                undone = [op]
             }
-            let entries = undone.map(WorkspaceWriteSafety.operationHistoryEntry)
-            return ToolEnvelope.success(
-                tool: name,
-                result: [
-                    "kind": "file_undo",
-                    "undone_count": undone.count,
-                    "undone": entries,
-                ] as [String: Any]
-            )
-        } catch let error as FileUndoError {
-            return ToolEnvelope.failure(
-                kind: .executionError,
-                message: error.localizedDescription,
-                tool: name
-            )
+            guard let set = sets.first(where: { $0.id == operationId }) else {
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: "No operation `\(operationIdRaw)` in this session's file history.",
+                    field: "operation_id",
+                    tool: name
+                )
+            }
+            // Both args together are fine when they AGREE — models
+            // routinely echo the path alongside the id (observed live:
+            // gemma-4-12B sent `{"operation_id": …, "path":
+            // "CHANGELOG.md"}`, got the old "not both" rejection, and
+            // spiralled into a blind rewrite instead of the undo).
+            // Only an actual DISAGREEMENT is ambiguous and refused.
+            if let rawPath, !rawPath.isEmpty,
+                !set.entries.contains(where: {
+                    FileOperationHistoryTool.matches($0, raw: rawPath, rootPath: rootPath)
+                })
+            {
+                let files = set.entries.map(\.path).joined(separator: "`, `")
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`operation_id` \(operationIdRaw) is an operation on `\(files)`, not "
+                        + "`\(rawPath)`. Pass just the `operation_id`, or just `path` to restore "
+                        + "that file.",
+                    field: "path",
+                    expected: "arguments that refer to the same file",
+                    tool: name
+                )
+            }
+            guard set.status != .reverted else {
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message: "Operation `\(operationIdRaw)` was already undone.",
+                    field: "operation_id",
+                    tool: name,
+                    retryable: false
+                )
+            }
+            scope = .set(operationId)
+            undoneSet = set
+        } else if let rawPath, !rawPath.isEmpty {
+            let key = sets.flatMap(\.entries)
+                .last { FileOperationHistoryTool.matches($0, raw: rawPath, rootPath: rootPath) }?
+                .pathKey
+            guard let key else {
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: "No logged operations found for `\(rawPath)` in this session — nothing to undo.",
+                    field: "path",
+                    tool: name
+                )
+            }
+            scope = .file(key)
+        } else {
+            guard let latest = await journal.latestRevertibleAgentSet(sessionId: sessionId) else {
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: "No logged file operations in this session — nothing to undo.",
+                    tool: name
+                )
+            }
+            scope = .set(latest.id)
+            undoneSet = latest
         }
+
+        let preview = await journal.previewRevert(scope, sessionId: sessionId)
+        let summary = await journal.revert(scope, sessionId: sessionId)
+        if let blocked = summary.blockedReason {
+            return ToolEnvelope.failure(kind: .unavailable, message: blocked, tool: name, retryable: true)
+        }
+        let conflicted = preview.items.filter(\.isConflict).map { $0.key.displayPath }
+        if summary.restored == 0, summary.conflicted + summary.failed > 0 {
+            var message = "Nothing was undone."
+            if !conflicted.isEmpty {
+                message +=
+                    " These files changed after this chat's edit and were left untouched: "
+                    + conflicted.joined(separator: ", ")
+                    + ". Ask the user before overwriting them."
+            }
+            if !summary.failures.isEmpty { message += " " + summary.failures.joined(separator: "; ") }
+            return ToolEnvelope.failure(kind: .executionError, message: message, tool: name, retryable: false)
+        }
+        var warnings: [String] = []
+        if !conflicted.isEmpty {
+            warnings.append(
+                "Left untouched (changed after this chat's edit): " + conflicted.joined(separator: ", "))
+        }
+        warnings += summary.failures
+        var result: [String: Any] = [
+            "kind": "file_undo",
+            "undone_count": summary.restored,
+            // What actually changed on disk, not what the preview planned.
+            "undone": summary.restoredPaths.map {
+                ["path": $0.rootKind == .hostFolder ? $0.path : $0.displayPath]
+            },
+        ]
+        if let undoneSet {
+            result["undone_operation_id"] = undoneSet.id.uuidString
+            result["undone_tool"] = undoneSet.toolName
+        }
+        if let revertId = summary.revertSetId {
+            result["revert_operation_id"] = revertId.uuidString
+        }
+        return ToolEnvelope.success(tool: name, result: result, warnings: warnings.isEmpty ? nil : warnings)
     }
 }
 
@@ -4266,6 +4552,15 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
     var mutatesHostFolder: Bool { true }
 
+    /// Opaque (full before/after scan); when the folder is too large to
+    /// scan, a simple `mv`/`cp`/`rm`/`mkdir` still names its paths.
+    func fallbackMutationTargets(argumentsJSON: String) -> [String]? {
+        guard let command = FileChangeCapture.declaredPaths(argumentsJSON, keys: ["command"])?.first,
+            let root = ChatExecutionContext.currentFolderRoot
+        else { return nil }
+        return ShellMutationPlanner.targets(command: command, rootPath: root)
+    }
+
     /// Streaming exec opts out of the registry's wall-clock cap. Long
     /// commands rely on the user's [Terminate] button + the optional
     /// `timeout` (idle ceiling) as the safety net.
@@ -4322,13 +4617,6 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         let requestedTimeout = Self.clampIdleTimeout(coerceInt(args["timeout"]))
         let idleTimeout: TimeInterval? =
             requestedTimeout ?? ChatExecutionContext.defaultShellIdleTimeout
-
-        // Pre-exec undo planning: simple `mv`/`cp`/`rm`/`mkdir` forms are
-        // captured into the same operation log as `file_write`/`file_edit`
-        // (an `rm` target's content only exists BEFORE the command runs).
-        // Unparseable mutation commands surface a "not in the undo log"
-        // warning instead of a silent gap.
-        let mutationPlan = ShellMutationLog.plan(command: command, rootPath: rootPath)
 
         // `set -o pipefail` wrapping so a real upstream pipeline
         // failure surfaces as the rightmost non-zero exit instead of
@@ -4494,34 +4782,8 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             )
         }
 
-        // Undo-log bookkeeping for the mutation plan computed pre-exec.
-        if exitCode == 0 {
-            switch mutationPlan {
-            case .none:
-                break
-            case .mutations(let planned):
-                if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
-                    var operationIds: [String] = []
-                    for op in planned {
-                        let operation = FileOperation(
-                            type: op.type,
-                            path: op.path,
-                            destinationPath: op.destinationPath,
-                            previousContent: op.previousContent,
-                            sessionId: sessionId,
-                            batchId: ChatExecutionContext.currentBatchId,
-                            rootPath: rootPath.standardizedFileURL.path
-                        )
-                        await FileOperationLog.shared.log(operation)
-                        operationIds.append(operation.id.uuidString)
-                    }
-                    payload["operation_ids"] = operationIds
-                }
-            case .unloggable:
-                warnings.append(
-                    "This command's filesystem changes were NOT captured in the undo log — `file_undo` cannot revert them."
-                )
-            }
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            payload["operation_id"] = setId.uuidString
         }
 
         return ToolEnvelope.success(

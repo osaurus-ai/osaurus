@@ -25,15 +25,6 @@ struct FileWriteDocumentFormatsTests {
         return dir
     }
 
-    private func withSession<T>(
-        _ sessionId: String = "file-write-formats-\(UUID().uuidString)",
-        body: (String) async throws -> T
-    ) async throws -> T {
-        try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-            try await body(sessionId)
-        }
-    }
-
     private func write(_ root: URL, _ args: [String: Any]) async throws -> String {
         let data = try JSONSerialization.data(withJSONObject: args)
         let json = try #require(String(data: data, encoding: .utf8))
@@ -230,44 +221,58 @@ struct FileWriteDocumentFormatsTests {
 
     @Test func overwritingBinaryDocumentIsUndoableByteForByte() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
-        await FileOperationLog.shared.clearAll()
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let target = root.appendingPathComponent("report.docx")
         // Arbitrary non-UTF-8 bytes standing in for a previous package.
         let original = Data([0x50, 0x4B, 0x03, 0x04, 0xFF, 0xFE, 0x00, 0x01, 0x80])
         try original.write(to: target)
+        let sessionId = "file-write-formats-\(UUID().uuidString)"
 
-        try await withSession { sessionId in
-            let result = try await write(root, ["path": "report.docx", "content": "# Replaced\n\nBody."])
-            #expect(ToolEnvelope.isSuccess(result), "overwrite failed: \(result)")
-            let payload = try #require(EnvelopeAssertions.successPayload(result))
-            #expect(payload["action"] as? String == "overwrite")
-            let operationId = try #require(payload["operation_id"] as? String)
-            let after = try Data(contentsOf: target)
-            #expect(after != original)
+        let result = try await env.run(
+            FileWriteTool(rootPath: root),
+            FileHistoryTestEnv.json(["path": "report.docx", "content": "# Replaced\n\nBody."]),
+            sessionId: sessionId, folder: root)
+        #expect(ToolEnvelope.isSuccess(result), "overwrite failed: \(result)")
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["action"] as? String == "overwrite")
+        let operationId = try #require(UUID(uuidString: payload["operation_id"] as? String ?? ""))
+        #expect(try Data(contentsOf: target) != original)
 
-            let history = await FileOperationLog.shared.operations(for: sessionId)
-            let entry = try #require(history.first(where: { $0.id.uuidString == operationId }))
-            #expect(entry.previousContentEncoding == .base64)
-            #expect(entry.contentKind == "binary")
+        let set = try #require(await env.journal.changeSet(id: operationId, sessionId: sessionId))
+        #expect(set.entries.map(\.path) == ["report.docx"])
+        #expect(set.entries.first?.kind == .modified)
 
-            _ = try await FileOperationLog.shared.undo(sessionId: sessionId, operationId: entry.id)
-            let restored = try Data(contentsOf: target)
-            #expect(restored == original, "undo did not restore the original bytes")
+        let summary = await env.journal.revert(.set(operationId), sessionId: sessionId)
+        #expect(summary.isClean, "\(summary)")
+        #expect(try Data(contentsOf: target) == original, "undo did not restore the original bytes")
+    }
+
+    @Test func pptxIsGeneratedFromMarkdownSlides() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let markdown = "# Q3 Review\nPrepared by Ops\n\n## Revenue\n- Up 12%\n- Margin flat\n\n## Next steps\n- Hire\n"
+        let result = try await write(root, ["path": "deck.pptx", "content": markdown])
+        #expect(!ToolEnvelope.isError(result), "\(result)")
+        let url = root.appendingPathComponent("deck.pptx")
+        let document = try await PPTXAdapter().parse(url: url, sizeLimit: 50_000_000)
+        let text = document.textFallback
+        for expected in ["Q3 Review", "Revenue", "Up 12%", "Next steps", "Hire"] {
+            #expect(text.contains(expected), "missing \(expected) in \(text)")
         }
     }
 
     @Test func presentationFormatsAreRefusedWithHonestPivot() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        for name in ["deck.pptx", "deck.key", "deck.odp"] {
+        for name in ["deck.key", "deck.odp", "deck.pptm"] {
             let result = try await write(root, ["path": name, "content": "# Slide 1"])
             #expect(ToolEnvelope.isError(result))
             let message = EnvelopeAssertions.failureMessage(result) ?? ""
             #expect(!message.contains("only writes UTF-8 text"), "stale text-only claim: \(message)")
-            #expect(message.contains(".docx"), "pivot must name a supported format: \(message)")
-            #expect(message.contains("osaurus.pptx"), "pivot must mention the pptx plugin: \(message)")
+            #expect(message.contains(".pptx"), "pivot must name the supported format: \(message)")
             #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path))
         }
     }

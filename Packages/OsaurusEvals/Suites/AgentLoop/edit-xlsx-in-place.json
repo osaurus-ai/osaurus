@@ -1,0 +1,61 @@
+{
+  "id": "agent_loop.edit-xlsx-in-place",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 edit cells and add formulas in an existing .xlsx with file_edit operations (no regenerate, no shell)",
+  "query": "In budget.xlsx, change Marketing's Q3 figure to 64000, then add a Total row directly under Support that sums Q1, Q2 and Q3 with formulas. Don't touch the Headcount sheet.",
+  "notes": "file_edit `operations` (set_cells) edits the workbook in place. Regenerating with file_write would drop the second sheet's untouched package bytes; the command assertions prove the edited value, real SUM formulas, and an intact Headcount sheet.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "budget.xlsx",
+        "contentsFromFixture": "Documents/budget.xlsx"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxToolCalls": 5,
+      "mustCallTools": [
+        "file_edit"
+      ],
+      "mustNotCallTools": [
+        "shell_run",
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 3,
+          "maxErrors": 1,
+          "argsMustContain": "set_cells"
+        }
+      ],
+      "files": [
+        {
+          "path": "budget.xlsx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "unzip -p budget.xlsx xl/worksheets/sheet1.xml | grep -q '<c r=\"D3\"[^>]*><v>64000</v>'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p budget.xlsx xl/worksheets/sheet1.xml | grep -q 'SUM(B2:B5)'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p budget.xlsx xl/worksheets/sheet1.xml | grep -q 'SUM(D2:D5)'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p budget.xlsx xl/worksheets/sheet2.xml | grep -q '<v>67</v>'",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

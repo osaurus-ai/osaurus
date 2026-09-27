@@ -192,10 +192,9 @@ final class ChatSessionsManager: ObservableObject {
             currentSessionId = nil
         }
         sessions.removeAll { $0.id == id }
-        // Drop the session's tracked sandbox changes + baseline snapshot
-        // (the DB rows cascade in deleteSession; this clears the in-memory
-        // cache, pending background-job records, and baseline clone).
-        Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
+        // Drop the session's file history and collect its now-unreferenced
+        // snapshot blobs.
+        Task { await FileChangeJournal.shared.purgeSession(id.uuidString) }
     }
 
     /// Delete every session owned by an agent. Strict ownership match, unlike
@@ -223,7 +222,7 @@ final class ChatSessionsManager: ObservableObject {
         }
         sessions.removeAll { idSet.contains($0.id) }
         for id in ids {
-            Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
+            Task { await FileChangeJournal.shared.purgeSession(id.uuidString) }
         }
         await withCheckedContinuation { continuation in
             ChatSessionStore.deleteBatch(ids: ids) {

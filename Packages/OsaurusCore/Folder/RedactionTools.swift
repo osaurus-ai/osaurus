@@ -244,6 +244,10 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
 
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
+
     /// Default placeholder per category, aligned with the wording users
     /// naturally ask for ("replace names with [REDACTED NAME]").
     static func defaultPlaceholder(for category: EntityCategory) -> String {
@@ -502,17 +506,8 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
         }
 
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
-        if let sid = ChatExecutionContext.currentSessionId {
-            let operation = FileOperation(
-                type: .fileEdit,
-                path: relativePath,
-                previousContent: originalContent,
-                sessionId: sid,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: rootPath.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            preview.payload["operation_id"] = operation.id.uuidString
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            preview.payload["operation_id"] = setId.uuidString
         }
         preview.payload["written"] = true
         return ToolEnvelope.success(tool: name, result: preview.payload, warnings: warnings)
