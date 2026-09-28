@@ -235,6 +235,146 @@
         }
       }
     },
+    "None selected — a model that ships its own drafter uses it; otherwise speculation falls back to the model's own MTP head, per Mode above." : {
+      "comment" : "Shown when no DFlash 2 drafter folder is selected.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keiner ausgewählt – ein Modell mit eigenem Drafter verwendet diesen; andernfalls greift die Spekulation gemäß dem Modus oben auf den MTP-Kopf des Modells zurück."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택 안 됨 — 자체 드래프터가 있는 모델은 이를 사용하고, 그렇지 않으면 위의 모드에 따라 모델의 MTP 헤드를 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не выбран — модель со своим драфтером использует его; иначе спекуляция использует MTP-голову модели согласно режиму выше."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未选择——自带草稿器的模型会使用它；否则将按上方的模式回退到模型自身的 MTP 头。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未選擇——隨附草稿器的模型會使用它；否則將依上方的模式改用模型本身的 MTP 頭。"
+          }
+        }
+      }
+    },
+    "Some models ship a DFlash 2 drafter in their bundle. It drafts for that model by default and replaces its native MTP head. Turn this off to decode those models without it. Applies to the next message; no reload." : {
+      "comment" : "Description of the toggle for drafters shipped inside a model bundle.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manche Modelle liefern in ihrem Paket einen DFlash-2-Drafter mit. Er entwirft standardmäßig für dieses Modell und ersetzt dessen nativen MTP-Kopf. Schalten Sie dies aus, um diese Modelle ohne ihn zu dekodieren. Gilt ab der nächsten Nachricht; kein Neuladen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일부 모델은 번들에 DFlash 2 드래프터를 포함합니다. 기본적으로 해당 모델의 초안을 작성하며 네이티브 MTP 헤드를 대체합니다. 드래프터 없이 디코딩하려면 끄세요. 다음 메시지부터 적용되며 다시 로드하지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Некоторые модели поставляются с драфтером DFlash 2 в своём пакете. По умолчанию он составляет черновики для этой модели и заменяет её встроенную MTP-голову. Выключите, чтобы декодировать такие модели без него. Действует со следующего сообщения, без перезагрузки."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分模型在其包中自带 DFlash 2 草稿器。默认情况下它会为该模型起草，并取代其原生 MTP 头。关闭此项可在不使用它的情况下解码这些模型。从下一条消息开始生效，无需重新加载。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分模型在其套件中隨附 DFlash 2 草稿器。預設會為該模型起草，並取代其原生 MTP 頭。關閉此項可在不使用它的情況下解碼這些模型。從下一則訊息開始生效，無需重新載入。"
+          }
+        }
+      }
+    },
+    "This model ships with a DFlash drafter, which drafts for it by default. Off turns it off for models that ship one. Your configured sampling stays in effect." : {
+      "comment" : "Help for the speculative decoding switch on a model that ships its own DFlash drafter.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Modell wird mit einem DFlash-Drafter geliefert, der standardmäßig für es entwirft. „Aus“ schaltet ihn für Modelle ab, die einen mitliefern. Ihre eingestellten Sampling-Parameter bleiben wirksam."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 모델에는 기본적으로 초안을 작성하는 DFlash 드래프터가 포함되어 있습니다. 끄기를 선택하면 드래프터를 포함한 모델에서 이를 끕니다. 설정한 샘플링은 그대로 적용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта модель поставляется с драфтером DFlash, который по умолчанию составляет для неё черновики. «Выкл.» отключает его для моделей, которые его поставляют. Ваши настройки сэмплирования остаются в силе."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型自带 DFlash 草稿器，默认会为其起草。选择“关闭”将对自带草稿器的模型停用它。您配置的采样设置保持不变。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型隨附 DFlash 草稿器，預設會為其起草。選擇「關閉」將對隨附草稿器的模型停用它。您設定的取樣設定保持不變。"
+          }
+        }
+      }
+    },
+    "Use Drafters That Ship With a Model" : {
+      "comment" : "Toggle that lets a DFlash 2 drafter shipped inside a model bundle draft for that model.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mitgelieferte Drafter eines Modells verwenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델에 포함된 드래프터 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать драфтеры, поставляемые с моделью"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用模型自带的草稿器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用模型隨附的草稿器"
+          }
+        }
+      }
+    },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",
       "isCommentAutoGenerated" : true,

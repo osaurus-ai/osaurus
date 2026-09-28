@@ -7,6 +7,7 @@
 //  seconds while the user is on the Settings tab.
 //
 
+@preconcurrency import MLXLMCommon
 import SwiftUI
 
 struct LiveActivitySection: View {
@@ -18,6 +19,8 @@ struct LiveActivitySection: View {
     /// depth 3 and getting depth 1 because acceptance collapsed — that the
     /// load-scoped MTP section (a request, not a result) cannot show.
     @State private var lastMTP: [String: MTPStatsSummary] = [:]
+    /// Same, for turns a DFlash 2 drafter drafted.
+    @State private var lastDFlash2: [String: DFlash2GenerationStats] = [:]
     @State private var inferenceActivities: [InferenceActivitySnapshot] = []
     @State private var refreshTimer: Timer?
     @Environment(\.theme) private var theme
@@ -40,7 +43,7 @@ struct LiveActivitySection: View {
                 effectiveSamplerReadout
             }
 
-            if !lastMTP.isEmpty {
+            if !lastMTP.isEmpty || !lastDFlash2.isEmpty {
                 SettingsDivider()
                 mtpRuntimeReadout
             }
@@ -146,6 +149,21 @@ struct LiveActivitySection: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(theme.secondaryText)
 
+            ForEach(lastDFlash2.keys.sorted(), id: \.self) { model in
+                if let stats = lastDFlash2[model] {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(Self.describeDFlash2(stats))
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundColor(theme.tertiaryText)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
             ForEach(lastMTP.keys.sorted(), id: \.self) { model in
                 if let stats = lastMTP[model] {
                     VStack(alignment: .leading, spacing: 2) {
@@ -163,6 +181,34 @@ struct LiveActivitySection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "DFlash 2 · block 5 · 2.5 tok/verify · 61% of drafts accepted".
+    /// Tokens per verify is the number that decides the speedup: 1.0 is no
+    /// better than plain decode, the block width is the ceiling.
+    static func describeDFlash2(_ stats: DFlash2GenerationStats) -> String {
+        var parts = [
+            "DFlash 2", "block \(stats.blockSize)",
+            String(format: "%.1f tok/verify", stats.acceptanceLength),
+        ]
+        if stats.draftedTokens > 0 {
+            parts.append(
+                String(
+                    format: "%.0f%% of drafts accepted",
+                    Double(stats.acceptedTokens) / Double(stats.draftedTokens) * 100))
+        }
+        // Drafting set aside because it decoded slower than plain on this
+        // turn — the governor's decision, named instead of hidden.
+        if stats.throughputPauses > 0 {
+            parts.append(
+                "plain for \(stats.throughputPausedTokens) tok (drafting slower, "
+                    + "\(stats.throughputPauses) pause\(stats.throughputPauses == 1 ? "" : "s"))")
+        }
+        let otherFallback = stats.autoregressiveFallbackTokens - stats.throughputPausedTokens
+        if otherFallback > 0 {
+            parts.append("AR fallback \(otherFallback) tok")
+        }
+        return parts.joined(separator: " · ")
     }
 
     static func describeMTP(_ stats: MTPStatsSummary) -> String {
@@ -268,6 +314,7 @@ struct LiveActivitySection: View {
             effectiveGeneration =
                 await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
             lastMTP = await MLXBatchAdapter.lastMTPStatsSnapshot()
+            lastDFlash2 = await MLXBatchAdapter.lastDFlash2StatsSnapshot()
             await refreshActivities()
         }
     }

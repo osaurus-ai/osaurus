@@ -64,7 +64,7 @@ struct MTPSection: View {
             SettingsField(
                 label: "Mode",
                 hint:
-                    "Native MTP starts Off. Off disables the model's native MTP head. Auto requires verified bundle tuning. Force On requires verified tuning unless you select an eligible manual depth in Chat. A refused request reports the reason. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
+                    "Native MTP starts Off. Off disables the model's native MTP head. Auto requires verified bundle tuning. Force On requires verified tuning unless you select an eligible manual depth in Chat. A refused request reports the reason. DFlash 2 drafters draft regardless of Mode — use the switches below to stop them."
             ) {
                 Picker("", selection: $draft.mtp.mode) {
                     ForEach(VMLXMTPServerMode.allCases, id: \.self) { mode in
@@ -95,10 +95,20 @@ struct MTPSection: View {
                 isOn: $draft.mtp.acceptedTokensOnlyEnterBaseCache
             )
 
+            SettingsToggle(
+                title: L("Use Drafters That Ship With a Model"),
+                description:
+                    "Some models ship a DFlash 2 drafter in their bundle. It drafts for that model by default and replaces its native MTP head. Turn this off to decode those models without it. Applies to the next message; no reload.",
+                isOn: Binding(
+                    get: { draft.mtp.bundledDrafter != .off },
+                    set: { draft.mtp.bundledDrafter = $0 ? .auto : .off }
+                )
+            )
+
             SettingsField(
                 label: "DFlash 2 Drafter",
                 hint:
-                    "A downloaded block-diffusion drafter drafts a whole block per step instead of one token. Applies to Qwen 3.8 only — the drafter is trained against that target's hidden states, so a mismatched bundle is ignored and every other model keeps its own decode path. When it does fit, it REPLACES the native MTP head."
+                    "A downloaded block-diffusion drafter drafts a whole block per step instead of one token. It is trained against one target's hidden states, so a mismatched bundle is ignored and every other model keeps its own decode path. When it does fit, it REPLACES the native MTP head, and it takes precedence over a drafter the model ships with."
             ) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
@@ -146,7 +156,7 @@ struct MTPSection: View {
                     } else {
                         Text(
                             L(
-                                "None selected — speculation falls back to the model's own MTP head, per Mode above."
+                                "None selected — a model that ships its own drafter uses it; otherwise speculation falls back to the model's own MTP head, per Mode above."
                             )
                         )
                         .font(.system(size: 11))

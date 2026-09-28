@@ -157,6 +157,13 @@ enum GenerationEventMapper {
                     if recordMTPLastRun, !suppressProgressUI, let mtp {
                         Task { await MLXBatchAdapter.recordLastMTPStats(modelName: modelName, stats: mtp) }
                     }
+                    if recordMTPLastRun, !suppressProgressUI {
+                        let dflash2 = info.dflash2Stats
+                        Task {
+                            await MLXBatchAdapter.recordLastDFlash2Stats(
+                                modelName: modelName, stats: dflash2)
+                        }
+                    }
                     continuation.yield(
                         .completionInfo(
                             tokenCount: info.generationTokenCount,
@@ -371,6 +378,25 @@ enum GenerationEventMapper {
         )
     }
 
+    /// Machine-greppable DFlash 2 counters for one generation.
+    static func describeDFlash2(_ stats: DFlash2GenerationStats) -> String {
+        let cycles = Double(max(stats.verifyCalls, 1))
+        return "block=\(stats.blockSize) verifyCalls=\(stats.verifyCalls) "
+            + "contextRows=\(stats.seededContextRows) recomputedRows=\(stats.recomputedContextRows) "
+            + "emitted=\(stats.emittedTokens) drafted=\(stats.draftedTokens) "
+            + "accepted=\(stats.acceptedTokens) "
+            + String(format: "tokPerVerify=%.2f ", stats.acceptanceLength)
+            + "arFallback=\(stats.autoregressiveFallbackTokens) "
+            + "pauses=\(stats.throughputPauses) pausedTokens=\(stats.throughputPausedTokens) "
+            + String(
+                format: "pausedTokPerSec=%.1f ",
+                Double(stats.throughputPausedTokens) / max(stats.throughputPausedSeconds, 1e-6))
+            + String(
+                format: "draftMs=%.2f verifyMs=%.2f commitMs=%.2f",
+                stats.draftSeconds / cycles * 1000, stats.verifySeconds / cycles * 1000,
+                stats.commitSeconds / cycles * 1000)
+    }
+
     private static func logCompletionInfo(_ info: GenerateCompletionInfo) {
         mapperLog.info(
             "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public) stop=\(String(describing: info.stopReason), privacy: .public) unclosedReasoning=\(info.unclosedReasoning, privacy: .public)"
@@ -406,6 +432,10 @@ enum GenerationEventMapper {
                     + "fallbackReason=\(mtp.adaptiveFallbackReason ?? "-") "
                     + "verifier=\(mtp.verifierMode) cacheMode=\(mtp.cacheMode)"
             )
+        } else if let dflash2 = info.dflash2Stats {
+            let line = Self.describeDFlash2(dflash2)
+            mapperLog.info("[perf] decodePath=dflash2 \(line, privacy: .public)")
+            PrefillDebugLog.shared.log("     STEP-MTP   decodePath=dflash2 \(line)")
         } else {
             mapperLog.info("[perf] decodePath=plain mtp=off")
             PrefillDebugLog.shared.log("     STEP-MTP   decodePath=plain mtp=off")

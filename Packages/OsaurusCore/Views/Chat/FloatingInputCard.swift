@@ -475,6 +475,12 @@ struct FloatingInputCard: View {
     /// Mirrors `mtp.mode` / `mtp.draftTokenLimit` so the row renders the value
     /// that is actually saved rather than a local guess.
     @State private var nativeMTPSelection: String = "off"
+    /// Models whose bundle ships a DFlash 2 drafter that fits it. For these
+    /// the row switches that drafter (Off / Auto); it replaces any native
+    /// head, so depths do not apply.
+    @State private var bundledDrafterModels: Set<String> = []
+    /// Mirrors `mtp.bundledDrafter` as a segment id.
+    @State private var bundledDrafterSelection: String = "auto"
 
     // MARK: - MTP Bundle-Layout Advisory State
 
@@ -2474,9 +2480,22 @@ extension FloatingInputCard {
     /// an eligible head and bound exploration by the selected depth.
     private func nativeMTPOption(for model: String) -> ModelOptionDefinition? {
         let identity = Self.mtpIdentity(model)
-        guard !isRemoteAgentRun,
-            nativeMTPCapableModels.contains(identity)
-        else { return nil }
+        guard !isRemoteAgentRun else { return nil }
+        if bundledDrafterModels.contains(identity) {
+            return ModelOptionDefinition(
+                id: Self.nativeMTPOptionID,
+                label: L("Speculative Decoding"),
+                icon: "hare",
+                kind: .segmented([
+                    ModelOptionSegment(id: "off", label: L("Off")),
+                    ModelOptionSegment(id: "auto", label: L("Auto")),
+                ]),
+                help: L(
+                    "This model ships with a DFlash drafter, which drafts for it by default. Off turns it off for models that ship one. Your configured sampling stays in effect."
+                )
+            )
+        }
+        guard nativeMTPCapableModels.contains(identity) else { return nil }
         let manuallyBlocked = nativeMTPManuallyBlockedModels.contains(identity)
         return ModelOptionDefinition(
             id: Self.nativeMTPOptionID,
@@ -2551,11 +2570,28 @@ extension FloatingInputCard {
         }
     }
 
+    /// Switches the drafter a bundle ships. Only `bundledDrafter` changes:
+    /// the drafter is resolved per request, so this applies to the next
+    /// message without reloading the model.
+    private func applyBundledDrafterSegment(_ segment: String) {
+        Task { @MainActor in
+            var settings = ServerController.runtimeSettingsForConfigureTool().settings
+            settings.mtp.bundledDrafter = segment == "off" ? .off : .auto
+            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings)
+            bundledDrafterSelection = Self.bundledDrafterSegment(
+                ServerController.runtimeSettingsForConfigureTool().settings.mtp)
+        }
+    }
+
+    private static func bundledDrafterSegment(_ mtp: VMLXServerMTPSettings) -> String {
+        mtp.bundledDrafter == .off ? "off" : "auto"
+    }
+
     /// Refreshes both the capable-model set and the saved selection.
     private func refreshNativeMTPState() {
-        nativeMTPSelection = Self.nativeMTPSegment(
-            ServerController.runtimeSettingsForConfigureTool().settings.mtp
-        )
+        let savedMTP = ServerController.runtimeSettingsForConfigureTool().settings.mtp
+        nativeMTPSelection = Self.nativeMTPSegment(savedMTP)
+        bundledDrafterSelection = Self.bundledDrafterSegment(savedMTP)
         Task { @MainActor in
             let summaries = await ModelRuntime.shared.cachedModelSummaries()
             // UNION, not replace: capability is a property of the bundle, and
@@ -3244,12 +3280,18 @@ extension FloatingInputCard {
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
             let identity = Self.mtpIdentity(model)
-            values[Self.nativeMTPOptionID] = .string(
-                nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
-            )
-            displayDefaults[Self.nativeMTPOptionID] = .string(
-                "off"
-            )
+            if bundledDrafterModels.contains(identity) {
+                // Auto is this row's default, so only Off is an explicit
+                // choice — and "Reset to default" returns to Auto.
+                values[Self.nativeMTPOptionID] =
+                    bundledDrafterSelection == "off" ? .string("off") : nil
+                displayDefaults[Self.nativeMTPOptionID] = .string("auto")
+            } else {
+                values[Self.nativeMTPOptionID] = .string(
+                    nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
+                )
+                displayDefaults[Self.nativeMTPOptionID] = .string("off")
+            }
         }
 
         return ModelPickerOptionsControl(
@@ -3262,8 +3304,13 @@ extension FloatingInputCard {
                 // Routed to server settings, NOT ModelOptionsStore: writing it
                 // per-model would persist a value the load path never reads.
                 if optionId == Self.nativeMTPOptionID {
+                    let bundled = bundledDrafterModels.contains(Self.mtpIdentity(model))
                     DispatchQueue.main.async {
-                        applyNativeMTPSegment(newValue?.stringValue ?? "off")
+                        if bundled {
+                            applyBundledDrafterSegment(newValue?.stringValue ?? "auto")
+                        } else {
+                            applyNativeMTPSegment(newValue?.stringValue ?? "off")
+                        }
                     }
                     return
                 }
@@ -4342,10 +4389,16 @@ extension FloatingInputCard {
             // Selection must expose the controls before Send. This reads only
             // bundle metadata/headers; it neither loads nor warms the model.
             let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
+            let shipsDrafter = ModelRuntime.bundleShipsFittingDrafter(bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
                 let identity = Self.mtpIdentity(model)
+                if shipsDrafter {
+                    bundledDrafterModels.insert(identity)
+                } else {
+                    bundledDrafterModels.remove(identity)
+                }
                 if let capability, capability.bundleHasMTP, capability.isTargetMTPFamily {
                     nativeMTPCapableModels.insert(identity)
                     if capability.isBlocked {
