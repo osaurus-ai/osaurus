@@ -1,6 +1,6 @@
 # Gather row tiles engine pin — proof pending
 
-Candidate engine: `26a0ea6d2f5ae92d8c3605e7dd4b895091a0102b`.
+Candidate engine: `1e2178e72b896ab4ed7e9c19154749529206c354`.
 Core: `083a6742d` (osaurus-ai/mlx#12, draft).
 
 All six executable pin/contract locations agree. The historical composite-cache
@@ -37,3 +37,5 @@ Known separate follow-up: Nemotron video EVS still falls back to full prefill
 because a safe recurrent prefix checkpoint is absent. No video-cache reuse
 claim for that path. Gemma4 video is explicitly unsupported. Full-model
 performance remains under paired measurement; no universal chip speed claim.
+
+The pin also consumes the focused tied-head activation-dtype correction (vmlx-swift#523). Optional Q6 head conversion now preserves the source FP16 stream instead of promoting Gemma arithmetic through mixed BF16/FP16 types. Engine numerical, matched-output performance, two-slot concurrency and image-cache replay tests pass. The newly pinned app must be rebuilt and re-proven; previous GUI rows describe the prior pin.
