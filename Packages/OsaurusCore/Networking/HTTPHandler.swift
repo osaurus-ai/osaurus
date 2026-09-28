@@ -8980,6 +8980,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // key such as the paired phone. Agent-scoped and workspace-minted
         // callers keep the sanitized trace above.
         let includeToolDetail = isLoopbackConnection(context) || stateRef.value.authedScopeIsMaster
+        // Read now: the connection's attribution is reset for its next request.
+        let callerKeyNonce = inboundConnectionInfo()?.accessKeyId
         let toolTimer = AgentToolTraceTimer()
         @Sendable func startedDetail(_ invocation: ServiceToolInvocation, callId: String) -> AgentToolTraceDetail? {
             guard includeToolDetail else { return nil }
@@ -9279,6 +9281,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let systemCount = messages.prefix(while: { $0.role == "system" }).count
                 messages.insert(contentsOf: history, at: systemCount)
                 persistFrom.value = systemCount + history.count
+                // The chat to bring forward when the user is back at the Mac.
+                await MainActor.run {
+                    PhoneChatHandoff.shared.notePhoneRun(sessionId: continuedSessionId, keyNonce: callerKeyNonce)
+                }
             }
             // Append this run's turns to the continued chat when the request
             // ends, however it ends (finished, errored, client gone).
@@ -9293,6 +9299,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 appended,
                                 to: continuedSessionId,
                                 model: runModel
+                            )
+                            PhoneChatHandoff.shared.notePhoneRun(
+                                sessionId: continuedSessionId,
+                                keyNonce: callerKeyNonce
                             )
                         }
                     }

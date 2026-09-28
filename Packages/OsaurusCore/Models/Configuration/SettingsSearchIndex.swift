@@ -330,6 +330,16 @@ public enum SettingsSearchIndex {
             keywords: ["sleep", "awake", "reachable", "phone", "remote", "idle sleep"]
         ),
         .init(
+            id: "settings.connect.continuePhoneChats",
+            tab: .connect,
+            section: "On This Mac",
+            title: "Continue Phone Chats on This Mac",
+            keywords: [
+                "handoff", "continue", "resume", "iphone", "phone", "bring to front", "focus", "come back",
+                "return", "unlock",
+            ]
+        ),
+        .init(
             id: "settings.chat.compactionModel",
             tab: .chat,
             section: "Chat",
