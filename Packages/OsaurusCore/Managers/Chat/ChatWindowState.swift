@@ -207,6 +207,13 @@ final class ChatWindowState: ObservableObject {
     /// survives and the sidebar returns when the inspector closes.
     @Published var isSidebarAutoHidden: Bool = false
 
+    /// Width of the right rail actually on screen (the chat inspector or
+    /// Project Settings), 0 while closed. `ChatView` sets it from its
+    /// geometry, so it already reflects the narrow-window squeeze and a
+    /// live resize drag. The tab strip reads it to stop the tabs at the
+    /// chat column's trailing edge instead of running under the rail.
+    @Published var inspectorColumnWidth: CGFloat = 0
+
     /// Whether the sidebar is on screen. The toolbar toggle and the tab
     /// strip inset read this, not `showSidebar`, so the chrome never claims
     /// a sidebar that the inspector has pushed aside.

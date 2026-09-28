@@ -72,6 +72,16 @@ struct ChatTabStripView: View {
     /// the chrome BEFORE the strip, so it holds still during a window resize.
     @State private var measuredChromeX: CGFloat?
 
+    /// Fallback for the width of the chrome AFTER this item (the inspector
+    /// toggle and window pin, plus toolbar padding), used only until the
+    /// first live measurement lands (see `measuredTrailingChrome`).
+    var trailingChromeWidth: CGFloat = 80
+
+    /// Distance from the strip's trailing edge to the window's trailing
+    /// edge, measured from AppKit like `measuredChromeX`. Only depends on
+    /// the chrome after the strip, so it too holds still during a resize.
+    @State private var measuredTrailingChrome: CGFloat?
+
     /// Last laid-out strip width, for drag math that runs outside `body`.
     @State private var lastStripWidth: CGFloat = 0
 
@@ -82,7 +92,24 @@ struct ChatTabStripView: View {
     /// fast resize can never race a measurement. `footFlare` on each side
     /// keeps the active tab's outward-curving feet inside the item.
     private func stripWidth(in available: CGFloat) -> CGFloat {
-        max(0, available - leadingInset - 2 * Self.footFlare)
+        max(0, available - leadingInset - trailingInset - 2 * Self.footFlare)
+    }
+
+    /// How far the strip must start past its own leading edge so the first
+    /// tab lands at the content area's left edge: the sidebar's width less
+    /// the chrome (sidebar button, toolbar padding) already ahead of the
+    /// strip. Zero when the sidebar is narrower than that chrome.
+    static func leadingInset(sidebarWidth: CGFloat, chromeWidth: CGFloat) -> CGFloat {
+        max(0, sidebarWidth - chromeWidth)
+    }
+
+    /// Mirror image for the right rail: the inspector's width less the
+    /// chrome (rail toggle, pin, toolbar padding) already after the strip,
+    /// so the last tab and "+" end at the chat column's trailing edge
+    /// instead of running under the rail. Zero while the rail is closed or
+    /// narrower than that chrome.
+    static func trailingInset(inspectorWidth: CGFloat, chromeWidth: CGFloat) -> CGFloat {
+        max(0, inspectorWidth - chromeWidth)
     }
 
     /// Hover is tracked at strip level (not per item) so separators can
@@ -105,13 +132,25 @@ struct ChatTabStripView: View {
     /// sidebar.
     private var sidebarOpenInset: CGFloat {
         let clamped = min(max(storedSidebarWidth, 260), 460)
-        return max(0, CGFloat(clamped) - (measuredChromeX ?? leadingChromeWidth))
+        return Self.leadingInset(
+            sidebarWidth: CGFloat(clamped),
+            chromeWidth: measuredChromeX ?? leadingChromeWidth)
     }
 
     /// Follows the sidebar actually on screen — while the inspector pushes
     /// it aside at narrow widths the tabs return to the window's left edge.
     private var leadingInset: CGFloat {
         windowState.isSidebarVisible ? sidebarOpenInset : 0
+    }
+
+    /// Keeps the tabs clear of the right rail (chat inspector or Project
+    /// Settings). `inspectorColumnWidth` is the rail's on-screen width as
+    /// `ChatView` laid it out — squeezed at narrow windows, live during a
+    /// resize drag — so the strip tracks it without a second computation.
+    private var trailingInset: CGFloat {
+        Self.trailingInset(
+            inspectorWidth: windowState.inspectorColumnWidth,
+            chromeWidth: measuredTrailingChrome ?? trailingChromeWidth)
     }
 
     var body: some View {
@@ -153,14 +192,29 @@ struct ChatTabStripView: View {
             // inside the measured bounds, so the reading is the pre-inset
             // chrome edge — no feedback loop).
             .background(alignment: .leading) {
-                WindowXReader { x in
+                WindowEdgeReader(edge: .leading) { x in
                     if abs((measuredChromeX ?? -1) - x) > 0.5 {
                         measuredChromeX = x
                     }
                 }
                 .frame(width: 0)
             }
+            // Same at the OUTER trailing edge: the distance from there to
+            // the window's edge is the trailing chrome, whatever AppKit (or
+            // the full-screen header) puts after the strip.
+            .background(alignment: .trailing) {
+                WindowEdgeReader(edge: .trailing) { gap in
+                    if abs((measuredTrailingChrome ?? -1) - gap) > 0.5 {
+                        measuredTrailingChrome = gap
+                    }
+                }
+                .frame(width: 0)
+            }
             .animation(windowState.theme.animationQuick(), value: windowState.isSidebarVisible)
+            // Rail open/close slides the tabs like the sidebar does; keyed
+            // on presence, not width, so a live resize drag is not lagged
+            // by the animation.
+            .animation(windowState.theme.animationQuick(), value: windowState.inspectorColumnWidth > 0)
             // Leaving the strip ends a close streak: widths relax to fit.
             .onHover { inside in
                 guard !inside, frozenTabWidth != nil else { return }
@@ -1023,30 +1077,38 @@ private struct ChatTabContextMenu {
     }
 }
 
-/// Reports the hosting SwiftUI view's leading x in WINDOW coordinates.
-/// SwiftUI's `.global` coordinate space bottoms out at the enclosing
-/// `NSHostingView` (each toolbar item is its own), so window-relative
-/// geometry needs an AppKit bridge.
-private struct WindowXReader: NSViewRepresentable {
+/// Reports the hosting SwiftUI view's distance from one WINDOW edge: its
+/// leading x for `.leading`, or the gap from its own x to the window's
+/// trailing edge for `.trailing`. SwiftUI's `.global` coordinate space
+/// bottoms out at the enclosing `NSHostingView` (each toolbar item is its
+/// own), so window-relative geometry needs an AppKit bridge. Mount it as a
+/// zero-width view on the edge to be measured.
+private struct WindowEdgeReader: NSViewRepresentable {
+    enum Edge { case leading, trailing }
+
+    var edge: Edge
     var onChange: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ReaderView {
-        ReaderView(onChange: onChange)
+        ReaderView(edge: edge, onChange: onChange)
     }
 
     func updateNSView(_ view: ReaderView, context: Context) {
+        view.edge = edge
         view.onChange = onChange
         view.report()
     }
 
     final class ReaderView: NSView {
+        var edge: Edge
         var onChange: (CGFloat) -> Void
         // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
         // observer; all writes happen on the main thread (same pattern as
         // ChatWindowState's notificationObservers).
         private nonisolated(unsafe) var resizeObserver: NSObjectProtocol?
 
-        init(onChange: @escaping (CGFloat) -> Void) {
+        init(edge: Edge, onChange: @escaping (CGFloat) -> Void) {
+            self.edge = edge
             self.onChange = onChange
             super.init(frame: .zero)
         }
@@ -1085,14 +1147,19 @@ private struct WindowXReader: NSViewRepresentable {
         }
 
         func report() {
-            guard window != nil else { return }
+            guard let window else { return }
             let x = convert(CGPoint.zero, to: nil).x
+            let value: CGFloat
+            switch edge {
+            case .leading: value = x
+            case .trailing: value = window.frame.width - x
+            }
             let callback = onChange
             // Defer: `layout` runs mid-layout-pass, and mutating SwiftUI
             // @State from inside it is undefined (AttributeGraph reentrancy).
-            // The x only depends on the chrome before the strip, so the one
-            // runloop of lag never shows during a resize.
-            DispatchQueue.main.async { callback(x) }
+            // The value only depends on the chrome beside the strip, so the
+            // one runloop of lag never shows during a resize.
+            DispatchQueue.main.async { callback(value) }
         }
     }
 }
@@ -1186,7 +1253,7 @@ private struct TabRightClickCatcher: NSViewRepresentable {
         var makeMenu: @MainActor () -> NSMenu
         // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
         // monitor; all writes happen on the main thread (same pattern as
-        // WindowXReader's resize observer).
+        // WindowEdgeReader's resize observer).
         private nonisolated(unsafe) var monitor: Any?
 
         init(makeMenu: @escaping @MainActor () -> NSMenu) {

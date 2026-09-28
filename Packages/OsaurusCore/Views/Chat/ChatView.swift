@@ -10141,8 +10141,16 @@ struct ChatView: View {
                     windowState.isSidebarAutoHidden = hidden
                 }
             }
+            // Same for the right rail's width: the strip insets its trailing
+            // edge by it so the tabs end where the chat column ends.
+            .onChange(of: inspectorWidth, initial: true) { _, width in
+                if windowState.inspectorColumnWidth != width {
+                    windowState.inspectorColumnWidth = width
+                }
+            }
             .onDisappear {
                 windowState.isSidebarAutoHidden = false
+                windowState.inspectorColumnWidth = 0
             }
         }
         // Allow the window to narrow down to 800pt so it tiles beside other

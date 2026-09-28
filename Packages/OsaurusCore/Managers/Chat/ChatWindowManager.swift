@@ -1427,7 +1427,9 @@ private struct ChatFullScreenHeaderView: View {
             ChatToolbarSidebarView(windowState: windowState)
             // Leading-aligned like Chrome: tabs grow left to right, filling the
             // row up to the trailing buttons like the toolbar item does.
-            ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
+            // Trailing fallback: two 28pt buttons, their 8pt gap, the HStack
+            // spacing and the row's horizontal padding — until measured.
+            ChatTabStripView(windowState: windowState, leadingChromeWidth: 76, trailingChromeWidth: 84)
             ChatToolbarTrailingView(windowState: windowState)
         }
         .padding(.horizontal, 12)
