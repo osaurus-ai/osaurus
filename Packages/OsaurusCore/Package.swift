@@ -318,9 +318,12 @@ let package = Package(
         // #512 validates persisted architecture state before granting SSD hits
         // and serializes validation with MLX disk I/O. #513 honors validated
         // max_tokens bundle aliases with max_new_tokens precedence.
+        // Gather row scheduling includes affine expert prefill and partial-K
+        // bounds correction. This pin also consumes the Unicode/BPE ordering,
+        // quantization_config, and SDK-gated JACCL fixes merged after #518.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "934dd5c8dc052cc6c8b4b960fe1bffd6badf0998"
+            revision: "146ddb0135ac366c64de4ded6ec2468ff947b9e8"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
