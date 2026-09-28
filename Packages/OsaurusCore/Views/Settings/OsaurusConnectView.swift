@@ -99,6 +99,7 @@ struct OsaurusConnectView: View {
                         .foregroundColor(theme.errorColor)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .settingsLandingAnchor("settings.connect.pairing")
     }
@@ -151,37 +152,40 @@ struct OsaurusConnectView: View {
 
     @ViewBuilder private var pairedDeviceSection: some View {
         SettingsSection(title: L("Paired iPhone"), icon: "checkmark.shield") {
-            if let device = pairing.pairedDevice {
-                HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: "iphone")
-                        .font(.system(size: 22))
-                        .foregroundColor(theme.accentColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(device.name)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            if device.isSimulator == true {
-                                simulatorBadge
+            Group {
+                if let device = pairing.pairedDevice {
+                    HStack(alignment: .center, spacing: 12) {
+                        Image(systemName: "iphone")
+                            .font(.system(size: 22))
+                            .foregroundColor(theme.accentColor)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(device.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(theme.primaryText)
+                                if device.isSimulator == true {
+                                    simulatorBadge
+                                }
                             }
+                            Text(Self.pairedSubtitle(device))
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.secondaryText)
                         }
-                        Text(Self.pairedSubtitle(device))
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
+                        Spacer()
+                        Button {
+                            showRevokeConfirm = true
+                        } label: {
+                            Text("Unpair", bundle: .module)
+                        }
+                        .buttonStyle(SettingsButtonStyle(isDestructive: true))
                     }
-                    Spacer()
-                    Button {
-                        showRevokeConfirm = true
-                    } label: {
-                        Text("Unpair", bundle: .module)
-                    }
-                    .buttonStyle(SettingsButtonStyle(isDestructive: true))
+                } else {
+                    Text("No iPhone is paired. Only one iPhone can be paired at a time; pairing a new one unpairs the old one.", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
                 }
-            } else {
-                Text("No iPhone is paired. Only one iPhone can be paired at a time; pairing a new one unpairs the old one.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .settingsLandingAnchor("settings.connect.pairedDevice")
     }
@@ -224,6 +228,7 @@ struct OsaurusConnectView: View {
                 )
                 .settingsLandingAnchor("settings.connect.keepAwake")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
