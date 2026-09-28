@@ -8,4 +8,4 @@ The planner now rejects this combination before child execution, using the same 
 
 `RestoreOnlyProtectedTargetTests` uses the real pure planner with no runtime doubles or model loads. The original three-test baseline executed against the unchanged compiled integration core: the protected-target refusal failed, while swapping-OFF and unprotected-child controls passed. The candidate adds a fourth control for a missing local parent.
 
-Candidate execution, complete adjacent suites, and application residency/continuation proof remain pending. This change does not establish model-load, cache-restoration, cancellation, or performance claims and does not weaken ownership checks during cleanup.
+The exact candidate planner function, renamed only for a private test module and linked to real compiled-core types, passed 30 methods / 33 invocation rows: four focused controls plus the existing planner suite. A rebuilt candidate core, complete adjacent suites, and application residency/continuation proof remain pending. This change does not establish model-load, cache-restoration, cancellation, or performance claims and does not weaken ownership checks during cleanup.
