@@ -1,6 +1,6 @@
 # Gather row tiles engine pin — proof pending
 
-Candidate engine: `1e2178e72b896ab4ed7e9c19154749529206c354`.
+Candidate engine: `b4b216199f610ca5581106a728def4c1c8d375c8`.
 Core: `083a6742d` (osaurus-ai/mlx#12, draft).
 
 All six executable pin/contract locations agree. The historical composite-cache
@@ -39,3 +39,5 @@ claim for that path. Gemma4 video is explicitly unsupported. Full-model
 performance remains under paired measurement; no universal chip speed claim.
 
 The pin also consumes the focused tied-head activation-dtype correction (vmlx-swift#523). Optional Q6 head conversion now preserves the source FP16 stream instead of promoting Gemma arithmetic through mixed BF16/FP16 types. Engine numerical, matched-output performance, two-slot concurrency and image-cache replay tests pass. The newly pinned app must be rebuilt and re-proven; previous GUI rows describe the prior pin.
+
+The app cache identity now includes the optional tied-head policy (including diagnostic bit/group overrides) and the source-dtype activation contract. Old incompatible entries remain on disk but cannot match the new namespace. Compile diagnostics distinguish a requested path from proof that compilation executed. These host changes require fresh tests/build/GUI evidence.
