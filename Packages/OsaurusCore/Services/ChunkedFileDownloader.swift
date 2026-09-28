@@ -586,7 +586,7 @@ private final class Counter: @unchecked Sendable {
 /// Exactly one request is in flight per lane, so the per-request state below
 /// needs no queue — only a lock, since the delegate callbacks land on a
 /// `URLSession` thread.
-private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var handle: FileHandle?
     private var expected: Int64 = 0
@@ -594,6 +594,12 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
     private var received: Int64 = 0
     private var continuation: CheckedContinuation<Void, Error>?
     private var failure: Error?
+    /// Set (under `lock`) once `invalidate()` has run. `URLSession` raises an
+    /// uncatchable `NSException` when a task is created on an invalidated
+    /// session; `fetch` must refuse instead. Lane workers can still be
+    /// draining `ChunkQueue` when `download()`'s `defer` / `pause()` /
+    /// `invalidate()` tear the lane down.
+    private var invalidated = false
 
     private lazy var session: URLSession = {
         GlobalProxySettings.makeSession(base: .default, delegate: self)
@@ -612,18 +618,43 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
 
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             lock.lock()
+            guard !invalidated else {
+                lock.unlock()
+                c.resume(throwing: CancellationError())
+                return
+            }
             self.handle = handle
             self.expected = expected
             self.onBytes = onBytes
             self.received = 0
             self.failure = nil
             self.continuation = c
-            lock.unlock()
+            // Create and start the task while still holding the lock so an
+            // `invalidate()` racing with this call either sees `invalidated`
+            // above or cancels a task that already exists. Delegate callbacks
+            // arrive asynchronously on the session queue, so no re-entrancy.
             session.dataTask(with: request).resume()
+            lock.unlock()
         }
     }
 
-    func invalidate() { session.invalidateAndCancel() }
+    func invalidate() {
+        lock.lock()
+        let alreadyInvalidated = invalidated
+        invalidated = true
+        // Resolve the lazy session under the lock too, so a first `fetch`
+        // racing with teardown cannot both initialise it.
+        let target = alreadyInvalidated ? nil : session
+        lock.unlock()
+        target?.invalidateAndCancel()
+    }
+
+    /// True once `invalidate()` has run; exposed for tests.
+    var isInvalidated: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return invalidated
+    }
 
     private func setFailure(_ error: Error) {
         lock.lock()
