@@ -1569,7 +1569,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
 
 // MARK: - NativeStatsView
 
-/// Lightweight AppKit view that displays generation benchmarks (TTFT and tok/s).
+/// Lightweight AppKit view that displays generation benchmarks (total time, TTFT and tok/s).
 final class NativeStatsView: NSView {
     private let label = NSTextField(labelWithString: "")
 
@@ -1597,6 +1597,7 @@ final class NativeStatsView: NSView {
         unclosedReasoning: Bool = false,
         modelLoad: TimeInterval? = nil,
         cachedInputTokens: Int? = nil,
+        totalDuration: TimeInterval? = nil,
         theme: any ThemeProtocol
     ) {
         label.stringValue = Self.statsText(
@@ -1605,7 +1606,8 @@ final class NativeStatsView: NSView {
             tokenCount: tokenCount,
             unclosedReasoning: unclosedReasoning,
             modelLoad: modelLoad,
-            cachedInputTokens: cachedInputTokens
+            cachedInputTokens: cachedInputTokens,
+            totalDuration: totalDuration
         )
         label.font = NSFont.monospacedDigitSystemFont(
             ofSize: CGFloat(theme.captionSize) - 1,
@@ -1622,9 +1624,15 @@ final class NativeStatsView: NSView {
         tokenCount: Int?,
         unclosedReasoning: Bool = false,
         modelLoad: TimeInterval? = nil,
-        cachedInputTokens: Int? = nil
+        cachedInputTokens: Int? = nil,
+        totalDuration: TimeInterval? = nil
     ) -> String {
         var parts: [String] = []
+        // Wall-clock for the whole response (every tool-calling step, model
+        // load included). Leads the row: it's the number users look for.
+        if let totalDuration {
+            parts.append(String(format: L("Took %@"), Self.formatLoad(totalDuration)))
+        }
         if let ttft {
             if ttft < 0.01 {
                 parts.append(String(format: L("TTFT %.0fms"), ttft * 1000))
@@ -2029,7 +2037,9 @@ final class NativeMessageCellView: NSTableCellView {
         case let .fileDiff(diff):
             configureAsFileDiff(block: block, diff: diff, context: context, sameKind: sameKind)
 
-        case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning, modelLoad, cachedInputTokens):
+        case let .generationStats(
+            ttft, tokensPerSecond, tokenCount, unclosedReasoning, modelLoad, cachedInputTokens, totalDuration
+        ):
             configureAsStats(
                 ttft: ttft,
                 tokensPerSecond: tokensPerSecond,
@@ -2037,6 +2047,7 @@ final class NativeMessageCellView: NSTableCellView {
                 unclosedReasoning: unclosedReasoning,
                 modelLoad: modelLoad,
                 cachedInputTokens: cachedInputTokens,
+                totalDuration: totalDuration,
                 context: context,
                 sameKind: sameKind
             )
@@ -2951,6 +2962,7 @@ final class NativeMessageCellView: NSTableCellView {
         unclosedReasoning: Bool,
         modelLoad: TimeInterval?,
         cachedInputTokens: Int?,
+        totalDuration: TimeInterval?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2975,6 +2987,7 @@ final class NativeMessageCellView: NSTableCellView {
             unclosedReasoning: unclosedReasoning,
             modelLoad: modelLoad,
             cachedInputTokens: cachedInputTokens,
+            totalDuration: totalDuration,
             theme: context.theme
         )
     }

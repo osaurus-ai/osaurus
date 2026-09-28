@@ -27,6 +27,10 @@ final class BlockMemoizer {
         let tokenCount: Int?
         let unclosedReasoning: Bool
         let modelLoad: TimeInterval?
+        /// Ends of the footer's total-response-time span; stamped with no
+        /// content delta, like the stats above.
+        let lastOutputAt: Date?
+        let completedAt: Date?
 
         init(_ turn: ChatTurn) {
             ttft = turn.timeToFirstToken
@@ -34,6 +38,8 @@ final class BlockMemoizer {
             tokenCount = turn.generationTokenCount
             unclosedReasoning = turn.unclosedReasoning
             modelLoad = turn.modelLoadSeconds
+            lastOutputAt = turn.lastOutputAt
+            completedAt = turn.completedAt
         }
     }
     private var lastGenerationStats: GenerationStatsKey?
@@ -241,6 +247,15 @@ final class BlockMemoizer {
             turnIndex >= 1
             ? turns.prefix(turnIndex).last { $0.role != .tool }
             : nil
+        // The response `previousTurn` belongs to may have started further
+        // back; walk its assistant run so the footer's total time spans it all.
+        var previousGroupStartedAt: Date?
+        if previousTurn?.role == .assistant {
+            for turn in turns.prefix(turnIndex).reversed() where turn.role != .tool {
+                guard turn.role == .assistant else { break }
+                previousGroupStartedAt = turn.createdAt
+            }
+        }
 
         // `cachedRepeatCounts` is keyed by call id over the FULL transcript,
         // so handing it to a suffix regeneration stays correct.
@@ -250,6 +265,7 @@ final class BlockMemoizer {
             activeTurnId: activeTurnId,
             agentName: agentName,
             previousTurn: previousTurn,
+            previousGroupStartedAt: previousGroupStartedAt,
             sessionSource: sessionSource,
             repeatCounts: cachedRepeatCounts
         )
