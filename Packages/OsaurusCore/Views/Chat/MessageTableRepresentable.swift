@@ -632,6 +632,12 @@ extension MessageTableRepresentable {
                 self?.dequeueAndConfigure(tableView: tableView, row: row, blockId: itemId)
                     ?? NSView()
             }
+            // Snapshots are applied with `animatingDifferences: true` so AppKit
+            // diffs rows (insert/remove/move, cell reuse). On AppKit `false`
+            // means `reloadData`, which rebuilds every visible cell and hung the
+            // main thread on long conversations. An empty animation set keeps
+            // the incremental path without any visible row animation.
+            dataSource?.defaultRowAnimation = []
             tableView.delegate = self
         }
 
@@ -1129,50 +1135,66 @@ extension MessageTableRepresentable {
             snapshot.appendSections([.main])
             snapshot.appendItems(uniqueIds, toSection: .main)
 
-            dataSource?.apply(snapshot, animatingDifferences: false) { [weak self] in
-                guard let self else { return }
+            // `animatingDifferences: true` + `defaultRowAnimation = []` (see
+            // setupDataSource): incremental insert/remove/move with cell reuse
+            // and no visible animation. AppKit applies the diff synchronously,
+            // so the follow-up work runs straight after the call returns.
+            //
+            // Deliberately NOT in the apply completion handler: AppKit invokes
+            // that handler from inside its own `endUpdates`, and any
+            // `noteHeightOfRows` issued from there (the reconfigure and the
+            // post-streaming height fix both do) opens a nested
+            // begin/endUpdates that re-runs the same completion — unbounded
+            // recursion and a stack overflow. Running here, outside AppKit's
+            // update transaction, the row updates are already committed and
+            // `noteHeightOfRows` is an ordinary call.
+            dataSource?.apply(snapshot, animatingDifferences: true)
 
-                if !stableChangedIds.isEmpty {
-                    var reconfiguredRows = IndexSet()
-                    for id in stableChangedIds {
-                        if let row = self.blockIds.firstIndex(of: id),
-                            let block = self.blockLookup[id],
-                            let cell = self.tableView?.view(
-                                atColumn: 0,
-                                row: row,
-                                makeIfNecessary: false
-                            ) as? NativeMessageCellView
-                        {
-                            self.heightCache.removeValue(forKey: id)
-                            self.configureCell(cell, with: block)
-                            reconfiguredRows.insert(row)
-                        }
-                    }
-                    if !reconfiguredRows.isEmpty {
-                        self.noteRowHeightsChanged(reconfiguredRows)
+            if !stableChangedIds.isEmpty {
+                var reconfiguredRows = IndexSet()
+                for id in stableChangedIds {
+                    if let row = blockIds.firstIndex(of: id),
+                        let block = blockLookup[id],
+                        let cell = tableView?.view(
+                            atColumn: 0,
+                            row: row,
+                            makeIfNecessary: false
+                        ) as? NativeMessageCellView
+                    {
+                        heightCache.removeValue(forKey: id)
+                        configureCell(cell, with: block)
+                        reconfiguredRows.insert(row)
                     }
                 }
+                if !reconfiguredRows.isEmpty {
+                    noteRowHeightsChanged(reconfiguredRows)
+                }
+            }
 
-                self.handlePostSnapshotScroll(
-                    lastAssistantTurnId: lastAssistantTurnId,
-                    autoScrollEnabled: autoScrollEnabled,
-                    wasPinnedToBottom: wasPinnedToBottom,
-                    isStreaming: isStreaming
+            // Unlike `reloadData`, the incremental apply defers the
+            // document-frame recalculation; the scroll handlers below read
+            // `documentView.frame.height`, so tile now.
+            tableView?.tile()
+
+            handlePostSnapshotScroll(
+                lastAssistantTurnId: lastAssistantTurnId,
+                autoScrollEnabled: autoScrollEnabled,
+                wasPinnedToBottom: wasPinnedToBottom,
+                isStreaming: isStreaming
+            )
+
+            // When streaming ends, the last throttled height measurement
+            // may not reflect the final content. Reconfigure the cell and
+            // schedule a deferred re-measurement after the hosting view's
+            // layout has settled, then re-pin scroll position.
+            if streamingJustEnded, let streamId = previousStreamingBlockId,
+                let row = blockIds.firstIndex(of: streamId)
+            {
+                schedulePostStreamingHeightFix(
+                    streamId: streamId,
+                    row: row,
+                    wasPinnedToBottom: wasPinnedToBottom
                 )
-
-                // When streaming ends, the last throttled height measurement
-                // may not reflect the final content. Reconfigure the cell and
-                // schedule a deferred re-measurement after the hosting view's
-                // layout has settled, then re-pin scroll position.
-                if streamingJustEnded, let streamId = previousStreamingBlockId,
-                    let row = self.blockIds.firstIndex(of: streamId)
-                {
-                    self.schedulePostStreamingHeightFix(
-                        streamId: streamId,
-                        row: row,
-                        wasPinnedToBottom: wasPinnedToBottom
-                    )
-                }
             }
         }
 
