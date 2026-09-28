@@ -203,19 +203,21 @@ final class PrivacyReviewService {
         // dispatches via the singleton (Swift 6 doesn't let us capture
         // a task-isolated `self` into a main-actor Task closure
         // without sendability headaches).
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { (cont: CheckedContinuation<PrivacyReviewOutcome, Never>) in
-                state.onResolve = { outcome in
-                    Task { @MainActor in
-                        PrivacyReviewService.shared.clearOpenState(id: stateId)
+        return await ChatExecutionContext.awaitingUser {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (cont: CheckedContinuation<PrivacyReviewOutcome, Never>) in
+                    state.onResolve = { outcome in
+                        Task { @MainActor in
+                            PrivacyReviewService.shared.clearOpenState(id: stateId)
+                        }
+                        cont.resume(returning: outcome)
                     }
-                    cont.resume(returning: outcome)
+                    presenter(state)
                 }
-                presenter(state)
-            }
-        } onCancel: {
-            Task { @MainActor in
-                PrivacyReviewService.shared.cancelOpenState(id: stateId)
+            } onCancel: {
+                Task { @MainActor in
+                    PrivacyReviewService.shared.cancelOpenState(id: stateId)
+                }
             }
         }
     }
@@ -309,18 +311,20 @@ final class PrivacyReviewService {
         let stateId = state.id
         remoteStates[stateId] = state
         print("[PrivacyReview] remote review \(stateId) parked for session \(sessionId): \(detections.count) item(s), waiting on the phone")
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { (cont: CheckedContinuation<PrivacyReviewOutcome, Never>) in
-                state.onResolve = { outcome in
-                    Task { @MainActor in
-                        PrivacyReviewService.shared.clearRemoteState(id: stateId)
+        return await ChatExecutionContext.awaitingUser {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (cont: CheckedContinuation<PrivacyReviewOutcome, Never>) in
+                    state.onResolve = { outcome in
+                        Task { @MainActor in
+                            PrivacyReviewService.shared.clearRemoteState(id: stateId)
+                        }
+                        cont.resume(returning: outcome)
                     }
-                    cont.resume(returning: outcome)
                 }
-            }
-        } onCancel: {
-            Task { @MainActor in
-                PrivacyReviewService.shared.cancelRemoteState(id: stateId)
+            } onCancel: {
+                Task { @MainActor in
+                    PrivacyReviewService.shared.cancelRemoteState(id: stateId)
+                }
             }
         }
     }

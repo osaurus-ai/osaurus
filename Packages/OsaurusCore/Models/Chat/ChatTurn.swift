@@ -390,6 +390,17 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// time-to-first-token window, or nil when the model was already resident
     /// (the overwhelmingly common case, and the one that must look unchanged).
     var modelLoadSeconds: TimeInterval?
+    /// Seconds the run had spent blocked on the user (approval prompts, see
+    /// `UserWaitClock`) by the time this turn's output ended. Cumulative over
+    /// the run, so the final turn of a response carries the whole wait; the
+    /// footer's total response time subtracts it. Nil when nothing waited.
+    var userWaitSeconds: TimeInterval?
+
+    /// Record the run's user-wait total as of this turn's last visible output.
+    func stampUserWait(from clock: UserWaitClock?, at fallback: Date) {
+        guard let wait = clock?.total(at: lastOutputAt ?? fallback), wait > 0 else { return }
+        userWaitSeconds = wait
+    }
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
     /// remote APIs). Persisted as displayed; do not recompute it from a
     /// wall-clock interval that includes prefill or cache finalization.

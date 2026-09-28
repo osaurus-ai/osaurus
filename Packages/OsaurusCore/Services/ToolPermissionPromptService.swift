@@ -370,29 +370,31 @@ enum ToolPermissionPromptService {
     ) async -> PromptResolution {
         let id = UUID()
         let presenter = presentationOverrideForTests
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                continuations[id] = continuation
-                queue.append(
-                    PendingPrompt(
-                        id: id,
-                        request: request,
-                        revalidate: revalidate,
-                        presenter: presenter
+        return await ChatExecutionContext.awaitingUser {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    continuations[id] = continuation
+                    queue.append(
+                        PendingPrompt(
+                            id: id,
+                            request: request,
+                            revalidate: revalidate,
+                            presenter: presenter
+                        )
                     )
-                )
-                // Cancellation can race the MainActor hop into this
-                // continuation. Re-check after the entry is registered so the
-                // hook below (or this check) always finds something to deny.
-                if Task.isCancelled {
-                    resolve(id: id, outcome: .denied)
-                    return
+                    // Cancellation can race the MainActor hop into this
+                    // continuation. Re-check after the entry is registered so the
+                    // hook below (or this check) always finds something to deny.
+                    if Task.isCancelled {
+                        resolve(id: id, outcome: .denied)
+                        return
+                    }
+                    pump()
                 }
-                pump()
-            }
-        } onCancel: {
-            Task { @MainActor in
-                resolve(id: id, outcome: .denied)
+            } onCancel: {
+                Task { @MainActor in
+                    resolve(id: id, outcome: .denied)
+                }
             }
         }
     }

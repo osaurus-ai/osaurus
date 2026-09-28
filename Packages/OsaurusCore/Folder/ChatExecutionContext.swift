@@ -83,6 +83,43 @@ final class ToolPermissionRunScope: @unchecked Sendable {
     }
 }
 
+/// Wall-clock one chat run spent blocked on the user (tool permission panels,
+/// config approval cards, computer-use confirmations, privacy review, provider
+/// credential sheets). Subtracted from the footer's total response time so a
+/// prompt left open for ten minutes doesn't read as ten minutes of work.
+/// Overlapping prompts (parallel subagents each asking at once) count once.
+final class UserWaitClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var openPrompts = 0
+    private var openedAt: Date?
+    private var accumulated: TimeInterval = 0
+
+    func begin(at now: Date = Date()) {
+        lock.withLock {
+            if openPrompts == 0 { openedAt = now }
+            openPrompts += 1
+        }
+    }
+
+    func end(at now: Date = Date()) {
+        lock.withLock {
+            guard openPrompts > 0 else { return }
+            openPrompts -= 1
+            if openPrompts == 0, let openedAt {
+                accumulated += max(0, now.timeIntervalSince(openedAt))
+                self.openedAt = nil
+            }
+        }
+    }
+
+    /// Total so far, including a prompt that is still open.
+    func total(at now: Date = Date()) -> TimeInterval {
+        lock.withLock {
+            accumulated + (openedAt.map { max(0, now.timeIntervalSince($0)) } ?? 0)
+        }
+    }
+}
+
 /// Sendable weak wrapper for the MainActor `ChatSession`, carried through
 /// task locals so a background helper dispatch can address its launching
 /// session at completion time. Weak on purpose: the box never extends the
@@ -119,6 +156,22 @@ public enum ChatExecutionContext {
 
     /// One logical agent run's interactive approval lease.
     @TaskLocal static var toolPermissionRunScope: ToolPermissionRunScope?
+
+    /// Time the current chat run has spent waiting on the user. Nil outside a
+    /// chat UI run (headless / HTTP callers have no footer to correct).
+    @TaskLocal static var userWaitClock: UserWaitClock?
+
+    /// Runs `body` (a suspension that only a person can resume) with the
+    /// current run's `userWaitClock` stopped-out for its duration.
+    static func awaitingUser<Value>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async -> Value
+    ) async -> Value {
+        guard let clock = userWaitClock else { return await body() }
+        clock.begin()
+        defer { clock.end() }
+        return await body()
+    }
 
     /// The current batch ID for grouped operations (nil for non-batch operations).
     @TaskLocal public static var currentBatchId: UUID?

@@ -1032,14 +1032,15 @@ extension ContentBlock {
             let isPendingIntermediateStep = isActive && turn.pendingToolName != nil
 
             // Wall-clock from the start of the response to the moment its last
-            // output was visible. `lastOutputAt` rather than `completedAt`: a
-            // local stream terminates only after the post-generation cache
-            // store, seconds after the answer finished (see `ChatTurn`).
+            // output was visible, minus time the run sat on approval prompts.
+            // `lastOutputAt` rather than `completedAt`: a local stream
+            // terminates only after the post-generation cache store, seconds
+            // after the answer finished (see `ChatTurn`).
             let totalDuration: TimeInterval? = {
                 guard turn.role == .assistant, let start = groupStartedAt,
                     let end = turn.lastOutputAt ?? turn.completedAt
                 else { return nil }
-                let elapsed = end.timeIntervalSince(start)
+                let elapsed = end.timeIntervalSince(start) - (turn.userWaitSeconds ?? 0)
                 return elapsed >= 0.05 ? elapsed : nil
             }()
 

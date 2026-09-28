@@ -1629,7 +1629,8 @@ final class NativeStatsView: NSView {
     ) -> String {
         var parts: [String] = []
         // Wall-clock for the whole response (every tool-calling step, model
-        // load included). Leads the row: it's the number users look for.
+        // load included, approval-prompt waits excluded). Leads the row: it's
+        // the number users look for.
         if let totalDuration {
             parts.append(String(format: L("Worked for %@"), Self.formatLoad(totalDuration)))
         }
