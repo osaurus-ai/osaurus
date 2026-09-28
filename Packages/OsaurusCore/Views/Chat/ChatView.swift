@@ -4982,9 +4982,6 @@ final class ChatSession: ObservableObject {
         selectedModel: String?
     ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
         var currentTurn = assistantTurn
-        // Captured here: the output-complete relay below runs from a Combine
-        // sink, outside this task, where the task local reads nil.
-        let userWaitClock = ChatExecutionContext.userWaitClock
         // A stream that arrives for an already-finalized run (Stop landed
         // while engine setup ignored cooperative cancellation) must not
         // write anything: the run's cleanup already finished, so every
@@ -5100,7 +5097,6 @@ final class ChatSession: ObservableObject {
                     if let turn = currentTurn {
                         if turn.completedAt == nil { turn.completedAt = at }
                         if turn.lastOutputAt == nil { turn.lastOutputAt = at }
-                        turn.stampUserWait(from: userWaitClock, at: at)
                     }
                     self.outputComplete = true
                     // The rebuild keeps the last turn "active" (pending tool
@@ -5518,7 +5514,6 @@ final class ChatSession: ObservableObject {
         // actually generated.
         let streamEndedAt = Date()
         currentTurn.completedAt = streamEndedAt
-        currentTurn.stampUserWait(from: userWaitClock, at: streamEndedAt)
         // Final stats are plain turn fields; no content delta follows them.
         // Refresh now so the footer does not retain its last rolling estimate
         // until another message or unrelated UI event invalidates the blocks.
@@ -8634,11 +8629,7 @@ final class ChatSession: ObservableObject {
             await ChatExecutionContext.$toolResultImagesEnabled.withValue(
                 turnSupportsImages
             ) { [self] () async -> Void in
-                // One clock per run: approval prompts raised anywhere under
-                // this turn stop it out of the footer's total response time.
-                await ChatExecutionContext.$userWaitClock.withValue(UserWaitClock()) {
-                    await runTurn()
-                }
+                await runTurn()
             }  // ChatExecutionContext.$toolResultImagesEnabled.withValue
             }  // ChatExecutionContext.$currentReasoningEffort.withValue
             }  // ChatExecutionContext.$currentEnableThinking.withValue

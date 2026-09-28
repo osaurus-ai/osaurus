@@ -1031,15 +1031,15 @@ extension ContentBlock {
             // landed.
             let isPendingIntermediateStep = isActive && turn.pendingToolName != nil
 
-            // Wall-clock from the keypress to the moment the run ended (model
-            // load, prefill, every tool step and the local cache-store tail
-            // included), minus time the run sat on approval prompts. Withheld
-            // while the run is still open so the chip lands once, final.
+            // Wall-clock from the keypress to the moment the run ended: model
+            // load, prefill, every tool step, approval prompts and the local
+            // cache-store tail all included. Withheld while the run is still
+            // open so the chip lands once, final.
             let totalDuration: TimeInterval? = {
                 guard turn.role == .assistant, !isActive, let start = groupStartedAt,
                     let end = turn.completedAt ?? turn.lastOutputAt
                 else { return nil }
-                let elapsed = end.timeIntervalSince(start) - (turn.userWaitSeconds ?? 0)
+                let elapsed = end.timeIntervalSince(start)
                 return elapsed >= 0.05 ? elapsed : nil
             }()
 

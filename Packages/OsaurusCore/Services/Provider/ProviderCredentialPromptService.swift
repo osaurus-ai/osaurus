@@ -236,12 +236,10 @@ public enum ProviderCredentialPromptService {
         // cancelled) into a panel dismissal. `job` is unstructured and does
         // not inherit cancellation, so we explicitly tear the sheet down and
         // let the continuation resume with `.cancelled`.
-        let result = await ChatExecutionContext.awaitingUser {
-            await withTaskCancellationHandler {
-                await job.value
-            } onCancel: {
-                Task { @MainActor in cancel() }
-            }
+        let result = await withTaskCancellationHandler {
+            await job.value
+        } onCancel: {
+            Task { @MainActor in cancel() }
         }
 
         // Once we're the trailing prompt, clear the chain anchor so we

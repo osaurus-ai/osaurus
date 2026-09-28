@@ -125,20 +125,18 @@ public final class ComputerUsePromptQueue: ObservableObject {
             event: "enqueued",
             preview: preview
         )
-        return await ChatExecutionContext.awaitingUser {
-            await withTaskCancellationHandler {
-                await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                    if Task.isCancelled {
-                        continuation.resume(returning: false)
-                        return
-                    }
-                    continuations[request.id] = continuation
-                    pending.append(request)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                if Task.isCancelled {
+                    continuation.resume(returning: false)
+                    return
                 }
-            } onCancel: {
-                Task { @MainActor in
-                    self.resolve(id: request.id, approved: false)
-                }
+                continuations[request.id] = continuation
+                pending.append(request)
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.resolve(id: request.id, approved: false)
             }
         }
     }
@@ -191,21 +189,19 @@ public final class ComputerUsePromptQueue: ObservableObject {
             toolCallId: toolCallId,
             fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
         )
-        return await ChatExecutionContext.awaitingUser {
-            await withTaskCancellationHandler {
-                await withCheckedContinuation {
-                    (continuation: CheckedContinuation<CloudVisionConsentChoice, Never>) in
-                    if Task.isCancelled {
-                        continuation.resume(returning: .deny)
-                        return
-                    }
-                    consentContinuations[request.id] = continuation
-                    pendingConsent.append(request)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation {
+                (continuation: CheckedContinuation<CloudVisionConsentChoice, Never>) in
+                if Task.isCancelled {
+                    continuation.resume(returning: .deny)
+                    return
                 }
-            } onCancel: {
-                Task { @MainActor in
-                    self.resolveConsent(id: request.id, choice: .deny)
-                }
+                consentContinuations[request.id] = continuation
+                pendingConsent.append(request)
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.resolveConsent(id: request.id, choice: .deny)
             }
         }
     }

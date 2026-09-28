@@ -49,9 +49,6 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     public var generationTokensPerSecond: Double?
     /// Cold model loading inside the first-token window. Nil when unavailable.
     public var modelLoadSeconds: TimeInterval?
-    /// Seconds the run had spent blocked on approval prompts when this turn
-    /// finished. Excluded from the footer's total response time.
-    public var userWaitSeconds: TimeInterval?
     /// When the user sent the message that opened this run (see
     /// `ChatTurn.requestedAt`). Nil for non-first turns and legacy sessions.
     public var requestedAt: Date?
@@ -101,7 +98,6 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         timeToFirstToken: TimeInterval? = nil,
         generationTokensPerSecond: Double? = nil,
         modelLoadSeconds: TimeInterval? = nil,
-        userWaitSeconds: TimeInterval? = nil,
         requestedAt: Date? = nil,
         terminalStopReason: String? = nil,
         reasoningItemId: String? = nil,
@@ -132,7 +128,6 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.timeToFirstToken = timeToFirstToken
         self.generationTokensPerSecond = generationTokensPerSecond
         self.modelLoadSeconds = modelLoadSeconds
-        self.userWaitSeconds = userWaitSeconds
         self.requestedAt = requestedAt
         self.terminalStopReason = terminalStopReason
         self.reasoningItemId = reasoningItemId
@@ -168,7 +163,6 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         timeToFirstToken = try container.decodeIfPresent(TimeInterval.self, forKey: .timeToFirstToken)
         generationTokensPerSecond = try container.decodeIfPresent(Double.self, forKey: .generationTokensPerSecond)
         modelLoadSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .modelLoadSeconds)
-        userWaitSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .userWaitSeconds)
         requestedAt = try container.decodeIfPresent(Date.self, forKey: .requestedAt)
         terminalStopReason = try container.decodeIfPresent(String.self, forKey: .terminalStopReason)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
@@ -219,7 +213,6 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
         try container.encodeIfPresent(generationTokensPerSecond, forKey: .generationTokensPerSecond)
         try container.encodeIfPresent(modelLoadSeconds, forKey: .modelLoadSeconds)
-        try container.encodeIfPresent(userWaitSeconds, forKey: .userWaitSeconds)
         try container.encodeIfPresent(requestedAt, forKey: .requestedAt)
         try container.encodeIfPresent(terminalStopReason, forKey: .terminalStopReason)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
@@ -243,7 +236,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case toolCalls, toolCallId, toolResults, toolCallDurations, toolCallLogs, thinking
         case thinkingDuration
         case createdAt, completedAt, lastOutputAt, generationTokenCount, timeToFirstToken
-        case generationTokensPerSecond, modelLoadSeconds, userWaitSeconds, requestedAt
+        case generationTokensPerSecond, modelLoadSeconds, requestedAt
         case terminalStopReason
         case reasoningItemId, reasoningEncrypted, responsesOutputItems
         case inputTokenCount, cachedInputTokenCount
@@ -291,7 +284,6 @@ extension ChatTurnData {
         self.timeToFirstToken = turn.timeToFirstToken
         self.generationTokensPerSecond = turn.generationTokensPerSecond
         self.modelLoadSeconds = turn.modelLoadSeconds
-        self.userWaitSeconds = turn.userWaitSeconds
         self.requestedAt = turn.requestedAt
         self.terminalStopReason = turn.terminalStopReason
         self.reasoningItemId = turn.reasoningItemId
@@ -332,7 +324,6 @@ extension ChatTurn {
         self.timeToFirstToken = data.timeToFirstToken
         self.generationTokensPerSecond = data.generationTokensPerSecond
         self.modelLoadSeconds = data.modelLoadSeconds
-        self.userWaitSeconds = data.userWaitSeconds
         self.requestedAt = data.requestedAt
         self.terminalStopReason = data.terminalStopReason
         self.reasoningItemId = data.reasoningItemId

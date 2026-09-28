@@ -31,7 +31,6 @@ final class BlockMemoizer {
         /// content delta, like the stats above.
         let lastOutputAt: Date?
         let completedAt: Date?
-        let userWaitSeconds: TimeInterval?
 
         init(_ turn: ChatTurn) {
             ttft = turn.timeToFirstToken
@@ -41,7 +40,6 @@ final class BlockMemoizer {
             modelLoad = turn.modelLoadSeconds
             lastOutputAt = turn.lastOutputAt
             completedAt = turn.completedAt
-            userWaitSeconds = turn.userWaitSeconds
         }
     }
     private var lastGenerationStats: GenerationStatsKey?

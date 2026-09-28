@@ -71,68 +71,12 @@ struct ResponseTotalDurationTests {
     }
 
     @Test
-    func approvalWaitIsExcludedFromTheTotal() throws {
-        let turns = toolLoopTurns(steps: 3)
-        // 50s of the 81s were spent on permission prompts between steps.
-        turns.last?.userWaitSeconds = 50
-        let blocks = ContentBlock.generateBlocks(from: turns, streamingTurnId: nil, agentName: "Assistant")
-        #expect(try totalDuration(in: blocks) == 31)
-    }
-
-    @Test
-    func userWaitClockCountsOverlappingPromptsOnce() {
-        let clock = UserWaitClock()
-        clock.begin(at: start)
-        clock.begin(at: start.addingTimeInterval(2))  // a sibling prompt opens
-        clock.end(at: start.addingTimeInterval(5))
-        #expect(clock.total(at: start.addingTimeInterval(6)) == 6)  // still open
-        clock.end(at: start.addingTimeInterval(10))
-        clock.end(at: start.addingTimeInterval(11))  // unbalanced end is ignored
-        clock.begin(at: start.addingTimeInterval(20))
-        clock.end(at: start.addingTimeInterval(23))
-        #expect(clock.total(at: start.addingTimeInterval(100)) == 13)
-    }
-
-    @Test
-    func awaitingUserStopsTheBoundRunClock() async {
-        let clock = UserWaitClock()
-        let value = await ChatExecutionContext.$userWaitClock.withValue(clock) {
-            await ChatExecutionContext.awaitingUser {
-                try? await Task.sleep(nanoseconds: 20_000_000)
-                return 7
-            }
-        }
-        #expect(value == 7)
-        #expect(clock.total() >= 0.015)
-        // Outside a chat run nothing is recorded (and nothing crashes).
-        let outside = await ChatExecutionContext.awaitingUser { 1 }
-        #expect(outside == 1)
-    }
-
-    @Test
-    func stampRecordsTheRunWaitSoFar() {
-        let clock = UserWaitClock()
-        clock.begin(at: start)
-        clock.end(at: start.addingTimeInterval(4))
+    func requestedAtSurvivesTheTurnDataRoundTrip() throws {
         let turn = ChatTurn(role: .assistant, content: "Done")
-        turn.stampUserWait(from: clock, at: start.addingTimeInterval(30))
-        #expect(turn.userWaitSeconds == 4)
-        let untouched = ChatTurn(role: .assistant, content: "Done")
-        untouched.stampUserWait(from: nil, at: start)
-        #expect(untouched.userWaitSeconds == nil)
-    }
-
-    @Test
-    func userWaitSurvivesTheTurnDataRoundTrip() throws {
-        let turn = ChatTurn(role: .assistant, content: "Done")
-        turn.userWaitSeconds = 42.5
         turn.requestedAt = start
         let data = try JSONDecoder().decode(ChatTurnData.self, from: JSONEncoder().encode(ChatTurnData(from: turn)))
-        #expect(data.userWaitSeconds == 42.5)
         #expect(data.requestedAt == start)
-        let restored = ChatTurn(from: data)
-        #expect(restored.userWaitSeconds == 42.5)
-        #expect(restored.requestedAt == start)
+        #expect(ChatTurn(from: data).requestedAt == start)
     }
 
     /// The memoizer's append path regenerates only a suffix of the transcript;

@@ -1628,9 +1628,9 @@ final class NativeStatsView: NSView {
         totalDuration: TimeInterval? = nil
     ) -> String {
         var parts: [String] = []
-        // Wall-clock from the keypress to the end of the run (model load and
-        // every tool-calling step included, approval-prompt waits excluded).
-        // Leads the row: it's the number users look for.
+        // Wall-clock from the keypress to the end of the run: model load, every
+        // tool-calling step and approval prompt included. Leads the row: it's
+        // the number users look for.
         if let totalDuration {
             parts.append(String(format: L("Worked for %@"), Self.formatLoad(totalDuration)))
         }

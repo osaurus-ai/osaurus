@@ -85,26 +85,24 @@ public final class ConfigApprovalQueue: ObservableObject {
         timeout: Duration = .seconds(120)
     ) async -> ConfigApprovalOutcome {
         let request = ConfigApprovalRequest(plan: plan, prune: prune, fromPairedPhone: fromPairedPhone)
-        return await ChatExecutionContext.awaitingUser {
-            await withTaskCancellationHandler {
-                await withCheckedContinuation {
-                    (continuation: CheckedContinuation<ConfigApprovalOutcome, Never>) in
-                    if Task.isCancelled {
-                        continuation.resume(returning: .cancelled)
-                        return
-                    }
-                    continuations[request.id] = continuation
-                    pending.append(request)
-                    timeoutTasks[request.id] = Task { [weak self] in
-                        try? await Task.sleep(for: timeout)
-                        guard !Task.isCancelled else { return }
-                        self?.resolve(id: request.id, outcome: .timedOut)
-                    }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation {
+                (continuation: CheckedContinuation<ConfigApprovalOutcome, Never>) in
+                if Task.isCancelled {
+                    continuation.resume(returning: .cancelled)
+                    return
                 }
-            } onCancel: {
-                Task { @MainActor in
-                    self.resolve(id: request.id, outcome: .cancelled)
+                continuations[request.id] = continuation
+                pending.append(request)
+                timeoutTasks[request.id] = Task { [weak self] in
+                    try? await Task.sleep(for: timeout)
+                    guard !Task.isCancelled else { return }
+                    self?.resolve(id: request.id, outcome: .timedOut)
                 }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.resolve(id: request.id, outcome: .cancelled)
             }
         }
     }
