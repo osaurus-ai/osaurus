@@ -410,6 +410,50 @@ final class WorkspaceRosterStore: ObservableObject {
         if next != rosters { rosters = next }
         lastRefreshedAt = now()
         reconcileSpawnPool(verified: verified, previousWorkspaceIds: previousWorkspaceIds)
+        reconcileDefaultPoolBilling(verified: verified)
+    }
+
+    // MARK: - Default pool billing for own shared agents
+
+    /// Receives, after every roster apply, the rosters whose membership was
+    /// just VERIFIED (the whole list on a full refresh, one workspace on a
+    /// targeted `update`). Production installs
+    /// `WorkspacesService.applyDefaultBilling` through
+    /// `installDefaultPoolBilling()` at launch so an own agent that appears
+    /// on a roster bills that workspace's pool by default (respecting the
+    /// per-agent opt-out written by the "Bill the workspace pool" switch).
+    /// Tests leave it nil: roster fixtures never touch UserDefaults.
+    typealias DefaultPoolBillingReconciler = @MainActor (_ verifiedRosters: [WorkspaceRoster]) -> Void
+
+    static var defaultPoolBillingReconciler: DefaultPoolBillingReconciler?
+
+    /// Wire verified rosters to the per-agent pool-billing default. Idempotent.
+    static func installDefaultPoolBilling() {
+        defaultPoolBillingReconciler = { rosters in
+            let localAgents = AgentManager.shared.agents.compactMap { agent -> (id: UUID, address: String)? in
+                guard let address = agent.agentAddress, !address.isEmpty else { return nil }
+                return (id: agent.id, address: address)
+            }
+            guard !localAgents.isEmpty else { return }
+            WorkspacesService.shared.applyDefaultBilling(
+                localAgents: localAgents,
+                rosters: rosters.map { roster in
+                    (
+                        workspaceId: roster.id,
+                        addresses: Set(roster.agents.map { $0.agentAddress.lowercased() })
+                    )
+                }
+            )
+        }
+    }
+
+    private func reconcileDefaultPoolBilling(verified: Set<String>) {
+        guard let reconciler = Self.defaultPoolBillingReconciler else { return }
+        // Only rosters the router just confirmed: a workspace whose fetch
+        // failed keeps its previous agents and must not seed a binding.
+        let verifiedRosters = rosters.filter { verified.contains($0.id) }
+        guard !verifiedRosters.isEmpty else { return }
+        reconciler(verifiedRosters)
     }
 
     // MARK: - Orchestrator spawn-pool auto-join

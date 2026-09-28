@@ -1316,6 +1316,11 @@ struct WorkspaceDetailView: View {
                 }
             } else {
                 VStack(spacing: 8) {
+                    // The billing switch renders per hosted-here row; only the
+                    // first carries the search anchor so the id is unique.
+                    let firstHostedHere = service.workspaceAgents.first {
+                        agentManager.agent(byAddress: $0.agentAddress) != nil
+                    }?.agentAddress.lowercased()
                     ForEach(service.workspaceAgents) { agent in
                         WorkspaceSharedAgentRow(
                             identity: identity(for: agent),
@@ -1324,6 +1329,8 @@ struct WorkspaceDetailView: View {
                             canManage: canManageInvites,
                             billsThisWorkspace: service.billingWorkspaceId(forAgentAddress: agent.agentAddress)
                                 == workspace.id,
+                            billingAnchorId: agent.agentAddress.lowercased() == firstHostedHere
+                                ? "workspaces.agents.billPool" : nil,
                             isUnsharing: service.isBusy("agent.\(agent.agentAddress.lowercased())"),
                             onConnect: { connect(agent) },
                             onChat: { chat(with: agent) },
@@ -1466,6 +1473,9 @@ private struct WorkspaceSharedAgentRow: View {
     /// Owner/admin: may unshare teammates' agents too.
     let canManage: Bool
     let billsThisWorkspace: Bool
+    /// Settings-search landing anchor for the billing switch; set on the
+    /// first hosted-here row only, so the id stays unique in the list.
+    var billingAnchorId: String? = nil
     let isUnsharing: Bool
     let onConnect: () -> Void
     let onChat: () -> Void
@@ -1695,14 +1705,18 @@ private struct WorkspaceSharedAgentRow: View {
         }
     }
 
+    /// On by default for every agent you share: `WorkspacesService` binds
+    /// the agent to the first workspace whose roster lists it. Off records a
+    /// per-agent opt-out so the roster-driven default never flips it back.
     private var billingToggle: some View {
         SettingsToggle(
             title: L("Bill the workspace pool"),
             description: L(
-                "This agent's Osaurus cloud calls draw from the workspace's shared credits. Off, they bill your own balance."
+                "On by default for agents you share: this agent's Osaurus cloud calls — yours and your teammates' — draw from the workspace's shared credits. Off, your own chats bill your personal balance."
             ),
             isOn: Binding(get: { billsThisWorkspace }, set: onSetBilling)
         )
         .padding(.leading, 40)
+        .settingsLandingAnchor(billingAnchorId)
     }
 }

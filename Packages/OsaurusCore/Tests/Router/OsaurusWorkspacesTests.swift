@@ -2219,6 +2219,177 @@ struct WorkspacesServiceTests {
         #expect(WorkspacesService.workspaceContext(forAgentId: agentId, defaults: defaults) == nil)
     }
 
+    // MARK: Default-on pool billing
+
+    private func isolatedDefaults() throws -> (UserDefaults, () -> Void) {
+        let suite = "teams-billing-default-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        return (defaults, { defaults.removePersistentDomain(forName: suite) })
+    }
+
+    @Test func defaultBilling_bindsOwnAgentOnRosterToItsWorkspace() throws {
+        let (defaults, cleanup) = try isolatedDefaults()
+        defer { cleanup() }
+        let shared = UUID()
+        let unshared = UUID()
+
+        let bound = WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: shared, address: "0xAAA"), (id: unshared, address: "0xBBB")],
+            rosters: [
+                // Roster addresses are lowercased; the local address is not —
+                // the match must be case-insensitive like every other lookup.
+                (workspaceId: "team-1", addresses: ["0xaaa", "0xteammate"])
+            ],
+            defaults: defaults
+        )
+
+        #expect(bound == [shared])
+        let context = try #require(
+            WorkspacesService.workspaceContext(forAgentId: shared, defaults: defaults)
+        )
+        #expect(context.workspaceId == "team-1")
+        #expect(context.agentAddress == "0xaaa")
+        // An own agent that is shared nowhere stays personal.
+        #expect(WorkspacesService.workspaceContext(forAgentId: unshared, defaults: defaults) == nil)
+        // Teammates' roster entries have no local agent and write nothing.
+        let map = defaults.dictionary(forKey: WorkspacesService.agentBillingDefaultsKey) as? [String: [String: String]]
+        #expect(map?.count == 1)
+    }
+
+    @Test func defaultBilling_isIdempotentAndKeepsAnExistingBinding() throws {
+        let (defaults, cleanup) = try isolatedDefaults()
+        defer { cleanup() }
+        let agent = UUID()
+        // Already bills team-2 (the user turned it on there).
+        WorkspacesService.setBillingWorkspace(
+            agentId: agent, agentAddress: "0xaaa", workspaceId: "team-2", defaults: defaults
+        )
+
+        // Now also shared into team-1, which lists first.
+        let rosters: [(workspaceId: String, addresses: Set<String>)] = [
+            (workspaceId: "team-1", addresses: ["0xaaa"]),
+            (workspaceId: "team-2", addresses: ["0xaaa"]),
+        ]
+        let first = WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: agent, address: "0xaaa")], rosters: rosters, defaults: defaults
+        )
+        #expect(first.isEmpty)
+        #expect(
+            WorkspacesService.workspaceContext(forAgentId: agent, defaults: defaults)?.workspaceId == "team-2"
+        )
+
+        // Re-applying with nothing new changes nothing and reports nothing.
+        let second = WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: agent, address: "0xaaa")], rosters: rosters, defaults: defaults
+        )
+        #expect(second.isEmpty)
+    }
+
+    @Test func defaultBilling_picksFirstWorkspaceWhenSharedIntoSeveral() throws {
+        let (defaults, cleanup) = try isolatedDefaults()
+        defer { cleanup() }
+        let agent = UUID()
+
+        WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: agent, address: "0xaaa")],
+            rosters: [
+                (workspaceId: "team-9", addresses: ["0xzzz"]),  // doesn't list it
+                (workspaceId: "team-1", addresses: ["0xaaa"]),
+                (workspaceId: "team-2", addresses: ["0xaaa"]),
+            ],
+            defaults: defaults
+        )
+
+        #expect(
+            WorkspacesService.workspaceContext(forAgentId: agent, defaults: defaults)?.workspaceId == "team-1"
+        )
+    }
+
+    @Test func billingOptOut_toggleOffTombstonesAndDefaultLeavesItAlone() throws {
+        let (defaults, cleanup) = try isolatedDefaults()
+        defer { cleanup() }
+        let agent = UUID()
+        let roster: [(workspaceId: String, addresses: Set<String>)] = [
+            (workspaceId: "team-1", addresses: ["0xaaa"])
+        ]
+
+        // Default binds it...
+        WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: agent, address: "0xaaa")], rosters: roster, defaults: defaults
+        )
+        #expect(WorkspacesService.workspaceContext(forAgentId: agent, defaults: defaults) != nil)
+        #expect(!WorkspacesService.isBillingOptedOut(agentId: agent, defaults: defaults))
+
+        // ...the user turns the switch off: entry gone, tombstone written...
+        WorkspacesService.recordBillingToggle(
+            agentId: agent, agentAddress: "0xaaa", workspaceId: nil, defaults: defaults
+        )
+        #expect(WorkspacesService.workspaceContext(forAgentId: agent, defaults: defaults) == nil)
+        #expect(WorkspacesService.isBillingOptedOut(agentId: agent, defaults: defaults))
+
+        // ...and the next roster apply must NOT flip it back on.
+        let rebound = WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: agent, address: "0xaaa")], rosters: roster, defaults: defaults
+        )
+        #expect(rebound.isEmpty)
+        #expect(WorkspacesService.workspaceContext(forAgentId: agent, defaults: defaults) == nil)
+
+        // Turning it back on clears the tombstone.
+        WorkspacesService.recordBillingToggle(
+            agentId: agent, agentAddress: "0xaaa", workspaceId: "team-1", defaults: defaults
+        )
+        #expect(
+            WorkspacesService.workspaceContext(forAgentId: agent, defaults: defaults)?.workspaceId == "team-1"
+        )
+        #expect(!WorkspacesService.isBillingOptedOut(agentId: agent, defaults: defaults))
+        #expect(defaults.object(forKey: WorkspacesService.agentBillingOptOutDefaultsKey) == nil)
+    }
+
+    @Test func billingOptOut_plainClearIsNotATombstoneSoReshareDefaultsOn() throws {
+        let (defaults, cleanup) = try isolatedDefaults()
+        defer { cleanup() }
+        let agent = UUID()
+        let roster: [(workspaceId: String, addresses: Set<String>)] = [
+            (workspaceId: "team-1", addresses: ["0xaaa"])
+        ]
+        WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: agent, address: "0xaaa")], rosters: roster, defaults: defaults
+        )
+
+        // Unshare path: the static clear drops the entry without opting out.
+        WorkspacesService.setBillingWorkspace(
+            agentId: agent, agentAddress: "0xaaa", workspaceId: nil, defaults: defaults
+        )
+        #expect(WorkspacesService.workspaceContext(forAgentId: agent, defaults: defaults) == nil)
+        #expect(!WorkspacesService.isBillingOptedOut(agentId: agent, defaults: defaults))
+
+        // Re-shared later: back on the pool by default.
+        let rebound = WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: agent, address: "0xaaa")], rosters: roster, defaults: defaults
+        )
+        #expect(rebound == [agent])
+    }
+
+    @Test func billingOptOut_prunesTombstonesForAgentsGoneFromThisMac() throws {
+        let (defaults, cleanup) = try isolatedDefaults()
+        defer { cleanup() }
+        let kept = UUID()
+        let deleted = UUID()
+        WorkspacesService.setBillingOptOut(agentId: kept, optedOut: true, defaults: defaults)
+        WorkspacesService.setBillingOptOut(agentId: deleted, optedOut: true, defaults: defaults)
+
+        WorkspacesService.applyDefaultBilling(
+            localAgents: [(id: kept, address: "0xaaa")],
+            rosters: [(workspaceId: "team-1", addresses: ["0xaaa"])],
+            defaults: defaults
+        )
+
+        #expect(WorkspacesService.isBillingOptedOut(agentId: kept, defaults: defaults))
+        #expect(!WorkspacesService.isBillingOptedOut(agentId: deleted, defaults: defaults))
+        // The kept opt-out still holds: no binding was written for it.
+        #expect(WorkspacesService.workspaceContext(forAgentId: kept, defaults: defaults) == nil)
+    }
+
     @Test func refreshTeams_reconcilesBillingPrefsAgainstWorkspaceList() async throws {
         try await withService(handler: { request in
             switch (request.httpMethod, request.url?.path) {

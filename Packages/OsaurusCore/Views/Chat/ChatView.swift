@@ -9068,14 +9068,27 @@ struct ChatView: View {
     }
 
     /// Workspace name for the composer's "Workspace pool" spend chip when the
-    /// active tab chats with a teammate's shared agent; nil for local agents
-    /// and for read-only teammate conversations served by this host.
+    /// active tab's cloud calls bill a workspace pool: a teammate's shared
+    /// agent (billed by its host), or one of this Mac's own agents whose
+    /// "Bill the workspace pool" preference is on. Nil for personally billed
+    /// local agents and for read-only teammate conversations served here.
     private var workspacePoolLabel: String? {
         // Agents shared directly (invite link) carry no workspace id and
         // bill nothing to a pool.
-        guard let workspaceId = activeWorkspaceId else { return nil }
+        guard let workspaceId = poolBillingWorkspaceId else { return nil }
         return rosterStore.rosters.first(where: { $0.id == workspaceId })?.workspace.name
             ?? L("Workspace")
+    }
+
+    /// The workspace whose pool this tab's turns bill, for the composer chip.
+    /// Remote tabs: the tab's workspace share. Local tabs: the agent's own
+    /// pool-billing preference — the same lookup `RemoteProviderService`
+    /// makes when it attaches `workspace_context`, so chip and charge agree.
+    /// `workspacesService` is observed so flipping the switch re-renders.
+    private var poolBillingWorkspaceId: String? {
+        if let workspaceId = activeWorkspaceId { return workspaceId }
+        guard observedSession.workspaceContext == nil else { return nil }
+        return WorkspacesService.workspaceContext(forAgentId: windowState.agentId)?.workspaceId
     }
 
     /// Where the composer lock's settings shortcut lands: the workspace
@@ -9428,6 +9441,10 @@ struct ChatView: View {
     @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
     @ObservedObject private var workspaceConnectService = WorkspaceAgentConnectService.shared
+    /// Per-agent pool-billing preference for the composer chip on local
+    /// tabs; publishes when the "Bill the workspace pool" switch changes or
+    /// the roster-driven default binds an agent.
+    @ObservedObject private var workspacesService = WorkspacesService.shared
 
     /// Convenience accessor for the session (uses observedSession for proper SwiftUI updates)
     private var session: ChatSession { observedSession }
@@ -9947,7 +9964,7 @@ struct ChatView: View {
                                     }(),
                                     isRouterBilledSession: observedSession.isOsaurusRouterSession,
                                     workspacePoolLabel: workspacePoolLabel,
-                                    workspacePoolId: activeWorkspaceId,
+                                    workspacePoolId: poolBillingWorkspaceId,
                                     imageComposerSettings: $observedSession.imageComposerSettings,
                                     onSend: { manualText in
                                         if let manualText = manualText {

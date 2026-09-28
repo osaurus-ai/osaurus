@@ -157316,6 +157316,40 @@
         }
       }
     },
+    "On by default for agents you share: this agent's Osaurus cloud calls — yours and your teammates' — draw from the workspace's shared credits. Off, your own chats bill your personal balance." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardmäßig aktiv für Agenten, die du teilst: Die Osaurus-Cloud-Aufrufe dieses Agenten – deine und die deiner Teammitglieder – werden aus dem gemeinsamen Guthaben des Workspace bezahlt. Aus: Deine eigenen Chats werden über dein persönliches Guthaben abgerechnet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "공유한 에이전트에는 기본으로 켜져 있습니다. 이 에이전트의 Osaurus 클라우드 호출(내 것과 팀원의 것 모두)은 작업 공간의 공유 크레딧에서 차감됩니다. 끄면 내 채팅은 개인 잔액으로 청구됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено по умолчанию для агентов, которыми вы делитесь: облачные вызовы Osaurus этого агента — ваши и ваших коллег — списываются из общих кредитов рабочей области. Если выключить, ваши собственные чаты оплачиваются с личного баланса."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对你共享的智能体默认开启：此智能体的 Osaurus 云调用（你和队友的）都从工作区共享额度中扣除。关闭后，你自己的对话将由个人余额计费。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對你共享的代理預設開啟：此代理的 Osaurus 雲端呼叫（你和隊友的）都從工作空間共享額度中扣除。關閉後，你自己的對話將由個人餘額計費。"
+          }
+        }
+      }
+    },
     "On disk: %@" : {
 
     },
@@ -247501,9 +247535,6 @@
           }
         }
       }
-    },
-    "This agent's Osaurus cloud calls draw from the workspace's shared credits. Off, they bill your own balance." : {
-
     },
     "This bundle advertises DFlash/speculative-decoding metadata, but local generation has no target/draft acceptance contract or benchmark proof yet. Use it only after native runtime support lands." : {
       "comment" : "Warning about using a DFlash/speculative-decoding-capable model that has not yet been proven to work on the host.",

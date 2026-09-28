@@ -173,6 +173,9 @@ struct SettingsSearchSelfFindProbe {
             // Workspaces → Shared agents: the per-workspace auto-join switch.
             ("let the orchestrator delegate to shared agents", "workspaces.agents.orchestratorAutoJoin"),
             ("auto-join", "workspaces.agents.orchestratorAutoJoin"),
+            // Workspaces → Shared agents: the per-agent pool-billing switch.
+            ("bill the workspace pool", "workspaces.agents.billPool"),
+            ("pool billing", "workspaces.agents.billPool"),
             // Agents → Abilities → Tools: the Apple Apps group row and one picker group per app,
             // by the exact title each picker group shows.
             ("apple apps", "agents.appleApps"),

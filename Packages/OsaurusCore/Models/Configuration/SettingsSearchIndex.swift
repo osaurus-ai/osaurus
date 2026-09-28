@@ -1390,6 +1390,18 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "workspaces.agents.billPool",
+            tab: .workspaces,
+            section: "Shared Agents",
+            title: "Bill the workspace pool",
+            keywords: [
+                "pool billing", "workspace pool", "workspace credits", "shared credits", "bill personal",
+                "personal credits", "own balance", "who pays", "billing toggle", "team credits",
+            ],
+            disambiguation:
+                "Per shared agent, shown only for agents hosted on this Mac. On by default once you share an agent; off bills your own chats with it to your personal balance. Teammates' runs always draw from the pool."
+        ),
+        .init(
             id: "workspaces.agents.orchestratorAutoJoin",
             tab: .workspaces,
             section: "Shared Agents",
