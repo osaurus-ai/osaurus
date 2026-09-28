@@ -3303,14 +3303,14 @@ extension ToolRegistry {
     /// `capabilities_load` (those stay available to custom agents). Computed
     /// from the live domain registry so a newly registered domain expands
     /// the set automatically, and stable across a session for KV-cache
-    /// reuse.
+    /// reuse. `prompt_working_folder` is deliberately NOT here: the
+    /// Orchestrator never writes files, its (read-only) folder is set from
+    /// the chat Folder chip or Settings → Orchestrator, and this baseline is
+    /// a reviewed first-turn schema contract.
     static var orchestratorAllowedToolNames: Set<String> {
         configureToolNames.union([
             "todo", "complete", "clarify", "get_current_time",
             "web_search", "search_and_extract",
-            // The Orchestrator has a (read-only) working folder too, set from
-            // the chat Folder chip; the picker-backed ask is the same record.
-            PromptWorkingFolderTool.toolName,
         ])
     }
 }

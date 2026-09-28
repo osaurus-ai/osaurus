@@ -137,9 +137,11 @@ struct PromptWorkingFolderToolTests {
         }
     }
 
-    @Test("the Orchestrator allowlist and the loop-control sets carry the tool")
+    @Test("the loop-control and deny sets carry the tool; the Orchestrator baseline does not")
     func nameSetsCarryTheTool() {
-        #expect(ToolRegistry.orchestratorAllowedToolNames.contains(PromptWorkingFolderTool.toolName))
+        // The Orchestrator never writes files and its first-turn schema is a
+        // reviewed contract (`orchestratorAllowedToolNames_isTheConsolidated…`).
+        #expect(!ToolRegistry.orchestratorAllowedToolNames.contains(PromptWorkingFolderTool.toolName))
         #expect(AgentToolLoop.interceptToolNames.contains(PromptWorkingFolderTool.toolName))
         #expect(AgentToolLoop.taskTrackingControlToolNames.contains(PromptWorkingFolderTool.toolName))
         #expect(AgentTodoRunScope.loopControlToolNames.contains(PromptWorkingFolderTool.toolName))
