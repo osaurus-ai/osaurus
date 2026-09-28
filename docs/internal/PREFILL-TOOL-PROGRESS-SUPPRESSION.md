@@ -1,0 +1,29 @@
+# Preserve foreground prefill during suppressed tool progress
+
+A background generation with `suppressProgressUI` could clear foreground prefill
+when its first output was a tool-call envelope fragment. That branch directly
+finished the global progress manager, bypassing the helper that already routes
+suppressed output to the warmup side channel.
+
+The branch now uses the existing suppression-aware helper, matching text and
+reasoning output. An internal mapper parameter defaults to the shared manager
+and lets regression tests use isolated progress state. Existing callers retain
+the same default behavior; no public API is added.
+
+The baseline was reproduced against the compiled application core with unchanged
+mapper and manager source: the suppressed test failed its inverted clear-event
+expectation and two foreground-state assertions; the unsuppressed control passed.
+The isolated candidate tests additionally hold the upstream stream open while
+checking first output, ensuring the positive control cannot pass solely because
+stream-drain cleanup eventually clears progress.
+
+Candidate mapper execution passed all 27 test methods (the two isolated regressions
+plus 25 adjacent mapper methods), with zero failures or skips. This bounded proof
+compiled the exact mapper source under a renamed symbol against the previously
+built real application core types; it did not rebuild the candidate application
+core or exercise the GUI. The manager/mapper baseline source is byte-identical
+across the focused PR base and the compiled-core baseline. Full candidate-core
+build and live application validation remain pending.
+This fixes one suppression bypass; it does not solve broader request/session
+ownership of the global progress manager, media-encoding progress, or final GPU
+completion timing. It makes no Sentry crash or live GUI occurrence claim.
