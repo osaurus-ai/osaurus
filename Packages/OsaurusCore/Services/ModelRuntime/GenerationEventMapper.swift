@@ -43,6 +43,7 @@ enum GenerationEventMapper {
         promptTokenCount: Int? = nil,
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
+        progressManager: InferenceProgressManager = .shared,
         /// Whether this generation's completion-time MTP stats should become
         /// the model's "Speculative decoding last run" readout. Callers pass
         /// false for housekeeping generations (`loadIntent == .background`:
@@ -128,7 +129,7 @@ enum GenerationEventMapper {
             // side channel for suppressed (background warm-up) requests.
             func reportPrefillFinished() {
                 if !suppressProgressUI {
-                    InferenceProgressManager.shared.prefillDidFinishAsync()
+                    progressManager.prefillDidFinishAsync()
                 } else {
                     WarmupProgressHub.shared.finish(model: modelName)
                 }
@@ -216,7 +217,7 @@ enum GenerationEventMapper {
                         detail: progress.detail
                     )
                     if !suppressProgressUI {
-                        InferenceProgressManager.shared.prefillDidUpdateAsync(state)
+                        progressManager.prefillDidUpdateAsync(state)
                     } else {
                         WarmupProgressHub.shared.prefillDidUpdate(model: modelName, state: state)
                     }
@@ -260,7 +261,7 @@ enum GenerationEventMapper {
                     markFirstModelOutput()
                     if firstChunk {
                         firstChunk = false
-                        InferenceProgressManager.shared.prefillDidFinishAsync()
+                        reportPrefillFinished()
                     }
                     continuation.yield(.toolCallProgress(envelopeDelta))
 
