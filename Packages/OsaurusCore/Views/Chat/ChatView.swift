@@ -5022,6 +5022,8 @@ final class ChatSession: ObservableObject {
         var uiStatsHintCount = 0
         var uiBillingHintCount = 0
         var uiPrefillHintCount = 0
+        let progressReceiver = PrefillProgressStreamReceiver(sessionID: sessionId?.uuidString)
+        defer { progressReceiver.finish() }
         var firstDeltaTime: Date?
         // Throttle key for streaming tool-call argument rebuilds.
         var lastToolArgRebuildAt: Date = .distantPast
@@ -5135,6 +5137,7 @@ final class ChatSession: ObservableObject {
                 // instant the tool finished. The activity is display-only and is
                 // never re-sent as history (see `ChatTurn.remoteToolActivity`).
                 if let trace = StreamingAgentToolHint.decode(delta) {
+                    progressReceiver.finish()
                     let callKey =
                         (trace.callId?.isEmpty == false) ? trace.callId! : trace.name
                     switch trace.phase {
@@ -5161,6 +5164,7 @@ final class ChatSession: ObservableObject {
                 }
                 // Server-side tool call complete: add the call card + result turn to the chat log
                 if let done = StreamingToolHint.decodeDone(delta) {
+                    progressReceiver.finish()
                     uiToolSentinelCount += 1
                     await processor.finalize()
                     let call = ToolCall(
@@ -5188,6 +5192,7 @@ final class ChatSession: ObservableObject {
                     continue
                 }
                 if let toolName = StreamingToolHint.decode(delta) {
+                    progressReceiver.finish()
                     uiToolSentinelCount += 1
                     // Local models stream the raw envelope as args fragments
                     // BEFORE the parsed call's name hint. When the hint lands
@@ -5225,6 +5230,7 @@ final class ChatSession: ObservableObject {
                 // text itself is intentionally NOT rendered (it isn't parsed args
                 // and could be any format), so it never leaks as message text.
                 if let envelopeDelta = StreamingToolCallProgressHint.decode(delta) {
+                    progressReceiver.finish()
                     uiToolSentinelCount += 1
                     // Also accumulate the raw envelope: the live diff preview
                     // extracts path/content from it mid-stream, and the tool
@@ -5276,6 +5282,7 @@ final class ChatSession: ObservableObject {
                     continue
                 }
                 if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                    progressReceiver.finish()
                     uiToolSentinelCount += 1
                     currentTurn.appendToolArgFragment(argFragment)
                     // Envelope-first flow (local models): the tool name rides
@@ -5343,7 +5350,7 @@ final class ChatSession: ObservableObject {
                     recordRouterBilling(billing, on: currentTurn)
                 } else if let progress = StreamingPrefillProgressHint.decode(delta) {
                     uiPrefillHintCount += 1
-                    InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
+                    progressReceiver.receive(progress)
                 } else if let remoteArtifacts = StreamingArtifactHint.decode(delta) {
                     // A teammate's host returned the small files its agent
                     // shared: import them into THIS session's store and show
@@ -5364,6 +5371,7 @@ final class ChatSession: ObservableObject {
                     uiReasoningDeltaCount += 1
                     let now = Date()
                     if firstDeltaTime == nil {
+                        progressReceiver.finish()
                         firstDeltaTime = now
                         ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
                         ttftTrace?.mark("first_text_delta")
@@ -5390,6 +5398,7 @@ final class ChatSession: ObservableObject {
                 } else if !delta.isEmpty {
                     let now = Date()
                     if firstDeltaTime == nil {
+                        progressReceiver.finish()
                         firstDeltaTime = now
                         ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
                         ttftTrace?.mark("first_text_delta")
@@ -10848,6 +10857,7 @@ struct ChatView: View {
             // when the agent emits a todo or completes.
             IsolatedThreadView(
                 store: session.visibleBlocksStore,
+                progressSessionID: session.sessionId?.uuidString,
                 width: width,
                 agentName: displayName,
                 agentAvatar: identity.mascotId,
@@ -11082,6 +11092,7 @@ struct ChatView: View {
 /// every streaming sync.
 private struct IsolatedThreadView: View {
     @ObservedObject var store: VisibleBlocksStore
+    let progressSessionID: String?
     let width: CGFloat
     let agentName: String
     let agentAvatar: String?
@@ -11130,6 +11141,7 @@ private struct IsolatedThreadView: View {
         let _ = ChatPerfTrace.shared.count("body.IsolatedThreadView")
         MessageThreadView(
             blocks: store.blocks,
+            progressSessionID: progressSessionID,
             groupHeaderMap: store.groupHeaderMap,
             width: width,
             agentName: agentName,

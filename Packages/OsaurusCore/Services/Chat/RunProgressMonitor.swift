@@ -87,7 +87,7 @@ final class RunProgressMonitor: ObservableObject {
                 now: now
             ),
             clearsLatch: clearsLatch,
-            loadingPhase: RunProgressLoadingPhase.current(agentId: agentId())
+            loadingPhase: RunProgressLoadingPhase.current(agentId: agentId(), sessionID: sessionId())
         )
         clearsLatch = false
         guard next != state else { return }
@@ -118,7 +118,10 @@ final class RunProgressMonitor: ObservableObject {
             .store(in: &subscriptions)
 
         let inference = InferenceProgressManager.shared
-        observeDiscrete(inference.$prefillProgress, throttleSeconds: 1)
+        observeDiscrete(
+            RequestPrefillProgressStore.shared.$entries.map { [weak self] entries in
+                RequestPrefillProgressStore.shared.visibleSnapshot(sessionID: self?.sessionId(), from: entries)
+            }.removeDuplicates(), throttleSeconds: 1)
         observeDiscrete(inference.$loadInFlightCount)
 
         let sandbox = SandboxManager.State.shared

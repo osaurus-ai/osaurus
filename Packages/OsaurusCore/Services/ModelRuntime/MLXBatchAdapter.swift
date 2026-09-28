@@ -120,6 +120,7 @@ struct MLXBatchAdapter {
         let stream: AsyncStream<Generation>
         let promptTokens: [Int]
         let genTask: Task<Void, Never>
+        var progressOwner: RequestPrefillProgressStore.Handle? = nil
     }
 
     struct AudioPreencodeResult {
@@ -1670,17 +1671,15 @@ struct MLXBatchAdapter {
         // AND leaked deterministic state into unrelated global-RNG
         // consumers (diffusion decode, image latents), so it is gone.
 
-        await MainActor.run {
+        let progressOwner: RequestPrefillProgressStore.Handle? = await MainActor.run {
             if !generation.suppressProgressUI {
-                InferenceProgressManager.shared.prefillWillStart(
-                    tokenCount: prepared.promptTokens.count
-                )
-            } else {
-                WarmupProgressHub.shared.prefillWillStart(
-                    model: modelName,
-                    tokenCount: prepared.promptTokens.count
-                )
+                return RequestPrefillProgressStore.shared.begin(
+                    sessionID: generation.sessionId, model: modelName,
+                    totalUnits: prepared.promptTokens.count)
             }
+            WarmupProgressHub.shared.prefillWillStart(
+                model: modelName, tokenCount: prepared.promptTokens.count)
+            return nil
         }
 
         // Prefill diagnostics: snapshot the cumulative cache counters BEFORE the
@@ -1743,6 +1742,7 @@ struct MLXBatchAdapter {
         do {
             try await MetalGate.shared.enterGeneration(model: modelName)
         } catch {
+            if let progressOwner { await RequestPrefillProgressStore.shared.finish(progressOwner) }
             if let soloLease { await soloLease.release() }
             throw error
         }
@@ -1866,7 +1866,8 @@ struct MLXBatchAdapter {
         return PreparedStream(
             stream: outStream,
             promptTokens: prepared.promptTokens,
-            genTask: producerTask
+            genTask: producerTask,
+            progressOwner: progressOwner
         )
     }
 

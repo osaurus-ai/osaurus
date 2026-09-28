@@ -44,6 +44,8 @@ enum GenerationEventMapper {
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
         progressManager: InferenceProgressManager = .shared,
+        progressOwner: RequestPrefillProgressStore.Handle? = nil,
+        requestProgressStore: RequestPrefillProgressStore? = nil,
         /// Whether this generation's completion-time MTP stats should become
         /// the model's "Speculative decoding last run" readout. Callers pass
         /// false for housekeeping generations (`loadIntent == .background`:
@@ -63,6 +65,7 @@ enum GenerationEventMapper {
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
+            let ownedStore = await MainActor.run { requestProgressStore ?? .shared }
             if let promptTokenCount, promptTokenCount >= 0 {
                 continuation.yield(.inputTokenCount(promptTokenCount))
             }
@@ -72,6 +75,7 @@ enum GenerationEventMapper {
             )
             let startedAt = CFAbsoluteTimeGetCurrent()
             var firstChunk = true
+            var progressSequence: UInt64 = 0
             var finalTokenCount = 0
             var sawCompletionInfo = false
             var sawReasoning = false
@@ -127,8 +131,10 @@ enum GenerationEventMapper {
             // Route the "prefill is done" signal to the surface that started
             // it: the global HUD for real requests, the per-model warm-up
             // side channel for suppressed (background warm-up) requests.
-            func reportPrefillFinished() {
-                if !suppressProgressUI {
+            func reportPrefillFinished() async {
+                if let progressOwner {
+                    await ownedStore.finish(progressOwner)
+                } else if !suppressProgressUI {
                     progressManager.prefillDidFinishAsync()
                 } else {
                     WarmupProgressHub.shared.finish(model: modelName)
@@ -185,7 +191,7 @@ enum GenerationEventMapper {
                     markFirstModelOutput()
                     if firstChunk {
                         firstChunk = false
-                        reportPrefillFinished()
+                        await reportPrefillFinished()
                     }
                     estimatedTextTokens += max(1, text.count / 4)
                     continuation.yield(.tokens(text))
@@ -205,18 +211,24 @@ enum GenerationEventMapper {
                     // channel.
                     if firstChunk {
                         firstChunk = false
-                        reportPrefillFinished()
+                        await reportPrefillFinished()
                     }
                     continuation.yield(.reasoning(text))
 
                 case .prefillProgress(let progress):
-                    let state = PrefillProgressState(
+                    var state = PrefillProgressState(
                         stage: PrefillProgressStage(rawValue: progress.stage.rawValue) ?? .prefill,
                         completedUnitCount: progress.completedUnitCount,
                         totalUnitCount: progress.totalUnitCount,
                         detail: progress.detail
                     )
-                    if !suppressProgressUI {
+                    if let progressOwner {
+                        progressSequence += 1
+                        state.requestOwner = progressOwner
+                        state.requestSequence = progressSequence
+                        _ = await ownedStore.receive(.init(
+                            handle: progressOwner, sequence: progressSequence, progress: state))
+                    } else if !suppressProgressUI {
                         progressManager.prefillDidUpdateAsync(state)
                     } else {
                         WarmupProgressHub.shared.prefillDidUpdate(model: modelName, state: state)
@@ -239,6 +251,10 @@ enum GenerationEventMapper {
                 case .toolCall(let call):
                     sawToolCall = true
                     markFirstModelOutput()
+                    if firstChunk {
+                        firstChunk = false
+                        await reportPrefillFinished()
+                    }
                     let argsJSON = serializeArguments(
                         call.function.arguments,
                         rawArgumentsJSON: call.function.rawArgumentsJSON,
@@ -261,7 +277,7 @@ enum GenerationEventMapper {
                     markFirstModelOutput()
                     if firstChunk {
                         firstChunk = false
-                        reportPrefillFinished()
+                        await reportPrefillFinished()
                     }
                     continuation.yield(.toolCallProgress(envelopeDelta))
 
@@ -329,12 +345,15 @@ enum GenerationEventMapper {
                 "     STEP-DRAIN logicalTotalMs=\(logicalTotalMs) cleanupDrainMs=\(cleanupDrainMs)"
             )
             recordCacheRestoreOnce()
-            reportPrefillFinished()
+            await reportPrefillFinished()
             continuation.finish()
         }
         continuation.onTermination = { @Sendable termination in
             if case .cancelled = termination {
                 task.cancel()
+                if let progressOwner {
+                    Task { @MainActor in (requestProgressStore ?? .shared).finish(progressOwner) }
+                }
                 // Cancelling the mapper task alone relies on several nested
                 // AsyncStream termination handlers eventually reaching the
                 // runtime producer. The caller owns the direct per-request

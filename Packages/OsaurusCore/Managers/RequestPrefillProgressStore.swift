@@ -1,11 +1,12 @@
 import Combine
 import Foundation
 
-/// Unwired prototype: no production mapper, hint consumer or view uses this store.
+/// Request-owned progress shared by the runtime mapper and session-scoped native HUD.
 /// A request may mutate only its registered entry. Session selection is a read,
 /// so switching windows cannot finish or overwrite another request's progress.
 @MainActor
 final class RequestPrefillProgressStore: ObservableObject {
+    static let shared = RequestPrefillProgressStore()
     enum Channel: String, Codable, Sendable { case foreground, suppressed }
 
     struct Handle: Codable, Hashable, Sendable {
@@ -101,14 +102,61 @@ final class RequestPrefillProgressStore: ObservableObject {
         return entry
     }
 
-    /// Prototype policy: newest active foreground generation in this exact chat.
+    /// Selection policy: newest active foreground generation in this exact chat.
     /// No global/model/agent fallback and no implicit selection of nil-session work.
-    func visibleSnapshot(sessionID: String?) -> Snapshot? {
+    func visibleSnapshot(sessionID: String?, from publishedEntries: [UUID: Snapshot]? = nil) -> Snapshot? {
+        let entries = publishedEntries ?? self.entries
         guard let sessionID else { return nil }
         for id in registrationOrder.reversed() {
             if let entry = entries[id], entry.handle.sessionID == sessionID,
                 entry.handle.channel == .foreground { return entry }
         }
         return nil
+    }
+}
+
+/// Per-native-stream receiver. Old providers without ownership metadata are
+/// scoped once to this stream; first output/termination closes that scope forever.
+@MainActor
+final class PrefillProgressStreamReceiver {
+    private let store: RequestPrefillProgressStore
+    private let sessionID: String?
+    private var owner: RequestPrefillProgressStore.Handle?
+    private var legacySequence: UInt64 = 0
+    private var isLegacy = false
+    private var closed = false
+
+    init(sessionID: String?, store: RequestPrefillProgressStore? = nil) {
+        self.sessionID = sessionID
+        self.store = store ?? .shared
+    }
+
+    @discardableResult
+    func receive(_ progress: PrefillProgressState) -> Bool {
+        guard !closed, progress.completedUnitCount >= 0, progress.totalUnitCount >= 0,
+            progress.completedUnitCount <= progress.totalUnitCount else { return false }
+        let accepted: Bool
+        if let handle = progress.requestOwner, let sequence = progress.requestSequence {
+            guard handle.sessionID == sessionID, owner == nil || owner == handle else { return false }
+            owner = handle
+            accepted = store.receive(.init(handle: handle, sequence: sequence, progress: progress))
+        } else {
+            guard progress.requestOwner == nil, progress.requestSequence == nil else { return false }
+            if owner == nil {
+                owner = store.begin(sessionID: sessionID, model: "remote-stream", totalUnits: progress.totalUnitCount)
+                isLegacy = true
+            }
+            guard let owner, isLegacy else { return false }
+            legacySequence += 1
+            accepted = store.receive(.init(handle: owner, sequence: legacySequence, progress: progress))
+        }
+        if progress.stage == .complete, let owner,
+            accepted || store.snapshot(for: owner) == nil { closed = true }
+        return accepted
+    }
+
+    func finish() {
+        closed = true
+        if let owner { store.finish(owner) }
     }
 }

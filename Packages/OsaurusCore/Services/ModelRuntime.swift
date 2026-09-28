@@ -5915,6 +5915,7 @@ public actor ModelRuntime {
             promptTokenCount: prepared.promptTokens.count,
             trace: trace,
             suppressProgressUI: parameters.suppressProgressUI,
+            progressOwner: prepared.progressOwner,
             // Background housekeeping (follow-up suggestions, titles) must not
             // stomp the user's turn in the speculative-decoding readout.
             recordMTPLastRun: parameters.loadIntent == .interactive,
