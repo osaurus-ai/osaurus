@@ -570,6 +570,13 @@ extension MessageTableRepresentable {
         ) {
             scrollAnchor.onScrolledToBottom = onScrolledToBottom
             scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
+            scrollAnchor.blockIdForRow = { [weak self] row in
+                guard let self, row >= 0, row < self.blockIds.count else { return nil }
+                return self.blockIds[row]
+            }
+            scrollAnchor.rowForBlockId = { [weak self] id in
+                self?.blockIds.firstIndex(of: id)
+            }
             scrollAnchor.attach(to: scrollView, tableView: tableView)
 
             // observe actual frame changes from AppKit layout (fires after
@@ -1019,6 +1026,11 @@ extension MessageTableRepresentable {
                 newIds.reversed().filter { seenIds.insert($0).inserted }.reversed()
             )
 
+            // Save the anchor while `blockIds` still matches the table's rows,
+            // so the anchor records the block the reader is actually on.
+            let wasPinnedToBottom = scrollAnchor.isPinnedToBottom
+            scrollAnchor.saveAnchor()
+
             blockLookup = newLookup
             blockIds = uniqueIds
             streamingBlockId = newStreamingBlockId
@@ -1026,9 +1038,6 @@ extension MessageTableRepresentable {
             let stableChangedIds = uniqueIds.filter { id in
                 oldIdSet.contains(id) && newLookup[id] != oldLookup[id]
             }
-
-            let wasPinnedToBottom = scrollAnchor.isPinnedToBottom
-            scrollAnchor.saveAnchor()
 
             var snapshot = NSDiffableDataSourceSnapshot<MessageSection, String>()
             snapshot.appendSections([.main])

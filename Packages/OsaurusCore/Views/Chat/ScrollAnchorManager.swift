@@ -10,9 +10,12 @@
 //  - Saves / restores a scroll anchor so that applying a new diffable snapshot
 //    preserves the user's reading position.
 //
-//  The anchor is row-based: we record the topmost visible row and the pixel
-//  offset from that row's top edge. After a snapshot, we recalculate the
-//  origin from the (possibly shifted) row rect.
+//  The anchor is block-based: we record the block in the topmost visible row
+//  and the pixel offset from that row's top edge. After a snapshot, we find
+//  that block's (possibly shifted) row and recalculate the origin from its
+//  rect. Resolving by id matters because a snapshot can insert rows above the
+//  reader (e.g. the streaming block window widening when a run ends), which
+//  would leave a bare row index pointing at older content.
 //
 
 import AppKit
@@ -34,6 +37,13 @@ final class ScrollAnchorManager {
     var onScrolledToBottom: (() -> Void)?
     var onScrolledAwayFromBottom: (() -> Void)?
 
+    /// Maps a table row to its block id. Must reflect the rows currently
+    /// in the table at `saveAnchor()` time.
+    var blockIdForRow: ((Int) -> String?)?
+
+    /// Maps a block id to its row after a snapshot applies.
+    var rowForBlockId: ((String) -> Int?)?
+
     // MARK: - Private State
 
     private weak var scrollView: NSScrollView?
@@ -53,6 +63,7 @@ final class ScrollAnchorManager {
 
     private struct Anchor {
         let row: Int
+        let blockId: String?
         let offsetFromRowTop: CGFloat
     }
 
@@ -94,7 +105,11 @@ final class ScrollAnchorManager {
         guard topRow >= 0 else { savedAnchor = nil; return }
 
         let rowRect = tableView.rect(ofRow: topRow)
-        savedAnchor = Anchor(row: topRow, offsetFromRowTop: topY - rowRect.origin.y)
+        savedAnchor = Anchor(
+            row: topRow,
+            blockId: blockIdForRow?(topRow),
+            offsetFromRowTop: topY - rowRect.origin.y
+        )
     }
 
     /// Restore position from the saved anchor. Call **after** the snapshot completes.
@@ -102,10 +117,19 @@ final class ScrollAnchorManager {
         guard let tableView, let scrollView, let anchor = savedAnchor else { return }
         savedAnchor = nil
 
-        let clampedRow = min(anchor.row, tableView.numberOfRows - 1)
-        guard clampedRow >= 0 else { return }
+        // Prefer the anchored block's new row; fall back to the old index
+        // only when that block left the thread.
+        let row: Int
+        if let blockId = anchor.blockId, let resolved = rowForBlockId?(blockId),
+            resolved < tableView.numberOfRows
+        {
+            row = resolved
+        } else {
+            row = min(anchor.row, tableView.numberOfRows - 1)
+        }
+        guard row >= 0 else { return }
 
-        let rowRect = tableView.rect(ofRow: clampedRow)
+        let rowRect = tableView.rect(ofRow: row)
         let targetY = rowRect.origin.y + anchor.offsetFromRowTop
         let curY = scrollView.contentView.bounds.origin.y
 

@@ -263,8 +263,9 @@ final class BlockMemoizer {
             return rolledUp(ContentBlock.coalesceToolGroups(cached))
         }
         // during streaming, cap tightly to prevent layout thrash on every delta.
-        // use a smooth transition: once streaming ends the cap rises gradually so
-        // the table doesn't get a sudden burst of new rows all at once.
+        // when streaming ends the cap widens in one step, prepending older rows
+        // above the reader. the table's scroll anchor resolves by block id so
+        // that insert doesn't move the reading position.
         let target = streaming ? streamingMaxBlocks : nonStreamingMaxBlocks
         let windowed = cached.count > target ? Array(cached.suffix(target)) : cached
         // Coalesce adjacent tool groups for display. `cached` keeps the original
