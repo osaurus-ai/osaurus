@@ -6681,6 +6681,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let images: [ImageDTO]?
         let created_at: String?
         let completed_at: String?
+        /// The footer's "Worked for" span, to the millisecond: the keypress
+        /// that opened the run (a run's first assistant turn only) and the
+        /// moment the run ended (`completedAt ?? lastOutputAt`).
+        let requested_at: String?
+        let ended_at: String?
         let token_count: Int?
     }
 
@@ -6711,6 +6716,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// documented as thread-safe for formatting, and this one is never
     /// reconfigured after creation.
     nonisolated(unsafe) private static let sessionDateFormatter = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let sessionPreciseDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     /// GET /sessions[?agent_id=&limit=&archived=] — the Mac's chat history
     /// (docs/MOBILE_PROTOCOL.md §14). Owner-only: these are the user's chats.
@@ -7158,6 +7168,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             images: images.isEmpty ? nil : images,
             created_at: turn.createdAt.map(sessionDateFormatter.string(from:)),
             completed_at: turn.completedAt.map(sessionDateFormatter.string(from:)),
+            requested_at: turn.requestedAt.map(sessionPreciseDateFormatter.string(from:)),
+            ended_at: (turn.completedAt ?? turn.lastOutputAt).map(sessionPreciseDateFormatter.string(from:)),
             token_count: turn.generationTokenCount
         )
     }

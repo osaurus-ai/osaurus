@@ -962,7 +962,8 @@ The same fields plus `turns`, in the Mac's block shape:
            "attachment_count":1,
            "attachments":[{"filename":"budget.md","file_size":664,"content":"…"}],
            "images":[{"index":0,"byte_count":284113}],
-           "created_at":"…","completed_at":"…","token_count":42}]}
+           "created_at":"…","completed_at":"…",
+           "requested_at":"2026-09-28T15:06:12.345Z","ended_at":"…","token_count":42}]}
 ```
 
 Tool-result turns are folded into the assistant turn that called them, so a
@@ -973,6 +974,16 @@ Absent when the turn has no documents. `images` lists the turn's images
 without their bytes (§14.9 serves them); absent when there are none. Audio
 and video are counted only.
 `404 session_not_found` for an unknown id.
+
+`requested_at` and `ended_at` carry the Mac footer's "Worked for" time,
+with fractional seconds. `requested_at` is when the user sent the run (before
+any model load) and is set only on a run's first assistant turn. It is absent
+on later steps and on chats older than the field. `ended_at` is when the run
+ended. A client times one response, meaning the consecutive assistant turns
+after a user turn, from its first turn's `requested_at ?? created_at`. If a
+later turn in that response has its own `requested_at`, as a Regenerate on a
+tool-calling step does, the time restarts from there. The response ends at
+its last turn's `ended_at`.
 
 Images a client sends in a §14.5 run (`image_url` data URLs) are stored on
 the user turn they came with, as a Mac chat stores its own, so they come
