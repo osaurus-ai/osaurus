@@ -1444,6 +1444,7 @@ public actor RemoteProviderService: ToolCapableService {
         /// keeping parallel calls (with explicit indices) separate.
         var lastTouchedToolSlot: Int?
         var lastFinishReason: String?
+        var remotePrefillProgress = RemotePrefillProgressTracker()
 
         /// Set once a reasoning item with non-empty `encrypted_content` has
         /// been yielded from the streaming `output_item.done` path, so the
@@ -1861,6 +1862,7 @@ public actor RemoteProviderService: ToolCapableService {
         // requested `usage` from, so the trailing usage chunk is captured and
         // surfaced as completion-token telemetry before the call dispatches.
         options.deferToolCallDispatchUntilUsage = requestsStreamUsageOptions(providerType: providerType)
+        options.acceptOsaurusPrefill = providerType == .osaurus
         return options
     }
 
