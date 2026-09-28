@@ -4515,8 +4515,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let avatar: String?
         /// The agent's custom Action Bar (chat quick actions) so a connected
         /// peer can surface the agent's own prompt shortcuts in the empty
-        /// state. Omitted (nil) when the agent uses the built-in defaults, so
-        /// the client falls back to its neutral chat defaults.
+        /// state. Omitted (nil) when the agent uses the built-in chat
+        /// defaults, so the client falls back to its own copy of them. The
+        /// Orchestrator's configure-oriented defaults are sent in full
+        /// (`clientQuickActions(for:)`).
         let chat_quick_actions: [AgentQuickAction]?
         let default_model: String?
         /// Server-resolved model id, known before the first streamed chunk.
@@ -4545,6 +4547,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private struct AgentListResponse: Codable {
         let agents: [AgentListItem]
+    }
+
+    /// The Action Bar a client shows for `agent`: its own, else for the
+    /// Orchestrator the configure-oriented defaults its Mac chat shows (a
+    /// client only knows the chat defaults). nil = the chat defaults.
+    static func clientQuickActions(for agent: Agent) -> [AgentQuickAction]? {
+        if let own = agent.chatQuickActions { return own }
+        return agent.id == Agent.defaultId ? AgentQuickAction.defaultConfigurationQuickActions : nil
     }
 
     // MARK: - Pair Endpoint
@@ -8538,7 +8548,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     description: agent.description,
                     generated_description: agent.generatedDescription,
                     avatar: agent.avatar,
-                    chat_quick_actions: agent.chatQuickActions,
+                    chat_quick_actions: Self.clientQuickActions(for: agent),
                     default_model: agent.defaultModel,
                     effective_model: modelId,
                     supports_thinking: supportsThinking,
@@ -8698,7 +8708,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 description: agent.description,
                 generated_description: agent.generatedDescription,
                 avatar: agent.avatar,
-                chat_quick_actions: agent.chatQuickActions,
+                chat_quick_actions: Self.clientQuickActions(for: agent),
                 default_model: agent.defaultModel,
                 effective_model: effectiveModelId,
                 supports_thinking: supportsThinking,
