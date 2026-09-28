@@ -35,6 +35,9 @@ public final class MCPProviderManager: ObservableObject {
     /// Registered tool instances keyed by provider ID
     private var registeredTools: [UUID: [MCPProviderTool]] = [:]
 
+    /// Only the latest discovery in the current provider lifecycle may publish.
+    private var catalogRefreshTokens: [UUID: UUID] = [:]
+
     /// Host-resident stdio subprocess owners keyed by provider ID. Held so
     /// `disconnect(...)` can terminate them — the subprocess only stays
     /// alive while we hold the runner.
@@ -381,6 +384,7 @@ public final class MCPProviderManager: ObservableObject {
 
     /// Disconnect from a provider
     public func disconnect(providerId: UUID) {
+        catalogRefreshTokens.removeValue(forKey: providerId)
         // Unregister tools
         if let tools = registeredTools[providerId] {
             let toolNames = tools.map { $0.name }
@@ -1171,6 +1175,7 @@ public final class MCPProviderManager: ObservableObject {
 
     private func handleStdioProcessExit(providerId: UUID, exitCode: Int32, stderrTail: String) {
         guard providerStates[providerId]?.isConnected == true else { return }
+        catalogRefreshTokens.removeValue(forKey: providerId)
 
         if let tools = registeredTools[providerId] {
             ToolRegistry.shared.unregister(names: tools.map { $0.name })
@@ -1275,7 +1280,7 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     private func discoverTools(for providerId: UUID, client: MCP.Client, provider: MCPProvider) async throws {
-        try await refreshDiscoveredTools(for: providerId, provider: provider) {
+        try await refreshDiscoveredTools(for: providerId, provider: provider, expectedClient: client) {
             // List tools with timeout, following pagination cursors so servers
             // that split tools/list across pages (e.g. Baserow, #1999) aren't
             // truncated to their first page.
@@ -1291,9 +1296,22 @@ public final class MCPProviderManager: ObservableObject {
     internal func refreshDiscoveredTools(
         for providerId: UUID,
         provider: MCPProvider,
+        expectedClient: MCP.Client? = nil,
         fetch: () async throws -> [MCP.Tool]
     ) async throws {
+        try Task.checkCancellation()
+        if let expectedClient, clients[providerId] !== expectedClient { return }
+        let token = UUID()
+        catalogRefreshTokens[providerId] = token
+        defer {
+            if catalogRefreshTokens[providerId] == token {
+                catalogRefreshTokens.removeValue(forKey: providerId)
+            }
+        }
         let mcpTools = try await fetch()
+        try Task.checkCancellation()
+        guard catalogRefreshTokens[providerId] == token else { return }
+        if let expectedClient, clients[providerId] !== expectedClient { return }
         // Only replace the live catalog after the complete paginated fetch
         // succeeds. A failed tools/list refresh therefore leaves the last
         // executable catalog intact instead of erasing it first.
@@ -1311,6 +1329,7 @@ public final class MCPProviderManager: ObservableObject {
         for providerId: UUID,
         provider: MCPProvider
     ) -> [MCPProviderTool] {
+        catalogRefreshTokens.removeValue(forKey: providerId)
         if let oldTools = registeredTools[providerId] {
             ToolRegistry.shared.unregister(names: oldTools.map(\.name))
         }
