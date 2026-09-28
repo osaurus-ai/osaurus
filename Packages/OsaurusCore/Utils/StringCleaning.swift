@@ -76,12 +76,30 @@ public enum StringCleaning {
         }
 
         let chars = Array(content)
+        // `isLeakedToolCallJSON` needs a top-level `action` or `name` key.
+        // A candidate block can only carry one if a key token (or a JSON
+        // `\u` escape that could spell one) starts strictly inside it, so
+        // record where those tokens start and skip the brace-match + JSON
+        // parse for every `{` that cannot enclose one. Without this, long
+        // code/JSON answers cost one parse per brace on the main thread
+        // (APPLE-MACOS-1FE / 2PF).
+        let keyStarts = leakKeyTokenStarts(in: chars)
+        let lastKeyStart = keyStarts.last ?? -1
+        var braceMatches: [Int: Int] = [:]
+
         var output: [Character] = []
         output.reserveCapacity(chars.count)
         var i = 0
         while i < chars.count {
+            // No key token starts after `i`: nothing ahead can be a leaked
+            // call. Append the remainder verbatim.
+            if i >= lastKeyStart {
+                output.append(contentsOf: chars[i...])
+                break
+            }
             if chars[i] == "{",
-                let end = matchingBraceIndex(chars, start: i),
+                let end = matchingBraceIndex(chars, start: i, cache: &braceMatches),
+                containsKeyStart(keyStarts, after: i, before: end),
                 isLeakedToolCallJSON(String(chars[i ... end]))
             {
                 i = end + 1
@@ -93,11 +111,60 @@ public enum StringCleaning {
         return String(output).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Tokens whose presence is necessary for a `{...}` block to satisfy
+    /// `isLeakedToolCallJSON`: the two key literals, plus `\u` because a JSON
+    /// unicode escape inside a key could spell either of them.
+    private static let leakKeyTokens: [[Character]] = [
+        Array("\"action\""), Array("\"name\""), Array("\\u"),
+    ]
+
+    /// Sorted start indices (in `chars`) of every `leakKeyTokens` occurrence.
+    private static func leakKeyTokenStarts(in chars: [Character]) -> [Int] {
+        var starts: [Int] = []
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "\"" || c == "\\" {
+                for token in leakKeyTokens where token[0] == c {
+                    let end = i + token.count
+                    if end <= chars.count, chars[i ..< end].elementsEqual(token) {
+                        starts.append(i)
+                        break
+                    }
+                }
+            }
+            i += 1
+        }
+        return starts
+    }
+
+    /// Whether any key token starts in the open interval `(open, close)`.
+    /// `starts` is sorted; binary search for the first entry > `open`.
+    private static func containsKeyStart(_ starts: [Int], after open: Int, before close: Int) -> Bool {
+        var lo = 0
+        var hi = starts.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if starts[mid] <= open { lo = mid + 1 } else { hi = mid }
+        }
+        return lo < starts.count && starts[lo] < close
+    }
+
     /// Index of the `}` that closes the `{` at `start`, respecting string
     /// literals so braces inside JSON string values don't miscount. Returns
     /// nil if the block never closes.
-    private static func matchingBraceIndex(_ chars: [Character], start: Int) -> Int? {
-        var depth = 0
+    ///
+    /// `cache` maps `{` index → closing index (`-1` = never closes). One scan
+    /// resolves not just `start` but every `{` it passes outside a string
+    /// literal: a scan starting at such a `{` sees the same characters with
+    /// the same string state and a depth offset by a constant, so it closes
+    /// exactly where this scan's stack pops it. Braces met inside a string
+    /// are not cached — their own scan would start with inverted string
+    /// state. This keeps unbalanced code (a stray `'{'` char literal) linear
+    /// instead of re-scanning to the end from every brace.
+    private static func matchingBraceIndex(_ chars: [Character], start: Int, cache: inout [Int: Int]) -> Int? {
+        if let hit = cache[start] { return hit >= 0 ? hit : nil }
+        var open: [Int] = []
         var inString = false
         var escaped = false
         var i = start
@@ -114,13 +181,14 @@ public enum StringCleaning {
             } else if c == "\"" {
                 inString = true
             } else if c == "{" {
-                depth += 1
+                open.append(i)
             } else if c == "}" {
-                depth -= 1
-                if depth == 0 { return i }
+                if let opened = open.popLast() { cache[opened] = i }
+                if open.isEmpty { return i }
             }
             i += 1
         }
+        for opened in open { cache[opened] = -1 }
         return nil
     }
 
