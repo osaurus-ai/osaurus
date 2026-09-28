@@ -264,6 +264,9 @@ enum SeatbeltExecutor {
         }
 
         do {
+            // A NUL byte in the model-supplied command/env makes `run()` raise
+            // an uncatchable ObjC exception; refuse it as a normal error.
+            try FolderToolHelpers.validateLaunchStrings(of: process)
             try process.run()
         } catch {
             throw SandboxError.execFailed(

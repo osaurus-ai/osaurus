@@ -350,6 +350,11 @@ enum FolderToolHelpers {
     /// Run a process and wait for completion asynchronously without blocking the main thread.
     /// The termination handler is set before running to avoid race conditions.
     static func runProcessAsync(_ process: Process) async throws {
+        // `Process.run()` raises an uncatchable `NSInvalidArgumentException`
+        // (`-[NSString fileSystemRepresentation]`) when any launch string
+        // carries an embedded NUL — model-supplied `shell_run` commands can.
+        // Swift `try` cannot catch that; reject before launching (APPLE-MACOS-258).
+        try validateLaunchStrings(of: process)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { _ in
                 continuation.resume()
@@ -359,6 +364,31 @@ enum FolderToolHelpers {
             } catch {
                 continuation.resume(throwing: error)
             }
+        }
+    }
+
+    /// Throws `FolderToolError.invalidArguments` when the executable path,
+    /// working directory, any argument, or any environment key/value contains
+    /// a NUL byte. Those cannot be passed to `posix_spawn` and make
+    /// `Process.run()` raise an Objective-C exception instead of throwing.
+    static func validateLaunchStrings(of process: Process) throws {
+        func check(_ value: String?, _ label: String) throws {
+            guard let value, value.utf8.contains(0) else { return }
+            throw FolderToolError.invalidArguments(
+                "\(label) contains a NUL byte and cannot be passed to a process"
+            )
+        }
+        // `URL.path` percent-encodes a NUL (`%00`) and `currentDirectoryURL`
+        // reads back nil for such a path; the string properties are what
+        // `Process` actually hands to `fileSystemRepresentation`.
+        try check(process.launchPath, "Executable path")
+        try check(process.currentDirectoryPath, "Working directory")
+        for (index, argument) in (process.arguments ?? []).enumerated() {
+            try check(argument, "Argument \(index)")
+        }
+        for (key, value) in process.environment ?? [:] {
+            try check(key, "Environment variable name")
+            try check(value, "Environment variable '\(key)'")
         }
     }
 

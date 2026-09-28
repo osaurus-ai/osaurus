@@ -1,0 +1,90 @@
+//
+//  ProcessLaunchValidationTests.swift
+//
+//  Regression for APPLE-MACOS-258: `Process.run()` raises an uncatchable
+//  `NSInvalidArgumentException` (`-[NSString fileSystemRepresentation]`)
+//  when a launch string carries an embedded NUL. Model-supplied `shell_run`
+//  commands can contain one, so `runProcessAsync` must refuse the launch
+//  with a normal Swift error instead of crashing the app.
+//
+
+import Foundation
+import Testing
+
+@testable import OsaurusCore
+
+struct ProcessLaunchValidationTests {
+
+    private func process(arguments: [String]) -> Process {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/echo")
+        p.arguments = arguments
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        return p
+    }
+
+    @Test func argumentWithNULIsRejectedBeforeLaunch() async {
+        let p = process(arguments: ["ok", "bad\u{0}arg"])
+        await #expect(throws: FolderToolError.self) {
+            try await FolderToolHelpers.runProcessAsync(p)
+        }
+        #expect(!p.isRunning)
+        #expect(p.processIdentifier == 0)
+    }
+
+    @Test func executablePathWithNULIsRejected() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/ec\u{0}ho")
+        #expect(throws: FolderToolError.self) {
+            try FolderToolHelpers.validateLaunchStrings(of: p)
+        }
+    }
+
+    @Test func workingDirectoryWithNULIsRejected() {
+        let p = process(arguments: [])
+        p.currentDirectoryURL = URL(fileURLWithPath: "/tmp/\u{0}x")
+        #expect(throws: FolderToolError.self) {
+            try FolderToolHelpers.validateLaunchStrings(of: p)
+        }
+    }
+
+    @Test func environmentWithNULIsRejected() {
+        let key = process(arguments: [])
+        key.environment = ["BAD\u{0}KEY": "v"]
+        #expect(throws: FolderToolError.self) {
+            try FolderToolHelpers.validateLaunchStrings(of: key)
+        }
+
+        let value = process(arguments: [])
+        value.environment = ["KEY": "bad\u{0}value"]
+        #expect(throws: FolderToolError.self) {
+            try FolderToolHelpers.validateLaunchStrings(of: value)
+        }
+    }
+
+    @Test func errorIsReportedAsInvalidArguments() {
+        let p = process(arguments: ["x\u{0}"])
+        do {
+            try FolderToolHelpers.validateLaunchStrings(of: p)
+            Issue.record("expected a throw")
+        } catch let error as FolderToolError {
+            guard case .invalidArguments(let message) = error else {
+                Issue.record("unexpected case: \(error)")
+                return
+            }
+            #expect(message.contains("NUL"))
+            #expect(!message.utf8.contains(0))
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test func cleanLaunchStillRuns() async throws {
+        let p = process(arguments: ["hello"])
+        p.currentDirectoryURL = FileManager.default.temporaryDirectory
+        p.environment = ["PATH": "/usr/bin:/bin"]
+        try await FolderToolHelpers.runProcessAsync(p)
+        #expect(p.terminationStatus == 0)
+    }
+}
