@@ -175,19 +175,6 @@ struct ModelDownloadView: View {
             LiveSystemStatusBar()
                 .opacity(hasAppeared ? 1 : 0)
 
-            Toggle(isOn: $modelManager.automaticallyChecksModelUpdates) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Automatically Check Model Updates", bundle: .module)
-                    Text("Checks installed OsaurusAI models every six hours. Never downloads model files automatically.", bundle: .module)
-                        .font(.caption)
-                        .foregroundStyle(theme.secondaryText)
-                }
-            }
-            .toggleStyle(.switch)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-            .settingsLandingAnchor("models.automaticUpdates")
-
             modelListView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
         }
@@ -440,6 +427,50 @@ struct ModelDownloadView: View {
                     : nil
             )
         }
+    }
+
+    // MARK: - Automatic Updates Card
+
+    /// Styled to match `HuggingFaceTokenCard` so the two settings cards read
+    /// as one family.
+    private var automaticUpdatesCard: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Automatically Check Model Updates", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    "Checks installed OsaurusAI models every six hours. Never downloads model files automatically.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Toggle(isOn: $modelManager.automaticallyChecksModelUpdates) {
+                Text("Automatically Check Model Updates", bundle: .module)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.tertiaryBackground.opacity(0.4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.cardBorder.opacity(0.6), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Filter Popover
@@ -1014,6 +1045,9 @@ struct ModelDownloadView: View {
                             if !modelManager.deprecationNotices.isEmpty {
                                 deprecationBanner
                             }
+
+                            automaticUpdatesCard
+                                .settingsLandingAnchor("models.automaticUpdates")
 
                             if lists.displayed.isEmpty {
                                 emptyState
