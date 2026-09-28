@@ -41,7 +41,7 @@ enum RunProgressLoadingPhase: Equatable, Sendable {
     /// Same priority as `NativeTypingIndicatorView`: sandbox, then prefill,
     /// then opaque MLX / warmup load.
     @MainActor
-    static func current(agentId: UUID?) -> RunProgressLoadingPhase {
+    static func current(agentId: UUID?, sessionID: String? = nil) -> RunProgressLoadingPhase {
         let progress = InferenceProgressManager.shared
         let sandbox = SandboxManager.State.shared
         let id = agentId ?? Agent.defaultId
@@ -50,13 +50,10 @@ enum RunProgressLoadingPhase: Equatable, Sendable {
         if usesSandbox && (sandbox.status == .starting || sandbox.isProvisioning) {
             return .sandbox
         }
-        if progress.prefillProgress != nil { return .prefill }
+        if RequestPrefillProgressStore.shared.visibleSnapshot(sessionID: sessionID) != nil { return .prefill }
         if progress.isLoadingModel { return .modelLoad }
         let warmup = WarmupProgressHub.shared.phases.values
         if warmup.contains(.loadingModel) { return .modelLoad }
-        if warmup.contains(where: { if case .prefilling = $0 { return true }; return false }) {
-            return .prefill
-        }
         return .none
     }
 }

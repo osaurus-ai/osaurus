@@ -12,6 +12,7 @@ import SwiftUI
 
 struct MessageThreadView: View {
     let blocks: [ContentBlock]
+    var progressSessionID: String? = nil
     /// Optional precomputed group header map; falls back to local computation when nil.
     var groupHeaderMap: [UUID: UUID]? = nil
     let width: CGFloat
@@ -98,6 +99,7 @@ struct MessageThreadView: View {
     var body: some View {
         MessageTableRepresentable(
             blocks: blocks,
+            progressSessionID: progressSessionID,
             groupHeaderMap: resolvedGroupHeaderMap,
             width: width,
             agentName: agentName,

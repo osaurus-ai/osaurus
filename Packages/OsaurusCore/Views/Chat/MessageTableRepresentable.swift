@@ -86,6 +86,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
 
     // Content
     let blocks: [ContentBlock]
+    var progressSessionID: String? = nil
     let groupHeaderMap: [UUID: UUID]
     let width: CGFloat
     let agentName: String
@@ -270,6 +271,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
 
     private func renderingContext(for coordinator: Coordinator) -> CellRenderingContext {
         CellRenderingContext(
+            progressSessionID: progressSessionID,
             width: max(100, width),
             agentName: agentName,
             agentAvatar: agentAvatar,
@@ -336,6 +338,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     // keep a convenience var for compatibility with init path which doesn't have a coordinator ref
     private var renderingContext: CellRenderingContext {
         CellRenderingContext(
+            progressSessionID: progressSessionID,
             width: max(100, width),
             agentName: agentName,
             agentAvatar: agentAvatar,
@@ -852,6 +855,7 @@ extension MessageTableRepresentable {
             let previousSearchHighlightQuery = ctx.searchHighlightQuery
             let previousSearchCurrentTurnId = ctx.searchCurrentTurnId
             let previousSearchCurrentOccurrence = ctx.searchCurrentOccurrence
+            let sessionChanged = ctx.progressSessionID != context.progressSessionID
             let previousStreaming = ctx.isStreaming
             let previousLastAssistantTurnId = ctx.lastAssistantTurnId
             // NSView backed cells snapshot the theme
@@ -969,7 +973,7 @@ extension MessageTableRepresentable {
                     previousStreaming != context.isStreaming
                     || previousLastAssistantTurnId != context.lastAssistantTurnId
                     || expandedIdsChanged
-                    || themeChanged
+                    || themeChanged || sessionChanged
                 if contextAffectsCells {
                     reconfigureAllCellsFromLookup(newLookup)
                     if themeChanged {

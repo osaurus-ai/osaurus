@@ -13,6 +13,7 @@ import SwiftUI
 
 /// Passed to NativeMessageCellView.configure() — bundles all rendering inputs.
 struct CellRenderingContext {
+    var progressSessionID: String? = nil
     var width: CGFloat
     let agentName: String
     let agentAvatar: String?
@@ -2939,7 +2940,7 @@ final class NativeMessageCellView: NSTableCellView {
             ])
             nativeTypingView = tv
         }
-        nativeTypingView?.configure(theme: context.theme, phase: phase)
+        nativeTypingView?.configure(theme: context.theme, phase: phase, sessionID: context.progressSessionID)
     }
 
     // MARK: - GenerationStats

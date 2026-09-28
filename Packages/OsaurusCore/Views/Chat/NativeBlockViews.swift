@@ -66,8 +66,21 @@ final class NativeTypingIndicatorView: NSView {
 
     // MARK: Init
 
+    private let requestStore: RequestPrefillProgressStore
+    private let warmupHub: WarmupProgressHub
+
     override init(frame: NSRect) {
+        requestStore = .shared
+        warmupHub = .shared
         super.init(frame: frame)
+        buildViews()
+        observeModelLoading()
+    }
+
+    init(progressStore: RequestPrefillProgressStore, warmupHub: WarmupProgressHub? = nil) {
+        requestStore = progressStore
+        self.warmupHub = warmupHub ?? .shared
+        super.init(frame: .zero)
         buildViews()
         observeModelLoading()
     }
@@ -93,7 +106,17 @@ final class NativeTypingIndicatorView: NSView {
         }
     }
 
-    func configure(theme: any ThemeProtocol, phase: TypingIndicatorPhase = .generating) {
+    private var progressSessionID: String?
+    /// The actual badge text; nil when this row is not showing prefill.
+    var prefillDisplayText: String? { prefillBadge.isHidden ? nil : prefillCountLabel.stringValue }
+
+    func configure(theme: any ThemeProtocol, phase: TypingIndicatorPhase = .generating,
+                   sessionID: String? = nil) {
+        if progressSessionID != sessionID {
+            progressSessionID = sessionID
+            cachedPrefill = requestStore.visibleSnapshot(sessionID: sessionID)?.progress
+            refreshLoadingPhase()
+        }
         if phase != self.phase {
             self.phase = phase
             refreshLoadingPhase()
@@ -206,17 +229,20 @@ final class NativeTypingIndicatorView: NSView {
         let sandbox = SandboxManager.State.shared
         let agents = AgentManager.shared
 
-        cachedPrefill = progress.prefillProgress
+        let requests = requestStore
+        cachedPrefill = requests.visibleSnapshot(sessionID: progressSessionID)?.progress
 
         // Prefill is observed on its own so the emitted value is captured
         // directly (see `cachedPrefill`), instead of being flattened to a Void
         // tick that forces a stale re-read of the singleton.
         cancellables.append(
-            progress.$prefillProgress
+            requests.$entries
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] state in
-                    self?.cachedPrefill = state
-                    self?.refreshLoadingPhase()
+                .sink { [weak self] entries in
+                    guard let self else { return }
+                    self.cachedPrefill = requests.visibleSnapshot(
+                        sessionID: self.progressSessionID, from: entries)?.progress
+                    self.refreshLoadingPhase()
                 }
         )
 
@@ -230,7 +256,7 @@ final class NativeTypingIndicatorView: NSView {
             // load/prefill progress to this side channel instead of the
             // global HUD. A send waiting on the pre-send handshake shows this
             // indicator, so the warm-up's model load must surface here too.
-            WarmupProgressHub.shared.$phases.map { _ in () }.eraseToAnyPublisher(),
+            warmupHub.$phases.map { _ in () }.eraseToAnyPublisher(),
         ]
 
         cancellables.append(
@@ -270,17 +296,12 @@ final class NativeTypingIndicatorView: NSView {
         if let prefillProgress = cachedPrefill { return .prefill(prefillProgress) }
         if progress.loadInFlightCount > 0 { return .modelLoad }
 
-        // Fall back to warm-up progress: while a send waits on the pre-send
-        // handshake, the model load/prefill in flight belongs to a suppressed
-        // warm-up request whose progress only reaches WarmupProgressHub.
-        let warmupPhases = WarmupProgressHub.shared.phases.values
+        // Preserve the coarse loading indication during the pre-send handshake.
+        // Suppressed warm-up token counts are not owned by this chat.
+        let warmupPhases = warmupHub.phases.values
         if warmupPhases.contains(.loadingModel) { return .modelLoad }
-        if case .prefilling(let state)? = warmupPhases.first(where: {
-            if case .prefilling = $0 { return true }
-            return false
-        }) {
-            return .prefill(state)
-        }
+        // Unowned background warmup counts belong to model tooltips, not a
+        // different chat's numeric prefill badge.
         return nil
     }
 

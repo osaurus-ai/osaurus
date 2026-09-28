@@ -37,6 +37,8 @@ struct PrefillProgressState: Codable, Sendable, Equatable {
     let completedUnitCount: Int
     let totalUnitCount: Int
     let detail: String?
+    var requestOwner: RequestPrefillProgressStore.Handle? = nil
+    var requestSequence: UInt64? = nil
 
     var fractionCompleted: Double {
         guard totalUnitCount > 0 else { return 0 }
