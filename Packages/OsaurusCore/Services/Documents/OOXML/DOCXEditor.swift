@@ -204,13 +204,13 @@ struct DOCXEditor {
             paragraphsByPart.append((part, try package.root(part).descendants("p")))
         }
         var mode: OOXMLText.MatchMode = .exact
-        var perPart: [(part: String, count: Int)] = []
+        var perPart: [(part: String, hits: Int)] = []
         var total = 0
         for candidate in [OOXMLText.MatchMode.exact, .normalized] {
             perPart = paragraphsByPart.map { entry in
                 (entry.part, entry.paras.reduce(0) { $0 + OOXMLText.occurrences(of: needle, in: $1, mode: candidate) })
             }
-            total = perPart.reduce(0) { $0 + $1.count }
+            total = perPart.reduce(0) { $0 + $1.hits }
             mode = candidate
             if total > 0 { break }
         }
@@ -709,11 +709,11 @@ struct DOCXEditor {
 
     // MARK: Diagnostics
 
-    private static func describeParts(_ perPart: [(part: String, count: Int)]) -> String {
-        perPart.filter { $0.count > 0 }.map { entry in
+    private static func describeParts(_ perPart: [(part: String, hits: Int)]) -> String {
+        perPart.filter { $0.hits > 0 }.map { entry in
             let name = (entry.part as NSString).lastPathComponent
             let label = name == "document.xml" ? "body" : name.replacingOccurrences(of: ".xml", with: "")
-            return "\(entry.count) in \(label)"
+            return "\(entry.hits) in \(label)"
         }.joined(separator: ", ")
     }
 

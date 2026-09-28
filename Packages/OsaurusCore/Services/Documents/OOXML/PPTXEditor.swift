@@ -127,13 +127,13 @@ struct PPTXEditor {
         // Match cascade: byte-for-byte first, then punctuation/whitespace
         // folded (PowerPoint autocorrects quotes and dashes too).
         var mode: OOXMLText.MatchMode = .exact
-        var perSlide: [(slide: Int, count: Int)] = []
+        var perSlide: [(slide: Int, hits: Int)] = []
         var total = 0
         for candidate in [OOXMLText.MatchMode.exact, .normalized] {
             perSlide = paragraphs.map { entry in
                 (entry.slide, entry.paras.reduce(0) { $0 + OOXMLText.occurrences(of: find, in: $1, mode: candidate) })
             }
-            total = perSlide.reduce(0) { $0 + $1.count }
+            total = perSlide.reduce(0) { $0 + $1.hits }
             mode = candidate
             if total > 0 { break }
         }
@@ -147,7 +147,7 @@ struct PPTXEditor {
             throw op.fail(message, isMatchMiss: true)
         }
         guard all || total == 1 else {
-            let where_ = perSlide.filter { $0.count > 0 }.map { "\($0.count) on slide \($0.slide)" }.joined(separator: ", ")
+            let where_ = perSlide.filter { $0.hits > 0 }.map { "\($0.hits) on slide \($0.slide)" }.joined(separator: ", ")
             throw op.fail(
                 "\"\(OOXMLText.preview(find, max: 80))\" appears \(total) times (\(where_)); add surrounding words, pass `slide`, or pass `replace_all: true`.")
         }
