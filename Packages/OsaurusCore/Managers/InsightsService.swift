@@ -108,18 +108,15 @@ final class InsightsService: ObservableObject {
         // miss the very first user keystroke when it lands inside
         // the debounce window.
         .dropFirst()
-        .debounce(for: .milliseconds(200), scheduler: DispatchQueue.main)
-        .map { logsAndCount, search, source, method in
-            let (snapshot, totalCount) = logsAndCount
-            let filtered = Self.computeFilteredLogs(
-                logs: snapshot,
-                search: search,
-                source: source,
-                method: method
-            )
-            let stats = Self.computeStats(logs: snapshot)
-            return (filtered, stats, totalCount, !snapshot.isEmpty)
-        }
+        // Debounce on a background queue so the filter + stats passes
+        // over the (up to 500-entry) ring buffer run off the main thread.
+        // Running them on main caused multi-second app hangs under load.
+        .debounce(for: .milliseconds(200), scheduler: Self.computeQueue)
+        // `computeSnapshot` is a nonisolated static function (not a
+        // closure formed inside this @MainActor init), so Swift 6 does not
+        // attach a main-actor isolation check to it when it runs on
+        // `computeQueue`.
+        .map(Self.computeSnapshot)
         .receive(on: DispatchQueue.main)
         .sink { [weak self] filtered, stats, totalCount, hasLogs in
             guard let self else { return }
@@ -130,7 +127,29 @@ final class InsightsService: ObservableObject {
         }
     }
 
-    private static func computeFilteredLogs(
+    /// Serial background queue for the debounced filter/stats pipeline.
+    nonisolated private static let computeQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.insights.compute",
+        qos: .userInitiated
+    )
+
+    /// Pure transform for the debounced pipeline. Operates only on the
+    /// passed-in value snapshot, so it's safe to run off the main actor.
+    nonisolated private static func computeSnapshot(
+        _ input: (([RequestLog], Int), String, SourceFilter, MethodFilter)
+    ) -> ([RequestLog], InsightsStats, Int, Bool) {
+        let ((snapshot, totalCount), search, source, method) = input
+        let filtered = computeFilteredLogs(
+            logs: snapshot,
+            search: search,
+            source: source,
+            method: method
+        )
+        let stats = computeStats(logs: snapshot)
+        return (filtered, stats, totalCount, !snapshot.isEmpty)
+    }
+
+    nonisolated private static func computeFilteredLogs(
         logs: [RequestLog],
         search: String,
         source: SourceFilter,
@@ -154,28 +173,44 @@ final class InsightsService: ObservableObject {
                 if log.source != .chatUI { return false }
             case .httpAPI:
                 if log.source != .httpAPI { return false }
-            case .plugin:
+    /// Single pass over the logs: avoids materializing intermediate arrays
+    /// (each copy of the large `RequestLog` struct retains many fields).
+    nonisolated private static func computeStats(logs: [RequestLog]) -> InsightsStats {
                 if log.source != .plugin { return false }
-            case .p2p:
+        var successCount = 0
+        var errors = 0
+        var durationSum: Double = 0
+        var inferenceCount = 0
+        var totalInputTokens = 0
+        var totalOutputTokens = 0
+        var speedSum: Double = 0
+        var speedCount = 0
+
+        for log in logs {
+            if log.isSuccess { successCount += 1 }
+            if log.isError { errors += 1 }
+            durationSum += log.durationMs
+            if log.isInference {
+                inferenceCount += 1
+                totalInputTokens += log.inputTokens ?? 0
+                totalOutputTokens += log.outputTokens ?? 0
+                if let tps = log.tokensPerSecond {
+                    speedSum += tps
+                    speedCount += 1
+                }
+            }
+        }
+
                 if log.source != .p2p { return false }
-            }
-
-            switch method {
-            case .all:
-                break
-            case .get:
-                if log.method != "GET" { return false }
-            case .post:
-                if log.method != "POST" { return false }
-            }
-
+        let avgDuration = total > 0 ? durationSum / Double(total) : 0
+        let avgSpeed = speedCount > 0 ? speedSum / Double(speedCount) : 0
             return true
         }
     }
 
     private static func computeStats(logs: [RequestLog]) -> InsightsStats {
         let total = logs.count
-        let successCount = logs.filter { $0.isSuccess }.count
+            inferenceCount: inferenceCount,
         let successRate = total > 0 ? Double(successCount) / Double(total) * 100 : 0
         let errors = logs.filter { $0.isError }.count
         let avgDuration =
@@ -366,7 +401,7 @@ struct ConnectionActivitySummary: Equatable {
 
 // MARK: - Supporting Types
 
-enum SourceFilter: String, CaseIterable {
+enum SourceFilter: String, CaseIterable, Sendable {
     case all = "All"
     case chatUI = "Chat"
     case httpAPI = "HTTP"
@@ -384,7 +419,7 @@ enum SourceFilter: String, CaseIterable {
     }
 }
 
-enum MethodFilter: String, CaseIterable {
+enum MethodFilter: String, CaseIterable, Sendable {
     case all = "All"
     case get = "GET"
     case post = "POST"
@@ -398,7 +433,7 @@ enum MethodFilter: String, CaseIterable {
     }
 }
 
-struct InsightsStats: Equatable {
+struct InsightsStats: Equatable, Sendable {
     let totalRequests: Int
     let successRate: Double
     let errorCount: Int
