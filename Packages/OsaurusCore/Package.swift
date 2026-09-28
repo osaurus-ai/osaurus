@@ -323,7 +323,7 @@ let package = Package(
         // bundle's dflash/ folder, and sets drafting aside while it loses.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "0003f720cb1aada936e69a5b14167697673eafe7"
+            revision: "20bafce21725d40eea623f691d17027bffb38191"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
