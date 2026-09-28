@@ -6485,6 +6485,9 @@ final class ChatSession: ObservableObject {
                 }
 
                 var assistantTurn = ChatTurn(role: .assistant, content: "")
+                // The footer's total response time runs from the keypress, so
+                // it covers the pre-send warm-up (model load) and setup above.
+                assistantTurn.requestedAt = sendRequestedAt
                 turns.append(assistantTurn)
                 // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
                 // user-only while isStreaming is true and the table early-returns without assistant rows.

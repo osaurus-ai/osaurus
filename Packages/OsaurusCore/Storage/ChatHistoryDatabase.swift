@@ -264,7 +264,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         "tool_call_durations", "thinking_duration", "router_billing",
         "terminal_stop_reason", "model_context_excluded", "tool_call_logs",
         "injected_context_prefix", "generation_tokens_per_second", "model_load_seconds", "last_output_at",
-        "user_wait_seconds",
+        "user_wait_seconds", "requested_at",
     ]
 
     private func assertWritableSchema() throws {
@@ -573,10 +573,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try setSchemaVersion(19)
     }
 
-    /// v21: seconds the run spent blocked on approval prompts, excluded from
-    /// the footer's total response time.
+    /// v21: the footer's total response time — when the user sent the run
+    /// (`requested_at`, before any pre-send model load) and the seconds it
+    /// spent blocked on approval prompts, which are excluded.
     private func migrateToV21() throws {
         try addColumnIfMissing("turns", "user_wait_seconds", "REAL")
+        try addColumnIfMissing("turns", "requested_at", "REAL")
         try setSchemaVersion(21)
     }
 
@@ -1963,6 +1965,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if let userWait = turn.userWaitSeconds {
             hasher.update(data: Data("user_wait:\(userWait)".utf8))
         }
+        if let requestedAt = turn.requestedAt {
+            hasher.update(data: Data("requested_at:\(requestedAt.timeIntervalSince1970)".utf8))
+        }
         if let stopReason = turn.terminalStopReason {
             hasher.update(data: Data(stopReason.utf8))
         }
@@ -2083,8 +2088,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
              created_at, completed_at, generation_token_count, time_to_first_token,
              tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
              model_context_excluded, tool_call_logs, injected_context_prefix,
-             generation_tokens_per_second, model_load_seconds, last_output_at, user_wait_seconds)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+             generation_tokens_per_second, model_load_seconds, last_output_at, user_wait_seconds,
+             requested_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -2111,7 +2117,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             generation_tokens_per_second = excluded.generation_tokens_per_second,
             model_load_seconds = excluded.model_load_seconds,
             last_output_at = excluded.last_output_at,
-            user_wait_seconds = excluded.user_wait_seconds
+            user_wait_seconds = excluded.user_wait_seconds,
+            requested_at = excluded.requested_at
         """
 
     private static let selectTurnsSQL = """
@@ -2120,7 +2127,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                created_at, completed_at, generation_token_count, time_to_first_token,
                tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
                model_context_excluded, tool_call_logs, injected_context_prefix,
-               generation_tokens_per_second, model_load_seconds, last_output_at, user_wait_seconds
+               generation_tokens_per_second, model_load_seconds, last_output_at, user_wait_seconds,
+               requested_at
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -2233,6 +2241,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             generationTokensPerSecond: readNullableDouble(stmt, index: 20),
             modelLoadSeconds: readNullableDouble(stmt, index: 21),
             userWaitSeconds: readNullableDouble(stmt, index: 23),
+            requestedAt: readNullableDate(stmt, index: 24),
             terminalStopReason: terminalStopReason,
             modelContextExcluded: modelContextExcluded,
             routerBilling: routerBilling,
@@ -2290,6 +2299,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindNullableDouble(stmt, index: 25, value: turn.modelLoadSeconds)
         bindNullableDouble(stmt, index: 26, value: turn.lastOutputAt?.timeIntervalSince1970)
         bindNullableDouble(stmt, index: 27, value: turn.userWaitSeconds)
+        bindNullableDouble(stmt, index: 28, value: turn.requestedAt?.timeIntervalSince1970)
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

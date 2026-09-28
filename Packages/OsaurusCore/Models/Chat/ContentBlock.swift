@@ -595,7 +595,7 @@ extension ContentBlock {
         activeTurnId: UUID? = nil,
         agentName: String,
         previousTurn: ChatTurn? = nil,
-        // `createdAt` of the first assistant turn in `previousTurn`'s group,
+        // `requestedAt ?? createdAt` of the first assistant turn in `previousTurn`'s group,
         // for suffix regenerations whose response began before `turns[0]`.
         // Anchors the footer's total response time. Ignored unless
         // `previousTurn` is an assistant turn.
@@ -633,7 +633,7 @@ extension ContentBlock {
             // Assistant messages group consecutive turns (continuing responses).
             let isFirstInGroup = turn.role != previousRole || turn.role == .user
             if isFirstInGroup {
-                groupStartedAt = turn.role == .assistant ? turn.createdAt : nil
+                groupStartedAt = turn.role == .assistant ? (turn.requestedAt ?? turn.createdAt) : nil
             }
 
             if isFirstInGroup, let prevId = previousTurnId {
@@ -1031,14 +1031,13 @@ extension ContentBlock {
             // landed.
             let isPendingIntermediateStep = isActive && turn.pendingToolName != nil
 
-            // Wall-clock from the start of the response to the moment its last
-            // output was visible, minus time the run sat on approval prompts.
-            // `lastOutputAt` rather than `completedAt`: a local stream
-            // terminates only after the post-generation cache store, seconds
-            // after the answer finished (see `ChatTurn`).
+            // Wall-clock from the keypress to the moment the run ended (model
+            // load, prefill, every tool step and the local cache-store tail
+            // included), minus time the run sat on approval prompts. Withheld
+            // while the run is still open so the chip lands once, final.
             let totalDuration: TimeInterval? = {
-                guard turn.role == .assistant, let start = groupStartedAt,
-                    let end = turn.lastOutputAt ?? turn.completedAt
+                guard turn.role == .assistant, !isActive, let start = groupStartedAt,
+                    let end = turn.completedAt ?? turn.lastOutputAt
                 else { return nil }
                 let elapsed = end.timeIntervalSince(start) - (turn.userWaitSeconds ?? 0)
                 return elapsed >= 0.05 ? elapsed : nil

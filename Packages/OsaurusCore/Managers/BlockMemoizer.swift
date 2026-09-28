@@ -255,7 +255,7 @@ final class BlockMemoizer {
         if previousTurn?.role == .assistant {
             for turn in turns.prefix(turnIndex).reversed() where turn.role != .tool {
                 guard turn.role == .assistant else { break }
-                previousGroupStartedAt = turn.createdAt
+                previousGroupStartedAt = turn.requestedAt ?? turn.createdAt
             }
         }
 

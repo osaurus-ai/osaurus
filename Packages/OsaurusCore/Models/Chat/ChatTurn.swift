@@ -395,10 +395,15 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// the run, so the final turn of a response carries the whole wait; the
     /// footer's total response time subtracts it. Nil when nothing waited.
     var userWaitSeconds: TimeInterval?
+    /// When the user pressed Enter (or Regenerate / Save & Regenerate) for the
+    /// run this turn opened. Earlier than `createdAt` by the pre-send warm-up
+    /// (model load) and setup awaits. Set only on a run's first assistant turn;
+    /// anchors the footer's total response time.
+    var requestedAt: Date?
 
-    /// Record the run's user-wait total as of this turn's last visible output.
-    func stampUserWait(from clock: UserWaitClock?, at fallback: Date) {
-        guard let wait = clock?.total(at: lastOutputAt ?? fallback), wait > 0 else { return }
+    /// Record the run's user-wait total as of `now`.
+    func stampUserWait(from clock: UserWaitClock?, at now: Date) {
+        guard let wait = clock?.total(at: now), wait > 0 else { return }
         userWaitSeconds = wait
     }
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for

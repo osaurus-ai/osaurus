@@ -19,19 +19,37 @@ struct ResponseTotalDurationTests {
     func totalSpansEveryToolCallingStepOfTheResponse() throws {
         let turns = toolLoopTurns(steps: 3)
         let blocks = ContentBlock.generateBlocks(from: turns, streamingTurnId: nil, agentName: "Assistant")
-        #expect(try totalDuration(in: blocks) == 80)
+        #expect(try totalDuration(in: blocks) == 81)
     }
 
+    /// Enter → run end: the pre-send warm-up before the assistant turn exists
+    /// and the local cache-store tail after the last token both count.
     @Test
-    func totalEndsAtLastVisibleOutputNotStreamTermination() throws {
+    func totalRunsFromKeypressToRunEnd() throws {
         let user = ChatTurn(role: .user, content: "Hi", createdAt: start)
-        let reply = ChatTurn(role: .assistant, content: "Hello", createdAt: start.addingTimeInterval(1))
+        let reply = ChatTurn(role: .assistant, content: "Hello", createdAt: start.addingTimeInterval(9))
+        reply.requestedAt = start  // model load happened before the turn was created
         reply.generationTokensPerSecond = 40
         reply.lastOutputAt = start.addingTimeInterval(11)
-        // Local cache-store tail after the last token must not count.
         reply.completedAt = start.addingTimeInterval(20)
         let blocks = ContentBlock.generateBlocks(from: [user, reply], streamingTurnId: nil, agentName: "Assistant")
-        #expect(try totalDuration(in: blocks) == 10)
+        #expect(try totalDuration(in: blocks) == 20)
+    }
+
+    /// While the run is open (engine tail after the output completed) the
+    /// chip is withheld so it lands once with the final number.
+    @Test
+    func totalWithheldWhileTheRunIsOpen() throws {
+        let user = ChatTurn(role: .user, content: "Hi", createdAt: start)
+        let reply = ChatTurn(role: .assistant, content: "Hello", createdAt: start)
+        reply.generationTokensPerSecond = 40
+        reply.lastOutputAt = start.addingTimeInterval(5)
+        reply.completedAt = start.addingTimeInterval(5)
+        let open = ContentBlock.generateBlocks(
+            from: [user, reply], streamingTurnId: nil, activeTurnId: reply.id, agentName: "Assistant")
+        #expect(try totalDuration(in: open) == nil)
+        let closed = ContentBlock.generateBlocks(from: [user, reply], streamingTurnId: nil, agentName: "Assistant")
+        #expect(try totalDuration(in: closed) == 5)
     }
 
     @Test
@@ -55,10 +73,10 @@ struct ResponseTotalDurationTests {
     @Test
     func approvalWaitIsExcludedFromTheTotal() throws {
         let turns = toolLoopTurns(steps: 3)
-        // 50s of the 80s were spent on permission prompts between steps.
+        // 50s of the 81s were spent on permission prompts between steps.
         turns.last?.userWaitSeconds = 50
         let blocks = ContentBlock.generateBlocks(from: turns, streamingTurnId: nil, agentName: "Assistant")
-        #expect(try totalDuration(in: blocks) == 30)
+        #expect(try totalDuration(in: blocks) == 31)
     }
 
     @Test
@@ -92,11 +110,11 @@ struct ResponseTotalDurationTests {
     }
 
     @Test
-    func stampUsesTheLastVisibleOutputAsTheCutoff() {
+    func stampRecordsTheRunWaitSoFar() {
         let clock = UserWaitClock()
         clock.begin(at: start)
+        clock.end(at: start.addingTimeInterval(4))
         let turn = ChatTurn(role: .assistant, content: "Done")
-        turn.lastOutputAt = start.addingTimeInterval(4)
         turn.stampUserWait(from: clock, at: start.addingTimeInterval(30))
         #expect(turn.userWaitSeconds == 4)
         let untouched = ChatTurn(role: .assistant, content: "Done")
@@ -108,9 +126,13 @@ struct ResponseTotalDurationTests {
     func userWaitSurvivesTheTurnDataRoundTrip() throws {
         let turn = ChatTurn(role: .assistant, content: "Done")
         turn.userWaitSeconds = 42.5
+        turn.requestedAt = start
         let data = try JSONDecoder().decode(ChatTurnData.self, from: JSONEncoder().encode(ChatTurnData(from: turn)))
         #expect(data.userWaitSeconds == 42.5)
-        #expect(ChatTurn(from: data).userWaitSeconds == 42.5)
+        #expect(data.requestedAt == start)
+        let restored = ChatTurn(from: data)
+        #expect(restored.userWaitSeconds == 42.5)
+        #expect(restored.requestedAt == start)
     }
 
     /// The memoizer's append path regenerates only a suffix of the transcript;
@@ -122,13 +144,13 @@ struct ResponseTotalDurationTests {
         // user, a1, tool, a2 — then tool, a3 appended.
         _ = memoizer.blocks(from: Array(all.prefix(4)), streamingTurnId: nil, agentName: "Assistant")
         let blocks = memoizer.blocks(from: all, streamingTurnId: nil, agentName: "Assistant")
-        #expect(try totalDuration(in: blocks) == 80)
+        #expect(try totalDuration(in: blocks) == 81)
         let full = ContentBlock.generateBlocks(from: all, streamingTurnId: nil, agentName: "Assistant")
         #expect(blocks == full)
     }
 
-    /// user → (assistant, tool)×(steps-1) → final assistant; the response
-    /// starts 2s after the user message and its last output lands at +80s.
+    /// user → (assistant, tool)×(steps-1) → final assistant.
+    /// Enter at -1s, first assistant step created at 0s, last output at +80s.
     private func toolLoopTurns(steps: Int) -> [ChatTurn] {
         var turns = [ChatTurn(role: .user, content: "Do the thing", createdAt: start.addingTimeInterval(-2))]
         for step in 0 ..< steps {
@@ -139,6 +161,7 @@ struct ResponseTotalDurationTests {
             )
             assistant.lastOutputAt = start.addingTimeInterval(Double(step) * 20 + 5)
             assistant.generationTokensPerSecond = 40
+            if step == 0 { assistant.requestedAt = start.addingTimeInterval(-1) }
             turns.append(assistant)
             if step < steps - 1 {
                 turns.append(ChatTurn(role: .tool, content: "ok", createdAt: start.addingTimeInterval(Double(step) * 20 + 6)))
