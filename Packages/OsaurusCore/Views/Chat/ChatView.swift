@@ -10944,18 +10944,24 @@ struct ChatView: View {
 
             // Minimap overlay — sits at vertical center, right edge
             if minimapMarkers.count >= 2 {
-                HStack {
-                    Spacer()
-                    ChatMinimap(
-                        markers: minimapMarkers,
-                        activeMarkerId: activeMinimapTurnId,
-                        onSelect: { turnId in
-                            scrollToTurnId = turnId
-                            scrollToFindOccurrence = nil
-                            scrollToTurnTrigger &+= 1
-                        }
-                    )
-                    .padding(.trailing, 22)
+                // Reads the thread area's height so the minimap can cap
+                // itself on long conversations instead of overflowing.
+                GeometryReader { proxy in
+                    HStack {
+                        Spacer()
+                        ChatMinimap(
+                            markers: minimapMarkers,
+                            activeMarkerId: activeMinimapTurnId,
+                            availableHeight: proxy.size.height,
+                            onSelect: { turnId in
+                                scrollToTurnId = turnId
+                                scrollToFindOccurrence = nil
+                                scrollToTurnTrigger &+= 1
+                            }
+                        )
+                        .padding(.trailing, 22)
+                    }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
                 }
                 .allowsHitTesting(true)
             }
