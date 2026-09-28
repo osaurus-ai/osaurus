@@ -8,9 +8,11 @@
 //  and single-line preview of the user message. Clicking a row scrolls
 //  the thread to that turn.
 //
-//  Long conversations are height-capped in both states: collapsed, the
-//  ticks pack tighter and, past that, each tick stands for a small group
-//  of messages; expanded, the list scrolls and opens on the active row.
+//  Long conversations are height-capped in both states. The same rows are
+//  kept across the hover so the tick-to-row morph survives: collapsed, the
+//  ticks pack tighter to fit the cap; expanded, the list scrolls and opens
+//  on the active row. Only past the densest legible tick spacing does each
+//  collapsed tick stand for a group of messages (with a crossfade).
 //
 
 import SwiftUI
@@ -45,16 +47,31 @@ struct ChatMinimap: View {
         static let minHeight: CGFloat = 80
 
         static let collapsedPadding: CGFloat = 10
-        static let collapsedTickHeight: CGFloat = 2
         static let collapsedSpacing: CGFloat = 6
-        /// Tightest tick spacing before ticks start standing for groups.
-        static let compactSpacing: CGFloat = 2
+        static let tickHeight: CGFloat = 2
+        /// Densest collapsed rail that still reads as separate ticks.
+        static let denseTickHeight: CGFloat = 1
+        static let denseMinSpacing: CGFloat = 1
 
         static let expandedPadding: CGFloat = 6
         static let expandedSpacing: CGFloat = 1
         /// Row height: 14 pt handle / 12 pt text line plus 4 pt vertical
         /// padding each side. Only decides whether the list must scroll.
         static let expandedRowHeight: CGFloat = 23
+    }
+
+    /// How the rows are hosted. Chosen from the marker count and space only
+    /// (never from `isExpanded`), so hovering keeps the same views and the
+    /// tick-to-row morph animates instead of swapping subtrees.
+    private enum Layout {
+        /// Everything fits expanded: the original plain stack.
+        case plain
+        /// Expanded overflows: one scroll view hosts the rows in both
+        /// states, ticks packed to fit the collapsed cap.
+        case scrolling(tickHeight: CGFloat, spacing: CGFloat)
+        /// Too many messages for one tick each: collapsed ticks stand for
+        /// groups, crossfading to the scrolling list on hover.
+        case grouped
     }
 
     private var heightBudget: CGFloat {
@@ -64,16 +81,21 @@ struct ChatMinimap: View {
     private var collapsedCap: CGFloat { min(Metrics.collapsedMaxHeight, heightBudget) }
     private var expandedCap: CGFloat { min(Metrics.expandedMaxHeight, heightBudget) }
 
-    private func collapsedHeight(spacing: CGFloat, count: Int) -> CGFloat {
-        CGFloat(count) * Metrics.collapsedTickHeight
-            + CGFloat(max(count - 1, 0)) * spacing
-            + Metrics.collapsedPadding * 2
-    }
+    private var layout: Layout {
+        let count = CGFloat(markers.count)
+        let gaps = max(count - 1, 0)
+        let expandedHeight =
+            count * Metrics.expandedRowHeight + gaps * Metrics.expandedSpacing + Metrics.expandedPadding * 2
+        if expandedHeight <= expandedCap { return .plain }
 
-    private var expandedContentHeight: CGFloat {
-        CGFloat(markers.count) * Metrics.expandedRowHeight
-            + CGFloat(max(markers.count - 1, 0)) * Metrics.expandedSpacing
-            + Metrics.expandedPadding * 2
+        let usable = collapsedCap - Metrics.collapsedPadding * 2
+        for tick in [Metrics.tickHeight, Metrics.denseTickHeight] {
+            let spacing = gaps > 0 ? (usable - count * tick) / gaps : 0
+            if spacing >= Metrics.denseMinSpacing {
+                return .scrolling(tickHeight: tick, spacing: min(spacing, Metrics.collapsedSpacing))
+            }
+        }
+        return .grouped
     }
 
     // MARK: - Body
@@ -91,74 +113,94 @@ struct ChatMinimap: View {
 
     @ViewBuilder
     private var content: some View {
-        if isExpanded {
-            if expandedContentHeight <= expandedCap {
-                fullList
-            } else {
-                scrollingList
-            }
-        } else if collapsedHeight(spacing: Metrics.collapsedSpacing, count: markers.count) <= collapsedCap {
-            fullList
-        } else {
-            compactRail
+        switch layout {
+        case .plain:
+            plainList
+        case let .scrolling(tickHeight, spacing):
+            scrollingList(collapsedTickHeight: tickHeight, collapsedSpacing: spacing)
+        case .grouped:
+            groupedContent
         }
     }
 
-    /// Every marker as a row. Used whenever the whole list fits, so short
-    /// conversations keep the tick-to-row morph on hover.
-    private var fullList: some View {
+    /// Original layout: every marker as a row in a plain stack.
+    private var plainList: some View {
         VStack(alignment: .leading, spacing: isExpanded ? Metrics.expandedSpacing : Metrics.collapsedSpacing) {
             ForEach(markers) { m in
-                row(for: m)
+                row(for: m, collapsedTickHeight: Metrics.tickHeight)
             }
         }
         .padding(.vertical, isExpanded ? Metrics.expandedPadding : Metrics.collapsedPadding)
     }
 
-    /// Expanded list for conversations taller than the cap: scrolls, and
-    /// opens centred on the message being read.
-    private var scrollingList: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: true) {
-                LazyVStack(alignment: .leading, spacing: Metrics.expandedSpacing) {
+    /// One scroll view for both states. Collapsed it shows every tick
+    /// (scrolling off); expanded the same rows grow into labelled rows, the
+    /// frame grows to the expanded cap, and the list centres on the active
+    /// row. Collapsing returns to the top so every tick is visible again.
+    private func scrollingList(collapsedTickHeight: CGFloat, collapsedSpacing: CGFloat) -> some View {
+        let count = CGFloat(markers.count)
+        let collapsedHeight =
+            count * collapsedTickHeight + max(count - 1, 0) * collapsedSpacing + Metrics.collapsedPadding * 2
+        return ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: isExpanded ? Metrics.expandedSpacing : collapsedSpacing) {
                     ForEach(markers) { m in
-                        row(for: m).id(m.id)
+                        row(for: m, collapsedTickHeight: collapsedTickHeight).id(m.id)
                     }
                 }
-                .padding(.vertical, Metrics.expandedPadding)
+                .padding(.vertical, isExpanded ? Metrics.expandedPadding : Metrics.collapsedPadding)
             }
-            .frame(height: expandedCap)
-            .onAppear {
-                if let activeMarkerId {
-                    proxy.scrollTo(activeMarkerId, anchor: .center)
+            .scrollIndicators(isExpanded ? .automatic : .hidden)
+            .scrollDisabled(!isExpanded)
+            .frame(height: isExpanded ? expandedCap : collapsedHeight)
+            .onChange(of: isExpanded) { _, expanded in
+                if expanded {
+                    if let activeMarkerId { proxy.scrollTo(activeMarkerId, anchor: .center) }
+                } else if let first = markers.first {
+                    proxy.scrollTo(first.id, anchor: .top)
                 }
             }
         }
     }
 
-    /// Collapsed rail for conversations taller than the cap. Ticks pack
-    /// down to `compactSpacing`; if they still overflow, each tick stands
-    /// for a contiguous group of messages and lights up when the active
-    /// one is in its group.
-    private var compactRail: some View {
+    /// Very long conversations: collapsed ticks stand for contiguous groups
+    /// of messages (lit when the active one is in the group), crossfading
+    /// to the scrolling list on hover.
+    @ViewBuilder
+    private var groupedContent: some View {
+        if isExpanded {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: Metrics.expandedSpacing) {
+                        ForEach(markers) { m in
+                            row(for: m, collapsedTickHeight: Metrics.denseTickHeight).id(m.id)
+                        }
+                    }
+                    .padding(.vertical, Metrics.expandedPadding)
+                }
+                .frame(height: expandedCap)
+                .onAppear {
+                    if let activeMarkerId { proxy.scrollTo(activeMarkerId, anchor: .center) }
+                }
+            }
+            .transition(.opacity)
+        } else {
+            groupedRail
+                .transition(.opacity)
+        }
+    }
+
+    private var groupedRail: some View {
         let count = markers.count
         let usable = collapsedCap - Metrics.collapsedPadding * 2
-        let pitchAtCompact = Metrics.collapsedTickHeight + Metrics.compactSpacing
-        let maxTicks = max(2, Int((usable + Metrics.compactSpacing) / pitchAtCompact))
-        let tickCount = min(count, maxTicks)
-        let spacing: CGFloat =
-            tickCount > 1
-            ? max(
-                Metrics.compactSpacing,
-                (usable - CGFloat(tickCount) * Metrics.collapsedTickHeight) / CGFloat(tickCount - 1)
-            )
-            : 0
+        let pitch = Metrics.denseTickHeight + Metrics.denseMinSpacing
+        let tickCount = max(2, min(count, Int((usable + Metrics.denseMinSpacing) / pitch)))
         let activeIndex = activeMarkerId.flatMap { id in markers.firstIndex { $0.id == id } }
         let activeTick = activeIndex.map { $0 * tickCount / count }
 
-        return VStack(alignment: .trailing, spacing: min(spacing, Metrics.collapsedSpacing)) {
+        return VStack(alignment: .trailing, spacing: Metrics.denseMinSpacing) {
             ForEach(0 ..< tickCount, id: \.self) { i in
-                handle(isActive: i == activeTick)
+                handle(isActive: i == activeTick, collapsedHeight: Metrics.denseTickHeight)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
@@ -188,7 +230,7 @@ struct ChatMinimap: View {
 
     // MARK: - Row
 
-    private func row(for marker: Marker) -> some View {
+    private func row(for marker: Marker, collapsedTickHeight: CGFloat) -> some View {
         let isActive = marker.id == activeMarkerId
 
         return Button {
@@ -196,7 +238,7 @@ struct ChatMinimap: View {
             onSelect(marker.id)
         } label: {
             HStack(spacing: 10) {
-                handle(isActive: isActive)
+                handle(isActive: isActive, collapsedHeight: collapsedTickHeight)
 
                 if isExpanded {
                     Text(displayText(for: marker))
@@ -216,10 +258,10 @@ struct ChatMinimap: View {
         .buttonStyle(.plain)
     }
 
-    private func handle(isActive: Bool) -> some View {
+    private func handle(isActive: Bool, collapsedHeight: CGFloat) -> some View {
         let color: Color = isActive ? theme.accentColor : theme.secondaryText.opacity(0.5)
         let width: CGFloat = isExpanded ? 3 : (isActive ? 12 : 10)
-        let height: CGFloat = isExpanded ? 14 : Metrics.collapsedTickHeight
+        let height: CGFloat = isExpanded ? 14 : collapsedHeight
         return Capsule(style: .continuous)
             .fill(color)
             .frame(width: width, height: height)
