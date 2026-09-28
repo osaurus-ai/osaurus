@@ -1,8 +1,18 @@
 # Request-owned prefill progress
 
-Status: source wiring and regressions prepared; not compiled or executed. The
-original manager baseline reproduced cross-request clearing, overwriting and
-resurrection. This candidate has no runtime or GUI pass yet.
+Current status: the request store and wiring patches match those in integration
+`1416f458a`, whose rebuilt full core passed 249 selected test methods / 260
+invocation rows (zero failures or skips). Ownership/wiring contributed 10 methods
+/ 14 rows; adjacent coverage 190 / 194 and capabilities 49 / 52. This is selected
+suite proof, not an entire-suite result. No model was loaded for these tests.
+
+Twelve of fourteen changed Swift files are byte-identical to that integration;
+ChatView and NativeMessageCellView also contain unrelated integration changes.
+The narrow branch retains only the prefill changes and is stacked on #2923,
+which depends on runtime pin #2917. Its own exact-head CI and fresh app GUI proof
+remain open. Legacy remote consumer coverage is deterministic only, with no live
+remote-server proof. The original manager baseline separately reproduced
+cross-request clearing, overwriting and resurrection.
 
 The adapter registers a fresh generation handle with the actual sessionId before
 submission. PreparedStream carries it to the mapper. Mapper events assign one
@@ -36,13 +46,11 @@ same-request queued-total discovery, sequenced Codable duplication and invalid
 frames; actual mapper text/reasoning/tool envelope/tool call first output;
 consumer cancellation; actual native hint round-trip; legacy remote first-output
 closure; and real NativeTypingIndicatorView same-theme session selection. Store,
-mapper, receiver and native view tests use isolated progress state. They have not
-been typechecked or run in this source pass. The two new suites contain ten
+mapper, receiver and native view tests use isolated progress state. These tests passed against the rebuilt integration core identified above. The two new suites contain ten
 methods and fourteen parameter-expanded rows, including an unrelated suppressed
 warmup while the native view selects a missing session.
 
-Before merge: compile the full candidate, run these and adjacent mapper/hint/UI
-regressions, then exercise two real chats with same-model batching, switch the
+Before merge: complete exact-branch CI and integration checks, then exercise two real chats with same-model batching, switch the
 visible session, cancel one during prefill and verify the other counter/output
 continues. Capture visible progress before first output, model/source identity,
 cache telemetry, natural-stop multi-turn output and tokens/s. This is not a
