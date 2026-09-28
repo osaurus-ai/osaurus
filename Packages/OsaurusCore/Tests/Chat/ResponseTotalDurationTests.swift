@@ -10,9 +10,9 @@ struct ResponseTotalDurationTests {
     @Test
     func statsTextLeadsWithTotalDuration() {
         let text = NativeStatsView.statsText(ttft: 0.5, tokensPerSecond: 40, tokenCount: 12, totalDuration: 80)
-        #expect(text.hasPrefix("Took 1m20s"))
-        #expect(NativeStatsView.statsText(ttft: nil, tokensPerSecond: nil, tokenCount: nil, totalDuration: 4.2) == "Took 4.2s")
-        #expect(!NativeStatsView.statsText(ttft: 0.5, tokensPerSecond: 40, tokenCount: 12).contains("Took"))
+        #expect(text.hasPrefix("Worked for 1m20s"))
+        #expect(NativeStatsView.statsText(ttft: nil, tokensPerSecond: nil, tokenCount: nil, totalDuration: 4.2) == "Worked for 4.2s")
+        #expect(!NativeStatsView.statsText(ttft: 0.5, tokensPerSecond: 40, tokenCount: 12).contains("Worked for"))
     }
 
     @Test

@@ -280133,36 +280133,36 @@
         }
       }
     },
-    "Took %@" : {
+    "Worked for %@" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Dauer %@"
+            "value" : "Gearbeitet: %@"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ 소요"
+            "value" : "%@ 동안 작업"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Заняло %@"
+            "value" : "Время работы: %@"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "耗时 %@"
+            "value" : "工作了 %@"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "耗時 %@"
+            "value" : "工作了 %@"
           }
         }
       }
