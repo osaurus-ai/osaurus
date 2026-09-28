@@ -382,6 +382,7 @@ enum GenerationEventMapper {
     static func describeDFlash2(_ stats: DFlash2GenerationStats) -> String {
         let cycles = Double(max(stats.verifyCalls, 1))
         return "block=\(stats.blockSize) verifyCalls=\(stats.verifyCalls) "
+            + "contextRows=\(stats.seededContextRows) recomputedRows=\(stats.recomputedContextRows) "
             + "emitted=\(stats.emittedTokens) drafted=\(stats.draftedTokens) "
             + "accepted=\(stats.acceptedTokens) "
             + String(format: "tokPerVerify=%.2f ", stats.acceptanceLength)

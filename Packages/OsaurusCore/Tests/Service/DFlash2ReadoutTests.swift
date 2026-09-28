@@ -38,7 +38,7 @@ struct DFlash2ReadoutTests {
 
     @Test func logLineIsGreppable() {
         let line = GenerationEventMapper.describeDFlash2(stats)
-        #expect(line.hasPrefix("block=5 verifyCalls=100 emitted=252 drafted=400 accepted=152 "))
+        #expect(line.hasPrefix("block=5 verifyCalls=100 contextRows=0 recomputedRows=0 emitted=252 drafted=400 accepted=152 "))
         #expect(line.contains("tokPerVerify=2.52"))
         #expect(line.contains("draftMs=1.80 verifyMs=9.50"))
         #expect(line.contains("pauses=0 pausedTokens=0"))
