@@ -842,7 +842,11 @@ public final class RemoteProviderManager: ObservableObject {
     /// error message that retrying can never fix. Mirrors
     /// `MCPProviderManager.handlePermanentOAuthFailure`.
     public func handlePermanentOAuthFailure(providerId: UUID) {
-        RemoteProviderKeychain.deleteOAuthTokens(for: providerId)
+        // Keep the blocking `SecItemDelete` off the caller's (main) thread;
+        // the serial write queue preserves ordering with later token saves.
+        Keychain.performInBackground {
+            RemoteProviderKeychain.deleteOAuthTokens(for: providerId)
+        }
         if let service = services.removeValue(forKey: providerId) {
             Task { await service.invalidateSession() }
         }
