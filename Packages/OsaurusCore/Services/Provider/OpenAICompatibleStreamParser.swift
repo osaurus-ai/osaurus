@@ -448,6 +448,43 @@ struct OpenAICompatibleToolCallAccumulator {
     }
 }
 
+/// One remote transport stream owns this filter. Foreign request handles are
+/// provenance only: they must never be used to mutate this process's HUD store.
+/// The native stream receiver assigns a fresh, locally session-scoped identity.
+struct RemotePrefillProgressTracker {
+    private enum Source: Equatable {
+        case legacy
+        case owned(RequestPrefillProgressStore.Handle)
+    }
+    private var source: Source?
+    private var lastSequence: UInt64?
+    private var closed = false
+
+    mutating func normalize(_ progress: PrefillProgressState) -> PrefillProgressState? {
+        guard !closed, progress.completedUnitCount >= 0, progress.totalUnitCount >= 0,
+            progress.completedUnitCount <= progress.totalUnitCount else { return nil }
+        let incoming: Source
+        if let handle = progress.requestOwner, let sequence = progress.requestSequence {
+            guard handle.channel == .foreground,
+                lastSequence.map({ sequence > $0 }) ?? true else { return nil }
+            incoming = .owned(handle)
+        } else {
+            guard progress.requestOwner == nil, progress.requestSequence == nil else { return nil }
+            incoming = .legacy
+        }
+        guard source == nil || source == incoming else { return nil }
+        source = incoming
+        lastSequence = progress.requestSequence
+        if progress.stage == .complete { closed = true }
+        var local = progress
+        local.requestOwner = nil
+        local.requestSequence = nil
+        return local
+    }
+
+    mutating func finish() { closed = true }
+}
+
 struct OpenAICompatibleStreamParser {
     enum DecodeMode: Sendable, Equatable {
         case strict
@@ -471,6 +508,9 @@ struct OpenAICompatibleStreamParser {
         /// `RemoteProviderService.requestsStreamUsageOptions`), so every other
         /// provider keeps the original dispatch-at-`finish_reason` timing.
         var deferToolCallDispatchUntilUsage: Bool = false
+        /// Only an explicitly configured Osaurus remote may emit this extension.
+        /// Plain OpenAI-compatible providers retain their existing behavior.
+        var acceptOsaurusPrefill: Bool = false
 
         static let strict = Options(decodeMode: .strict, framing: .strict)
         static let routerCompatible = Options(decodeMode: .lenient, framing: .routerCompatible)
@@ -557,6 +597,10 @@ struct OpenAICompatibleStreamParser {
             // `usage` is null. Capture whatever is present — surfaced at the
             // finish boundary by `dispatchFinal`.
             state.captureProviderUsage(chunk.usage)
+            if options.acceptOsaurusPrefill, let progress = chunk.osaurus_prefill,
+                let local = state.remotePrefillProgress.normalize(progress) {
+                yield(StreamingPrefillProgressHint.encode(local))
+            }
             let choice = chunk.choices.first
             return processChoice(
                 delta: choice?.delta,
@@ -640,6 +684,15 @@ struct OpenAICompatibleStreamParser {
         state: inout RemoteProviderService.StreamingState,
         yield: (String) -> Void
     ) -> RemoteProviderService.StreamEventOutcome {
+        // A later progress frame cannot resurrect prefill after any actual
+        // output or terminal boundary, including tool-only responses.
+        let hasToolOutput = delta?.tool_calls?.contains { call in
+            call.function?.name?.isEmpty == false || call.function?.arguments?.isEmpty == false
+        } ?? false
+        if delta?.content?.isEmpty == false || delta?.reasoning_content?.isEmpty == false
+            || hasToolOutput || finishReason?.isEmpty == false {
+            state.remotePrefillProgress.finish()
+        }
         if let toolCalls = delta?.tool_calls {
             for toolCall in toolCalls {
                 let idx = OpenAICompatibleToolCallAccumulator.resolveToolCallSlot(
