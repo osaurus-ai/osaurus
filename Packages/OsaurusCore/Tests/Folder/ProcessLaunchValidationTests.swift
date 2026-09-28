@@ -33,9 +33,11 @@ struct ProcessLaunchValidationTests {
         #expect(p.processIdentifier == 0)
     }
 
+    // The string setters always keep the NUL, regardless of how the running
+    // Foundation bridges it into `executableURL` / `currentDirectoryURL`.
     @Test func executablePathWithNULIsRejected() {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/ec\u{0}ho")
+        p.launchPath = "/bin/ec\u{0}ho"
         #expect(throws: FolderToolError.self) {
             try FolderToolHelpers.validateLaunchStrings(of: p)
         }
@@ -43,9 +45,39 @@ struct ProcessLaunchValidationTests {
 
     @Test func workingDirectoryWithNULIsRejected() {
         let p = process(arguments: [])
-        p.currentDirectoryURL = URL(fileURLWithPath: "/tmp/\u{0}x")
+        p.currentDirectoryPath = "/tmp/\u{0}x"
         #expect(throws: FolderToolError.self) {
             try FolderToolHelpers.validateLaunchStrings(of: p)
+        }
+    }
+
+    /// Foundation releases disagree on what a file URL built from a string
+    /// with an embedded NUL looks like afterwards (kept verbatim, `%00`
+    /// percent-encoded, or truncated at the NUL). Whenever the NUL survives
+    /// in any representation the validator must reject it; when Foundation
+    /// dropped it there is nothing left to crash on and the launch is clean.
+    @Test func urlFormsWithNULAreRejectedWheneverTheNULSurvives() {
+        let exec = Process()
+        exec.executableURL = URL(fileURLWithPath: "/bin/ec\u{0}ho")
+        let cwd = process(arguments: [])
+        cwd.currentDirectoryURL = URL(fileURLWithPath: "/tmp/\u{0}x")
+
+        for (p, url) in [(exec, exec.executableURL), (cwd, cwd.currentDirectoryURL)] {
+            let survives =
+                (url?.path.utf8.contains(0) ?? false)
+                || (url?.path(percentEncoded: false).utf8.contains(0) ?? false)
+                || (url?.absoluteString.localizedCaseInsensitiveContains("%00") ?? false)
+                || (p.launchPath?.utf8.contains(0) ?? false)
+                || (p.currentDirectoryPath.utf8.contains(0))
+            if survives {
+                #expect(throws: FolderToolError.self) {
+                    try FolderToolHelpers.validateLaunchStrings(of: p)
+                }
+            } else {
+                #expect(throws: Never.self) {
+                    try FolderToolHelpers.validateLaunchStrings(of: p)
+                }
+            }
         }
     }
 

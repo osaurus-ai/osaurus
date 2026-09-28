@@ -378,11 +378,24 @@ enum FolderToolHelpers {
                 "\(label) contains a NUL byte and cannot be passed to a process"
             )
         }
-        // `URL.path` percent-encodes a NUL (`%00`) and `currentDirectoryURL`
-        // reads back nil for such a path; the string properties are what
-        // `Process` actually hands to `fileSystemRepresentation`.
-        try check(process.launchPath, "Executable path")
-        try check(process.currentDirectoryPath, "Working directory")
+        // Foundation releases differ in how a NUL inside a file URL surfaces:
+        // some keep it in the string properties (`launchPath`), others
+        // percent-encode it as `%00` in the URL and return nil/empty from the
+        // string mirror. Check every representation so the guard does not
+        // depend on which one the running Foundation picked.
+        func checkPath(_ path: String?, _ url: URL?, _ label: String) throws {
+            try check(path, label)
+            guard let url else { return }
+            try check(url.path, label)
+            try check(url.path(percentEncoded: false), label)
+            if url.absoluteString.range(of: "%00", options: .caseInsensitive) != nil {
+                throw FolderToolError.invalidArguments(
+                    "\(label) contains a NUL byte and cannot be passed to a process"
+                )
+            }
+        }
+        try checkPath(process.launchPath, process.executableURL, "Executable path")
+        try checkPath(process.currentDirectoryPath, process.currentDirectoryURL, "Working directory")
         for (index, argument) in (process.arguments ?? []).enumerated() {
             try check(argument, "Argument \(index)")
         }
