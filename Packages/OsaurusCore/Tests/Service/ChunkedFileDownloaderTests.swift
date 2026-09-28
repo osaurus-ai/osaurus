@@ -113,6 +113,39 @@ struct ChunkedFileDownloaderTests {
         string: "https://huggingface.co/mlx-community/Qwen3-0.6B-4bit/resolve/main/model.safetensors"
     )!
 
+    // MARK: - Lane teardown
+
+    /// Regression for APPLE-MACOS-1PA: `download()`'s `defer`, `pause()` and
+    /// `invalidate()` tear lanes down while workers may still be pulling
+    /// chunks. Creating a task on an invalidated `URLSession` raises an
+    /// uncatchable `NSException`; the lane must refuse the fetch instead.
+    @Test func fetchAfterInvalidateThrowsCancellationInsteadOfCrashing() async throws {
+        let lane = TransferLane()
+        lane.invalidate()
+        #expect(lane.isInvalidated)
+        // Idempotent: a second teardown must not touch the session again.
+        lane.invalidate()
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-lane-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let part = dir.appendingPathComponent("chunk.part")
+        try Data().write(to: part)
+        let handle = try FileHandle(forWritingTo: part)
+        defer { try? handle.close() }
+
+        await #expect(throws: CancellationError.self) {
+            try await lane.fetch(
+                url: URL(string: "https://127.0.0.1:9/never")!,
+                range: "bytes=0-0",
+                handle: handle,
+                expected: 1,
+                onBytes: { _ in }
+            )
+        }
+    }
+
     @Test(.enabled(if: liveHFDownloadEnabled())) func liveProbeReadsSizeCommitAndHash() async throws {
         let meta = try #require(try await ChunkedFileDownloader.probe(url: Self.liveURL))
         // Not pinned to an exact byte count — a repo push would break that

@@ -38,6 +38,11 @@ final class ChatTurn: ObservableObject, Identifiable {
     private var _cachedContent: String?
     /// Cached content length - updated on append/set without joining
     private var _contentLength: Int = 0
+    /// Cached `visibleContent` — the display cleaners (leaked action JSON,
+    /// Gemini metadata, channel label) are O(n·braces) and the property is
+    /// read several times per block build on the main thread. Invalidated
+    /// wherever `contentChunks` changes.
+    private var _cachedVisibleContent: String?
 
     /// The message content. Uses lazy joining for efficient streaming.
     var content: String {
@@ -55,6 +60,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             _cachedContent = newValue
             _contentLength = newValue.count
             _cachedEnvelope = nil
+            _cachedVisibleContent = nil
             objectWillChange.send()
         }
     }
@@ -111,6 +117,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         _contentLength += s.count
         _cachedContent = nil  // Invalidate cache
         _cachedEnvelope = nil
+        _cachedVisibleContent = nil
     }
 
     /// Append content and immediately notify observers (triggers UI update)
@@ -134,6 +141,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             _contentLength = cleanedContent.count
             _cachedContent = cleanedContent
             _cachedEnvelope = nil
+            _cachedVisibleContent = nil
         }
     }
 
@@ -614,14 +622,17 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// structured call.
     var visibleContent: String {
         guard role == .assistant else { return content }
+        if let cached = _cachedVisibleContent { return cached }
         // Channel-label strip runs first: the label arrives on the leading line
         // ahead of anything the other two cleaners look for, so removing it
         // early keeps their inputs shaped the way they expect.
-        return StringCleaning.stripLeakedActionJSON(
+        let cleaned = StringCleaning.stripLeakedActionJSON(
             StringCleaning.stripGeminiDisplayMetadata(
                 StringCleaning.stripLeakedChannelLabel(content)
             )
         )
+        _cachedVisibleContent = cleaned
+        return cleaned
     }
 
     /// Whether this turn has any thinking/reasoning content

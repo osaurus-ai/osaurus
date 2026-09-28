@@ -350,6 +350,11 @@ enum FolderToolHelpers {
     /// Run a process and wait for completion asynchronously without blocking the main thread.
     /// The termination handler is set before running to avoid race conditions.
     static func runProcessAsync(_ process: Process) async throws {
+        // `Process.run()` raises an uncatchable `NSInvalidArgumentException`
+        // (`-[NSString fileSystemRepresentation]`) when any launch string
+        // carries an embedded NUL — model-supplied `shell_run` commands can.
+        // Swift `try` cannot catch that; reject before launching (APPLE-MACOS-258).
+        try validateLaunchStrings(of: process)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { _ in
                 continuation.resume()
@@ -359,6 +364,44 @@ enum FolderToolHelpers {
             } catch {
                 continuation.resume(throwing: error)
             }
+        }
+    }
+
+    /// Throws `FolderToolError.invalidArguments` when the executable path,
+    /// working directory, any argument, or any environment key/value contains
+    /// a NUL byte. Those cannot be passed to `posix_spawn` and make
+    /// `Process.run()` raise an Objective-C exception instead of throwing.
+    static func validateLaunchStrings(of process: Process) throws {
+        func check(_ value: String?, _ label: String) throws {
+            guard let value, value.utf8.contains(0) else { return }
+            throw FolderToolError.invalidArguments(
+                "\(label) contains a NUL byte and cannot be passed to a process"
+            )
+        }
+        // Foundation releases differ in how a NUL inside a file URL surfaces:
+        // some keep it in the string properties (`launchPath`), others
+        // percent-encode it as `%00` in the URL and return nil/empty from the
+        // string mirror. Check every representation so the guard does not
+        // depend on which one the running Foundation picked.
+        func checkPath(_ path: String?, _ url: URL?, _ label: String) throws {
+            try check(path, label)
+            guard let url else { return }
+            try check(url.path, label)
+            try check(url.path(percentEncoded: false), label)
+            if url.absoluteString.range(of: "%00", options: .caseInsensitive) != nil {
+                throw FolderToolError.invalidArguments(
+                    "\(label) contains a NUL byte and cannot be passed to a process"
+                )
+            }
+        }
+        try checkPath(process.launchPath, process.executableURL, "Executable path")
+        try checkPath(process.currentDirectoryPath, process.currentDirectoryURL, "Working directory")
+        for (index, argument) in (process.arguments ?? []).enumerated() {
+            try check(argument, "Argument \(index)")
+        }
+        for (key, value) in process.environment ?? [:] {
+            try check(key, "Environment variable name")
+            try check(value, "Environment variable '\(key)'")
         }
     }
 
