@@ -126,6 +126,19 @@ enum SubagentResidency {
                 let invokingParentModelName,
                 invokingParentModelName.caseInsensitiveCompare(modelName) != .orderedSame
             {
+                // A warm protected child will not acquire this handoff's
+                // ownership token. Refuse before child work: restoring the
+                // nonresident parent cannot safely evict that unrelated model.
+                guard !protectedResidentModels.contains(where: {
+                    $0.caseInsensitiveCompare(modelName) == .orderedSame
+                }) else {
+                    throw SubagentError.unavailable(
+                        "Cannot hand off from the invoking local model to protected resident "
+                            + "'\(modelName)' because the parent cannot be restored without "
+                            + "evicting unrelated API/plugin/scheduled work. Enable a RAM-safe "
+                            + "coexistence configuration or finish the protected work first."
+                    )
+                }
                 return ResidencyPlan(
                     shouldUnload: true,
                     requiredBytes: requiredBytes,
