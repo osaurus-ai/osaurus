@@ -17,7 +17,13 @@ The isolated candidate tests additionally hold the upstream stream open while
 checking first output, ensuring the positive control cannot pass solely because
 stream-drain cleanup eventually clears progress.
 
-Candidate typechecking/execution and a full application build remain pending.
+Candidate mapper execution passed all 27 test methods (the two isolated regressions
+plus 25 adjacent mapper methods), with zero failures or skips. This bounded proof
+compiled the exact mapper source under a renamed symbol against the previously
+built real application core types; it did not rebuild the candidate application
+core or exercise the GUI. The manager/mapper baseline source is byte-identical
+across the focused PR base and the compiled-core baseline. Full candidate-core
+build and live application validation remain pending.
 This fixes one suppression bypass; it does not solve broader request/session
 ownership of the global progress manager, media-encoding progress, or final GPU
 completion timing. It makes no Sentry crash or live GUI occurrence claim.
