@@ -73,15 +73,18 @@ public final class ChatFolderState: ObservableObject {
     /// panel for key status and z-order, which flickers; a sheet can't, and
     /// it makes visually obvious WHICH chat the folder is being attached to.
     /// Falls back to a detached panel when no window is available.
+    /// `message` overrides the panel's explanatory line — the
+    /// `prompt_working_folder` tool passes the model's reason so the user
+    /// sees WHY the agent is asking for a folder.
     @discardableResult
-    public func selectFolder(from window: NSWindow? = nil) async -> FolderContext? {
+    public func selectFolder(from window: NSWindow? = nil, message: String? = nil) async -> FolderContext? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = L("Select Working Directory")
-        panel.message = L("Choose a folder for the AI to work with")
+        panel.message = message ?? L("Choose a folder for the AI to work with")
         panel.prompt = L("Select")
 
         let response: NSApplication.ModalResponse

@@ -517,6 +517,14 @@ final class ChatSession: ObservableObject {
     /// Privacy review cancel restores the draft instead of committing the run;
     /// it must not auto-dispatch a queued follow-up during cleanup.
     private var suppressQueuedSendFlushForCurrentRun = false
+    /// Set by the `prompt_working_folder` intercept after the user picked a
+    /// folder mid-run. The run ends there (the folder root, execution mode
+    /// and tool schema are all frozen per turn), and `completeRunCleanup`
+    /// immediately continues the conversation with `send("")` so the model
+    /// resumes with the folder bound — without the user typing anything.
+    /// Cleared by every fresh send / stop / reset so a stale flag can never
+    /// auto-continue an unrelated run.
+    private var pendingWorkingFolderContinuation = false
 
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
@@ -2953,6 +2961,7 @@ final class ChatSession: ObservableObject {
         awaitingPreSendHandshake = false
         turnsRollbackOnCancel = nil
         suppressQueuedSendFlushForCurrentRun = false
+        pendingWorkingFolderContinuation = false
         // Clear session identity for new chat
         if let prev = sessionId {
             let key = sessionStateKey(prev)
@@ -4358,6 +4367,23 @@ final class ChatSession: ObservableObject {
             flushQueuedSendIfEligible()
         }
         suppressQueuedSendFlushForCurrentRun = false
+        continueAfterWorkingFolderAttachIfEligible()
+    }
+
+    /// Auto-continue after a mid-run `prompt_working_folder` pick. Runs
+    /// AFTER the queued-send flush: a user message the user queued while the
+    /// picker was up already carries the conversation forward (and `send`
+    /// clears the flag), so the continuation only fires when nothing else
+    /// did. Stopped or errored runs leave the transcript as-is — the folder
+    /// is attached, the user decides what happens next.
+    private func continueAfterWorkingFolderAttachIfEligible() {
+        guard pendingWorkingFolderContinuation else { return }
+        pendingWorkingFolderContinuation = false
+        guard !stopRequested, lastStreamError == nil else { return }
+        guard activeRunId == nil, !isStreaming else { return }
+        guard folderState.hasActiveFolder else { return }
+        debugLog("send: continuing after prompt_working_folder attached a folder")
+        send("")
     }
 
     /// Outcome of the auto-title eligibility check for one clean run
@@ -6291,6 +6317,7 @@ final class ChatSession: ObservableObject {
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
         suppressQueuedSendFlushForCurrentRun = false
+        pendingWorkingFolderContinuation = false
 
         // Any new user input clears a prior completion banner — we're
         // moving on to a follow-up. Clarify prompts (when active) live
@@ -7159,6 +7186,28 @@ final class ChatSession: ObservableObject {
                             }
                             // Fall through on failure (empty question,
                             // etc.) so the model sees the rejection.
+                        }
+                        if inv.toolName == PromptWorkingFolderTool.toolName {
+                            // The user picked a folder inside the tool call
+                            // and the session already holds it (per-chat
+                            // folder + sticky agent record + sandbox off).
+                            // Nothing in THIS run can use it, though: the
+                            // folder root TaskLocal, the execution mode and
+                            // the tool schema were all frozen when the turn
+                            // started. End the run here and let
+                            // `completeRunCleanup` re-enter `send("")`, which
+                            // recomposes with the folder bound and the file
+                            // tools in the schema — the model continues from
+                            // the success envelope in history without the
+                            // user typing anything. A cancel / failure
+                            // envelope falls through so the model sees it
+                            // and delivers without the folder.
+                            if !ToolEnvelope.isError(resultText) {
+                                self.turns.append(recordToolTurn(resultText, callId: callId))
+                                self.rebuildVisibleBlocks()
+                                self.pendingWorkingFolderContinuation = true
+                                return AgentLoopToolExecution(result: resultText, endRun: true)
+                            }
                         }
 
                         // Tools loaded via capabilities, first-use sandbox

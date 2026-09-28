@@ -15,7 +15,7 @@ It does not do hands-on work itself: no shell, no sandbox, no browser or compute
 
 ## Working folder
 
-Pick a folder with the Folder chip on an Orchestrator chat, or in Settings → Orchestrator → Working Folder. With a folder set the Orchestrator can **read** it (`file_read`, `file_search`) — list what is there, open a deliverable a worker wrote, check a result. It never writes.
+Pick a folder with the Folder chip on an Orchestrator chat, or in Settings → Orchestrator → Working Folder; in a folder-less chat the Orchestrator can also ask for one with `prompt_working_folder`, which opens the same picker. With a folder set the Orchestrator can **read** it (`file_read`, `file_search`) — list what is there, open a deliverable a worker wrote, check a result. It never writes.
 
 The folder is also what delegated agents inherit: an agent with no working folder of its own works inside the Orchestrator's folder (read and write), so "write the report into the folder" works out of the box. Agents that have their own folder keep it. Teammates' shared agents run on their owner's Mac and cannot see your folder at all — the Orchestrator puts everything they need in the task text.
 

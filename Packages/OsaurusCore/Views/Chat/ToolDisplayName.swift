@@ -313,5 +313,8 @@ enum ToolDisplayName {
         "todo": ToolLabel(L("Updating the task list"), L("Updated the task list")),
         "complete": ToolLabel(L("Finishing up"), L("Finished")),
         "clarify": ToolLabel(L("Asking a question"), L("Asked a question")),
+        // Picker-backed folder attach: rendered as a normal chip so the
+        // attached folder stays visible in scroll-back.
+        "prompt_working_folder": ToolLabel(L("Asking for a folder"), L("Attached a folder")),
     ]
 }

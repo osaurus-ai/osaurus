@@ -50,8 +50,9 @@ enum DatabaseFilePathResolver {
                     message:
                         "`\(tool)` reads files from your sandbox workspace or host "
                         + "working folder, but neither is available in this session. "
-                        + "Run in sandbox mode or ask the user to pick a working folder, "
-                        + "then retry. Fallback for tabular data: one `db_insert` with "
+                        + PromptWorkingFolderTool.attachFolderSteer
+                        + " Then retry (sandbox mode is the other option). "
+                        + "Fallback for tabular data: one `db_insert` with "
                         + "a `rows` array instead of row-by-row inserts.",
                     tool: tool,
                     retryable: false

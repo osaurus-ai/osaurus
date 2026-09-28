@@ -28,11 +28,13 @@ The chat layer intercepts three special tool results so the loop has structure w
 
 **Intercept parity across surfaces.** The run-ending intercepts are not chat-only. The HTTP `/agents/{id}/run` loop and the plugin completion loop also end the run on a successful `complete`/`clarify` (the driver exits `.endedBySurface`), and a batch carrying an intercept falls back to serial model-order execution on every surface. What differs per surface is only the *presentation*: chat renders banners/overlays, HTTP returns the summary or question in the response payload, and plugins receive lifecycle events.
 
-| Surface | `complete` | `clarify` |
-| --- | --- | --- |
-| Chat | Ends run; "Completed" banner | Pauses run; inline overlay, user's answer resumes |
-| HTTP `/agents/{id}/run` | Ends run; summary in response | Ends run; question in response (stateless — the caller re-sends with the answer) |
-| Plugin dispatch | Ends run; COMPLETED event | Pauses task; `CLARIFICATION` event, answer resumes the task |
+| Surface | `complete` | `clarify` | `prompt_working_folder` |
+| --- | --- | --- | --- |
+| Chat | Ends run; "Completed" banner | Pauses run; inline overlay, user's answer resumes | Blocks on the folder picker; on a pick the run ends and immediately auto-continues with the folder bound |
+| HTTP `/agents/{id}/run` | Ends run; summary in response | Ends run; question in response (stateless — the caller re-sends with the answer) | Not exposed; refused as an external-surface tool |
+| Plugin dispatch | Ends run; COMPLETED event | Pauses task; `CLARIFICATION` event, answer resumes the task | Not exposed (no attended window) |
+
+A fourth intercept, `prompt_working_folder`, is the one picker-backed tool (see [Working Folder](#working-folder-folder-context) below). It is not a loop-structure tool like the three above — it is in the schema only for an attended chat turn that has no execution root — but its success shares the same `endRun` mechanics.
 
 See [Tool Contract](TOOL_CONTRACT.md) for the canonical success/failure envelope shape every tool returns.
 
@@ -87,6 +89,18 @@ The `clarify` (along with `todo` and `complete`) tool call is filtered out of th
 ## Working Folder (Folder Context)
 
 Selecting a working folder transforms the chat into a code-aware agent. The selector lives on the chat input bar; you can also point a chat at a folder programmatically via its session's [`ChatFolderState`](../Packages/OsaurusCore/Folder/ChatFolderState.swift).
+
+### `prompt_working_folder` — let the agent ask for the folder
+
+When a chat has no folder, the file/shell tools are withheld from the schema and every "no working folder" steer (the folder tool bodies' `unavailable` envelope, the registry's scope refusal, the `capabilities` loader, the announce-only nudge) names one recovery: call [`prompt_working_folder`](../Packages/OsaurusCore/Folder/PromptWorkingFolderTool.swift). The tool opens the native folder picker as a sheet on the chat window with the model's `reason` as the dialog message, then runs the exact Folder-chip sequence — per-chat `ChatFolderState.setFolder`, `AgentManager.disableSandboxForHostFolder`, sticky `AgentManager.updateWorkingFolder` — with the chip's fail-closed rollback.
+
+| Field    | Type   | Required | Description |
+| -------- | ------ | -------- | ----------- |
+| `reason` | string | Yes      | One short user-facing sentence shown in the picker (e.g. "Save the generated report as report.md"). |
+
+Because the folder root (`ChatExecutionContext.currentFolderRoot`), the execution mode and the tool schema are all frozen per turn, the chat intercept ends the run on a success envelope and `completeRunCleanup` immediately re-enters `send("")` — the existing contentless continuation — so the next run composes with `.hostFolder`, the file tools in the schema and the root bound, and the model continues from the success envelope without the user typing. A cancel returns a `user_denied` envelope, which the chat loop treats like any interactive denial: the run stops there, the envelope message is shown to the user (prefixed "The requested action was not completed.") and stays in history for the next turn — so a dismissed picker is never re-opened by the same run. A failure (stale bookmark, sandbox could not be disabled) returns `execution_error`, rolls the chat and agent records back, and gives the model one correction.
+
+Exposure is deliberately narrow (`PromptWorkingFolderTool.shouldExpose`): only `ExecutionMode.none` (with a folder it is moot; in VM mode the model already has the workspace tools and a host pick would silently flip the agent's sandbox off), and only a `.chat` / `.imported` session — HTTP, plugin, channel, schedule, watcher, delegation and workspace runs have no one to click. It is additionally in `ToolRegistry.externallyDeniedToolNames`, excluded from spawned workers (`TextSubagentKind.isExcludedChildTool`), and refuses with a typed `unavailable` envelope when no live `ChatSession` drives the execution. It is not `clarify` (which waits for the user's next message) and not an approval card (which gates a call the model already made).
 
 **Folder ownership is per chat.** Each `ChatSession` owns a `ChatFolderState` — its security-scoped URL, built `FolderContext`, and persistable bookmark. Picking, refreshing, or clearing a folder affects only that chat; two concurrent chats can work against two different repos without cross-routing. The folder is persisted on the session row (`ChatSessionData.folderBookmark` / `folderPath`, sessions schema v10) and restored when the session reloads, so a chat reopened after relaunch comes back attached to its own folder. New chats always start folder-less. The pre-per-chat process-wide bookmark (`FolderContextBookmark` in UserDefaults) is migrated once — the first eligible chat opened after the update adopts it, then the global key is deleted.
 
@@ -249,7 +263,7 @@ When a model emits several tool calls in one step, the driver executes them as a
 
 - **Two-phase approvals.** Permission gates resolve **serially, in model order, before anything executes** — prompts never stack or race. A denial skips every later call in the batch with a paired rejection envelope (no dangling `tool_use`). The approved set then runs in parallel via a TaskGroup with the gate pre-resolved, and results are restored to model order. HTTP uses the shared two-phase helper (`AgentToolLoop.runBatchInParallel(sessionId:agentId:)`); chat implements the same two phases inline because each outcome also records a UI turn on the MainActor.
 - **Intra-batch dedupe.** Read-like duplicates *within* one batch are deferred past the parallel wave and resolved in order against live state: if the earlier sibling's read succeeded, the duplicate replays the held envelope (serial parity); if it failed, the duplicate executes for real.
-- **Intercepts force serial.** A batch carrying a loop-ending intercept (`AgentToolLoop.interceptToolNames` — `complete`, `clarify`) falls back to serial model-order execution and stops at the first `endRun`, so siblings after a `complete` never execute or land in history.
+- **Intercepts force serial.** A batch carrying a loop-ending intercept (`AgentToolLoop.interceptToolNames` — `complete`, `clarify`, `prompt_working_folder`) falls back to serial model-order execution and stops at the first `endRun`, so siblings after a `complete` never execute or land in history.
 - **State-before-cancel.** Executed outcomes are recorded into `AgentTaskState` before cancellation is honored, so history and task state can't desync mid-batch.
 
 ### Deferred schema policy (`capabilities_load`)

@@ -1399,7 +1399,10 @@ final class TextSubagentKind:
     ///   instead (`AgentDelegationDispatcher.delegatedPrompt`).
     static func isExcludedChildTool(_ name: String) -> Bool {
         if SubagentCapabilityRegistry.spawn.toolNames.contains(name) { return true }
-        return name == "clarify"
+        // `prompt_working_folder` is excluded for the same reason: it opens a
+        // picker on the LAUNCHING chat's window and re-roots that chat, which
+        // a bounded worker must never do on its own.
+        return name == "clarify" || name == PromptWorkingFolderTool.toolName
     }
 
     /// The target agent's cancellation-safe enabled tools, as the child's

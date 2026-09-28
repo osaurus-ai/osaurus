@@ -2002,6 +2002,9 @@ public struct SystemPromptComposer: Sendable {
     private static let constraintPreservingBootstrapToolNames: Set<String> = [
         "complete", "clarify", "share_artifact",
         "write_knowledge", "delete_knowledge", "edit_knowledge",
+        // The `reason` property description is the only place the model
+        // learns the argument is a user-facing sentence shown in the picker.
+        PromptWorkingFolderTool.toolName,
     ]
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
@@ -2914,6 +2917,17 @@ public struct SystemPromptComposer: Sendable {
             // answer from its instructions or state assumptions instead.
             byName.removeValue(forKey: "clarify")
         }
+        // `prompt_working_folder` opens a folder picker on the chat window:
+        // only an attended chat with NO execution root can act on it (see
+        // `PromptWorkingFolderTool.shouldExpose`). Stripped in both modes —
+        // a manual tick or session load cannot conjure a picker for a run
+        // that has no window.
+        if !PromptWorkingFolderTool.shouldExpose(
+            executionMode: executionMode,
+            source: ChatExecutionContext.currentSessionSource
+        ) {
+            byName.removeValue(forKey: PromptWorkingFolderTool.toolName)
+        }
         for capability in SubagentCapabilityRegistry.all {
             switch capability.gate {
             case .perAgent:
@@ -3223,6 +3237,12 @@ public struct SystemPromptComposer: Sendable {
             // This unconditionally available baseline tool is part of the
             // stable schema. Query wording never adds or removes it.
             allowed.insert("get_current_time")
+            // The folder ask is a chat-surface affordance, not an agent
+            // capability: if it survived the attended/folder-less strip
+            // above it stays, in auto and manual mode alike.
+            if byName[PromptWorkingFolderTool.toolName] != nil {
+                allowed.insert(PromptWorkingFolderTool.toolName)
+            }
             // The orchestrator invariant holds in workspace modes too: with
             // a working folder attached the Default agent keeps its configure
             // surface, reads the folder (`file_read` / `file_search`), and

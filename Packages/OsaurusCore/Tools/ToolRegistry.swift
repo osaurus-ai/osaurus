@@ -258,6 +258,10 @@ public final class ToolRegistry: ObservableObject {
             TodoTool(),
             CompleteTool(),
             ClarifyTool(),
+            // Picker-backed folder attach: the model asks the user to pick a
+            // working folder; `ChatView` intercepts the success and
+            // auto-continues the run with the folder bound.
+            PromptWorkingFolderTool(),
             // Voice output: model calls this when the user explicitly
             // asks to hear the response. ChatView intercepts the
             // successful call and routes through TTSService.
@@ -623,6 +627,11 @@ public final class ToolRegistry: ObservableObject {
     /// unauthenticated loopback bridge must never reach them.
     nonisolated public static let externallyDeniedToolNames: Set<String> =
         externallyDeniedHostToolNames.union(agentChannelToolNames).union(AppleApp.allToolNames)
+        // Opens an AppKit folder picker on a chat window and re-roots the
+        // chat + the agent's sticky Working Folder: there is no window on an
+        // external surface, and a remote caller must not be able to pop a
+        // picker on the user's Mac. Hidden from `/mcp/tools` too.
+        .union([PromptWorkingFolderTool.toolName])
 
     /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
     /// folder-bounded remote agent run may use (gated on
@@ -1232,10 +1241,11 @@ public final class ToolRegistry: ObservableObject {
                     kind: .toolNotFound,
                     reason:
                         "\(name) needs a working folder attached to THIS chat and there is none "
-                        + "(this chat has no folder, or its folder was cleared). Ask the user to "
-                        + "attach a folder via the Folder chip — that also becomes the agent's "
-                        + "Working Folder for future chats and background runs — or enable "
-                        + "Autonomous execution. Until then, deliver file content with "
+                        + "(this chat has no folder, or its folder was cleared). "
+                        + PromptWorkingFolderTool.attachFolderSteer
+                        + " An attached folder also becomes the agent's Working Folder for "
+                        + "future chats and background runs; enabling Autonomous execution is "
+                        + "the other option. Until then, deliver file content with "
                         + "share_artifact and say why.",
                     toolName: name,
                     retryable: false
@@ -2562,6 +2572,13 @@ public final class ToolRegistry: ObservableObject {
         excluded.formUnion(hiddenSandboxNames)
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
+            // The picker-backed folder ask is only for a turn with NO
+            // execution root: with a folder it is moot, and in VM mode the
+            // model already has the five workspace tools inside the sandbox.
+            // Mode-level so every schema consumer (chat composer, plugin
+            // `complete`, HTTP agent-run) agrees; the composer additionally
+            // strips it for non-chat sources (`PromptWorkingFolderTool.shouldExpose`).
+            excluded.insert(PromptWorkingFolderTool.toolName)
         }
         // The spawn / image delegation family is never excluded from the base
         // schema — there is no global master switch. The base set stays a
@@ -3291,6 +3308,9 @@ extension ToolRegistry {
         configureToolNames.union([
             "todo", "complete", "clarify", "get_current_time",
             "web_search", "search_and_extract",
+            // The Orchestrator has a (read-only) working folder too, set from
+            // the chat Folder chip; the picker-backed ask is the same record.
+            PromptWorkingFolderTool.toolName,
         ])
     }
 }
