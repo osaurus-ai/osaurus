@@ -2194,6 +2194,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
+    var parameterOrder: [String]? { ["path", "content", "mode", "dry_run"] }
 
     func declaredMutationTargets(argumentsJSON: String) -> [String]? {
         FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
@@ -2426,6 +2427,37 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         )
     }
 
+    /// `content` parsed as a `file_edit` operations array: a JSON array
+    /// (optionally wrapped as `{"operations": [...]}`) whose every element
+    /// is an object with a string `op` that the document editors know.
+    /// Anything else — including a bare array of rows for `.xlsx` — is nil.
+    static func fileEditOperationsPayload(_ content: String) -> [[String: Any]]? {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("[") || trimmed.hasPrefix("{"),
+            let data = trimmed.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data)
+        else { return nil }
+        let list: [[String: Any]]?
+        if let array = object as? [[String: Any]] {
+            list = array
+        } else if let dict = object as? [String: Any], dict.count == 1 {
+            list = dict["operations"] as? [[String: Any]]
+        } else {
+            list = nil
+        }
+        guard let list, !list.isEmpty else { return nil }
+        let known = Set(DocumentEditService.allOperationNames)
+        guard list.allSatisfy({ ($0["op"] as? String).map(known.contains) == true }) else { return nil }
+        return list
+    }
+
+    static func compactJSON(_ value: Any) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: .osaurusCanonical),
+            let text = String(data: data, encoding: .utf8)
+        else { return "[…]" }
+        return text.count > 400 ? String(text.prefix(400)) + "…" : text
+    }
+
     /// Rejection for a generated-document write whose sandbox path the host
     /// cannot serve (outside `/workspace`, rejected by the sanitizer, or the
     /// share root is missing). Names the working alternatives instead of
@@ -2477,6 +2509,31 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 expected: "omit `mode` (or `write`) for .\(ext); documents are regenerated whole",
                 tool: name,
                 retryable: false
+            )
+        }
+
+        // `content` that is a `file_edit` operations array (`[{"op":
+        // "fill_form", …}]`) is an edit request typed into the wrong tool,
+        // not a document body. Rendering it would overwrite the document
+        // (a filled PDF form became one line of JSON text — Raptor no-think
+        // `fill-pdf-form-in-place`, twice in one run), so it is refused
+        // with the exact call to make instead.
+        if let operations = Self.fileEditOperationsPayload(content) {
+            let opNames = operations.compactMap { $0["op"] as? String }
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`content` is a list of `file_edit` operations (\(opNames.joined(separator: ", "))), not a document body — writing it would replace '\(relativePath)' with that JSON as text. "
+                    + "Call `file_edit` with {\"path\": \"\(relativePath)\", \"operations\": \(Self.compactJSON(operations))} instead; the file was not changed.",
+                field: "content",
+                expected: target.contentHint,
+                tool: name,
+                retryable: false,
+                metadata: [
+                    "extension": ext,
+                    "retry_with_tool": "file_edit",
+                    "retry_with": ["path": relativePath, "operations": operations],
+                ]
             )
         }
 
@@ -2603,7 +2660,10 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "`old_string` must uniquely match exactly one "
         + "location in the file — include surrounding context lines if needed to ensure uniqueness. "
         + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
-        + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "
+        + "`file_read` output. Small drift is tolerated when the match stays unique — indentation, tabs vs spaces, "
+        + "blank-line count, curly vs straight quotes — and the result reports `match_strategy` (\"exact\" when it "
+        + "matched byte-for-byte); the file's own whitespace is kept for unchanged lines. "
+        + "Fails if `old_string` is not found or matches multiple locations. "
         + "For repeated occurrences of the same text pass `replace_all: true` to replace every one. "
         + "For many distinct replacements pass `edits`: an array of {old_string, new_string} applied "
         + "atomically in one call — if any edit fails to match, nothing is written. Prefer one `edits` "
@@ -2611,7 +2671,9 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "Documents (.docx/.xlsx/.pptx/.pdf) are edited in place with `operations` (formatting, styles, media and "
         + "untouched content are kept): call `file_read` with `mode: \"structure\"` first to get paragraph numbers, "
         + "cell refs, slides/shapes, or pages; on .docx/.pptx a plain old_string/new_string also works (text is "
-        + "matched across formatting runs). Other document types (.doc/.xls/.odt/…) are read with `file_read` and "
+        + "matched across formatting runs; on .docx each line of a multi-line old_string is one paragraph and each "
+        + "line of new_string becomes a paragraph, with `## Heading` / `- bullet` lines styled like `file_write` "
+        + "Markdown — leading bullets/numbers are list formatting, not text). Other document types (.doc/.xls/.odt/…) are read with `file_read` and "
         + "regenerated with `file_write`. "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial edit. "
         + "Pass `dry_run: true` to preview the diff without modifying the file. "
@@ -2670,19 +2732,14 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                         + ".pptx: replace_text {old_string, new_string, replace_all?, slide?}, set_slide_text {slide, shape: title|subtitle|body|number, text}, "
                         + "duplicate_slide {slide}, delete_slide {slide}, reorder_slides {order}. "
                         + "Example: {\"path\": \"deck.pptx\", \"operations\": [{\"op\": \"set_slide_text\", \"slide\": 2, \"shape\": \"title\", \"text\": \"Roadmap\"}]}. "
-                        + ".pdf: delete_pages {pages}, reorder_pages {order}, rotate_pages {pages?, degrees}, merge {files}, fill_form {fields}, "
+                        + ".pdf: delete_pages {pages}, reorder_pages {order}, rotate_pages {pages?, degrees}, merge {files}, fill_form {fields: {\"Name\": \"Ada\", \"Agree\": true, \"Plan\": \"Pro\"}} (`file_read` mode \"structure\" lists form_fields with types and options), "
                         + "add_text {page, text, x?, y?}, add_note {page, text}, highlight {text, page?}. "
-                        + "Example: {\"path\": \"report.pdf\", \"operations\": [{\"op\": \"rotate_pages\", \"pages\": [1], \"degrees\": 90}]}. Numbers are 1-based."
+                        + "Example: {\"path\": \"intake.pdf\", \"operations\": [{\"op\": \"fill_form\", \"fields\": {\"Name\": \"Ada Lovelace\", \"Agree\": true}}]}. Numbers are 1-based."
                 ),
-                "items": .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "op": .object([
-                            "type": .string("string"),
-                            "enum": .array(DocumentEditService.allOperationNames.map { .string($0) }),
-                        ])
-                    ]),
-                ]),
+                // Free-form on purpose — see
+                // `DocumentEditService.operationItemSchema` for the
+                // constrained-decoder evidence.
+                "items": DocumentEditService.operationItemSchema,
             ]),
             "dry_run": .object([
                 "type": .string("boolean"),
@@ -2697,6 +2754,11 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
+    /// `old_string` must precede `new_string` on the wire — see
+    /// `ToolWirePropertyOrder` for the constrained-decoder evidence.
+    var parameterOrder: [String]? {
+        ["path", "old_string", "new_string", "replace_all", "edits", "operations", "dry_run"]
+    }
 
     func declaredMutationTargets(argumentsJSON: String) -> [String]? {
         FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
@@ -2727,6 +2789,100 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         return hint
     }
 
+    /// Three narrowly documented Raptor-0.6-4B shapes are repaired before
+    /// the shared schema validator runs (nothing else about the payload
+    /// changes, and the public schema stays strict):
+    ///
+    /// 1. `edits` / `operations` sent as a JSON **string** (`"edits":
+    ///    "[{…}]"`, `edit-docx-in-place`) is decoded so the entries can be
+    ///    read below; the shared coercer would decode it later anyway.
+    /// 2. A missing top-level `path` whose value every entry carries
+    ///    identically (`{"edits": [{"path": "memo.docx", …}, {"path":
+    ///    "memo.docx", …}]}`, `edit-docx-in-place` ×3 and
+    ///    `fill-pdf-form-in-place` ×2) is hoisted; entries that disagree, or
+    ///    a call with no `path` anywhere, still get "Missing required
+    ///    property: path".
+    /// 3. Document operations under `edits` (`{"edits": [{"op": "set_cells",
+    ///    …}]}`, `edit-xlsx-in-place`, `document-drafting-revisions`) move to
+    ///    `operations`: `edits.items` requires `old_string`, so the validator
+    ///    would otherwise reject them and the model re-guesses shapes. Only an
+    ///    array in which at least one entry carries a known document `op`
+    ///    moves (text-file batches never do); `{old_string, new_string}`
+    ///    entries in the same array become `replace_text` (top-level
+    ///    `replace_all` carries over), and a real `operations` array wins.
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        Self.normalizingEditShapes(argumentsJSON)
+    }
+
+    static func normalizingEditShapes(_ argumentsJSON: String) -> String {
+        guard let data = argumentsJSON.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return argumentsJSON }
+        var changed = false
+
+        // 1. String-encoded arrays.
+        for key in ["edits", "operations"] {
+            guard let encoded = object[key] as? String,
+                let bytes = encoded.data(using: .utf8),
+                let decoded = try? JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]
+            else { continue }
+            object[key] = decoded
+            changed = true
+        }
+
+        // 2. `path` carried by every entry instead of the call. The same
+        //    resolution lives in `AgentTaskState.sharedEntryPath`, so the
+        //    loop's mutation bookkeeping (which sees the raw call) targets
+        //    the same file.
+        let topPath = (object["path"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        if topPath.isEmpty, let shared = AgentTaskState.sharedEntryPath(object) {
+            object["path"] = shared
+            for key in ["edits", "operations"] {
+                guard let entries = object[key] as? [[String: Any]] else { continue }
+                object[key] = entries.map { entry -> [String: Any] in
+                    guard let own = entry["path"] as? String,
+                        AgentTaskState.canonicalPath(own.trimmingCharacters(in: .whitespaces)) == AgentTaskState.canonicalPath(shared)
+                    else { return entry }
+                    var stripped = entry
+                    stripped.removeValue(forKey: "path")
+                    return stripped
+                }
+            }
+            changed = true
+        }
+
+        // 3. Document operations under `edits`.
+        if let edits = object["edits"] as? [[String: Any]], !edits.isEmpty {
+            let known = Set(DocumentEditService.allOperationNames)
+            func isOperation(_ entry: [String: Any]) -> Bool {
+                guard let op = entry["op"] as? String else { return false }
+                return known.contains(op)
+            }
+            func isPair(_ entry: [String: Any]) -> Bool {
+                entry["op"] == nil && entry["old_string"] is String && entry["new_string"] is String
+            }
+            let hasRealOperations = object["operations"].map { !isContentFree($0) } ?? false
+            if !hasRealOperations, edits.contains(where: isOperation), edits.allSatisfy({ isOperation($0) || isPair($0) }) {
+                let replaceAll = ArgumentCoercion.bool(object["replace_all"]) ?? false
+                object["operations"] = edits.map { entry -> [String: Any] in
+                    if isOperation(entry) { return entry }
+                    var op = entry
+                    op["op"] = "replace_text"
+                    if replaceAll, op["all"] == nil, op["replace_all"] == nil { op["all"] = true }
+                    return op
+                }
+                object.removeValue(forKey: "edits")
+                changed = true
+            }
+        }
+
+        guard changed,
+            let cleaned = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+            let text = String(data: cleaned, encoding: .utf8)
+        else { return argumentsJSON }
+        return text
+    }
+
     /// Cap on `edits` entries per call so a runaway batch can't produce an
     /// unreviewably large atomic change.
     static let maxBatchEdits = 100
@@ -2737,9 +2893,50 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         self.fixedRootPath = rootPath
     }
 
+    /// Constrained decoders that walk the schema in declared order emit
+    /// optional collection keys as empty fillers when the model has nothing
+    /// to put in them (`"operations": []` next to a real `edits` batch, 5/5
+    /// on xAI grok-4.3; the same shape as the `"description": ""` fillers
+    /// `SchemaValidator.coerceArguments` already tolerates). An empty array,
+    /// `null` or `""` under `edits` / `operations` carries no intent, so it
+    /// is dropped whenever another edit form is present instead of being
+    /// rejected as "operations on a text file". A request that carries
+    /// *only* a filler still reaches the pointed non-empty-array error.
+    /// Fillers are content-free values: `null`, `""`, `[]`, `{}`, and
+    /// containers holding only such values (`[{}]`, `[{"op": ""}]` — the
+    /// same decoders also pad the array with an empty object once they have
+    /// opened it).
+    static func droppingEditFormFillers(_ args: [String: Any]) -> [String: Any] {
+        func isFiller(_ value: Any?) -> Bool {
+            guard let value else { return false }
+            return Self.isContentFree(value)
+        }
+        let editForms = ["edits", "operations"]
+        let fillers = editForms.filter { isFiller(args[$0]) }
+        guard !fillers.isEmpty else { return args }
+        let hasOtherForm =
+            args["old_string"] != nil
+            || editForms.contains { args[$0] != nil && !isFiller(args[$0]) }
+        guard hasOtherForm else { return args }
+        var cleaned = args
+        for key in fillers { cleaned.removeValue(forKey: key) }
+        return cleaned
+    }
+
+    /// `null`, `""`, and arrays/objects (recursively) made only of those.
+    /// Numbers and booleans are content.
+    static func isContentFree(_ value: Any) -> Bool {
+        if value is NSNull { return true }
+        if let string = value as? String { return string.isEmpty }
+        if let array = value as? [Any] { return array.allSatisfy(isContentFree) }
+        if let object = value as? [String: Any] { return object.values.allSatisfy(isContentFree) }
+        return false
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        guard case .value(let rawArgs) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let args = Self.droppingEditFormFillers(rawArgs)
 
         let pathReq = requireString(
             args,
@@ -2774,87 +2971,25 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         // Resolve the requested edits: either the batch `edits` array or the
         // single `old_string`/`new_string` pair. Both funnel into one ordered
         // list so the apply loop below has a single shape.
-        var requestedEdits: [(old: String, new: String)] = []
+        let requestedEdits: [(old: String, new: String)]
         let isBatch = args["edits"] != nil
-        if isBatch {
-            guard let rawEdits = args["edits"] as? [[String: Any]], !rawEdits.isEmpty else {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message: "`edits` must be a non-empty array of {old_string, new_string} objects.",
-                    field: "edits",
-                    expected: "non-empty array of {old_string, new_string}",
-                    tool: name
-                )
-            }
-            if rawEdits.count > Self.maxBatchEdits {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "`edits` contains \(rawEdits.count) entries; the cap is \(Self.maxBatchEdits) per call. Split into multiple calls.",
-                    field: "edits",
-                    expected: "at most \(Self.maxBatchEdits) edits per call",
-                    tool: name
-                )
-            }
-            for (index, raw) in rawEdits.enumerated() {
-                // Empty `old_string` is ambiguous (same rule as the single
-                // form); empty `new_string` is the delete-the-match form.
-                guard let old = raw["old_string"] as? String, !old.isEmpty else {
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message: "`edits[\(index)].old_string` must be a non-empty string.",
-                        field: "edits",
-                        expected: "non-empty exact text for every edit's old_string",
-                        tool: name
-                    )
-                }
-                guard let new = raw["new_string"] as? String else {
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message: "`edits[\(index)].new_string` must be a string (use `\"\"` to delete the match).",
-                        field: "edits",
-                        expected: "replacement text for every edit",
-                        tool: name
-                    )
-                }
-                requestedEdits.append((old, new))
-            }
-        } else {
-            // Empty `old_string` is ambiguous — `requireString` (default
-            // `allowEmpty: false`) rejects it with a pointed envelope that
-            // matches the sandbox in-place edit (`sandbox_write_file`).
-            let oldReq = requireString(
-                args,
-                "old_string",
-                expected: "non-empty exact text that matches the target location (or pass `edits` for a batch)",
-                tool: name
-            )
-            guard case .value(let oldString) = oldReq else {
-                return oldReq.failureEnvelope ?? ""
-            }
-
-            // Empty `new_string` is the supported delete-the-match form.
-            let newReq = requireString(
-                args,
-                "new_string",
-                expected: "replacement text (use `\"\"` to delete the match)",
-                tool: name,
-                allowEmpty: true
-            )
-            guard case .value(let newString) = newReq else {
-                return newReq.failureEnvelope ?? ""
-            }
-            requestedEdits.append((oldString, newString))
+        switch parseRequestedEdits(args, tool: name) {
+        case .success(let edits): requestedEdits = edits
+        case .failureEnvelope(let envelope): return envelope
         }
 
         // Writable combined mode: an absolute `/workspace/...` path is the
         // Linux sandbox — route to the sandbox writer's in-place edit
-        // branch (`old_string` present selects it), mirroring `file_read`.
+        // branch (`old_string`/`edits` present selects it), mirroring
+        // `file_read`. The sandbox writer reads the file back through the
+        // bridge and applies the same `applyEdits` matcher host-side, so
+        // batches, `replace_all`, `dry_run` and the tolerance cascade behave
+        // identically on both routes.
         if combinedFileRoute(path: relativePath) == .sandbox,
             let bridge = ChatExecutionContext.sandboxReadBridge
         {
-            // Documents are never text-edited on either route: the pivot is
-            // read (extracted) -> change the text -> regenerate whole.
+            // Documents are never text-edited on the sandbox route: the
+            // pivot is read (extracted) -> change the text -> regenerate whole.
             if let rejected = WorkspaceWriteSafety.documentEditRejection(
                 path: relativePath,
                 fileExtension: URL(fileURLWithPath: relativePath).pathExtension.lowercased(),
@@ -2864,39 +2999,16 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             ) {
                 return rejected
             }
-            if dryRun {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "`dry_run` previews are not supported for `/workspace/...` sandbox paths — "
-                        + "edit directly, or preview host-folder paths only.",
-                    field: "dry_run",
-                    expected: "omit `dry_run` for sandbox paths",
-                    tool: name
-                )
+            var forwarded: [String: Any] = ["path": relativePath]
+            if isBatch {
+                forwarded["edits"] = requestedEdits.map { ["old_string": $0.old, "new_string": $0.new] }
+            } else {
+                forwarded["old_string"] = requestedEdits[0].old
+                forwarded["new_string"] = requestedEdits[0].new
             }
-            // The sandbox writer's in-place edit branch only understands the
-            // single unique-match form; batch/replace_all stay host-only.
-            if isBatch || replaceAll {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "`edits` and `replace_all` are not supported for `/workspace/...` sandbox paths — "
-                        + "issue single old_string/new_string edits, or use `sandbox_exec` with `sed`.",
-                    field: isBatch ? "edits" : "replace_all",
-                    expected: "single old_string/new_string edit for sandbox paths",
-                    tool: name
-                )
-            }
-            return try await sandboxBridgeWrite(
-                bridge,
-                tool: name,
-                args: [
-                    "path": relativePath,
-                    "old_string": requestedEdits[0].old,
-                    "new_string": requestedEdits[0].new,
-                ]
-            )
+            if replaceAll { forwarded["replace_all"] = true }
+            if dryRun { forwarded["dry_run"] = true }
+            return try await sandboxBridgeWrite(bridge, tool: name, args: forwarded)
         }
 
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
@@ -2937,54 +3049,18 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         case .failureEnvelope(let envelope):
             return envelope
         }
-        var content = originalContent
-
         // Apply every requested edit in order against the evolving content.
         // Atomic by construction: content only reaches the filesystem after
         // the whole loop succeeds, so a failing edit means nothing changed.
-        var perEditReplacements: [Int] = []
-        for (index, edit) in requestedEdits.enumerated() {
-            let label = isBatch ? "edits[\(index)].old_string" : "old_string"
-            let atomicNote = isBatch ? " No edits were applied — the batch is atomic." : ""
-            let matches = content.ranges(of: edit.old)
-            if matches.isEmpty {
-                let diagnosis = Self.noMatchDiagnosis(oldString: edit.old, content: content)
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "Could not find `\(label)` in \(relativePath). \(diagnosis)\(atomicNote)",
-                    field: "old_string",
-                    expected: "exact non-empty text present in the target file",
-                    tool: name
-                )
-            }
-            if matches.count > 1, !replaceAll {
-                // Action-first phrasing plus a machine-readable retry hint:
-                // observed live, a 9B model got the old hint ("...or pass
-                // replace_all...") buried mid-sentence, retried with
-                // `dry_run: true` instead, and abandoned the task.
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "Found \(matches.count) matches for `\(label)` in \(relativePath). "
-                        + "To replace EVERY occurrence, retry the same call with the added "
-                        + "argument \"replace_all\": true. To replace only one occurrence, "
-                        + "include more surrounding context in `old_string`. Do NOT add "
-                        + "dry_run - it only previews and changes nothing.\(atomicNote)",
-                    field: "old_string",
-                    expected: "the same call plus \"replace_all\": true (or a uniquely matching old_string)",
-                    tool: name,
-                    metadata: ["retry_with": ["replace_all": true]]
-                )
-            }
-            if replaceAll {
-                content = content.replacingOccurrences(of: edit.old, with: edit.new)
-                perEditReplacements.append(matches.count)
-            } else {
-                content.replaceSubrange(matches[0], with: edit.new)
-                perEditReplacements.append(1)
-            }
+        let applied: Self.AppliedEdits
+        switch Self.applyEdits(
+            requestedEdits, to: originalContent, replaceAll: replaceAll, isBatch: isBatch,
+            relativePath: relativePath, tool: name
+        ) {
+        case .success(let result): applied = result
+        case .failureEnvelope(let envelope): return envelope
         }
+        let content = applied.content
         var preview = WorkspaceWriteSafety.preview(
             path: relativePath,
             previousContent: originalContent,
@@ -2995,10 +3071,14 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             createsParentDirectories: false,
             fileURL: fileURL
         )
-        preview.payload["replacements"] = perEditReplacements.reduce(0, +)
+        preview.payload["replacements"] = applied.perEditReplacements.reduce(0, +)
+        preview.payload["match_strategy"] = applied.overallStrategy.rawValue
+        preview.payload["matched_lines"] = applied.matchedLineLabels
         if isBatch {
-            preview.payload["edits_applied"] = perEditReplacements
+            preview.payload["edits_applied"] = applied.perEditReplacements
+            preview.payload["edit_strategies"] = applied.perEditStrategies.map(\.rawValue)
         }
+        preview.warnings.append(contentsOf: applied.warnings)
         if dryRun {
             // Unmissable not-applied signal: observed live, a model read a
             // dry-run preview as completion and told the user "all 3
@@ -3094,13 +3174,20 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     tool: name
                 )
             }
+            // An empty `old_string` with text in `new_string` is an insert,
+            // which `replace_text` can't anchor; name the operations that can.
+            let insertHint =
+                ext == "docx"
+                ? " To add text without replacing any, use `operations`: {\"op\": \"append_markdown\", \"markdown\": \"## Heading\\n- item\"} appends styled paragraphs at the end, or {\"op\": \"insert_paragraph\", \"text\": \"…\", \"after\": N} places one after paragraph N (`file_read` mode \"structure\" numbers them)."
+                : " To add text without replacing any, use `operations` with `set_slide_text` (or `duplicate_slide` then `set_slide_text` for a new slide)."
             var pairs: [(String, String)] = []
             if let edits = args["edits"] as? [[String: Any]] {
                 for (index, edit) in edits.enumerated() {
                     guard let old = edit["old_string"] as? String, !old.isEmpty, let new = edit["new_string"] as? String else {
+                        let isInsert = (edit["old_string"] as? String)?.isEmpty == true && edit["new_string"] is String
                         return ToolEnvelope.failure(
                             kind: .invalidArgs,
-                            message: "`edits[\(index)]` needs a non-empty `old_string` and a `new_string`.",
+                            message: "`edits[\(index)]` needs a non-empty `old_string` and a `new_string`." + (isInsert ? insertHint : ""),
                             field: "edits",
                             expected: "{old_string, new_string}",
                             tool: name
@@ -3111,9 +3198,10 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             } else if let old = args["old_string"] as? String, !old.isEmpty, let new = args["new_string"] as? String {
                 pairs.append((old, new))
             } else {
+                let isInsert = (args["old_string"] as? String)?.isEmpty == true && args["new_string"] is String
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
-                    message: "Pass a non-empty `old_string` and a `new_string`.",
+                    message: "Pass a non-empty `old_string` and a `new_string`." + (isInsert ? insertHint : ""),
                     field: "old_string",
                     expected: "document text to replace",
                     tool: name
@@ -3124,7 +3212,10 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
-                    "Pass `operations` to edit this .\(ext) (\(DocumentEditService.operationNames(for: ext).joined(separator: ", "))). "
+                    (ext == "docx" || ext == "pptx"
+                        ? "Nothing to apply: pass `old_string` + `new_string` (text is matched across runs) or `operations` "
+                        : "Pass `operations` ")
+                    + "to edit this .\(ext) (\(DocumentEditService.operationNames(for: ext).joined(separator: ", "))). "
                     + "Call `file_read` with `mode: \"structure\"` to see what can be addressed.",
                 field: "operations",
                 expected: "`operations` array",
@@ -3184,16 +3275,246 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
     }
 
+    // MARK: - Shared text-edit application
+
+    enum RequestedEditsResult {
+        case success([(old: String, new: String)])
+        case failureEnvelope(String)
+    }
+
+    /// Validate the edit request shape — batch `edits` array or single
+    /// `old_string`/`new_string` — into one ordered list. Shared by the host
+    /// route and the sandbox writer (via `FileEditTool().parseRequestedEdits`)
+    /// so both reject malformed requests with the same envelopes. Instance
+    /// method only for the protocol's `requireString` helpers; it reads no
+    /// state.
+    func parseRequestedEdits(_ rawArgs: [String: Any], tool: String) -> RequestedEditsResult {
+        let args = Self.droppingEditFormFillers(rawArgs)
+        var requestedEdits: [(old: String, new: String)] = []
+        if args["edits"] != nil {
+            guard let rawEdits = args["edits"] as? [[String: Any]], !rawEdits.isEmpty else {
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`edits` must be a non-empty array of {old_string, new_string} objects.",
+                        field: "edits",
+                        expected: "non-empty array of {old_string, new_string}",
+                        tool: tool
+                    ))
+            }
+            if rawEdits.count > Self.maxBatchEdits {
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message:
+                            "`edits` contains \(rawEdits.count) entries; the cap is \(Self.maxBatchEdits) per call. Split into multiple calls.",
+                        field: "edits",
+                        expected: "at most \(Self.maxBatchEdits) edits per call",
+                        tool: tool
+                    ))
+            }
+            for (index, raw) in rawEdits.enumerated() {
+                // Empty `old_string` is ambiguous (same rule as the single
+                // form); empty `new_string` is the delete-the-match form.
+                guard let old = raw["old_string"] as? String, !old.isEmpty else {
+                    return .failureEnvelope(
+                        ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message: "`edits[\(index)].old_string` must be a non-empty string.",
+                            field: "edits",
+                            expected: "non-empty exact text for every edit's old_string",
+                            tool: tool
+                        ))
+                }
+                guard let new = raw["new_string"] as? String else {
+                    return .failureEnvelope(
+                        ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message: "`edits[\(index)].new_string` must be a string (use `\"\"` to delete the match).",
+                            field: "edits",
+                            expected: "replacement text for every edit",
+                            tool: tool
+                        ))
+                }
+                requestedEdits.append((old, new))
+            }
+            return .success(requestedEdits)
+        }
+
+        // Empty `old_string` is ambiguous — `requireString` (default
+        // `allowEmpty: false`) rejects it with a pointed envelope.
+        let oldReq = requireString(
+            args,
+            "old_string",
+            expected: "non-empty exact text that matches the target location (or pass `edits` for a batch)",
+            tool: tool
+        )
+        guard case .value(let oldString) = oldReq else {
+            return .failureEnvelope(oldReq.failureEnvelope ?? "")
+        }
+        guard args["new_string"] != nil else {
+            return .failureEnvelope(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`old_string` given without `new_string` — an in-place edit needs both. Use "
+                        + "`\"\"` for `new_string` to delete the match.",
+                    field: "new_string",
+                    expected: "replacement text (use `\"\"` to delete the match)",
+                    tool: tool
+                ))
+        }
+        // Empty `new_string` is the supported delete-the-match form.
+        let newReq = requireString(
+            args,
+            "new_string",
+            expected: "replacement text (use `\"\"` to delete the match)",
+            tool: tool,
+            allowEmpty: true
+        )
+        guard case .value(let newString) = newReq else {
+            return .failureEnvelope(newReq.failureEnvelope ?? "")
+        }
+        return .success([(oldString, newString)])
+    }
+
+    /// Result of applying an ordered list of edits to one file's text.
+    struct AppliedEdits {
+        let content: String
+        let perEditReplacements: [Int]
+        let perEditStrategies: [FileEditMatcher.Strategy]
+        /// `"12"` or `"12-15"` per replaced block, in file order of the
+        /// first edit that touched it.
+        let matchedLineLabels: [String]
+        /// Model-facing notes for relaxed matches (verbatim file text).
+        let warnings: [String]
+
+        /// The most relaxed strategy any edit needed.
+        var overallStrategy: FileEditMatcher.Strategy {
+            let order = FileEditMatcher.Strategy.allCases
+            return perEditStrategies.max { order.firstIndex(of: $0)! < order.firstIndex(of: $1)! } ?? .exact
+        }
+    }
+
+    enum ApplyEditsResult {
+        case success(AppliedEdits)
+        case failureEnvelope(String)
+    }
+
+    /// Apply `edits` in order to `content` with the shared tolerance
+    /// cascade. Pure: the caller decides where the result is written. Used
+    /// by the host route and the sandbox bridge so both routes have one
+    /// matching contract and one set of error envelopes.
+    static func applyEdits(
+        _ edits: [(old: String, new: String)],
+        to content: String,
+        replaceAll: Bool,
+        isBatch: Bool,
+        relativePath: String,
+        tool: String
+    ) -> ApplyEditsResult {
+        var working = content
+        var replacements: [Int] = []
+        var strategies: [FileEditMatcher.Strategy] = []
+        var lineLabels: [String] = []
+        var warnings: [String] = []
+        for (index, edit) in edits.enumerated() {
+            let label = isBatch ? "edits[\(index)].old_string" : "old_string"
+            let atomicNote = isBatch ? " No edits were applied — the batch is atomic." : ""
+            switch FileEditMatcher.apply(oldString: edit.old, newString: edit.new, to: working, replaceAll: replaceAll) {
+            case .noOp:
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message:
+                            "`\(label)` and its `new_string` are identical in \(relativePath) — there is nothing to change. "
+                            + "If the file already has the intended text, the edit is done; otherwise fix `new_string`.\(atomicNote)",
+                        field: "new_string",
+                        expected: "replacement text that differs from old_string",
+                        tool: tool
+                    )
+                )
+            case .notFound:
+                let diagnosis = Self.noMatchDiagnosis(oldString: edit.old, content: working)
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "Could not find `\(label)` in \(relativePath). \(diagnosis)\(atomicNote)",
+                        field: "old_string",
+                        expected: "exact non-empty text present in the target file",
+                        tool: tool
+                    )
+                )
+            case .ambiguous(let count, let strategy):
+                // Action-first phrasing plus a machine-readable retry hint:
+                // observed live, a 9B model got the old hint ("...or pass
+                // replace_all...") buried mid-sentence, retried with
+                // `dry_run: true` instead, and abandoned the task.
+                let how = strategy.isRelaxed ? " (matching \(strategy.explanation))" : ""
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message:
+                            "Found \(count) matches for `\(label)` in \(relativePath)\(how). "
+                            + "To replace EVERY occurrence, retry the same call with the added "
+                            + "argument \"replace_all\": true. To replace only one occurrence, "
+                            + "include more surrounding context in `old_string`. Do NOT add "
+                            + "dry_run - it only previews and changes nothing.\(atomicNote)",
+                        field: "old_string",
+                        expected: "the same call plus \"replace_all\": true (or a uniquely matching old_string)",
+                        tool: tool,
+                        metadata: ["retry_with": ["replace_all": true]]
+                    )
+                )
+            case .applied(let applied):
+                working = applied.content
+                replacements.append(applied.replacements)
+                strategies.append(applied.strategy)
+                lineLabels.append(
+                    contentsOf: applied.matchedLines.map {
+                        $0.lowerBound == $0.upperBound ? "\($0.lowerBound)" : "\($0.lowerBound)-\($0.upperBound)"
+                    }
+                )
+                if applied.strategy.isRelaxed {
+                    let where_ = applied.matchedLines.first.map { range in
+                        range.lowerBound == range.upperBound
+                            ? "line \(range.lowerBound)" : "lines \(range.lowerBound)-\(range.upperBound)"
+                    } ?? "the matched region"
+                    var note =
+                        "`\(label)` did not match the file byte-for-byte; it was matched at \(where_) "
+                        + "with \(applied.strategy.explanation). The file's own indentation, blank lines and line "
+                        + "endings were kept for unchanged lines"
+                    if applied.replacements > 1 { note += " (\(applied.replacements) occurrences)" }
+                    note += "."
+                    if let matched = applied.matchedText {
+                        note += " The file text there was:\n\(Self.boundedQuote(matched))"
+                    }
+                    warnings.append(note)
+                }
+            }
+        }
+        return .success(
+            AppliedEdits(
+                content: working,
+                perEditReplacements: replacements,
+                perEditStrategies: strategies,
+                matchedLineLabels: lineLabels,
+                warnings: warnings
+            )
+        )
+    }
+
     /// Truthful diagnosis for a 0-match `old_string`, computed against the
     /// already-loaded file content. The generic "make sure it matches"
     /// message left models re-issuing the identical failing call (observed
     /// live: grok-4.3 copied the leading space from `file_read`'s `N| `
     /// line-number formatting into `old_string` and repeated the same edit
-    /// until the iteration cap). Three checks, cheapest signal first:
+    /// until the iteration cap). Whitespace-only, blank-line and unicode
+    /// punctuation drift no longer reach this point: `FileEditMatcher`
+    /// applies those when the relaxed match is unique. Two checks remain,
+    /// cheapest signal first:
     ///   1. `N|` line-number prefixes pasted from `file_read` output.
-    ///   2. A whitespace-only mismatch — the trimmed lines match a unique
-    ///      region of the file; quote the exact file bytes to copy.
-    ///   3. A closest-line anchor — quote the real file line most similar
+    ///   2. A closest-line anchor — quote the real file line most similar
     ///      to the first non-empty `old_string` line.
     /// All hints quote VERBATIM file content (never invented text), so the
     /// recovery path stays honest.
@@ -3211,70 +3532,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         let contentLines = content.components(separatedBy: "\n")
         let trimmedOldLines = oldLines.map { $0.trimmingCharacters(in: .whitespaces) }
 
-        // 2. Whitespace-only mismatch: the trimmed old_string lines match a
-        // unique consecutive run of trimmed file lines. Quote the exact
-        // file bytes for that region so the model can copy them verbatim.
-        if !trimmedOldLines.allSatisfy({ $0.isEmpty }), trimmedOldLines.count <= contentLines.count {
-            let trimmedContentLines = contentLines.map { $0.trimmingCharacters(in: .whitespaces) }
-            var matchStarts: [Int] = []
-            for start in 0 ... (trimmedContentLines.count - trimmedOldLines.count) {
-                if Array(trimmedContentLines[start ..< start + trimmedOldLines.count]) == trimmedOldLines {
-                    matchStarts.append(start)
-                    if matchStarts.count > 1 { break }
-                }
-            }
-            if matchStarts.count == 1, let start = matchStarts.first {
-                let exact = contentLines[start ..< start + trimmedOldLines.count]
-                    .joined(separator: "\n")
-                return "Found text differing only in whitespace at line \(start + 1). "
-                    + "The exact file content there is:\n\(Self.boundedQuote(exact))\n"
-                    + "Use that exact text (including its whitespace) as `old_string`."
-            }
-        }
-
-        // 2b. Blank-line-count drift: same as check 2 but comparing only the
-        // NON-empty trimmed lines. Models routinely collapse a `\n\n\n` run
-        // to `\n\n` (observed live: a model normalized two blank lines
-        // between functions to one and re-issued the identical failing edit
-        // until its budget ran out, because check 2 requires equal line
-        // counts and check 3's single-line anchor was useless). On a unique
-        // match, quote the true file region — including its real blank
-        // lines — verbatim.
-        let oldNonEmpty = trimmedOldLines.filter { !$0.isEmpty }
-        if oldNonEmpty.count >= 2 {
-            // Indices of non-empty file lines, in file order.
-            var fileNonEmpty: [(index: Int, text: String)] = []
-            for (index, line) in contentLines.enumerated() {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty { fileNonEmpty.append((index, trimmed)) }
-            }
-            if oldNonEmpty.count <= fileNonEmpty.count {
-                var matchStarts: [Int] = []
-                for start in 0 ... (fileNonEmpty.count - oldNonEmpty.count) {
-                    var all = true
-                    for offset in 0 ..< oldNonEmpty.count
-                    where fileNonEmpty[start + offset].text != oldNonEmpty[offset] {
-                        all = false
-                        break
-                    }
-                    if all {
-                        matchStarts.append(start)
-                        if matchStarts.count > 1 { break }
-                    }
-                }
-                if matchStarts.count == 1, let start = matchStarts.first {
-                    let firstLine = fileNonEmpty[start].index
-                    let lastLine = fileNonEmpty[start + oldNonEmpty.count - 1].index
-                    let exact = contentLines[firstLine ... lastLine].joined(separator: "\n")
-                    return "Found the same non-blank lines at line \(firstLine + 1), but the "
-                        + "blank lines between them differ from your `old_string`. The exact "
-                        + "file content there is:\n\(Self.boundedQuote(exact))\n"
-                        + "Use that exact text (including its blank lines) as `old_string`."
-                }
-            }
-        }
-
-        // 3. Closest-line anchor: score every file line against the first
+        // 2. Closest-line anchor: score every file line against the first
         // non-empty trimmed old_string line (containment either way, or
         // shared prefix — cheap but catches the common "the line changed
         // after the model last read it" case) and quote the best one when
@@ -5064,7 +5322,7 @@ struct GitDiffTool: OsaurusTool {
             output,
             cap: ToolOutputCaps.gitDiff,
             headFraction: 0.6,
-            hint: "re-run git_diff with `file_path` scoped to one file to see its full diff"
+            hint: "re-run git_diff with `path` set to one file to see its full diff"
         )
         let text = truncated.isEmpty ? "No differences" : truncated
         return ToolEnvelope.success(tool: name, text: text)

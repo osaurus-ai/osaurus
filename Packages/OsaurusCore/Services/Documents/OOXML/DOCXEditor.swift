@@ -85,43 +85,677 @@ struct DOCXEditor {
     private mutating func replaceText(_ op: DocumentOperation) throws {
         let find = try op.string(op.has("find") ? "find" : "old_string")
         let replacement = try op.string(op.has("replace") ? "replace" : "new_string", allowEmpty: true)
-        guard !find.contains("\n") else {
-            throw op.fail("`old_string` can't span paragraphs; replace within one paragraph at a time.")
-        }
         let all = op.bool("replace_all") || op.bool("all")
-        var paragraphsByPart: [(String, [XMLElement])] = []
-        var total = 0
+        guard find != replacement else {
+            throw op.fail("`old_string` and `new_string` are identical; nothing to change.")
+        }
+        do {
+            try replaceText(op, find: find, replacement: replacement, all: all)
+        } catch let error as DocumentEditError where error.isMatchMiss {
+            // Markdown syntax is formatting in Word, not text: list bullets
+            // and numbers (`file_read` renders "•\t…", a model that drafted
+            // the file writes "- item"), heading hashes ("## Scope") and
+            // inline emphasis ("**Kickoff: April 7**") all become styles
+            // when `file_write` renders the draft. Match without the syntax,
+            // and drop it from the replacement too so a literal marker is
+            // not written into a styled paragraph.
+            let strippedFind = Self.strippingMarkdownSyntax(find)
+            guard strippedFind.stripped else { throw error }
+            // A multi-line replacement is read as block Markdown by the
+            // paragraph expansion below (its markers pick heading/list
+            // styling for the new paragraphs), so only a single-line
+            // replacement is pre-stripped here.
+            let strippedReplacement =
+                Self.editLines(replacement).count > 1 ? replacement : Self.strippingMarkdownSyntax(replacement).text
+            do {
+                try replaceText(op, find: strippedFind.text, replacement: strippedReplacement, all: all)
+            } catch let second as DocumentEditError {
+                // Another miss reports the original text; a failure past
+                // matching (the stripped text matched but couldn't be
+                // applied) is the more specific story.
+                throw second.isMatchMiss ? error : second
+            }
+            summaries.append(
+                "Markdown syntax in `old_string` (list markers, heading hashes, emphasis) was treated as formatting — Word stores it as paragraph and run styling, not text")
+        }
+    }
+
+    /// `strippingListMarkers` plus ATX heading hashes and inline emphasis
+    /// (`**bold**`, `__bold__`, `*italic*`, `_italic_`, `` `code` ``,
+    /// `~~strike~~`) per line. Underscores inside words (`file_name`) are
+    /// left alone: an emphasis run must start after whitespace/start and
+    /// end before whitespace/punctuation/end.
+    static func strippingMarkdownSyntax(_ text: String) -> (text: String, stripped: Bool) {
+        var changed = false
+        let lines = text.components(separatedBy: "\n").map { line -> String in
+            var out = line
+            let leading = out.prefix { $0 == " " || $0 == "\t" }
+            let body = out.dropFirst(leading.count)
+            let hashes = body.prefix(while: { $0 == "#" }).count
+            if hashes > 0, hashes <= 6, body.dropFirst(hashes).first == " " {
+                out = String(leading) + String(body.dropFirst(hashes + 1)).trimmingCharacters(in: .whitespaces)
+                changed = true
+            }
+            let list = strippingListMarkers(out)
+            if list.stripped { out = list.text; changed = true }
+            for pattern in Self.inlineEmphasisPatterns {
+                let range = NSRange(out.startIndex..., in: out)
+                let replaced = pattern.stringByReplacingMatches(in: out, range: range, withTemplate: "$1$2")
+                if replaced != out { out = replaced; changed = true }
+            }
+            return out
+        }
+        return (changed ? lines.joined(separator: "\n") : text, changed)
+    }
+
+    private static let inlineEmphasisPatterns: [NSRegularExpression] = {
+        let boundaryBefore = "(^|[\\s(\\[\"'“‘])"
+        let boundaryAfter = "(?=$|[\\s.,;:!?)\\]\"'”’])"
+        let patterns = [
+            "\\*\\*(\\S(?:[^*\\n]*?\\S)?)\\*\\*",
+            "__(\\S(?:[^_\\n]*?\\S)?)__",
+            "~~(\\S(?:[^~\\n]*?\\S)?)~~",
+            "`([^`\\n]+)`",
+            "\\*(\\S(?:[^*\\n]*?\\S)?)\\*",
+            "_(\\S(?:[^_\\n]*?\\S)?)_",
+        ]
+        return patterns.compactMap { core in
+            try? NSRegularExpression(pattern: boundaryBefore + core + boundaryAfter, options: [])
+        }
+    }()
+
+    /// Leading list markers per line: `•`, `◦`, `▪`, `-`, `*`, `+`, or `1.` /
+    /// `1)` followed by a space or tab. Returns the text without them and
+    /// whether anything changed.
+    static func strippingListMarkers(_ text: String) -> (text: String, stripped: Bool) {
+        var changed = false
+        let lines = text.components(separatedBy: "\n").map { line -> String in
+            let leading = line.prefix { $0 == " " || $0 == "\t" }
+            var rest = Substring(line.dropFirst(leading.count))
+            if let first = rest.first, "•◦▪■-*+–".contains(first) {
+                rest = rest.dropFirst()
+            } else {
+                let digits = rest.prefix { $0.isNumber }
+                guard (1...3).contains(digits.count), let punct = rest.dropFirst(digits.count).first, punct == "." || punct == ")"
+                else { return line }
+                rest = rest.dropFirst(digits.count + 1)
+            }
+            guard let separator = rest.first, separator == " " || separator == "\t" else { return line }
+            changed = true
+            return String(leading) + String(rest.drop { $0 == " " || $0 == "\t" })
+        }
+        return (changed ? lines.joined(separator: "\n") : text, changed)
+    }
+
+    private mutating func replaceText(_ op: DocumentOperation, find: String, replacement: String, all: Bool) throws {
+        // A multi-line old_string means "this run of paragraphs".
+        let findLines = Self.editLines(find)
+        if findLines.count > 1 {
+            try replaceAcrossParagraphs(op, lines: findLines, replacement: replacement, all: all)
+            return
+        }
+        let needle = findLines.first ?? find
+
+        // Match cascade: byte-for-byte first, then punctuation/whitespace
+        // folded. The mode is chosen document-wide so a count of N always
+        // means N replacements under one rule.
+        var paragraphsByPart: [(part: String, paras: [XMLElement])] = []
         for part in try textParts() where package.has(part) {
-            let paras = try package.root(part).descendants("p")
-            let count = paras.reduce(0) { $0 + OOXMLText.occurrences(of: find, in: $1) }
-            total += count
-            paragraphsByPart.append((part, paras))
+            paragraphsByPart.append((part, try package.root(part).descendants("p")))
+        }
+        var mode: OOXMLText.MatchMode = .exact
+        var perPart: [(part: String, count: Int)] = []
+        var total = 0
+        for candidate in [OOXMLText.MatchMode.exact, .normalized] {
+            perPart = paragraphsByPart.map { entry in
+                (entry.part, entry.paras.reduce(0) { $0 + OOXMLText.occurrences(of: needle, in: $1, mode: candidate) })
+            }
+            total = perPart.reduce(0) { $0 + $1.count }
+            mode = candidate
+            if total > 0 { break }
         }
         guard total > 0 else {
-            throw op.fail("\"\(OOXMLText.preview(find, max: 80))\" wasn't found in the document text.")
+            throw op.fail(
+                "\"\(OOXMLText.preview(needle, max: 80))\" wasn't found in the document text."
+                    + Self.closestParagraphHint(for: needle, in: try paragraphs()),
+                isMatchMiss: true)
         }
         guard all || total == 1 else {
-            throw op.fail("\"\(OOXMLText.preview(find, max: 80))\" appears \(total) times; add surrounding words to `old_string`, or pass `all: true`.")
+            throw op.fail(
+                "\"\(OOXMLText.preview(needle, max: 80))\" appears \(total) times (\(Self.describeParts(perPart))); "
+                    + "add surrounding words to `old_string`, or pass `replace_all: true`.")
         }
+
+        // A multi-line replacement means "these paragraphs": the first line
+        // stays in the matched paragraph, the rest become new paragraphs
+        // (read as block Markdown, so `## Heading` / `- item` pick styles
+        // instead of landing as literal text) — the way the same text
+        // would have been rendered by `file_write`. Soft line breaks
+        // inside one paragraph would read back as one run-on line and no
+        // later `old_string` could address the new paragraphs.
+        let replacementLines = Self.editLines(replacement)
+        if replacementLines.count > 1 {
+            let expanded = try expandIntoParagraphs(op, needle: needle, lines: replacementLines, paragraphsByPart: paragraphsByPart, mode: mode)
+            var summary =
+                "Replaced \(expanded) occurrence\(expanded == 1 ? "" : "s") of \"\(OOXMLText.preview(needle, max: 60))\" with \(replacementLines.count) paragraphs (each line of `new_string` is a paragraph; `## ` headings and `- ` bullets became styles)"
+            if mode == .normalized { summary += " (matched with punctuation and whitespace normalized)" }
+            summaries.append(summary)
+            return
+        }
+
         var replaced = 0
         for (part, paras) in paragraphsByPart {
             var changed = false
             for p in paras {
                 let n: Int
                 do {
-                    n = try OOXMLText.replace(in: p, find: find, with: replacement, flavor: .word)
+                    n = try OOXMLText.replace(in: p, find: needle, with: replacement, flavor: .word, mode: mode)
                 } catch OOXMLText.ReplaceError.spansBreak {
                     throw op.fail(
-                        "\"\(OOXMLText.preview(find, max: 80))\" runs across a tab or line break in the document; replace the text on each side of it separately.")
+                        "\"\(OOXMLText.preview(needle, max: 80))\" runs across a tab or line break in the document; replace the text on each side of it separately.",
+                        isMatchMiss: true)
                 }
                 if n > 0 { changed = true; replaced += n }
             }
             if changed { package.markDirty(part) }
         }
-        if replacement.contains("\n") {
-            summaries.append("Line breaks in the replacement became soft line breaks (Shift+Enter)")
+        var summary = "Replaced \(replaced) occurrence\(replaced == 1 ? "" : "s") of \"\(OOXMLText.preview(needle, max: 60))\""
+        if mode == .normalized {
+            summary += " (matched with punctuation and whitespace normalized: the document's own quotes/dashes differed from `old_string`)"
         }
-        summaries.append("Replaced \(replaced) occurrence\(replaced == 1 ? "" : "s") of \"\(OOXMLText.preview(find, max: 60))\"")
+        summaries.append(summary)
+    }
+
+    /// Replace one match per paragraph with `lines` as paragraphs: the
+    /// matched paragraph keeps its head text and takes the first line; any
+    /// tail text after the match moves to a clone (keeping its runs) that
+    /// takes the last line; the lines in between are built from block
+    /// Markdown next to the matched paragraph. Returns the number of
+    /// paragraphs expanded.
+    private mutating func expandIntoParagraphs(
+        _ op: DocumentOperation, needle: String, lines: [String],
+        paragraphsByPart: [(part: String, paras: [XMLElement])], mode: OOXMLText.MatchMode
+    ) throws -> Int {
+        var expanded = 0
+        for (part, paras) in paragraphsByPart {
+            var changed = false
+            for p in paras {
+                let text = OOXMLText.text(of: p)
+                let ranges = OOXMLText.matchRanges(of: needle, in: text, mode: mode)
+                guard let range = ranges.first else { continue }
+                guard ranges.count == 1 else {
+                    throw op.fail(
+                        "\"\(OOXMLText.preview(needle, max: 80))\" appears \(ranges.count) times inside one paragraph; a multi-line `new_string` splits the paragraph there, so add surrounding words to match one occurrence.")
+                }
+                let units = Array(text.utf16)
+                let tailIsBlank = units[range.upperBound...].allSatisfy { OOXMLText.foldUnit($0) == [0x20] || OOXMLText.foldUnit($0).isEmpty }
+                var tailHolder: XMLElement?
+                if !tailIsBlank {
+                    let clone = p.deepCopy()
+                    try Self.spansBreak {
+                        try OOXMLText.replace(in: clone, ranges: [0..<range.upperBound], with: Self.blockMarkdown(lines[lines.count - 1]).text, flavor: .word)
+                    }
+                    Self.pruneEmptyTextRuns(clone)
+                    tailHolder = clone
+                }
+                let firstText =
+                    range.lowerBound == 0 ? Self.lineText(lines[0], replacingStartOf: text) : Self.blockMarkdown(lines[0]).text
+                try Self.spansBreak {
+                    try OOXMLText.replace(in: p, ranges: [range.lowerBound..<units.count], with: firstText, flavor: .word)
+                }
+                Self.pruneEmptyTextRuns(p)
+                let fresh = tailHolder == nil ? lines[1...] : lines[1..<(lines.count - 1)]
+                var cursor: XMLNode = p
+                for line in fresh {
+                    let paragraph = try markdownParagraph(line, near: p)
+                    paragraph.insertSibling(after: cursor)
+                    cursor = paragraph
+                }
+                if let tailHolder { tailHolder.insertSibling(after: cursor) }
+                changed = true
+                expanded += 1
+            }
+            if changed { package.markDirty(part) }
+        }
+        return expanded
+    }
+
+    /// Drop runs whose text was emptied by a range replacement and that
+    /// carry nothing else (no tab/break/drawing), so a split paragraph
+    /// doesn't keep a stray `<w:t/>`.
+    private static func pruneEmptyTextRuns(_ paragraph: XMLElement) {
+        for run in paragraph.childElements("r") {
+            let content = run.elementChildren.filter { $0.local != "rPr" }
+            guard !content.isEmpty, content.allSatisfy({ $0.local == "t" && ($0.stringValue ?? "").isEmpty }) else { continue }
+            run.detach()
+        }
+    }
+
+    private static func spansBreak<T>(_ work: () throws -> T) throws -> T {
+        do { return try work() } catch OOXMLText.ReplaceError.spansBreak {
+            throw DocumentEditError(
+                "`old_string` runs across a tab or line break inside a paragraph; replace the text on each side of it separately.",
+                isMatchMiss: true)
+        }
+    }
+
+    // MARK: Block Markdown lines
+
+    enum BlockKind: Equatable { case heading(Int), listItem, plain }
+
+    /// One line of a multi-line `new_string` read as block Markdown: an
+    /// ATX heading (`## Title`), a list item (`- item`, `* item`, `1. item`
+    /// — the same markers `strippingListMarkers` accepts, including the
+    /// `•\t` that `file_read` renders), or plain text.
+    static func blockMarkdown(_ line: String) -> (kind: BlockKind, text: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let hashes = trimmed.prefix(while: { $0 == "#" }).count
+        if hashes > 0, hashes <= 6, trimmed.dropFirst(hashes).first == " " {
+            return (.heading(hashes), String(trimmed.dropFirst(hashes + 1)).trimmingCharacters(in: .whitespaces))
+        }
+        let stripped = strippingListMarkers(trimmed)
+        if stripped.stripped { return (.listItem, stripped.text) }
+        return (.plain, trimmed)
+    }
+
+    static func isListParagraph(_ paragraph: XMLElement) -> Bool {
+        if paragraph.firstChild("pPr")?.firstChild("numPr") != nil { return true }
+        return styleId(of: paragraph)?.lowercased().hasPrefix("list") == true
+    }
+
+    /// A paragraph for one block-Markdown line, styled from the document:
+    /// headings use the `HeadingN` style when defined (bold text
+    /// otherwise), list items clone the nearest list paragraph's
+    /// formatting (then `ListBullet`, then a literal bullet), plain lines
+    /// clone the nearest unstyled body paragraph.
+    private func markdownParagraph(_ line: String, near anchor: XMLElement) throws -> XMLElement {
+        let block = Self.blockMarkdown(line)
+        let styles = try paragraphStyleIds()
+        let paras = try paragraphs()
+        let plainTemplate = paras.last { Self.styleId(of: $0) == nil && !Self.isListParagraph($0) }
+        func plainParagraph() -> XMLElement {
+            if let plainTemplate { return makeParagraph("", like: plainTemplate, style: nil) }
+            let p = makeParagraph("", like: anchor, style: nil)
+            if let pPr = p.firstChild("pPr") {
+                pPr.firstChild("numPr")?.detach()
+                pPr.firstChild("pStyle")?.detach()
+            }
+            return p
+        }
+        switch block.kind {
+        case .heading(let level):
+            let style = styles["Heading\(level)"] != nil ? "Heading\(level)" : nil
+            let p = style == nil ? plainParagraph() : makeParagraph("", like: nil, style: style)
+            appendInlineMarkdown(style == nil ? "**\(block.text)**" : block.text, to: p, runTemplate: plainTemplate)
+            return p
+        case .listItem:
+            if let listTemplate = Self.nearestListParagraph(to: anchor, in: paras) {
+                let p = makeParagraph("", like: listTemplate, style: nil)
+                appendInlineMarkdown(block.text, to: p, runTemplate: listTemplate)
+                return p
+            }
+            if styles["ListBullet"] != nil {
+                let p = makeParagraph("", like: nil, style: "ListBullet")
+                appendInlineMarkdown(block.text, to: p, runTemplate: plainTemplate)
+                return p
+            }
+            // Documents rendered from Markdown by `file_write` carry their
+            // bullets as literal "•\t" text; match that shape (and its
+            // paragraph formatting) so new items look like their siblings.
+            if let literal = Self.nearestLiteralBulletParagraph(to: anchor, in: paras) {
+                let p = makeParagraph("", like: literal.paragraph, style: nil)
+                appendInlineMarkdown(literal.prefix + block.text, to: p, runTemplate: literal.paragraph)
+                return p
+            }
+            let p = plainParagraph()
+            appendInlineMarkdown("• " + block.text, to: p, runTemplate: plainTemplate)
+            return p
+        case .plain:
+            let p = plainParagraph()
+            appendInlineMarkdown(block.text, to: p, runTemplate: plainTemplate ?? anchor)
+            return p
+        }
+    }
+
+    /// The anchor itself when it is a list paragraph, else the closest list
+    /// paragraph before it, else the closest after it.
+    static func nearestListParagraph(to anchor: XMLElement, in paras: [XMLElement]) -> XMLElement? {
+        nearest(to: anchor, in: paras, where: isListParagraph)
+    }
+
+    /// Closest paragraph whose text starts with a literal bullet glyph and
+    /// a tab/space, with that prefix, for documents that carry bullets as
+    /// text rather than numbering.
+    static func nearestLiteralBulletParagraph(to anchor: XMLElement, in paras: [XMLElement]) -> (paragraph: XMLElement, prefix: String)? {
+        func prefix(of paragraph: XMLElement) -> String? { literalBulletPrefix(OOXMLText.text(of: paragraph)) }
+        guard let paragraph = nearest(to: anchor, in: paras, where: { prefix(of: $0) != nil }),
+            let found = prefix(of: paragraph)
+        else { return nil }
+        return (paragraph, found)
+    }
+
+    /// "•\t" / "• " when the paragraph text starts with a literal bullet, or
+    /// "1.\t" / "12) " when it starts with a literal list number (rendered
+    /// drafts store list items this way).
+    static func literalBulletPrefix(_ text: String) -> String? {
+        if let glyph = text.first, "•◦▪■".contains(glyph),
+            let separator = text.dropFirst().first, separator == "\t" || separator == " "
+        {
+            return String(glyph) + String(separator)
+        }
+        let digits = text.prefix { $0.isNumber }
+        guard (1...3).contains(digits.count) else { return nil }
+        let rest = text.dropFirst(digits.count)
+        guard let punct = rest.first, punct == "." || punct == ")",
+            let separator = rest.dropFirst().first, separator == "\t" || separator == " "
+        else { return nil }
+        return String(digits) + String(punct) + String(separator)
+    }
+
+    /// Text for a `new_string` line that lands on an existing paragraph,
+    /// replacing it from its start: block-Markdown syntax is dropped (the
+    /// paragraph keeps its style), except that a list-item line keeps the
+    /// paragraph's own literal bullet prefix when it has one, so
+    /// "•\tKickoff: April 7" → "- Kickoff: May 5" stays a bulleted line.
+    static func lineText(_ line: String, replacingStartOf paragraphText: String) -> String {
+        let block = blockMarkdown(line)
+        if block.kind == .listItem, let prefix = literalBulletPrefix(paragraphText) {
+            return prefix + block.text
+        }
+        return block.text
+    }
+
+    private static func nearest(to anchor: XMLElement, in paras: [XMLElement], where matches: (XMLElement) -> Bool) -> XMLElement? {
+        if matches(anchor) { return anchor }
+        guard let index = paras.firstIndex(where: { $0 === anchor }) else {
+            return paras.first(where: matches)
+        }
+        if let before = paras[..<index].last(where: matches) { return before }
+        return paras[(index + 1)...].first(where: matches)
+    }
+
+    // MARK: Multi-paragraph replace
+
+    /// Lines of an `old_string` / `new_string`, split on newlines, edge
+    /// whitespace trimmed, blank lines dropped (paragraph boundaries are the
+    /// unit of matching; blank lines between them are the model's
+    /// formatting, not the document's).
+    static func editLines(_ text: String) -> [String] {
+        text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Replace a run of consecutive body paragraphs whose text matches
+    /// `lines`: the first line matches the END of the first paragraph, the
+    /// last line matches the START of the last paragraph, and any middle
+    /// lines match whole paragraphs. The replacement's lines land on the
+    /// same paragraphs (first/last keep their unmatched text and run
+    /// formatting; middles are rewritten, added as clones, or removed as the
+    /// line counts require), so paragraph styles survive the edit.
+    private mutating func replaceAcrossParagraphs(_ op: DocumentOperation, lines: [String], replacement: String, all: Bool) throws {
+        let paras = try paragraphs()
+        let texts = paras.map { OOXMLText.text(of: $0) }
+        var mode: OOXMLText.MatchMode = .exact
+        var matches: [ParagraphRunMatch] = []
+        for candidate in [OOXMLText.MatchMode.exact, .normalized] {
+            matches = Self.paragraphRunMatches(lines: lines, texts: texts, mode: candidate)
+            mode = candidate
+            if !matches.isEmpty { break }
+        }
+        guard !matches.isEmpty else {
+            let first = lines[0]
+            var message = "the \(lines.count)-line `old_string` doesn't match \(lines.count) consecutive paragraphs. "
+            var starts: [Int] = []
+            for (index, text) in texts.enumerated()
+            where !OOXMLText.matchRanges(of: first, in: text, mode: .normalized).isEmpty {
+                starts.append(index + 1)
+            }
+            if starts.isEmpty {
+                message += "Its first line wasn't found in any body paragraph."
+                    + Self.closestParagraphHint(for: first, in: paras)
+            } else {
+                message += "Its first line occurs in paragraph\(starts.count == 1 ? "" : "s") \(starts.prefix(8).map(String.init).joined(separator: ", ")); "
+                    + "the following paragraph\(lines.count == 2 ? "" : "s") there read"
+                if let start = starts.first {
+                    let following = texts[start..<min(start + lines.count - 1, texts.count)]
+                    message += ":\n" + following.map { "  \"\(OOXMLText.preview($0, max: 120))\"" }.joined(separator: "\n")
+                }
+                message += "\nCopy the paragraph text as `file_read` mode \"structure\" lists it."
+            }
+            throw op.fail(message, isMatchMiss: true)
+        }
+        guard all || matches.count == 1 else {
+            throw op.fail(
+                "the \(lines.count)-line `old_string` matches \(matches.count) paragraph runs (starting at paragraphs \(matches.map { String($0.start + 1) }.joined(separator: ", "))); "
+                    + "add surrounding text, or pass `replace_all: true`.")
+        }
+
+        let newLines = Self.editLines(replacement)
+        for match in matches.reversed() {
+            try applyParagraphRun(match, paras: paras, newLines: newLines, mode: mode)
+        }
+        package.markDirty(mainPart)
+
+        var summary =
+            "Replaced \(matches.count) run\(matches.count == 1 ? "" : "s") of \(lines.count) paragraphs (starting at paragraph \(matches.map { String($0.start + 1) }.joined(separator: ", "))) with \(newLines.count) paragraph\(newLines.count == 1 ? "" : "s")"
+        if mode == .normalized { summary += " (matched with punctuation and whitespace normalized)" }
+        summaries.append(summary)
+    }
+
+    struct ParagraphRunMatch {
+        /// 0-based index of the first matched paragraph.
+        let start: Int
+        let count: Int
+        /// UTF-16 range of the first line inside the first paragraph's text.
+        let firstRange: Range<Int>
+        /// UTF-16 range of the last line inside the last paragraph's text.
+        let lastRange: Range<Int>
+    }
+
+    static func paragraphRunMatches(lines: [String], texts: [String], mode: OOXMLText.MatchMode) -> [ParagraphRunMatch] {
+        let k = lines.count
+        guard k >= 2, texts.count >= k else { return [] }
+        var out: [ParagraphRunMatch] = []
+        var start = 0
+        while start + k <= texts.count {
+            guard let first = edgeRange(of: lines[0], in: texts[start], edge: .suffix, mode: mode),
+                let last = edgeRange(of: lines[k - 1], in: texts[start + k - 1], edge: .prefix, mode: mode)
+            else {
+                start += 1
+                continue
+            }
+            var middlesMatch = true
+            for offset in 1..<(k - 1) where edgeRange(of: lines[offset], in: texts[start + offset], edge: .whole, mode: mode) == nil {
+                middlesMatch = false
+                break
+            }
+            if middlesMatch {
+                out.append(ParagraphRunMatch(start: start, count: k, firstRange: first, lastRange: last))
+                start += k
+            } else {
+                start += 1
+            }
+        }
+        return out
+    }
+
+    enum Edge { case prefix, suffix, whole }
+
+    /// The range of `line` in `text` anchored to the given edge (only
+    /// whitespace may surround it on the anchored side(s)). A literal list
+    /// prefix at the start of the paragraph ("•\t", "1.\t" — how rendered
+    /// drafts store list items) counts as blank on the leading side, so a
+    /// line whose list marker was stripped as Markdown syntax still
+    /// addresses the whole item; the prefix itself stays in the paragraph.
+    static func edgeRange(of line: String, in text: String, edge: Edge, mode: OOXMLText.MatchMode) -> Range<Int>? {
+        let units = Array(text.utf16)
+        func blank(_ range: Range<Int>) -> Bool {
+            units[range].allSatisfy { OOXMLText.foldUnit($0) == [0x20] || OOXMLText.foldUnit($0).isEmpty }
+        }
+        let prefixLength = literalBulletPrefix(text)?.utf16.count ?? 0
+        func leadingBlank(_ upper: Int) -> Bool {
+            blank(0..<upper) || (upper >= prefixLength && blank(prefixLength..<upper))
+        }
+        let ranges = OOXMLText.matchRanges(of: line, in: text, mode: mode)
+        switch edge {
+        case .suffix:
+            return ranges.last { blank($0.upperBound..<units.count) }
+        case .prefix:
+            return ranges.first { leadingBlank($0.lowerBound) }
+        case .whole:
+            return ranges.first { leadingBlank($0.lowerBound) && blank($0.upperBound..<units.count) }
+        }
+    }
+
+    private mutating func applyParagraphRun(_ match: ParagraphRunMatch, paras: [XMLElement], newLines: [String], mode: OOXMLText.MatchMode) throws {
+        let first = paras[match.start]
+        let last = paras[match.start + match.count - 1]
+        let middles = Array(paras[(match.start + 1)..<(match.start + match.count - 1)])
+        let firstLength = OOXMLText.text(of: first).utf16.count
+        // Lines written into existing paragraphs keep those paragraphs'
+        // styles, so a block-Markdown prefix is formatting to drop, not
+        // text to write.
+        let firstParagraphText = OOXMLText.text(of: first)
+        let firstText =
+            newLines.first.map {
+                match.firstRange.lowerBound == 0 ? Self.lineText($0, replacingStartOf: firstParagraphText) : Self.blockMarkdown($0).text
+            } ?? ""
+        // A literal list prefix ("•\t" — a `<w:tab/>` in the document) that
+        // the match was anchored after stays in place and is written around;
+        // replacing across it would span the tab.
+        let lastParagraphText = OOXMLText.text(of: last)
+        let lastKeep = min(Self.literalBulletPrefix(lastParagraphText)?.utf16.count ?? 0, match.lastRange.upperBound)
+        let lastText =
+            newLines.last.map {
+                lastKeep > 0 ? Self.blockMarkdown($0).text : Self.lineText($0, replacingStartOf: lastParagraphText)
+            } ?? ""
+
+        if newLines.count <= 1 {
+            // Everything collapses into the first paragraph: its unmatched
+            // head, the (optional) single new line, then the last
+            // paragraph's unmatched tail (runs moved over, formatting kept).
+            try Self.spansBreak {
+                try OOXMLText.replace(in: first, ranges: [match.firstRange.lowerBound..<firstLength], with: firstText, flavor: .word)
+            }
+            try Self.spansBreak {
+                try OOXMLText.replace(in: last, ranges: [lastKeep..<match.lastRange.upperBound], with: "", flavor: .word)
+            }
+            // A last paragraph reduced to its literal bullet has no tail to
+            // carry over; moving the bullet would prepend it to the first.
+            let remainder = OOXMLText.text(of: last)
+            let tailIsOnlyPrefix = lastKeep > 0 && remainder.utf16.count <= lastKeep
+            for child in last.elementChildren where !tailIsOnlyPrefix && !["pPr", "endParaRPr"].contains(child.local) {
+                child.detach()
+                if let end = first.firstChild("endParaRPr") {
+                    first.insertChild(child, at: end.index)
+                } else {
+                    first.addChild(child)
+                }
+            }
+            for paragraph in middles { paragraph.detach() }
+            last.detach()
+            return
+        }
+
+        try Self.spansBreak {
+            try OOXMLText.replace(in: first, ranges: [match.firstRange.lowerBound..<firstLength], with: firstText, flavor: .word)
+        }
+        try Self.spansBreak {
+            try OOXMLText.replace(in: last, ranges: [lastKeep..<match.lastRange.upperBound], with: lastText, flavor: .word)
+        }
+        let newMiddles = Array(newLines[1..<(newLines.count - 1)])
+        let paired = min(middles.count, newMiddles.count)
+        for index in 0..<paired {
+            let block = Self.blockMarkdown(newMiddles[index])
+            // A heading or list line landing on a paragraph that isn't one
+            // is rebuilt with the matching style; otherwise the paragraph
+            // keeps its formatting and only the text changes.
+            let needsRestyle: Bool
+            switch block.kind {
+            case .heading: needsRestyle = Self.styleId(of: middles[index])?.lowercased().hasPrefix("heading") != true
+            case .listItem:
+                needsRestyle =
+                    !Self.isListParagraph(middles[index]) && Self.literalBulletPrefix(OOXMLText.text(of: middles[index])) == nil
+            case .plain: needsRestyle = false
+            }
+            if needsRestyle {
+                let rebuilt = try markdownParagraph(newMiddles[index], near: middles[index])
+                rebuilt.insertSibling(after: middles[index])
+                middles[index].detach()
+            } else {
+                let middleText = OOXMLText.text(of: middles[index])
+                let keep = Self.literalBulletPrefix(middleText)?.utf16.count ?? 0
+                if keep > 0 {
+                    try Self.spansBreak {
+                        try OOXMLText.replace(
+                            in: middles[index], ranges: [keep..<middleText.utf16.count], with: block.text, flavor: .word)
+                    }
+                } else {
+                    OOXMLText.setText(middles[index], Self.lineText(newMiddles[index], replacingStartOf: middleText), flavor: .word)
+                }
+            }
+        }
+        for paragraph in middles.dropFirst(paired) { paragraph.detach() }
+        if newMiddles.count > paired {
+            // Extra new lines become paragraphs built from block Markdown
+            // next to the last paragraph, inserted just before it.
+            for line in newMiddles.dropFirst(paired) {
+                let paragraph = try markdownParagraph(line, near: paired > 0 ? middles[paired - 1] : first)
+                paragraph.insertSibling(before: last)
+            }
+        }
+    }
+
+    // MARK: Diagnostics
+
+    private static func describeParts(_ perPart: [(part: String, count: Int)]) -> String {
+        perPart.filter { $0.count > 0 }.map { entry in
+            let name = (entry.part as NSString).lastPathComponent
+            let label = name == "document.xml" ? "body" : name.replacingOccurrences(of: ".xml", with: "")
+            return "\(entry.count) in \(label)"
+        }.joined(separator: ", ")
+    }
+
+    /// Quote the paragraph most similar to `needle` (verbatim, bounded) so
+    /// the model can copy the document's real text.
+    static func closestParagraphHint(for needle: String, in paras: [XMLElement]) -> String {
+        let needleNorm = OOXMLText.NormalizedUnits(needle).units
+        guard needleNorm.count >= 4 else { return "" }
+        var best: (index: Int, text: String, score: Int)?
+        for (index, paragraph) in paras.enumerated() {
+            let text = OOXMLText.text(of: paragraph)
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let hayNorm = OOXMLText.NormalizedUnits(text).units
+            let score: Int
+            if !OOXMLText.matchOffsets(of: needleNorm, in: hayNorm, limit: 1).isEmpty
+                || (!hayNorm.isEmpty && !OOXMLText.matchOffsets(of: hayNorm, in: needleNorm, limit: 1).isEmpty)
+            {
+                score = min(needleNorm.count, hayNorm.count)
+            } else {
+                score = Self.longestCommonRun(needleNorm, hayNorm)
+            }
+            if score > (best?.score ?? 0) { best = (index, text, score) }
+        }
+        guard let best, best.score >= max(4, needleNorm.count / 2) else { return "" }
+        return " The closest paragraph text is (paragraph \(best.index + 1)):\n\"\(OOXMLText.preview(best.text, max: 400))\"\nCompare it against your `old_string`."
+    }
+
+    /// Length of the longest common contiguous run of code units — cheap
+    /// similarity for short paragraphs.
+    private static func longestCommonRun(_ a: [UInt16], _ b: [UInt16]) -> Int {
+        guard !a.isEmpty, !b.isEmpty, a.count * b.count <= 4_000_000 else { return 0 }
+        var previous = [Int](repeating: 0, count: b.count + 1)
+        var best = 0
+        for i in 1...a.count {
+            var current = [Int](repeating: 0, count: b.count + 1)
+            for j in 1...b.count where a[i - 1] == b[j - 1] {
+                current[j] = previous[j - 1] + 1
+                if current[j] > best { best = current[j] }
+            }
+            previous = current
+        }
+        return best
     }
 
     private mutating func insertParagraph(_ op: DocumentOperation) throws {

@@ -3,8 +3,9 @@
 //
 //  Pins the harness-stability fixes proven necessary by the frontier
 //  agent-loop evals and the FolderTools audit:
-//    1. file_edit 0-match diagnostics (N| prefix / whitespace-only /
-//       closest-line) — the reproducible grok-4.3 death-spiral input.
+//    1. file_edit 0-match diagnostics (N| prefix / closest-line) — the
+//       reproducible grok-4.3 death-spiral input — plus the matcher's
+//       tolerant tiers that now apply whitespace / blank-line drift.
 //    2. AgentTaskState held-error replay for deterministic folder-tool
 //       failures, with fresh-read-parity invalidation rules.
 //    3. summarizeToolResult honesty: file-kind branch keeps the real path,
@@ -51,18 +52,19 @@ struct HarnessStabilityFixesTests {
         #expect(diagnosis.contains("file_read"))
     }
 
-    @Test func fileEditDiagnosis_whitespaceOnlyMismatchQuotesExactBytes() {
-        // Leading space the file doesn't have (historically copied from the
-        // old `N| ` read gutter; the gutter is now `N|` with no space, but
-        // whitespace-only mismatches still happen and must stay diagnosed).
+    @Test func fileEditDiagnosis_whitespaceOnlyMismatchFallsBackToClosestLine() {
+        // Whitespace-only drift no longer reaches the diagnosis in the live
+        // tool — `FileEditMatcher` applies it when the relaxed match is
+        // unique (see `fileEdit_endToEnd_whitespaceDriftIsAppliedAndReported`).
+        // The pure diagnosis still has to say something honest for it: the
+        // closest-line anchor quotes the real bytes with the real line number.
         let content = "alpha\nitem 042 value=42\nomega\n"
         let diagnosis = FileEditTool.noMatchDiagnosis(
             oldString: " item 042 value=42",
             content: content
         )
-        #expect(diagnosis.contains("differing only in whitespace"))
+        #expect(diagnosis.contains("closest matching line"))
         #expect(diagnosis.contains("line 2"))
-        // The exact file bytes are quoted verbatim for copy-paste.
         #expect(diagnosis.contains("item 042 value=42"))
     }
 
@@ -72,9 +74,11 @@ struct HarnessStabilityFixesTests {
             oldString: "let x = 1\nreturn x",
             content: content
         )
-        #expect(diagnosis.contains("differing only in whitespace"))
+        // Anchored on the first non-empty old_string line, quoted verbatim
+        // with the file's own indentation.
+        #expect(diagnosis.contains("closest matching line"))
         #expect(diagnosis.contains("line 2"))
-        #expect(diagnosis.contains("    let x = 1\n    return x"))
+        #expect(diagnosis.contains("    let x = 1"))
     }
 
     @Test func fileEditDiagnosis_closestLineHint() {
@@ -100,32 +104,64 @@ struct HarnessStabilityFixesTests {
 
     @Test func fileEditDiagnosis_blankLineCountDrift() {
         // Regression (E4B loop, ordered-procedure): the file has TWO blank
-        // lines between sections, the model sent ONE. Check 2 (equal line
-        // counts) can't fire and the old check-3 anchor pointed at a line
-        // that looked identical — the model re-sent the same failing edit
-        // until its budget died. Check 2b must quote the real region with
-        // its real blank lines.
+        // lines between sections, the model sent ONE, and it re-sent the
+        // same failing edit until its budget died. The matcher now applies
+        // this (blank_lines_collapsed tier) when the match is unique; the
+        // pure diagnosis anchors on the first line with its real number.
         let content = "step one\n\n\nstep two\ntail\n"
         let diagnosis = FileEditTool.noMatchDiagnosis(
             oldString: "step one\n\nstep two",
             content: content
         )
-        #expect(diagnosis.contains("blank lines between them differ"))
         #expect(diagnosis.contains("line 1"))
-        // The quoted region carries BOTH real blank lines verbatim.
-        #expect(diagnosis.contains("step one\n\n\nstep two"))
+        #expect(diagnosis.contains("step one"))
+
+        switch FileEditMatcher.apply(oldString: "step one\n\nstep two", newString: "step 1\n\nstep 2", to: content, replaceAll: false) {
+        case .applied(let applied):
+            #expect(applied.strategy == .blankLinesCollapsed)
+            // The file's own two blank lines are kept.
+            #expect(applied.content == "step 1\n\n\nstep 2\ntail\n")
+        default:
+            Issue.record("blank-line drift should be applied when unique")
+        }
     }
 
-    @Test func fileEditDiagnosis_blankLineDriftNotFiredOnAmbiguousMatch() {
-        // Two candidate regions share the same non-blank lines — quoting
-        // one would be a coin flip, so check 2b must stay silent and let
-        // the later checks (or the fallback) speak instead.
+    @Test func fileEditDiagnosis_blankLineDriftAmbiguousIsRefusedNotGuessed() {
+        // Two candidate regions share the same non-blank lines — picking
+        // one would be a coin flip, so the matcher reports the ambiguity
+        // (naming the tier) instead of applying either.
         let content = "a\n\nb\nx\na\n\n\nb\n"
-        let diagnosis = FileEditTool.noMatchDiagnosis(
-            oldString: "a\n\n\n\nb",
-            content: content
-        )
+        switch FileEditMatcher.apply(oldString: "a\n\n\n\nb", newString: "z", to: content, replaceAll: false) {
+        case .ambiguous(let count, let strategy):
+            #expect(count == 2)
+            #expect(strategy == .blankLinesCollapsed)
+        default:
+            Issue.record("ambiguous relaxed match must not be applied")
+        }
+        let diagnosis = FileEditTool.noMatchDiagnosis(oldString: "a\n\n\n\nb", content: content)
         #expect(!diagnosis.contains("blank lines between them differ"))
+    }
+
+    @Test func fileEdit_endToEnd_whitespaceDriftIsAppliedAndReported() async throws {
+        let root = tmpRoot()
+        try "item 042 value=42\n".write(
+            to: root.appendingPathComponent("data.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let tool = FileEditTool(rootPath: root)
+        // Leading space that isn't in the file (whitespace-only mismatch):
+        // applied, with the tier and the verbatim file text reported so the
+        // model learns what the file really looked like.
+        let result = try await tool.execute(
+            argumentsJSON:
+                #"{"path": "data.txt", "old_string": " item 042 value=42", "new_string": "item 042 value=43"}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result), "\(result)")
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["match_strategy"] as? String == "whitespace_normalized")
+        #expect(warnings(result).contains { $0.contains("did not match the file byte-for-byte") && $0.contains("item 042 value=42") })
+        #expect(try String(contentsOf: root.appendingPathComponent("data.txt"), encoding: .utf8) == "item 042 value=43\n")
     }
 
     @Test func fileEdit_endToEnd_noMatchEnvelopeCarriesDiagnosis() async throws {
@@ -136,15 +172,17 @@ struct HarnessStabilityFixesTests {
             encoding: .utf8
         )
         let tool = FileEditTool(rootPath: root)
-        // Leading space that isn't in the file (whitespace-only mismatch).
+        // A genuine content difference (not whitespace): refused, with the
+        // closest real line quoted.
         let result = try await tool.execute(
             argumentsJSON:
-                #"{"path": "data.txt", "old_string": " item 042 value=42", "new_string": "item 042 value=43"}"#
+                #"{"path": "data.txt", "old_string": "item 042 value=41", "new_string": "item 042 value=43"}"#
         )
         #expect(ToolEnvelope.isError(result))
         #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
         let message = ToolEnvelope.failureMessage(result)
-        #expect(message.contains("differing only in whitespace"))
+        #expect(message.contains("closest matching line"))
+        #expect(message.contains("item 042 value=42"))
     }
 
     // MARK: - 2. Held-error replay (AgentTaskState)

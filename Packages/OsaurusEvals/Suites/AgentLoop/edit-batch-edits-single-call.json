@@ -1,0 +1,43 @@
+{
+  "id": "agent_loop.edit-batch-edits-single-call",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 three related changes in one file land as a single atomic file_edit `edits` batch",
+  "query": "In settings.ini, set timeout to 60, retries to 5 and log_level to debug. Make all three changes in one file_edit call using its `edits` array so the change is atomic. Leave the other keys alone.",
+  "notes": "Pins the batch contract: `edits` applies every replacement or none. The audit requires exactly one executed file_edit whose args carry `edits`, forbids the file_write rewrite path, and the checker verifies the three new values plus the untouched keys and section headers.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "settings.ini",
+        "contents": "[server]\nhost = 0.0.0.0\nport = 8443\ntimeout = 30\n\n[client]\nretries = 3\nbackoff_ms = 250\n\n[logging]\nlog_level = info\nlog_file = /var/log/app.log\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxToolCalls": 4,
+      "mustCallTools": [
+        "file_edit"
+      ],
+      "mustNotCallTools": [
+        "shell_run",
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "\"edits\""
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c \"import configparser; c = configparser.ConfigParser(); c.read('settings.ini'); assert c['server']['timeout'] == '60', c['server']['timeout']; assert c['client']['retries'] == '5', c['client']['retries']; assert c['logging']['log_level'] == 'debug', c['logging']['log_level']; assert c['server']['port'] == '8443' and c['client']['backoff_ms'] == '250' and c['logging']['log_file'] == '/var/log/app.log'; assert c['server']['host'] == '0.0.0.0'\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

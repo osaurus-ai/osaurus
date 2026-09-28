@@ -133,6 +133,14 @@ swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --resume
 # carry the whole composed prompt; shared reports shouldn't).
 swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --transcripts
 
+# Override the reasoning mode for every agent-loop / micro-perf case in the
+# run (`on` = thinking, `off` = no-think). Unset, each case's `enableThinking`
+# applies and otherwise the model bundle's own default. The run records the
+# override under `environment.thinkingControl`, so a `--thinking off` lane is
+# an explicit, labelled mode — report it as such next to the default lane,
+# never as the default lane's score.
+swift run osaurus-evals run --suite Suites/AgentLoop --thinking off --out report.json
+
 # Build a maintainer-facing PR report bundle.
 swift run osaurus-evals report --local-model foundation --frontier-model openai/gpt-4o-mini
 ```

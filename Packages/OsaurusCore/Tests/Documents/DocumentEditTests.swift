@@ -189,7 +189,7 @@ struct DocumentEditTests {
                 ],
             ])
         #expect(EnvelopeAssertions.failureKind(missing) == "invalid_args")
-        #expect((EnvelopeAssertions.failureMessage(missing) ?? "").contains("Nothing was changed"))
+        #expect(ToolEnvelope.failureMessage(missing).contains("Nothing was changed"))
 
         let unknown = try await edit(root, ["path": "memo.docx", "operations": [["op": "explode"]]])
         #expect(ToolEnvelope.isError(unknown))
@@ -567,8 +567,9 @@ struct DocumentEditTests {
         #expect(ToolEnvelope.isError(decomposed), "\(decomposed)")
         #expect((EnvelopeAssertions.failureMessage(decomposed) ?? "").contains("wasn't found"), "\(decomposed)")
 
-        // Newlines in the replacement become soft line breaks in Word, and
-        // control characters never reach the XML.
+        // Newlines in the replacement are paragraph boundaries (never soft
+        // line breaks, which read back as one run-on line), and control
+        // characters never reach the XML.
         let ok = try await edit(
             root,
             [
@@ -580,11 +581,544 @@ struct DocumentEditTests {
             ])
         #expect(ToolEnvelope.isSuccess(ok), "\(ok)")
         let xml = try part("word/document.xml", in: url)
-        #expect(xml.contains("<w:t>Line one.</w:t><w:br></w:br><w:t>Line two.</w:t>") || xml.contains("<w:t>Line one.</w:t><w:br/><w:t>Line two.</w:t>"), "\(xml)")
+        #expect(xml.contains("<w:t>Line one.</w:t></w:r></w:p><w:p><w:r><w:t>Line two.</w:t>"), "\(xml)")
+        #expect(!xml.contains("<w:br></w:br><w:t>Line two"), "\(xml)")
         #expect(!xml.unicodeScalars.contains("\u{0}"))
         #expect(xml.contains("coffee menu"), "\(xml)")
         // Tab and break still present, untouched.
         #expect(xml.contains("<w:t>Name</w:t><w:tab/><w:t>Score</w:t>") || xml.contains("<w:t>Name</w:t><w:tab></w:tab><w:t>Score</w:t>"), "\(xml)")
+    }
+
+    /// Body with Word-autocorrected punctuation (curly quotes, em dash,
+    /// non-breaking space), a three-paragraph run to match across, and a
+    /// header part that repeats a body word.
+    private func makeToleranceDOCX(_ url: URL) throws {
+        let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        let r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        let document = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <w:document xmlns:w="\(w)" xmlns:r="\(r)"><w:body>\
+            <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Draft agreement</w:t></w:r></w:p>\
+            <w:p><w:r><w:t>She said \u{201C}we\u{2019}ll ship\u{201D}\u{00A0}\u{2014} by Friday.</w:t></w:r></w:p>\
+            <w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Intro: </w:t></w:r><w:r><w:t>first clause here.</w:t></w:r></w:p>\
+            <w:p><w:pPr><w:pStyle w:val="ListParagraph"/></w:pPr><w:r><w:t>Second clause.</w:t></w:r></w:p>\
+            <w:p><w:r><w:t>Third clause</w:t></w:r><w:r><w:t xml:space="preserve"> and a tail.</w:t></w:r></w:p>\
+            <w:p><w:r><w:t>Closing remarks about the whole agreement.</w:t></w:r></w:p>\
+            <w:sectPr><w:headerReference w:type="default" r:id="rId2"/></w:sectPr></w:body></w:document>
+            """
+        let header = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <w:hdr xmlns:w="\(w)"><w:p><w:r><w:t>Draft \u{2013} confidential</w:t></w:r></w:p></w:hdr>
+            """
+        var zip = ZipArchiveWriter()
+        try zip.add(
+            path: "[Content_Types].xml",
+            data: Data(
+                """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\
+                <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\
+                <Default Extension="xml" ContentType="application/xml"/>\
+                <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>\
+                <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>\
+                </Types>
+                """.utf8))
+        try zip.add(
+            path: "_rels/.rels",
+            data: Data(
+                """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\
+                <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>\
+                </Relationships>
+                """.utf8))
+        try zip.add(path: "word/document.xml", data: Data(document.utf8))
+        try zip.add(path: "word/header1.xml", data: Data(header.utf8))
+        try zip.add(
+            path: "word/_rels/document.xml.rels",
+            data: Data(
+                """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\
+                <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>\
+                </Relationships>
+                """.utf8))
+        try zip.finalize().write(to: url)
+    }
+
+    @Test func docxReplaceToleratesAutocorrectedPunctuationAndSaysSo() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("tolerant.docx")
+        try makeToleranceDOCX(url)
+
+        // Straight quotes, ASCII apostrophe, hyphen, plain spaces: the model's
+        // rendering of what Word autocorrected.
+        let result = try await edit(
+            root,
+            [
+                "path": "tolerant.docx",
+                "operations": [
+                    ["op": "replace_text", "old_string": "\"we'll ship\" - by Friday", "new_string": "\"we'll ship\" by Thursday"]
+                ],
+            ])
+        #expect(ToolEnvelope.isSuccess(result), "\(result)")
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        let applied = (payload["operations_applied"] as? [String]) ?? []
+        #expect(applied.joined(separator: "\n").contains("normalized"), "\(applied)")
+        let xml = try part("word/document.xml", in: url)
+        #expect(xml.contains("She said \"we'll ship\" by Thursday."), "\(xml)")
+        #expect(!xml.contains("\u{2014}"), "\(xml)")
+
+        // Identical old/new is a no-op error, not a silent success.
+        let same = try await edit(
+            root, ["path": "tolerant.docx", "operations": [["op": "replace_text", "old_string": "Second clause.", "new_string": "Second clause."]]])
+        #expect(ToolEnvelope.isError(same), "\(same)")
+        #expect((EnvelopeAssertions.failureMessage(same) ?? "").contains("identical"), "\(same)")
+    }
+
+    /// Bullets are list formatting in Word. `file_read` renders a list
+    /// paragraph as "•\tSecond clause." and a model that drafted the file as
+    /// Markdown types "- Second clause."; both must edit the paragraph
+    /// without writing a literal marker, and the result must say so.
+    @Test func docxReplaceTreatsLeadingListMarkersAsFormatting() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("list.docx")
+        try makeToleranceDOCX(url)
+
+        let bulletTab = try await edit(
+            root,
+            ["path": "list.docx", "operations": [["op": "replace_text", "old_string": "•\tSecond clause.", "new_string": "•\tSecond clause, revised."]]])
+        #expect(ToolEnvelope.isSuccess(bulletTab), "\(bulletTab)")
+        let applied = ((try #require(EnvelopeAssertions.successPayload(bulletTab)))["operations_applied"] as? [String]) ?? []
+        #expect(applied.joined(separator: "\n").contains("treated as formatting"), "\(applied)")
+        var xml = try part("word/document.xml", in: url)
+        #expect(xml.contains("<w:pStyle w:val=\"ListParagraph\"/></w:pPr><w:r><w:t>Second clause, revised.</w:t>"), "\(xml)")
+        #expect(!xml.contains("•"), "\(xml)")
+
+        let markdownDash = try await edit(
+            root,
+            ["path": "list.docx", "operations": [["op": "replace_text", "old_string": "- Second clause, revised.", "new_string": "- Second clause, final."]]])
+        #expect(ToolEnvelope.isSuccess(markdownDash), "\(markdownDash)")
+        xml = try part("word/document.xml", in: url)
+        #expect(xml.contains("<w:t>Second clause, final.</w:t>"), "\(xml)")
+        #expect(!xml.contains("<w:t>- Second"), "\(xml)")
+
+        // Heading hashes and inline emphasis are formatting too: the model
+        // that drafted "## Draft agreement" / "- **Second clause, final.**"
+        // addresses the styled paragraphs without the syntax being text.
+        let headingHashes = try await edit(
+            root, ["path": "list.docx", "operations": [["op": "replace_text", "old_string": "## Draft agreement", "new_string": "## Final agreement"]]])
+        #expect(ToolEnvelope.isSuccess(headingHashes), "\(headingHashes)")
+        let emphasis = try await edit(
+            root,
+            ["path": "list.docx", "operations": [["op": "replace_text", "old_string": "- **Second clause, final.**", "new_string": "- **Second clause, signed.**"]]])
+        #expect(ToolEnvelope.isSuccess(emphasis), "\(emphasis)")
+        xml = try part("word/document.xml", in: url)
+        #expect(xml.contains("<w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>Final agreement</w:t>"), "\(xml)")
+        #expect(xml.contains("<w:t>Second clause, signed.</w:t>") && !xml.contains("**") && !xml.contains("## "), "\(xml)")
+
+        // A genuine miss still reports the closest paragraph, not a marker note.
+        let miss = try await edit(
+            root, ["path": "list.docx", "operations": [["op": "replace_text", "old_string": "- Third clause.", "new_string": "x"]]])
+        #expect(ToolEnvelope.isError(miss), "\(miss)")
+        let message = EnvelopeAssertions.failureMessage(miss) ?? ""
+        #expect(message.contains("wasn't found"), "\(message)")
+        #expect(!message.contains("treated as formatting"), "\(message)")
+
+        #expect(DOCXEditor.strippingListMarkers("1. First\n  2) Second\n• Third\nplain").text == "First\n  Second\nThird\nplain")
+        #expect(DOCXEditor.strippingListMarkers("-5 degrees").stripped == false)
+        #expect(DOCXEditor.strippingListMarkers("1.5 litres").stripped == false)
+        #expect(DOCXEditor.strippingMarkdownSyntax("### Title **bold** and `code`, _it_ file_name a*b").text == "Title bold and code, it file_name a*b")
+        #expect(DOCXEditor.strippingMarkdownSyntax("plain 2 * 3 = 6").stripped == false)
+    }
+
+    /// On a `file_write`-rendered draft (bullets are literal "•\t" text), the
+    /// Raptor no-think flow: `- **Kickoff: April 7**` matches the bold
+    /// bulleted line, `## Scope` matches the heading, and appending a section
+    /// through a whole-line match keeps the line's bullet and adds sibling
+    /// bullets in the same literal shape.
+    @Test func renderedDraftAcceptsMarkdownSyntaxAndKeepsLiteralBullets() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await write(
+            root, "brief.docx",
+            "# Atlas Brief\n\n## Scope\n- **Kickoff: April 7**\n- Full rollout in Q3\n")
+        let url = root.appendingPathComponent("brief.docx")
+
+        let date = try await edit(
+            root, ["path": "brief.docx", "old_string": "- **Kickoff: April 7**", "new_string": "- **Kickoff: May 5**"])
+        #expect(ToolEnvelope.isSuccess(date), "\(date)")
+        let heading = try await edit(root, ["path": "brief.docx", "old_string": "## Scope", "new_string": "## Scope and Timeline"])
+        #expect(ToolEnvelope.isSuccess(heading), "\(heading)")
+        let section = try await edit(
+            root,
+            [
+                "path": "brief.docx", "old_string": "•\tFull rollout in Q3",
+                "new_string": "- Full rollout in Q3\n\n## Risks\n- Vendor delays\n- Data loss",
+            ])
+        #expect(ToolEnvelope.isSuccess(section), "\(section)")
+
+        let editor = try DOCXEditor(package: OOXMLPackage(data: Data(contentsOf: url)))
+        let texts = try editor.paragraphs().map { OOXMLText.text(of: $0) }
+        #expect(
+            texts == ["Atlas Brief", "Scope and Timeline", "•\tKickoff: May 5", "•\tFull rollout in Q3", "Risks", "•\tVendor delays", "•\tData loss"],
+            "\(texts)")
+        let xml = try part("word/document.xml", in: url)
+        #expect(!xml.contains("**") && !xml.contains("## ") && !xml.contains("- Vendor"), "\(xml)")
+    }
+
+    /// Raptor-0.6-4B (`document-drafting-revisions`, post-change run): a
+    /// multi-line `old_string` written with `- ` markers against a rendered
+    /// draft whose list items read "•\tKickoff: April 7". The Markdown
+    /// rescue strips the markers, so the middle/last lines must still
+    /// address whole items whose text starts with the literal bullet; the
+    /// bullets stay in place and the appended section is styled.
+    @Test func renderedDraftMultiLineOldStringWithListMarkersMatchesLiteralBullets() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await write(
+            root, "brief.docx",
+            "# Atlas Migration Brief\n\n## Goal\n- Define the objectives\n\n## Timeline\n- Kickoff: April 7\n- Phase 1 complete in June\n- Set the schedule for each phase\n")
+        let url = root.appendingPathComponent("brief.docx")
+
+        let section = try await edit(
+            root,
+            [
+                "path": "brief.docx",
+                "old_string": "- Kickoff: April 7\n- Phase 1 complete in June\n- Set the schedule for each phase",
+                "new_string":
+                    "- Kickoff: May 5\n- Phase 1 complete in June\n- Set the schedule for each phase\n\n## Risks\n- Identify potential risks and mitigation strategies\n- Define monitoring and response protocols",
+            ])
+        #expect(ToolEnvelope.isSuccess(section), "\(section)")
+
+        let editor = try DOCXEditor(package: OOXMLPackage(data: Data(contentsOf: url)))
+        let texts = try editor.paragraphs().map { OOXMLText.text(of: $0) }
+        #expect(
+            texts == [
+                "Atlas Migration Brief", "Goal", "•\tDefine the objectives", "Timeline", "•\tKickoff: May 5", "•\tPhase 1 complete in June",
+                "•\tSet the schedule for each phase", "Risks", "•\tIdentify potential risks and mitigation strategies",
+                "•\tDefine monitoring and response protocols",
+            ], "\(texts)")
+        let xml = try part("word/document.xml", in: url)
+        #expect(!xml.contains("- Kickoff") && !xml.contains("## Risks") && !xml.contains("April 7"), "\(xml)")
+
+        // Collapsing two bulleted items into one keeps a single bullet.
+        let merged = try await edit(
+            root,
+            [
+                "path": "brief.docx",
+                "old_string": "- Identify potential risks and mitigation strategies\n- Define monitoring and response protocols",
+                "new_string": "- Identify risks and define monitoring",
+            ])
+        #expect(ToolEnvelope.isSuccess(merged), "\(merged)")
+        let mergedTexts = try DOCXEditor(package: OOXMLPackage(data: Data(contentsOf: url))).paragraphs().map { OOXMLText.text(of: $0) }
+        #expect(Array(mergedTexts.suffix(2)) == ["Risks", "•\tIdentify risks and define monitoring"], "\(mergedTexts)")
+
+        #expect(DOCXEditor.literalBulletPrefix("•\tItem") == "•\t")
+        #expect(DOCXEditor.literalBulletPrefix("12) Item") == "12) ")
+        #expect(DOCXEditor.literalBulletPrefix("1.\tItem") == "1.\t")
+        #expect(DOCXEditor.literalBulletPrefix("2024 was a year") == nil)
+        #expect(DOCXEditor.literalBulletPrefix("Plain") == nil)
+        // The leading-side tolerance only covers a literal list prefix.
+        #expect(DOCXEditor.edgeRange(of: "Kickoff", in: "•\tKickoff", edge: .whole, mode: .exact) == 2..<9)
+        #expect(DOCXEditor.edgeRange(of: "Kickoff", in: "Re: Kickoff", edge: .prefix, mode: .exact) == nil)
+    }
+
+    /// An empty `old_string` with a `new_string` is an insert; the
+    /// rejection names the operations that add text (Raptor-0.6-4B tried
+    /// this twice while appending a section).
+    @Test func docxEmptyOldStringNamesInsertOperations() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await write(root, "brief.docx", "# Brief\n\nBody.\n")
+
+        let single = try await edit(root, ["path": "brief.docx", "old_string": "", "new_string": "## Risks\n- Vendor delays"])
+        #expect(!ToolEnvelope.isSuccess(single))
+        #expect(ToolEnvelope.failureMessage(single).contains("append_markdown"), "\(single)")
+        #expect(ToolEnvelope.failureMessage(single).contains("insert_paragraph"), "\(single)")
+
+        let batch = try await edit(root, ["path": "brief.docx", "edits": [["old_string": "", "new_string": "## Risks"]]])
+        #expect(ToolEnvelope.failureMessage(batch).contains("append_markdown"), "\(batch)")
+
+        // A missing new_string is not an insert; no operations advice.
+        let missing = try await edit(root, ["path": "brief.docx", "old_string": "Body."])
+        #expect(!ToolEnvelope.failureMessage(missing).contains("append_markdown"), "\(missing)")
+    }
+
+    /// Document operations sent under `edits` (`{"edits": [{"op":
+    /// "set_cells", …}]}`, Raptor-0.6-4B 2/2 rows) are moved to
+    /// `operations` before schema validation, which would otherwise reject
+    /// them for the missing `old_string`. Text-file batches never carry an
+    /// `op`, so they are untouched; a real `operations` array wins.
+    @Test func operationsSentAsEditsArePromotedBeforeValidation() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await write(root, "budget.xlsx", "Dept,Q1\nEng,10\nOps,20\n")
+
+        let raw = #"{"edits":[{"cells":{"B4":"=SUM(B2:B3)"},"op":"set_cells"},{"cells":{"B3":25},"op":"set_cells"}],"path":"budget.xlsx"}"#
+        let normalized = FileEditTool.normalizingEditShapes(raw)
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(normalized.utf8)) as? [String: Any])
+        #expect(object["edits"] == nil)
+        #expect((object["operations"] as? [[String: Any]])?.count == 2, "\(normalized)")
+        let schemaCheck = SchemaValidator.validate(arguments: object, against: try #require(FileEditTool(rootPath: root).parameters))
+        #expect(schemaCheck.isValid, "\(schemaCheck.errorMessage ?? "")")
+
+        let applied = try await FileEditTool(rootPath: root).execute(argumentsJSON: normalized)
+        #expect(ToolEnvelope.isSuccess(applied), "\(applied)")
+        let sheet = try part("xl/worksheets/sheet1.xml", in: root.appendingPathComponent("budget.xlsx"))
+        #expect(sheet.contains("SUM(B2:B3)") && sheet.contains("<v>25</v>"), "\(sheet)")
+
+        // Mixed: a pair beside an operation becomes replace_text and keeps replace_all.
+        let mixed = FileEditTool.normalizingEditShapes(
+            #"{"path":"memo.docx","replace_all":true,"edits":[{"old_string":"a","new_string":"b"},{"op":"delete_paragraph","index":3}]}"#)
+        let mixedObject = try #require(try JSONSerialization.jsonObject(with: Data(mixed.utf8)) as? [String: Any])
+        let ops = try #require(mixedObject["operations"] as? [[String: Any]])
+        #expect(ops[0]["op"] as? String == "replace_text" && ops[0]["all"] as? Bool == true, "\(ops)")
+        #expect(ops[1]["op"] as? String == "delete_paragraph", "\(ops)")
+
+        // Untouched: text batch, unknown op, real operations present.
+        for unchanged in [
+            #"{"path":"a.txt","edits":[{"old_string":"a","new_string":"b"}]}"#,
+            #"{"path":"a.docx","edits":[{"op":"explode"}]}"#,
+            #"{"path":"a.docx","edits":[{"op":"delete_paragraph","index":1}],"operations":[{"op":"append_markdown","markdown":"x"}]}"#,
+        ] {
+            #expect(FileEditTool.normalizingEditShapes(unchanged) == unchanged)
+        }
+    }
+
+    /// Raptor-0.6-4B (`edit-docx-in-place` ×3, `fill-pdf-form-in-place` ×2,
+    /// third post-change run): `edits` as a JSON string and `path` inside
+    /// every entry instead of at the top level. Both shapes are repaired
+    /// before validation when unambiguous; disagreeing or absent paths are
+    /// still rejected for the missing `path`.
+    @Test func stringEncodedEditsAndPerEntryPathAreNormalizedBeforeValidation() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await write(root, "memo.docx", "# Memo\n\nStatus: Draft\n\nGo-live remains scheduled for April 14.\n")
+        let schema = try #require(FileEditTool(rootPath: root).parameters)
+
+        let raw =
+            #"{"dry_run":"false","edits":"[{\"new_string\": \"Status: Final\", \"old_string\": \"Status: Draft\", \"path\": \"memo.docx\"}, {\"new_string\": \"April 21.\", \"old_string\": \"April 14.\", \"path\": \"memo.docx\"}]"}"#
+        #expect(!SchemaValidator.validate(arguments: try JSONSerialization.jsonObject(with: Data(raw.utf8)), against: schema).isValid)
+        let normalized = FileEditTool.normalizingEditShapes(raw)
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(normalized.utf8)) as? [String: Any])
+        #expect(object["path"] as? String == "memo.docx", "\(normalized)")
+        let edits = try #require(object["edits"] as? [[String: Any]])
+        #expect(edits.count == 2 && edits.allSatisfy { $0["path"] == nil }, "\(edits)")
+        #expect(SchemaValidator.validate(arguments: object, against: schema).isValid, "\(normalized)")
+        let applied = try await FileEditTool(rootPath: root).execute(argumentsJSON: normalized)
+        #expect(ToolEnvelope.isSuccess(applied), "\(applied)")
+        let texts = try DOCXEditor(package: OOXMLPackage(data: Data(contentsOf: root.appendingPathComponent("memo.docx")))).paragraphs()
+            .map { OOXMLText.text(of: $0) }
+        #expect(texts.contains("Status: Final") && texts.contains("Go-live remains scheduled for April 21."), "\(texts)")
+
+        // Per-entry path + document op under `edits`: hoisted and promoted together.
+        let form = FileEditTool.normalizingEditShapes(
+            #"{"dry_run":"true","edits":[{"fields":{"Name":"Ada"},"op":"fill_form","path":"intake-form.pdf"}]}"#)
+        let formObject = try #require(try JSONSerialization.jsonObject(with: Data(form.utf8)) as? [String: Any])
+        #expect(formObject["path"] as? String == "intake-form.pdf", "\(form)")
+        #expect((formObject["operations"] as? [[String: Any]])?.first?["op"] as? String == "fill_form", "\(form)")
+        #expect(SchemaValidator.validate(arguments: formObject, against: schema).isValid, "\(form)")
+
+        // Ambiguous or absent paths are left for the validator to reject.
+        for unchanged in [
+            #"{"edits":[{"old_string":"a","new_string":"b","path":"x.txt"},{"old_string":"c","new_string":"d","path":"y.txt"}]}"#,
+            #"{"edits":[{"fields":{"Name":"Ada"},"op":"fill_form"}]}"#,
+            #"{"edits":[{"old_string":"a","new_string":"b","path":""}]}"#,
+        ] {
+            let result = FileEditTool.normalizingEditShapes(unchanged)
+            let parsed = try JSONSerialization.jsonObject(with: Data(result.utf8))
+            let verdict = SchemaValidator.validate(arguments: parsed, against: schema)
+            #expect(!verdict.isValid && verdict.field == "path", "\(result) → \(verdict.errorMessage ?? "")")
+        }
+        // A top-level path always wins over entry paths.
+        let kept = FileEditTool.normalizingEditShapes(#"{"path":"real.txt","edits":[{"old_string":"a","new_string":"b","path":"other.txt"}]}"#)
+        #expect(kept == #"{"path":"real.txt","edits":[{"old_string":"a","new_string":"b","path":"other.txt"}]}"#)
+    }
+
+    /// The drafting workflow: a model appends a section by replacing the
+    /// last paragraph of the previous one with itself plus Markdown lines.
+    /// Every line becomes a paragraph (headings/bullets pick styles, never
+    /// literal `##`/`-` text), a tail after the match keeps its runs, and the
+    /// new paragraphs are addressable by a later multi-line `old_string`.
+    @Test func docxMultiLineReplacementExpandsIntoStyledParagraphs() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("draft.docx")
+        try makeToleranceDOCX(url)
+
+        let appended = try await edit(
+            root,
+            [
+                "path": "draft.docx",
+                "operations": [
+                    [
+                        "op": "replace_text", "old_string": "- first clause here.",
+                        "new_string": "- first clause here.\n\n## Risks\n- Vendor delays\n- Resource contention\nMitigation is tracked weekly.",
+                    ]
+                ],
+            ])
+        #expect(ToolEnvelope.isSuccess(appended), "\(appended)")
+        let applied = ((try #require(EnvelopeAssertions.successPayload(appended)))["operations_applied"] as? [String]) ?? []
+        #expect(applied.joined(separator: "\n").contains("5 paragraphs"), "\(applied)")
+        var xml = try part("word/document.xml", in: url)
+        // The matched paragraph keeps its head run and takes the first line.
+        #expect(xml.contains("<w:t>Intro: </w:t></w:r><w:r><w:t>first clause here.</w:t></w:r></w:p>"), "\(xml)")
+        // No styles.xml in this fixture → the heading is bold text, not "## Risks".
+        #expect(xml.contains("<w:rPr><w:b></w:b></w:rPr><w:t>Risks</w:t>") || xml.contains("<w:rPr><w:b/></w:rPr><w:t>Risks</w:t>"), "\(xml)")
+        #expect(!xml.contains("## Risks"), "\(xml)")
+        // Bullets clone the nearest list paragraph's formatting; no literal markers.
+        #expect(xml.contains("<w:pStyle w:val=\"ListParagraph\"/></w:pPr><w:r><w:t>Vendor delays</w:t>"), "\(xml)")
+        #expect(xml.contains("<w:pStyle w:val=\"ListParagraph\"/></w:pPr><w:r><w:t>Resource contention</w:t>"), "\(xml)")
+        #expect(!xml.contains("- Vendor") && !xml.contains("•"), "\(xml)")
+        #expect(!xml.contains("<w:br"), "\(xml)")
+        let editor = try DOCXEditor(package: OOXMLPackage(data: Data(contentsOf: url)))
+        let texts = try editor.paragraphs().map { OOXMLText.text(of: $0) }
+        #expect(
+            Array(texts[2...7]) == [
+                "Intro: first clause here.", "Risks", "Vendor delays", "Resource contention", "Mitigation is tracked weekly.", "Second clause.",
+            ], "\(texts)")
+
+        // The new paragraphs are real paragraphs: a later multi-line
+        // old_string (as `file_read` would render them) addresses them.
+        let revised = try await edit(
+            root,
+            [
+                "path": "draft.docx",
+                "operations": [
+                    [
+                        "op": "replace_text", "old_string": "Risks\n•\tVendor delays\n•\tResource contention",
+                        "new_string": "Risks\n- Vendor delays (mitigated)\n- Resource contention",
+                    ]
+                ],
+            ])
+        #expect(ToolEnvelope.isSuccess(revised), "\(revised)")
+        xml = try part("word/document.xml", in: url)
+        #expect(xml.contains("<w:pStyle w:val=\"ListParagraph\"/></w:pPr><w:r><w:t>Vendor delays (mitigated)</w:t>"), "\(xml)")
+
+        // A partial match with a tail: the tail moves to the last new
+        // paragraph and keeps its own run.
+        let split = try await edit(
+            root,
+            ["path": "draft.docx", "operations": [["op": "replace_text", "old_string": "Third clause", "new_string": "Third clause\nFourth clause"]]])
+        #expect(ToolEnvelope.isSuccess(split), "\(split)")
+        xml = try part("word/document.xml", in: url)
+        #expect(xml.contains("<w:t>Third clause</w:t></w:r></w:p><w:p><w:r><w:t>Fourth clause</w:t></w:r><w:r><w:t xml:space=\"preserve\"> and a tail.</w:t>"), "\(xml)")
+
+        #expect(DOCXEditor.blockMarkdown("## Risks ").kind == .heading(2))
+        #expect(DOCXEditor.blockMarkdown("•\tItem").text == "Item")
+        #expect(DOCXEditor.blockMarkdown("#hashtag").kind == .plain)
+    }
+
+    @Test func docxMultiMatchNamesPartsAndNotFoundQuotesClosestParagraph() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("parts.docx")
+        try makeToleranceDOCX(url)
+        let before = try Data(contentsOf: url)
+
+        // "Draft" appears in the body heading and the header.
+        let ambiguous = try await edit(
+            root, ["path": "parts.docx", "operations": [["op": "replace_text", "old_string": "Draft", "new_string": "Final"]]])
+        #expect(ToolEnvelope.isError(ambiguous), "\(ambiguous)")
+        let message = EnvelopeAssertions.failureMessage(ambiguous) ?? ""
+        #expect(message.contains("appears 2 times"), "\(message)")
+        #expect(message.contains("1 in body"), "\(message)")
+        #expect(message.contains("1 in header1"), "\(message)")
+        #expect(try Data(contentsOf: url) == before)
+
+        // replace_all takes both, header included.
+        let all = try await edit(
+            root,
+            ["path": "parts.docx", "operations": [["op": "replace_text", "old_string": "Draft", "new_string": "Final", "replace_all": true]]])
+        #expect(ToolEnvelope.isSuccess(all), "\(all)")
+        #expect(try part("word/header1.xml", in: url).contains("Final \u{2013} confidential"))
+        #expect(try part("word/document.xml", in: url).contains("Final agreement"))
+
+        // A near miss quotes the document's own paragraph.
+        let miss = try await edit(
+            root,
+            ["path": "parts.docx", "operations": [["op": "replace_text", "old_string": "Closing remarks about the entire agreement.", "new_string": "x"]]])
+        #expect(ToolEnvelope.isError(miss), "\(miss)")
+        let missMessage = EnvelopeAssertions.failureMessage(miss) ?? ""
+        #expect(missMessage.contains("wasn't found"), "\(missMessage)")
+        #expect(missMessage.contains("closest paragraph"), "\(missMessage)")
+        #expect(missMessage.contains("Closing remarks about the whole agreement."), "\(missMessage)")
+    }
+
+    @Test func docxReplaceAcrossParagraphsKeepsStylesAndRuns() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("multi.docx")
+        try makeToleranceDOCX(url)
+
+        // Three paragraphs → three paragraphs: the first keeps its italic
+        // "Intro: " run and the last keeps its tail; the middle keeps its
+        // list style.
+        let three = try await edit(
+            root,
+            [
+                "path": "multi.docx",
+                "operations": [
+                    [
+                        "op": "replace_text",
+                        "old_string": "first clause here.\nSecond clause.\nThird clause",
+                        "new_string": "FIRST.\n\nSECOND.\nTHIRD",
+                    ]
+                ],
+            ])
+        #expect(ToolEnvelope.isSuccess(three), "\(three)")
+        var xml = try part("word/document.xml", in: url)
+        #expect(xml.contains("<w:i/></w:rPr><w:t xml:space=\"preserve\">Intro: </w:t></w:r><w:r><w:t>FIRST.</w:t>") || xml.contains("<w:i/></w:rPr><w:t>Intro: </w:t></w:r><w:r><w:t>FIRST.</w:t>"), "\(xml)")
+        #expect(xml.contains("<w:pStyle w:val=\"ListParagraph\"/></w:pPr><w:r><w:t>SECOND.</w:t>"), "\(xml)")
+        #expect(xml.contains("<w:t>THIRD</w:t></w:r><w:r><w:t xml:space=\"preserve\"> and a tail.</w:t>"), "\(xml)")
+        #expect(!xml.contains("clause"), "\(xml)")
+        #expect(try elementsWithoutNamespace("word/document.xml", in: url).isEmpty)
+
+        // Three paragraphs → one: the run collapses into the first
+        // paragraph and the extra paragraphs are gone.
+        let one = try await edit(
+            root,
+            [
+                "path": "multi.docx",
+                "operations": [
+                    ["op": "replace_text", "old_string": "FIRST.\nSECOND.\nTHIRD and a tail.", "new_string": "Everything, merged."]
+                ],
+            ])
+        #expect(ToolEnvelope.isSuccess(one), "\(one)")
+        xml = try part("word/document.xml", in: url)
+        #expect(xml.contains("Intro: "), "\(xml)")
+        #expect(xml.contains("Everything, merged."), "\(xml)")
+        #expect(!xml.contains("SECOND"), "\(xml)")
+        #expect(!xml.contains("ListParagraph"), "\(xml)")
+        let merged = try await text(of: url)
+        #expect(merged.contains("Intro: Everything, merged."), "\(merged)")
+
+        // One paragraph → three: the extra lines become new paragraphs.
+        let grow = try await edit(
+            root,
+            [
+                "path": "multi.docx",
+                "operations": [
+                    ["op": "replace_text", "old_string": "Everything, merged.\nClosing remarks", "new_string": "Alpha.\nBeta.\nGamma. Closing remarks"]
+                ],
+            ])
+        #expect(ToolEnvelope.isSuccess(grow), "\(grow)")
+        let grown = try await text(of: url)
+        #expect(grown.contains("Intro: Alpha."), "\(grown)")
+        #expect(grown.contains("Beta."), "\(grown)")
+        #expect(grown.contains("Gamma. Closing remarks about the whole agreement."), "\(grown)")
+
+        // Wrong second line: the error shows what actually follows.
+        let wrong = try await edit(
+            root,
+            ["path": "multi.docx", "operations": [["op": "replace_text", "old_string": "Alpha.\nNot here.", "new_string": "x"]]])
+        #expect(ToolEnvelope.isError(wrong), "\(wrong)")
+        let wrongMessage = EnvelopeAssertions.failureMessage(wrong) ?? ""
+        #expect(wrongMessage.contains("consecutive paragraphs"), "\(wrongMessage)")
+        #expect(wrongMessage.contains("Beta."), "\(wrongMessage)")
     }
 
     /// Deck from the emitter plus a chart hanging off slide 1 (with an
@@ -671,6 +1205,31 @@ struct DocumentEditTests {
         #expect((EnvelopeAssertions.failureMessage(result) ?? "").contains("set_slide_text"), "\(result)")
     }
 
+    @Test func pptxReplaceToleratesPunctuationAndLocatesMultiMatchesBySlide() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await write(root, "deck.pptx", "# Q3 \u{2014} \u{201C}Plan\u{201D}\n- Ship it\n\n# Q4\n- Ship it\n")
+
+        let tolerant = try await edit(
+            root, ["path": "deck.pptx", "operations": [["op": "replace_text", "old_string": "Q3 - \"Plan\"", "new_string": "Q3 Plan"]]])
+        #expect(ToolEnvelope.isSuccess(tolerant), "\(tolerant)")
+        let applied = (EnvelopeAssertions.successPayload(tolerant)?["operations_applied"] as? [String]) ?? []
+        #expect(applied.joined(separator: "\n").contains("normalized"), "\(applied)")
+        #expect(try part("ppt/slides/slide1.xml", in: root.appendingPathComponent("deck.pptx")).contains("Q3 Plan"))
+
+        let ambiguous = try await edit(
+            root, ["path": "deck.pptx", "operations": [["op": "replace_text", "old_string": "Ship it", "new_string": "Shipped"]]])
+        #expect(ToolEnvelope.isError(ambiguous), "\(ambiguous)")
+        let message = EnvelopeAssertions.failureMessage(ambiguous) ?? ""
+        #expect(message.contains("1 on slide 1, 1 on slide 2"), "\(message)")
+
+        let miss = try await edit(
+            root, ["path": "deck.pptx", "operations": [["op": "replace_text", "old_string": "Ship it now", "new_string": "x"]]])
+        #expect(ToolEnvelope.isError(miss), "\(miss)")
+        let missMessage = EnvelopeAssertions.failureMessage(miss) ?? ""
+        #expect(missMessage.contains("closest slide text"), "\(missMessage)")
+    }
+
     @Test func pptxEmitterOutputParsesAndUsesTitleSlide() async throws {
         let slides = PPTXEmitter.slides(fromMarkdown: "# Deck\nsubtitle\n\n## Point\n- a\n- b\n", fallbackTitle: "x")
         #expect(slides.map(\.title) == ["Deck", "Point"])
@@ -710,6 +1269,324 @@ struct DocumentEditTests {
     private func pageWidths(_ url: URL) throws -> [Int] {
         let document = try #require(PDFDocument(url: url))
         return (0..<document.pageCount).map { Int(document.page(at: $0)!.bounds(for: .mediaBox).width) }
+    }
+
+    // MARK: PDF forms
+
+    /// Minimal classic-xref PDF writer: objects by number, offsets computed.
+    private func buildPDF(_ objects: [Int: String], root: Int = 1) -> Data {
+        var out = Data("%PDF-1.6\n".utf8)
+        var offsets: [Int: Int] = [:]
+        for number in objects.keys.sorted() {
+            offsets[number] = out.count
+            out.append(Data("\(number) 0 obj\n\(objects[number]!)\nendobj\n".utf8))
+        }
+        let xref = out.count
+        let size = (objects.keys.max() ?? 0) + 1
+        out.append(Data("xref\n0 \(size)\n0000000000 65535 f \n".utf8))
+        for number in 1..<size {
+            out.append(Data(String(format: "%010d 00000 n \n", offsets[number] ?? 0).utf8))
+        }
+        out.append(Data("trailer\n<< /Size \(size) /Root \(root) 0 R >>\nstartxref\n\(xref)\n%%EOF\n".utf8))
+        return out
+    }
+
+    private func pdfStream(_ dict: String, _ body: String) -> String {
+        "<< \(dict) /Length \(body.utf8.count) >>\nstream\n\(body)\nendstream"
+    }
+
+    /// AcroForm intake form: text `Name`, checkbox `Agree` (on-state
+    /// /Yes), radio group `Plan` (/Basic, /Pro), combo `State`,
+    /// hierarchical text `applicant.email`, push button `Submit`. `xfa`
+    /// adds an /XFA entry the way LiveCycle hybrids do.
+    private func makeAcroFormPDF(_ url: URL, xfa: Bool = false) throws {
+        let content = """
+            BT /F1 12 Tf 40 740 Td (Name:) Tj ET
+            BT /F1 12 Tf 40 700 Td (I agree to the terms) Tj ET
+            BT /F1 12 Tf 40 660 Td (Plan:  Basic        Pro) Tj ET
+            BT /F1 12 Tf 40 620 Td (State:) Tj ET
+            BT /F1 12 Tf 40 580 Td (Email:) Tj ET
+            """
+        var acro = "/Fields [10 0 R 11 0 R 12 0 R 15 0 R 16 0 R 18 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 5 0 R >> >>"
+        if xfa { acro += " /XFA 19 0 R" }
+        var objects: [Int: String] = [
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << \(acro) >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> "
+                + "/Annots [10 0 R 11 0 R 13 0 R 14 0 R 15 0 R 17 0 R 18 0 R] >>",
+            4: pdfStream("", content),
+            5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            6: pdfStream("/Type /XObject /Subtype /Form /BBox [0 0 14 14]", "0 g BT /ZaDb 10 Tf 2 3 Td (4) Tj ET"),
+            7: pdfStream("/Type /XObject /Subtype /Form /BBox [0 0 14 14]", ""),
+            8: pdfStream("/Type /XObject /Subtype /Form /BBox [0 0 14 14]", "0 g 7 7 m 7 7 l S"),
+            9: pdfStream("/Type /XObject /Subtype /Form /BBox [0 0 200 18] /Resources << /Font << /Helv 5 0 R >> >>", "/Tx BMC EMC"),
+            10: "<< /Type /Annot /Subtype /Widget /FT /Tx /T (Name) /V () /DA (/Helv 10 Tf 0 g) /Rect [90 732 290 750] /F 4 /P 3 0 R /AP << /N 9 0 R >> >>",
+            11: "<< /Type /Annot /Subtype /Widget /FT /Btn /T (Agree) /V /Off /AS /Off /Rect [190 696 204 710] /F 4 /P 3 0 R /AP << /N << /Yes 6 0 R /Off 7 0 R >> >> >>",
+            12: "<< /FT /Btn /Ff 49152 /T (Plan) /V /Off /Kids [13 0 R 14 0 R] >>",
+            13: "<< /Type /Annot /Subtype /Widget /Parent 12 0 R /AS /Off /Rect [76 656 90 670] /F 4 /P 3 0 R /AP << /N << /Basic 8 0 R /Off 7 0 R >> >> >>",
+            14: "<< /Type /Annot /Subtype /Widget /Parent 12 0 R /AS /Off /Rect [156 656 170 670] /F 4 /P 3 0 R /AP << /N << /Pro 8 0 R /Off 7 0 R >> >> >>",
+            15: "<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (State) /V (CA) /Opt [(CA) (NY) (TX)] /DA (/Helv 10 Tf 0 g) /Rect [90 612 190 630] /F 4 /P 3 0 R >>",
+            16: "<< /T (applicant) /Kids [17 0 R] >>",
+            17: "<< /Type /Annot /Subtype /Widget /Parent 16 0 R /FT /Tx /T (email) /V () /DA (/Helv 10 Tf 0 g) /Rect [90 572 290 590] /F 4 /P 3 0 R >>",
+            18: "<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 65536 /T (Submit) /Rect [400 572 480 592] /F 4 /P 3 0 R /MK << /CA (Submit) >> >>",
+        ]
+        if xfa {
+            objects[19] = pdfStream("", "<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\"><template/></xdp:xdp>")
+        }
+        try buildPDF(objects).write(to: url)
+    }
+
+    /// The same form printed flat: labels and underscores, no widgets.
+    private func makeFlattenedFormPDF(_ url: URL) throws {
+        let content = """
+            BT /F1 12 Tf 40 740 Td (Name: ______________________) Tj ET
+            BT /F1 12 Tf 40 700 Td (Date of birth: ____________) Tj ET
+            BT /F1 12 Tf 40 660 Td (Email: _____________________) Tj ET
+            """
+        try buildPDF([
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            4: pdfStream("", content),
+            5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ]).write(to: url)
+    }
+
+    private func widgetsByName(_ url: URL) throws -> [String: [PDFAnnotation]] {
+        let document = try #require(PDFDocument(url: url))
+        var out: [String: [PDFAnnotation]] = [:]
+        for index in 0..<document.pageCount {
+            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == "Widget" {
+                out[annotation.fieldName ?? "", default: []].append(annotation)
+            }
+        }
+        return out
+    }
+
+    // MARK: - operations schema
+
+    /// `operations.items` must stay a free-form object. Enumerating the
+    /// per-operation keys as `properties` breaks schema-constrained decoders
+    /// (xAI grok-4.3 emitted `{"op": "replace_text", "slide": 1, "text": …,
+    /// "x": 0, "y": 0}` and never `old_string` — 3/3 runs — while the
+    /// property-less shape produced correct arguments 3/3). The full
+    /// operation shapes must still validate and coerce locally without any
+    /// key being dropped or retyped.
+    @Test func operationsItemSchemaIsFreeFormAndKeepsEveryEditorKey() throws {
+        let schema = try #require(FileEditTool().parameters)
+        guard case .object(let root) = schema,
+            case .object(let props)? = root["properties"],
+            case .object(let operations)? = props["operations"],
+            case .object(let items)? = operations["items"]
+        else {
+            Issue.record("file_edit operations.items missing")
+            return
+        }
+        #expect(items["type"] == .string("object"))
+        #expect(items["properties"] == nil, "operations.items must not enumerate properties (constrained-decoder regression)")
+        #expect(items["additionalProperties"] == nil)
+        if case .string(let description)? = items["description"] {
+            for name in DocumentEditService.allOperationNames {
+                #expect(description.contains(name), "items description must name \(name)")
+            }
+        } else {
+            Issue.record("operations.items needs a description naming the operations")
+        }
+
+        let representativeCalls: [[String: Any]] = [
+            ["op": "replace_text", "old_string": "a", "new_string": "b", "replace_all": true, "slide": 2],
+            ["op": "insert_paragraph", "text": "t", "after": 3, "style": "Heading 2"],
+            ["op": "delete_paragraph", "indices": [2, 3]],
+            ["op": "set_table_cell", "table": 1, "row": 2, "column": 3, "text": "x"],
+            ["op": "set_cells", "sheet": "Q3", "cells": ["B2": 1, "C2": "=B2*2", "D2": NSNull()]],
+            ["op": "insert_rows", "sheet": 1, "at": 2, "count": 3],
+            ["op": "add_sheet", "name": "New", "after": "Summary"],
+            ["op": "set_slide_text", "slide": 2, "shape": "title", "text": "T"],
+            ["op": "reorder_slides", "order": [2, 1]],
+            ["op": "rotate_pages", "pages": 1, "degrees": 90],
+            ["op": "merge", "files": ["a.pdf"], "after": 0],
+            ["op": "fill_form", "fields": ["Name": "Ada", "Agree": true, "Plan": "Pro"]],
+            ["op": "add_text", "page": 1, "text": "hi", "x": 10, "y": 20, "size": 12],
+            ["op": "highlight", "text": "term", "all": true],
+        ]
+        let arguments: [String: Any] = ["path": "x.docx", "operations": representativeCalls]
+        let validation = SchemaValidator.validate(arguments: arguments, against: schema)
+        #expect(validation.isValid, "\(validation.errorMessage ?? "")")
+        let coerced = SchemaValidator.coerceArguments(arguments, against: schema) as? [String: Any]
+        let coercedOps = coerced?["operations"] as? [[String: Any]]
+        #expect(coercedOps?.count == representativeCalls.count)
+        for (original, roundTripped) in zip(representativeCalls, coercedOps ?? []) {
+            #expect(Set(original.keys) == Set(roundTripped.keys), "coercion dropped keys for \(original["op"] ?? "?")")
+            #expect(
+                NSDictionary(dictionary: original).isEqual(to: roundTripped),
+                "coercion changed values for \(original["op"] ?? "?")"
+            )
+        }
+    }
+
+    @Test func pdfStructureListsFormFieldsWithKindsAndOptions() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("intake.pdf")
+        try makeAcroFormPDF(url)
+
+        let structure = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: try json(["path": "intake.pdf", "mode": "structure"]))
+        #expect(ToolEnvelope.isSuccess(structure), "\(structure)")
+        let payload = try #require(EnvelopeAssertions.successPayload(structure))
+        let fields = try #require(payload["form_fields"] as? [[String: Any]])
+        let byName = Dictionary(uniqueKeysWithValues: fields.map { ($0["name"] as? String ?? "", $0) })
+        #expect(byName["Name"]?["type"] as? String == "text")
+        #expect(byName["Agree"]?["type"] as? String == "checkbox")
+        #expect(byName["Agree"]?["on_value"] as? String == "Yes")
+        #expect(byName["Plan"]?["type"] as? String == "radio")
+        #expect(byName["Plan"]?["options"] as? [String] == ["Basic", "Pro"])
+        #expect(byName["State"]?["type"] as? String == "choice")
+        #expect(byName["State"]?["options"] as? [String] == ["CA", "NY", "TX"])
+        #expect(byName["State"]?["value"] as? String == "CA")
+        #expect(byName["applicant.email"]?["label"] as? String == "email")
+        #expect(byName["Submit"]?["type"] as? String == "button")
+        #expect(byName["Submit"]?["fillable"] as? Bool == false)
+        // One row per logical field: the radio group's two widgets collapse.
+        #expect(fields.count == 6, "\(fields)")
+    }
+
+    @Test func pdfFillFormResolvesNamesSetsRadiosAndSurvivesReopen() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("intake.pdf")
+        try makeAcroFormPDF(url)
+
+        let result = try await edit(
+            root,
+            [
+                "path": "intake.pdf",
+                "operations": [
+                    [
+                        "op": "fill_form",
+                        "fields": [
+                            "name": "Ada Lovelace",  // case-insensitive
+                            "Agree": true,
+                            "Plan": "pro",  // radio option, case-insensitive
+                            "State": "NY",
+                            "email": "ada@example.com",  // short name of applicant.email
+                        ],
+                    ]
+                ],
+            ])
+        #expect(ToolEnvelope.isSuccess(result), "\(result)")
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        let applied = (payload["operations_applied"] as? [String]) ?? []
+        #expect(applied.joined().contains("Filled 5 form fields"), "\(applied)")
+        #expect(applied.joined().contains("Plan=Pro"), "\(applied)")
+
+        // Reopen with PDFKit: values, radio selection, and the saved bytes
+        // carry /NeedAppearances so viewers redraw the fields.
+        let widgets = try widgetsByName(url)
+        #expect(widgets["Name"]?.first?.widgetStringValue == "Ada Lovelace")
+        #expect(widgets["Agree"]?.first?.buttonWidgetState == .onState)
+        let plan = widgets["Plan"] ?? []
+        #expect(plan.count == 2)
+        #expect(plan.first { $0.buttonWidgetStateString == "Pro" }?.buttonWidgetState == .onState)
+        #expect(plan.first { $0.buttonWidgetStateString == "Basic" }?.buttonWidgetState == .offState)
+        #expect(widgets["State"]?.first?.widgetStringValue == "NY")
+        #expect(widgets["applicant.email"]?.first?.widgetStringValue == "ada@example.com")
+        let bytes = try Data(contentsOf: url)
+        #expect(bytes.range(of: Data("/NeedAppearances".utf8)) != nil)
+        #expect(bytes.range(of: Data("/V /Pro".utf8)) != nil || bytes.range(of: Data("/V/Pro".utf8)) != nil)
+        // The push button was left alone.
+        #expect(widgets["Submit"]?.count == 1)
+
+        // Second pass: clearing the radio and unchecking works too.
+        let cleared = try await edit(
+            root,
+            ["path": "intake.pdf", "operations": [["op": "fill_form", "fields": ["Plan": false, "Agree": "no"]]]])
+        #expect(ToolEnvelope.isSuccess(cleared), "\(cleared)")
+        let after = try widgetsByName(url)
+        #expect(after["Agree"]?.first?.buttonWidgetState == .offState)
+        #expect((after["Plan"] ?? []).allSatisfy { $0.buttonWidgetState == .offState })
+        #expect(after["Name"]?.first?.widgetStringValue == "Ada Lovelace")
+    }
+
+    @Test func pdfFillFormRefusalsAreSpecificAndLeaveTheFileUntouched() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("intake.pdf")
+        try makeAcroFormPDF(url)
+        let original = try Data(contentsOf: url)
+
+        func failure(_ fields: [String: Any]) async throws -> String {
+            let result = try await edit(root, ["path": "intake.pdf", "operations": [["op": "fill_form", "fields": fields]]])
+            #expect(ToolEnvelope.isError(result), "\(result)")
+            return EnvelopeAssertions.failureMessage(result) ?? ""
+        }
+
+        // Typo: suggestion plus the real field list; nothing else applied
+        // even though "Name" was valid.
+        let typo = try await failure(["Name": "Ada", "Nmae": "x"])
+        #expect(typo.contains("no field named \"Nmae\""), "\(typo)")
+        #expect(typo.contains("Did you mean \"Name\""), "\(typo)")
+        #expect(try Data(contentsOf: url) == original)
+
+        let badRadio = try await failure(["Plan": "Enterprise"])
+        #expect(badRadio.contains("Options: Basic, Pro"), "\(badRadio)")
+
+        let badChoice = try await failure(["State": "ZZ"])
+        #expect(badChoice.contains("Options: CA, NY, TX"), "\(badChoice)")
+
+        let button = try await failure(["Submit": true])
+        #expect(button.contains("push button"), "\(button)")
+
+        let badBool = try await failure(["Agree": "maybe"])
+        #expect(badBool.contains("true/false"), "\(badBool)")
+        #expect(badBool.contains("\"Yes\""), "\(badBool)")
+
+        #expect(try Data(contentsOf: url) == original)
+    }
+
+    @Test func pdfFormsWithoutWidgetsExplainXFAOrFlattenedLayout() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let flat = root.appendingPathComponent("flat.pdf")
+        try makeFlattenedFormPDF(flat)
+
+        let flatResult = try await edit(
+            root, ["path": "flat.pdf", "operations": [["op": "fill_form", "fields": ["Name": "Ada"]]]])
+        #expect(ToolEnvelope.isError(flatResult), "\(flatResult)")
+        let flatMessage = EnvelopeAssertions.failureMessage(flatResult) ?? ""
+        #expect(flatMessage.contains("no fillable form fields"), "\(flatMessage)")
+        #expect(flatMessage.contains("add_text"), "\(flatMessage)")
+        #expect(flatMessage.contains("\"Name:\""), "\(flatMessage)")
+        #expect(flatMessage.contains("\"Date of birth:\""), "\(flatMessage)")
+        // The label baseline is at 740pt; the reported y is the label's
+        // bottom edge (baseline minus descent), a few points below it.
+        let ys = flatMessage.components(separatedBy: "y=").dropFirst().compactMap { Int($0.prefix { $0.isNumber }) }
+        #expect(ys.contains { (730...741).contains($0) }, "\(flatMessage)")
+
+        // The suggested pivot works: add_text lands the value on the page.
+        let placed = try await edit(
+            root, ["path": "flat.pdf", "operations": [["op": "add_text", "page": 1, "text": "Ada Lovelace", "x": 80, "y": 752]]])
+        #expect(ToolEnvelope.isSuccess(placed), "\(placed)")
+        let document = try #require(PDFDocument(url: flat))
+        #expect(document.page(at: 0)?.annotations.contains { $0.contents == "Ada Lovelace" } == true)
+
+        // Structure mode for a flat PDF has no form_fields key at all.
+        let structure = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: try json(["path": "flat.pdf", "mode": "structure"]))
+        let payload = try #require(EnvelopeAssertions.successPayload(structure))
+        #expect(payload["form_fields"] == nil)
+
+        // XFA-only: PDFKit sees no widgets; say so instead of "no fields".
+        let xfaURL = root.appendingPathComponent("xfa.pdf")
+        try makeAcroFormPDF(xfaURL, xfa: true)
+        // Strip the AcroForm widgets so only the XFA packet remains.
+        var raw = String(decoding: try Data(contentsOf: xfaURL), as: UTF8.self)
+        raw = raw.replacingOccurrences(of: "/Annots [10 0 R 11 0 R 13 0 R 14 0 R 15 0 R 17 0 R 18 0 R]", with: "/Annots []")
+        try Data(raw.utf8).write(to: xfaURL)
+        let xfaResult = try await edit(
+            root, ["path": "xfa.pdf", "operations": [["op": "fill_form", "fields": ["Name": "Ada"]]]])
+        #expect(ToolEnvelope.isError(xfaResult), "\(xfaResult)")
+        #expect((EnvelopeAssertions.failureMessage(xfaResult) ?? "").contains("XFA form"), "\(xfaResult)")
     }
 
     @Test func pdfPageOperationsAndHonestTextRefusal() async throws {

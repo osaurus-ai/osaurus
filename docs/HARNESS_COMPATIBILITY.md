@@ -504,6 +504,169 @@ PR #46 (vMLX main `1ab081eb1d51568ae636f64b9ac76cd3ab4d2534`):
   (7.3 GB, mixed-precision profile) mapped via mmap — not a runtime
   leak. MXFP4 E2B is 3.8 GB on disk / ~1.7 GB footprint.
 
+## File-tool hardening checkpoint (Raptor-0.6-4B-JANG_6M + grok-4.3)
+
+File-tool hardening branch (`harden-file-edit-tools`, base `74e83c6c5`),
+2026-09-27/28: tolerant `file_edit` matching (`FileEditMatcher` cascade,
+byte-preserving apply), atomic `edits` batches, `.docx`/`.pptx`
+tolerant `replace_text` with multi-paragraph matching, Markdown-syntax
+rescue and paragraph expansion, PDF `fill_form`, wire-order and
+shape-tolerance fixes for constrained decoders (`ToolWirePropertyOrder`,
+edit-form fillers, string-encoded arrays, per-entry `path`, document ops
+under `edits`), `file_write` xlsx record rows and operations-payload
+guard. Contract text: `docs/TOOL_CONTRACT.md`.
+
+Run setup (all rows): `OsaurusAI/Raptor-0.6-4B-JANG_6M` from
+`~/MLXModels` (Spark2_5, JANG affine bits=6 gs=64 with 8-bit embedding /
+attention overrides, 181 per-layer quant overrides), vMLX
+`osaurus-ai/vmlx-swift@934dd5c8`, Apple M4 Pro 14 cores / 48 GB, macOS
+26.5.2, AC power. Agent-loop generation defaults come from the bundle's
+`generation_config.json` (temperature 1.0, top_p 0.95, top_k -1,
+repetition_penalty 1.0, do_sample true) — the cases are **sampled**, one
+trial each, so per-case outcomes flip between otherwise identical runs
+(the diffs below list every flip). Judge for rubric rows: `xai/grok-4.3`.
+Decode throughput was 50–55 tok/s on every step of every recorded case
+(`measured_vmlx_info`); peak physical footprint 3.1–3.3 GB.
+
+Lanes: deterministic (`ToolEnvelope` 10, `Schema` 11, `ArgumentCoercion`
+9) and `AgentLoop` (67, 4 of them skipped as sandbox-gated) +
+`AgentLoopFrontier` (43) with `--thinking off` — an explicit, recorded
+mode (`environment.thinkingControl = "off"`), not the bundle default.
+The bundle-default (thinking) lane is **BLOCKED on wall clock**, not
+faked: the baseline think run hit the 1800 s watchdog on case 2 (1 pass,
+1 errored, 60 skipped) and the post-change focused file subset was
+killed after case 1 step 4 alone produced >41k reasoning characters in
+465 s (`/tmp/osaurus-file-tools-proof/post/agentloop-think-subset.log`,
+exit 143). No prompt, template or sampler coercion was added to make the
+think lane fit.
+
+| Run | Source | AgentLoop (67) | Frontier (43) | Deterministic (30) | Artifacts |
+|---|---|---|---|---|---|
+| baseline-nothink | `74e83c6c5` + harness-only patches (new cases, fixtures, `--thinking` flag), worktree `/tmp/osaurus-base` | 53 ✓ / 10 ✗ / 4 skip | 32 ✓ / 11 ✗ | — | `/tmp/osaurus-file-tools-proof/baseline-nothink/` |
+| post | branch before the `file_write` guard, record rows, Markdown-syntax rescue, bullet-glyph, shape normalizer | 49 ✓ / 14 ✗ / 4 skip | 28 ✓ / 15 ✗ | 30 ✓ | `/tmp/osaurus-file-tools-proof/post/` |
+| post2 | + `file_write` operations guard, xlsx record rows, Markdown-syntax rescue, bullet-glyph normalization | 55 ✓ / 8 ✗ / 4 skip | 29 ✓ / 14 ✗ | 30 ✓ | `/tmp/osaurus-file-tools-proof/post2/` |
+| post3 | + literal-bullet leading tolerance, insert hint, ops-under-`edits` promotion | 53 ✓ / 10 ✗ / 4 skip | 36 ✓ / 7 ✗ | 30 ✓ | `/tmp/osaurus-file-tools-proof/post3/` |
+| post4 | + string-encoded `edits`, per-entry `path` hoist (last full matrix) | 51 ✓ / 12 ✗ / 4 skip | 31 ✓ / 12 ✗ | 30 ✓ | `/tmp/osaurus-file-tools-proof/post4/` |
+| post5-files | final source (+ content-free `[{}]` fillers, `AgentTaskState.sharedEntryPath` invalidation); file-tool cases only | 13 ✓ / 2 ✗ (of 15 file cases) | 3 ✓ / 2 ✗ (of 5 file cases) | — | `/tmp/osaurus-file-tools-proof/post5-files/` |
+
+The final source differs from `post4` only by two additive tolerances
+(padded fillers dropped; per-entry-path edits invalidate held reads), so
+the post4 full matrix plus the post5 file-case subset is the evidence for
+the shipped tree — not a full-matrix run on the exact final tree.
+
+Across the five no-think runs the AgentLoop pass count ranged 49–55 / 67
+and Frontier 28–36 / 43 with the same source in two of the pairs, so a
+±4-case swing between adjacent runs is sampling noise, not signal; only
+the per-case attribution below is stable.
+
+Timing overlaps to weigh against the numbers: unit-test compiles ran
+during the `post` frontier lane (21:16–21:19Z, 21:54–21:57Z,
+21:59–22:02Z) and a Release `make app` (22:08–22:29Z) plus a brief
+isolated-app model load during the baseline lane. `post2`–`post5` ran
+with no concurrent builds.
+
+Failed-case attribution (union over the no-think runs; "tool" rows are
+fixed in the final source, "model" rows are scored honestly and stay):
+
+- **tool → fixed** `edit-xlsx-in-place` (baseline, post2), `edit-pptx-in-place`
+  (baseline), `undo-document-edit` (post), `edit-docx-in-place` (post3),
+  `fill-pdf-form-in-place` (post3): document ops or `{old_string,
+  new_string}` pairs under `edits` with the `path` inside each entry, or
+  `edits` as a JSON string — rejected by the shared validator ("Missing
+  required property: old_string" / "path") before this branch's
+  `FileEditTool.normalizeArgumentsBeforeValidation`. In post4 the
+  promoted shapes reached the document editor (`edit-xlsx-in-place`:
+  `set_cells` beside a text pair, the pair correctly rejected for
+  `.xlsx`; `fill-pdf-form-in-place`: form filled in place after the
+  `file_write` guard redirected the first attempt).
+- **tool → fixed** `edit-pptx-in-place` (post4): the edit landed but the
+  verify-read replayed the pre-edit extraction — the loop's mutation
+  bookkeeping keyed on the raw call, which carried `path` only inside the
+  `edits` entries; `AgentTaskState` now resolves the same shared entry
+  path. The model then re-read three times and hit the cap.
+- **tool → fixed** `edit-batch-edits-single-call` (grok-4.3, 1 run in 10):
+  `"operations": [{}]` padding beside a real `edits` batch was not a
+  recognised filler; content-free containers now are.
+- **tool → fixed** `fill-pdf-form-in-place` (post, post2): Raptor wrote
+  the `fill_form` operations JSON into `file_write`, replacing the PDF
+  with text; `file_write` now refuses an operations payload and hands
+  back the exact `file_edit` call.
+- **tool → fixed** `write-xlsx-by-extension` (post): JSON record rows
+  (`[{"Item": …, "Amount": …}]`) rejected; now accepted.
+- **tool → fixed** `document-drafting-revisions` (post, post2): `- **Kickoff:
+  April 7**` / `## Scope` old_strings against a rendered draft (Markdown
+  syntax is styling in Word), a 3-line bulleted `old_string` against
+  literal `•\t` items, and an empty-`old_string` insert with no pointer to
+  `append_markdown`/`insert_paragraph`. post3/post4 apply the revision in
+  1 `file_edit` call with 0 errors; the post3/post4/post5 misses are the
+  model merging "Scope and Timeline" into one heading (checker and judge
+  require four separate headings).
+- **model** `append-preserve-existing` (every run): rewrites the whole
+  file via `file_write` (baseline: duplicated the header with `mode:
+  append`), appends without the requested blank-line separator (post5), or
+  ends the turn with prose and no edit (post3).
+- **model** `edit-xlsx-in-place` (baseline, post3, post5): `=SUM(B5:B5)`
+  written where `=SUM(B2:B5)` was asked — the tool applied exactly what
+  was sent (in post5 the `set_cells`-under-`edits` shape was promoted and
+  applied in one call).
+- **model** `edit-batch-edits-single-call` (post3): three `file_search`
+  probes before one correct atomic batch; 5 calls against a cap of 4.
+- **model** `read-xlsx-directly`, `list-folder-contents`,
+  `listing-navigation-discipline`, `live-data-no-rejection`: hallucinated
+  absolute `/var/folders/…` or `/tmp/…` paths outside the working folder
+  (the rejection names the fix; usually recovered on the next call).
+- **model** `write-pdf-by-extension` (post4): wrote `onepage.pdf` for a
+  requested `onepager.pdf` and reported success.
+- **model** `audit-file-write`, `exact-bytes-version-contract`: `content`
+  written without the requested trailing newline / byte-exact copy drift.
+- **model** `answer-direct-no-complete`, `clarify-before-destructive`,
+  `rejection-stops-run`, `decline-out-of-scope-capability`,
+  `avoid-unneeded-described-agent`, `route-by-agent-description`,
+  `spawn-wave-two-different-local-workers`, `constraint-retention-*`,
+  `contract-search-then-cite`, `kitchen-sink`, `long-horizon-project`,
+  `ordered-sort-count-pipeline`, `format-contract`, `code-review-findings`,
+  `compaction-under-load`, `data-analysis-artifact`, `db-view-and-report`,
+  `json-config-migration`, `substantial-single-file-app`: loop discipline,
+  delegation routing, budget overruns and deliverable-content misses
+  unrelated to file-tool argument handling; each flipped in at least one
+  direction between runs under sampling.
+
+`xai/grok-4.3` on the file-tool cases (15 AgentLoop: `append-preserve-existing`,
+`edit-batch-edits-single-call`, `edit-docx-in-place`,
+`edit-docx-smart-quotes`, `edit-file-then-verify`,
+`edit-one-key-preserve-others`, `edit-pptx-in-place`,
+`edit-whitespace-drift-recovers`, `edit-xlsx-in-place`,
+`fill-pdf-form-in-place`, `read-xlsx-directly`, `undo-document-edit`,
+`write-docx/pdf/xlsx-by-extension`; 5 Frontier: `audit-file-edit`,
+`audit-file-write`, `document-drafting-revisions`, `document-roundtrip`,
+`ordered-read-before-edit`): 20/20 on the final source
+(`/tmp/osaurus-file-tools-proof/newcases-grok11/`; the preceding runs
+were 20/20 (`grok9`) and 19/20 (`grok10`, the `[{}]` filler above). Before
+the wire-order fix grok-4.3 could not reach `new_string` at all
+(constrained decoder emitting optional properties in declared order; see
+"Provider wire-format requirements"), and `document-drafting-revisions`
+went from 16 calls / 7 `file_edit` errors to 4 calls / 0 errors.
+
+Live Release-app UI proof for this checkpoint (txt/docx/xlsx/pdf-form edits,
+undo, relaunch with Raptor in the isolated root
+`/tmp/osaurus-live-proof-filetools`) is **PARTIAL/BLOCKED**: the machine
+was in active use during the window, so no keystrokes were injected into
+the built app. Source, unit, deterministic and agent-loop evidence above
+does not substitute for it.
+
+Unit-test status for this checkpoint: the touched areas pass under
+`swift test --filter` (1644 tests / 241 suites — Documents, Folder, Tool,
+Sandbox, Workspace, ToolRegistry/ToolEnvelope/ToolWire, SchemaValidator,
+AgentTaskState, SystemPrompt, RemoteProvider). Two local full-suite
+`make test` attempts on this machine did not finish: the first aborted
+with MLX "Failed to load the default metallib" (the SwiftPM test binary
+has no colocated metallib), the second — with the metallib colocated —
+starved the cooperative pool (2 s deadline tests measuring 130–206 s) and
+wedged with 252 Swift Testing rows still running; a local `make ci-test`
+hung in `xcodebuild` while the user's Xcode session was active. The
+authoritative full run for this branch is therefore the CI `test-core`
+job on the PR.
+
 ## Provider wire-format requirements
 
 Quirks discovered live, handled automatically by Osaurus. Useful if you
@@ -521,6 +684,7 @@ connect these providers through a custom endpoint.
 | OpenAI reasoning models (o-series, gpt-5+) | Require `max_completion_tokens` (reject `max_tokens`); forbid `temperature`/`top_p`. | Detected by model-id profile; parameters switched/omitted automatically. |
 | Mistral, Groq, OpenRouter, DeepSeek, … (strict OpenAI-compat) | Reject `max_completion_tokens` (HTTP 422). | `max_tokens` emitted by default for non-reasoning models. |
 | xAI, Groq, OpenRouter | Accept full JSON Schema in tool parameters. | No sanitization — full schemas sent as-is. |
+| xAI (grok-4.3, constrained decoding) | Emits optional properties **only in the schema's declared order** and pads unused optional collections with empty fillers (`"operations": []` beside a real `edits` batch, 5/5). With alphabetical `.sortedKeys` wire order `new_string` sorted before `old_string` and was unreachable once `old_string` had been emitted — `file_edit` was 0/N on this route. | `ToolWirePropertyOrder` rewrites `properties` in each tool's authored `parameterOrder` on the wire (validation still uses the canonical schema); empty `edits`/`operations` fillers are dropped when another edit form is present. Evidence: `docs/TOOL_CONTRACT.md` "Schema shape on the provider wire". |
 | OpenAI-compatible streaming (xAI/Grok, Azure OpenAI) | Per-request token `usage` is only returned mid-stream when `stream_options.include_usage` is set, and the final usage chunk arrives **after** `finish_reason` (including on tool-call turns). Without it, streamed remote runs report 0 completion tokens. | Osaurus sets `stream_options.include_usage` on streaming requests to these upstreams, briefly defers the tool-call dispatch so the trailing usage chunk lands first, then surfaces the real `completion_tokens` as the same in-band stats hint the local runtime emits. Throughput (`tok/s`) is the provider's value when present, else left nil — never fabricated. Other providers and the non-streaming path are byte-identical on the wire. |
 
 ## Known model findings
@@ -568,6 +732,30 @@ harness bugs; they're scored honestly and tracked across model versions.
   API-level safeguard this is the model's own choice (the request is never
   blocked by the provider). Headless/automated secret seeding with gpt-5.5
   is unreliable; store secrets via the UI prompt flow instead.
+- **Raptor-0.6-4B-JANG_6M (no-think) — `file_edit` shape drift.** Puts
+  document operations and even `path` inside `edits` entries, sends
+  `edits` as a JSON string, writes operation JSON into `file_write`, and
+  sends `old_string`/`new_string` text swaps at `.xlsx`/`.pdf`. The
+  unambiguous shapes are repaired before validation (see
+  `docs/TOOL_CONTRACT.md`); the rest get pointed rejections and it
+  usually recovers on the next call.
+- **Raptor-0.6-4B-JANG_6M (no-think) — path hallucination.** Reads
+  `/var/folders/…/<file>` or `/tmp/<file>` instead of the working-folder
+  relative path on the first call of listing/reading tasks
+  (`read-xlsx-directly`, `list-folder-contents`, `live-data-no-rejection`).
+- **Raptor-0.6-4B-JANG_6M (no-think) — additive-edit fidelity.**
+  `append-preserve-existing` fails every run: rewrites the file, appends a
+  duplicate header, or narrates the append without calling a tool. Byte-
+  exact `file_write` content also tends to drop the trailing newline
+  (`audit-file-write`, `exact-bytes-version-contract`).
+- **Raptor-0.6-4B-JANG_6M (no-think) — formula/range slips.** Writes
+  `=SUM(B5:B5)` for a requested `=SUM(B2:B5)` (`edit-xlsx-in-place`,
+  2 of 5 runs); the tool applies exactly what was sent.
+- **Raptor-0.6-4B-JANG_6M (think mode) — reasoning volume.** Bundle-default
+  thinking produced >41k reasoning characters in one agent-loop step
+  (465 s at ~50 tok/s); full-suite think runs are wall-clock infeasible on
+  M4 Pro, so agent-loop rows are recorded with `--thinking off` and the
+  think lane stays BLOCKED rather than coerced.
 
 ## PR eval evidence
 

@@ -96,27 +96,72 @@ struct PPTXEditor {
             let (number, info) = try slide(op)
             targets = [(number, info)]
         }
-        var total = 0
-        var paragraphs: [(String, [XMLElement])] = []
-        for (_, info) in targets {
-            let paras = try package.root(info.part).descendants("p").filter { $0.uri == a || $0.name?.hasPrefix("a:") == true }
-            total += paras.reduce(0) { $0 + OOXMLText.occurrences(of: find, in: $1) }
-            paragraphs.append((info.part, paras))
+        guard find != replacement else {
+            throw op.fail("`old_string` and `new_string` are identical; nothing to change.")
         }
-        guard total > 0 else { throw op.fail("\"\(OOXMLText.preview(find, max: 80))\" wasn't found on \(op.has("slide") ? "that slide" : "any slide").") }
+        do {
+            try replaceText(op, find: find, replacement: replacement, all: all, targets: targets)
+        } catch let error as DocumentEditError where error.isMatchMiss {
+            // Slide bullets are paragraph formatting (`a:buChar`), not text;
+            // match without a leading marker and don't write one back.
+            let strippedFind = DOCXEditor.strippingMarkdownSyntax(find)
+            guard strippedFind.stripped else { throw error }
+            let strippedReplacement = DOCXEditor.strippingMarkdownSyntax(replacement)
+            do {
+                try replaceText(op, find: strippedFind.text, replacement: strippedReplacement.text, all: all, targets: targets)
+            } catch is DocumentEditError {
+                throw error
+            }
+            summaries.append("Markdown syntax in `old_string` (list markers, heading hashes, emphasis) was treated as formatting — slides store it as paragraph and run styling, not text")
+        }
+    }
+
+    private mutating func replaceText(
+        _ op: DocumentOperation, find: String, replacement: String, all: Bool, targets: [(Int, SlideInfo)]
+    ) throws {
+        var paragraphs: [(slide: Int, part: String, paras: [XMLElement])] = []
+        for (number, info) in targets {
+            let paras = try package.root(info.part).descendants("p").filter { $0.uri == a || $0.name?.hasPrefix("a:") == true }
+            paragraphs.append((number, info.part, paras))
+        }
+        // Match cascade: byte-for-byte first, then punctuation/whitespace
+        // folded (PowerPoint autocorrects quotes and dashes too).
+        var mode: OOXMLText.MatchMode = .exact
+        var perSlide: [(slide: Int, count: Int)] = []
+        var total = 0
+        for candidate in [OOXMLText.MatchMode.exact, .normalized] {
+            perSlide = paragraphs.map { entry in
+                (entry.slide, entry.paras.reduce(0) { $0 + OOXMLText.occurrences(of: find, in: $1, mode: candidate) })
+            }
+            total = perSlide.reduce(0) { $0 + $1.count }
+            mode = candidate
+            if total > 0 { break }
+        }
+        guard total > 0 else {
+            let allParas = paragraphs.flatMap(\.paras)
+            var message = "\"\(OOXMLText.preview(find, max: 80))\" wasn't found on \(op.has("slide") ? "that slide" : "any slide")."
+            let hint = DOCXEditor.closestParagraphHint(for: find, in: allParas)
+            if !hint.isEmpty {
+                message += hint.replacingOccurrences(of: "paragraph text is (paragraph", with: "slide text is (text line")
+            }
+            throw op.fail(message, isMatchMiss: true)
+        }
         guard all || total == 1 else {
-            throw op.fail("\"\(OOXMLText.preview(find, max: 80))\" appears \(total) times; add surrounding words, pass `slide`, or pass `all: true`.")
+            let where_ = perSlide.filter { $0.count > 0 }.map { "\($0.count) on slide \($0.slide)" }.joined(separator: ", ")
+            throw op.fail(
+                "\"\(OOXMLText.preview(find, max: 80))\" appears \(total) times (\(where_)); add surrounding words, pass `slide`, or pass `replace_all: true`.")
         }
         var replaced = 0
-        for (part, paras) in paragraphs {
+        for (_, part, paras) in paragraphs {
             var changed = false
             for p in paras {
                 let n: Int
                 do {
-                    n = try OOXMLText.replace(in: p, find: find, with: replacement, flavor: .drawing)
+                    n = try OOXMLText.replace(in: p, find: find, with: replacement, flavor: .drawing, mode: mode)
                 } catch OOXMLText.ReplaceError.spansBreak {
                     throw op.fail(
-                        "\"\(OOXMLText.preview(find, max: 80))\" runs across a line break on the slide; replace the text on each side of it separately.")
+                        "\"\(OOXMLText.preview(find, max: 80))\" runs across a line break on the slide; replace the text on each side of it separately.",
+                        isMatchMiss: true)
                 } catch OOXMLText.ReplaceError.newlineUnsupported {
                     throw op.fail("`new_string` can't contain line breaks on a slide; use set_slide_text to rewrite the shape's lines.")
                 }
@@ -124,7 +169,11 @@ struct PPTXEditor {
             }
             if changed { package.markDirty(part) }
         }
-        summaries.append("Replaced \(replaced) occurrence\(replaced == 1 ? "" : "s") of \"\(OOXMLText.preview(find, max: 60))\"")
+        var summary = "Replaced \(replaced) occurrence\(replaced == 1 ? "" : "s") of \"\(OOXMLText.preview(find, max: 60))\""
+        if mode == .normalized {
+            summary += " (matched with punctuation and whitespace normalized: the slide's own quotes/dashes differed from `old_string`)"
+        }
+        summaries.append(summary)
     }
 
     private mutating func setSlideText(_ op: DocumentOperation) throws {

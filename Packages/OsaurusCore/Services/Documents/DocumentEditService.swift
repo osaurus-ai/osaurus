@@ -34,6 +34,27 @@ enum DocumentEditService {
         Set(DOCXEditor.operations + XLSXEditor.operations + PPTXEditor.operations + PDFEditor.operations)
     ).sorted()
 
+    /// Schema for one `operations[]` entry: a free-form object whose keys are
+    /// documented in the `operations` description, NOT enumerated as
+    /// `properties`. Declaring the per-operation keys breaks
+    /// schema-constrained decoders: with `properties` present, xAI's
+    /// grok-4.3 deterministically emitted `{"op": "replace_text", "slide": 1,
+    /// "text": "Lisbon", "x": 0, "y": 0}` and never `old_string`/`new_string`
+    /// (probe: /tmp xai_probe, 3/3 runs), and the original `{op}`-only
+    /// declaration arrived as `{"op": "replace_text"}` with every other key
+    /// dropped. The same request against `{"type": "object"}` produced the
+    /// correct `old_string`/`new_string`/`slide` 3/3. Every editor validates
+    /// its own keys with entry-numbered errors, so nothing is lost locally.
+    static let operationItemSchema: JSONValue = .object([
+        "type": .string("object"),
+        "description": .string(
+            "One operation: {\"op\": name, …keys for that op}. `op` is one of: "
+                + allOperationNames.joined(separator: ", ")
+                + ". replace_text needs old_string + new_string; set_cells needs cells; fill_form needs fields; "
+                + "insert_paragraph needs text (+ after|before); set_slide_text needs slide + shape + text."
+        ),
+    ])
+
     /// An applied, validated edit waiting to be committed or discarded.
     final class PreparedEdit {
         let fileURL: URL
@@ -312,7 +333,7 @@ enum DocumentEditService {
                 if !fields.isEmpty { out["form_fields"] = fields }
             }
             out["hint"] =
-                "Pages are 1-based; x/y are points from the page's bottom-left. delete_pages {pages}; reorder_pages {order}; rotate_pages {pages?, degrees}; merge {files, after?}; fill_form {fields}; add_text {page, text, x?, y?, size?}; add_note {page, text}; highlight {text, page?}. Body text can't be rewritten in a PDF."
+                "Pages are 1-based; x/y are points from the page's bottom-left. delete_pages {pages}; reorder_pages {order}; rotate_pages {pages?, degrees}; merge {files, after?}; fill_form {fields: {name: value}} (text: string; checkbox: true/false; radio: one of its `options`; choice: one of `options`; field names may be the short `label`); add_text {page, text, x?, y?, size?}; add_note {page, text}; highlight {text, page?}. Body text can't be rewritten in a PDF."
         default:
             throw DocumentEditError("Structure mode supports .docx, .xlsx, .pptx and .pdf.")
         }

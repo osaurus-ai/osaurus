@@ -98,6 +98,84 @@ struct FileWriteDocumentFormatsTests {
         #expect((readPayload?["sheet_names"] as? [String]) == ["Q1", "Q2"])
     }
 
+    /// Record rows (`{"Item": "Rent", "Amount": 1200}`) describe the same
+    /// sheet as positional rows; a header spelled as a record is not written
+    /// twice. Accepted inside `sheets[].rows` and top-level `rows` alike.
+    @Test func xlsxFromJSONRecordRowsBuildsHeaderFromKeys() async throws {
+        DocumentAdaptersBootstrap.registerBuiltIns()
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let content = """
+            {"sheets": [{"name": "Budget", "rows": [{"Item": "Item", "Amount": "Amount"}, {"Item": "Rent", "Amount": 1200}, {"Item": "Groceries", "Amount": 450}]}]}
+            """
+        let result = try await write(root, ["path": "budget.xlsx", "content": content])
+        #expect(ToolEnvelope.isSuccess(result), "record rows xlsx write failed: \(result)")
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["rows"] as? Int == 3, "\(payload)")
+
+        let readBack = try await read(root, "budget.xlsx")
+        let text = EnvelopeAssertions.successText(readBack) ?? ""
+        #expect(text.contains("Rent") && text.contains("1200") && text.contains("Groceries"), "\(text)")
+        #expect(text.components(separatedBy: "Amount").count == 2, "header written once: \(text)")
+
+        let rows = FileWriteDocumentRouting.rowsFromJSON([["b": 2, "a": 1], ["a": 3]])
+        #expect(rows?.count == 3)
+        #expect(rows?[0] as? [String] == ["a", "b"])
+        #expect(rows?[2].map { "\($0)" } == ["3", ""])
+    }
+
+    /// A draft written with typographic bullets (what `file_read` renders
+    /// for list paragraphs) must produce list paragraphs, not one soft-wrapped
+    /// paragraph per section.
+    @Test func docxBulletGlyphLinesBecomeListParagraphs() async throws {
+        DocumentAdaptersBootstrap.registerBuiltIns()
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let content = "Atlas Brief\n\nGoal\n• Migrate the platform\n•\tKeep data intact\n\nRisks\n• Vendor delays\n\n```\n• not a bullet\n```"
+        let result = try await write(root, ["path": "brief.docx", "content": content])
+        #expect(ToolEnvelope.isSuccess(result), "\(result)")
+        let editor = try DOCXEditor(package: OOXMLPackage(data: Data(contentsOf: root.appendingPathComponent("brief.docx"))))
+        let texts = try editor.paragraphs().map { OOXMLText.text(of: $0) }
+        // The OOXML writer renders each list item as its own paragraph
+        // (bullet + tab, the same shape `file_read` reports back).
+        #expect(texts.contains("Goal") && texts.contains("•\tMigrate the platform") && texts.contains("•\tKeep data intact"), "\(texts)")
+        #expect(texts.contains("Risks") && texts.contains("•\tVendor delays"), "\(texts)")
+        #expect(!texts.contains { $0.contains("Goal •") || $0.contains("• Migrate") }, "\(texts)")
+        #expect(texts.contains { $0.contains("• not a bullet") }, "fenced code keeps its glyph: \(texts)")
+
+        #expect(
+            MarkdownRichTextRenderer.normalizingBulletGlyphs("a\n• b\n\t◦ c\nplain • inline") == "a\n- b\n  - c\nplain • inline")
+        #expect(MarkdownRichTextRenderer.normalizingBulletGlyphs("no glyphs") == "no glyphs")
+    }
+
+    /// A `file_edit` operations array typed into `file_write` on a document
+    /// path is refused (it would replace the document with JSON text) and
+    /// the rejection carries the exact `file_edit` call to make instead.
+    @Test func operationsArrayInContentIsRedirectedToFileEdit() async throws {
+        DocumentAdaptersBootstrap.registerBuiltIns()
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("intake.pdf")
+        try Data("%PDF-1.4 placeholder".utf8).write(to: url)
+        let before = try Data(contentsOf: url)
+
+        let content = #"[{"op": "fill_form", "fields": {"Name": "Ada Lovelace", "Agree": true}}]"#
+        let result = try await write(root, ["path": "intake.pdf", "content": content, "mode": "overwrite"])
+        #expect(ToolEnvelope.isError(result), "\(result)")
+        #expect(EnvelopeAssertions.failureField(result) == "content")
+        let message = EnvelopeAssertions.failureMessage(result) ?? ""
+        #expect(message.contains("file_edit") && message.contains("fill_form"), "\(message)")
+        #expect(try Data(contentsOf: url) == before, "document bytes must be untouched")
+
+        // Wrapped form is recognized too; a bare array of rows for .xlsx is not an operations payload.
+        #expect(FileWriteTool.fileEditOperationsPayload(#"{"operations": [{"op": "set_cells", "cells": {"B2": 1}}]}"#)?.count == 1)
+        #expect(FileWriteTool.fileEditOperationsPayload(#"[["Item", "Amount"], ["Rent", 1200]]"#) == nil)
+        #expect(FileWriteTool.fileEditOperationsPayload(#"[{"op": "not_a_real_op"}]"#) == nil)
+        #expect(FileWriteTool.fileEditOperationsPayload("# Heading\n\n- item") == nil)
+    }
+
     @Test func xlsxInvalidJSONIsAnArgumentError() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }

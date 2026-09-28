@@ -39,7 +39,15 @@ enum OOXMLRelationshipType {
 /// for the model: what was wrong and what to do instead.
 struct DocumentEditError: LocalizedError, Equatable {
     let message: String
-    init(_ message: String) { self.message = message }
+    /// `true` when the failure is "the text wasn't matched" (not found, or
+    /// the needle straddles a tab/line break) — the class of miss a
+    /// tolerant retry may rescue. Wrong-argument and ambiguity errors stay
+    /// `false` so they are never retried under a looser rule.
+    var isMatchMiss: Bool = false
+    init(_ message: String, isMatchMiss: Bool = false) {
+        self.message = message
+        self.isMatchMiss = isMatchMiss
+    }
     var errorDescription: String? { message }
 }
 

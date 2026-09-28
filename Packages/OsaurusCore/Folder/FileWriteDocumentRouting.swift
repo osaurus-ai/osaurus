@@ -267,29 +267,18 @@ enum FileWriteDocumentRouting {
             if let sheetList = dict["sheets"] as? [[String: Any]] {
                 for (index, sheet) in sheetList.enumerated() {
                     let name = (sheet["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Sheet\(index + 1)"
-                    guard let rows = sheet["rows"] as? [[Any]] else {
-                        throw RoutingError.invalidJSON("sheet \(index + 1) has no `rows` array of arrays")
+                    guard let rows = rowsFromJSON(sheet["rows"]) else {
+                        throw RoutingError.invalidJSON("sheet \(index + 1) has no `rows` array (of arrays, or of objects)")
                     }
                     sheets.append((name, rows))
                 }
-            } else if let rows = dict["rows"] as? [[Any]] {
+            } else if let rows = rowsFromJSON(dict["rows"]) {
                 let name = (dict["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Sheet1"
                 sheets.append((name, rows))
             } else {
                 throw RoutingError.invalidJSON("top-level object needs `sheets` or `rows`")
             }
-        } else if let rows = object as? [[Any]] {
-            sheets.append(("Sheet1", rows))
-        } else if let records = object as? [[String: Any]], !records.isEmpty {
-            // Array of objects: header from the union of keys (first-seen order).
-            var headers: [String] = []
-            for record in records {
-                for key in record.keys.sorted() where !headers.contains(key) { headers.append(key) }
-            }
-            var rows: [[Any]] = [headers]
-            for record in records {
-                rows.append(headers.map { record[$0] ?? "" })
-            }
+        } else if let rows = rowsFromJSON(object) {
             sheets.append(("Sheet1", rows))
         } else {
             throw RoutingError.invalidJSON(
@@ -297,6 +286,31 @@ enum FileWriteDocumentRouting {
             )
         }
         return try workbook(sheets: sheets)
+    }
+
+    /// Rows from a JSON value at any level (`sheets[].rows`, top-level
+    /// `rows`, or the bare top-level array): an array of arrays as-is, or an
+    /// array of objects (records) turned into a header row from the union of
+    /// keys plus one row per record. Models write `{"Item": "Rent",
+    /// "Amount": 1200}` records as naturally as positional rows (Raptor
+    /// no-think `write-xlsx-by-extension` did, and got an error for it);
+    /// both shapes describe the same sheet. A record whose values repeat its
+    /// keys (`{"Item": "Item", "Amount": "Amount"}` — a header spelled as a
+    /// record) is dropped so the header isn't written twice.
+    static func rowsFromJSON(_ value: Any?) -> [[Any]]? {
+        if let rows = value as? [[Any]] { return rows }
+        guard let records = value as? [[String: Any]], !records.isEmpty else { return nil }
+        var headers: [String] = []
+        for record in records {
+            for key in record.keys.sorted() where !headers.contains(key) { headers.append(key) }
+        }
+        var rows: [[Any]] = [headers]
+        for record in records {
+            let isHeaderEcho = record.allSatisfy { key, value in (value as? String) == key }
+            if isHeaderEcho { continue }
+            rows.append(headers.map { record[$0] ?? "" })
+        }
+        return rows
     }
 
     /// Build a typed `Workbook` from raw rows (`String` / numeric / `Bool` /

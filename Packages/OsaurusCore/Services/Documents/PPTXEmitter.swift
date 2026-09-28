@@ -73,8 +73,8 @@ public struct PPTXEmitter: DocumentFormatEmitter {
             if let heading = headingText(trimmed) {
                 text = heading.text
                 level = 0
-            } else if let marker = ["- ", "* ", "+ ", "• "].first(where: { trimmed.hasPrefix($0) }) {
-                text = String(trimmed.dropFirst(marker.count))
+            } else if let marker = ["- ", "* ", "+ ", "• ", "•\t", "◦ ", "◦\t", "▪ ", "▪\t"].first(where: { trimmed.hasPrefix($0) }) {
+                text = String(trimmed.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
             } else if let dot = trimmed.firstIndex(of: "."), trimmed[..<dot].allSatisfy(\.isNumber),
                 !trimmed[..<dot].isEmpty, trimmed[trimmed.index(after: dot)...].hasPrefix(" ")
             {

@@ -62,11 +62,45 @@ enum MarkdownRichTextRenderer {
         )
         let parsed: AttributedString
         do {
-            parsed = try AttributedString(markdown: markdown, options: options)
+            parsed = try AttributedString(markdown: normalizingBulletGlyphs(markdown), options: options)
         } catch {
             throw RenderError.markdownParseFailed(error.localizedDescription)
         }
         return layout(parsed)
+    }
+
+    /// Lines that start with a typographic bullet (`•`, `◦`, `▪`, `■`
+    /// followed by a space or tab) become Markdown list items. Models that
+    /// have just read a document back (`file_read` renders list paragraphs
+    /// as "•\t…") write the draft with those glyphs; CommonMark treats them
+    /// as prose, so a whole section soft-wraps into one paragraph ("Goal •
+    /// Migrate … • Ensure …" — Raptor no-think `document-drafting-revisions`).
+    /// Fenced code blocks are left untouched.
+    static func normalizingBulletGlyphs(_ markdown: String) -> String {
+        guard markdown.contains(where: { "•◦▪■".contains($0) }) else { return markdown }
+        var inFence = false
+        var changed = false
+        let lines = markdown.components(separatedBy: "\n").map { line -> String in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                inFence.toggle()
+                return line
+            }
+            guard !inFence else { return line }
+            let leading = line.prefix { $0 == " " || $0 == "\t" }
+            let rest = line.dropFirst(leading.count)
+            guard let glyph = rest.first, "•◦▪■".contains(glyph),
+                let separator = rest.dropFirst().first, separator == " " || separator == "\t"
+            else { return line }
+            changed = true
+            let content = rest.dropFirst().drop { $0 == " " || $0 == "\t" }
+            // Indentation in spaces keeps nesting; a tab-indented bullet is
+            // one level per tab (two spaces each, the CommonMark minimum
+            // for a child item under a two-character marker).
+            let indent = String(leading).replacingOccurrences(of: "\t", with: "  ")
+            return indent + "- " + content
+        }
+        return changed ? lines.joined(separator: "\n") : markdown
     }
 
     @MainActor

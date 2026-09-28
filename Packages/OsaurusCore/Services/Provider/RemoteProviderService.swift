@@ -3882,7 +3882,7 @@ public actor RemoteProviderService: ToolCapableService {
         // tool-heavy payloads) for zero wire benefit.
         let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: false)
 
-        let bodyData: Data
+        var bodyData: Data
         switch requestProviderType {
         case .anthropic:
             try Self.rejectDroppedMediaInputs(in: request.messages, wireName: "Anthropic")
@@ -3944,6 +3944,10 @@ public actor RemoteProviderService: ToolCapableService {
             }
             bodyData = try encoder.encode(outbound)
         }
+        // Authored `properties` order for tools that declare one (the
+        // canonical encoder alphabetized them); still deterministic, and it
+        // runs before the router signer hashes the body.
+        bodyData = ToolWirePropertyOrder.apply(to: bodyData)
         urlRequest.httpBody = bodyData
         if provider.providerType == .osaurusRouter {
             // The signer hashes `bodyData`, so the `idempotency_key` embedded

@@ -13,6 +13,10 @@ import PDFKit
 
 final class PDFEditor {
     let document: PDFDocument
+    /// The bytes as opened. PDFKit's re-serialization drops AcroForm
+    /// entries it doesn't model (`/XFA`, `/DR`), so diagnostics that need
+    /// them read the original.
+    private let originalData: Data
     private(set) var summaries: [String] = []
     private(set) var warnings: [String] = []
     private let resolvePath: (String) throws -> URL
@@ -29,6 +33,7 @@ final class PDFEditor {
             throw DocumentEditError("The PDF is password-protected or doesn't allow changes; it can't be edited.")
         }
         self.document = document
+        self.originalData = data
         self.resolvePath = resolvePath
     }
 
@@ -60,6 +65,16 @@ final class PDFEditor {
         if hasSignatureField {
             warnings.append(
                 "This PDF has a digital signature field; saving an edited copy invalidates any existing signatures. Keep the original if the signed version matters.")
+        }
+        if filledFormFields > 0 {
+            // PDFKit regenerates each filled widget's appearance stream and
+            // sets /NeedAppearances so Acrobat/Preview/Chrome redraw the
+            // values. Verify rather than assume: a save that lacks the flag
+            // may show stale (empty) boxes in viewers that trust /AP only.
+            if data.range(of: Data("/NeedAppearances".utf8)) == nil {
+                warnings.append(
+                    "The saved form does not carry /NeedAppearances; some viewers may show the filled values only after clicking into a field.")
+            }
         }
         warnings.append("The PDF was re-saved as a whole by PDFKit; earlier saved revisions embedded in the file aren't kept.")
         return data
@@ -151,60 +166,339 @@ final class PDFEditor {
         return out
     }
 
-    func formFields() -> [[String: Any]] {
-        widgets().compactMap { page, annotation in
-            guard let name = annotation.fieldName else { return nil }
-            var field: [String: Any] = ["name": name, "page": page + 1]
-            switch annotation.widgetFieldType {
-            case .button:
-                field["type"] = "checkbox"
-                field["value"] = annotation.buttonWidgetState == .onState
-            case .choice:
-                field["type"] = "choice"
-                field["value"] = annotation.widgetStringValue ?? ""
-                if let options = annotation.choices { field["options"] = options }
-            default:
-                field["type"] = "text"
-                field["value"] = annotation.widgetStringValue ?? ""
-            }
-            return field
+    /// One logical AcroForm field: every widget that shares a
+    /// fully-qualified name (a radio group has one widget per option; a
+    /// text field printed on two pages has two widgets).
+    struct FormField {
+        enum Kind: String { case text, checkbox, radio, choice, button, signature }
+        let name: String
+        let kind: Kind
+        let widgets: [(page: Int, annotation: PDFAnnotation)]
+
+        /// Last dotted component with any `[n]` array suffix removed —
+        /// what the form's author typed, and what a model reads off the
+        /// page (`topmostSubform[0].Page1[0].Name[0]` → `Name`).
+        var shortName: String { PDFEditor.shortFieldName(name) }
+        var firstPage: Int { widgets.map(\.page).min() ?? 0 }
+        var isReadOnly: Bool { widgets.contains { $0.annotation.isReadOnly } }
+
+        /// Radio: the on-state name of every option, in page order.
+        /// Checkbox: its single on-state name.
+        var onStates: [String] {
+            widgets.map(\.annotation.buttonWidgetStateString).filter { !$0.isEmpty && $0 != "Off" }
         }
+    }
+
+    /// Fully-qualified name → logical field, in first-appearance order.
+    func formFieldGroups() -> [FormField] {
+        var order: [String] = []
+        var grouped: [String: [(page: Int, annotation: PDFAnnotation)]] = [:]
+        for entry in widgets() {
+            guard let name = entry.annotation.fieldName, !name.isEmpty else { continue }
+            if grouped[name] == nil { order.append(name) }
+            grouped[name, default: []].append(entry)
+        }
+        return order.map { name in
+            let members = grouped[name] ?? []
+            let first = members[0].annotation
+            let kind: FormField.Kind
+            let fieldType = first.value(forAnnotationKey: .widgetFieldType) as? String
+            if first.widgetFieldType == .signature || fieldType == "Sig" || fieldType == "/Sig" {
+                kind = .signature
+            } else {
+                switch first.widgetFieldType {
+                case .button:
+                    switch first.widgetControlType {
+                    case .pushButtonControl: kind = .button
+                    case .radioButtonControl: kind = .radio
+                    default:
+                        // A checkbox flagged without the radio bit but with
+                        // several differently-named on-states is still a
+                        // radio group in practice.
+                        let onStates = Set(members.map(\.annotation.buttonWidgetStateString))
+                        kind = members.count > 1 && onStates.count > 1 ? .radio : .checkbox
+                    }
+                case .choice: kind = .choice
+                default: kind = .text
+                }
+            }
+            return FormField(name: name, kind: kind, widgets: members)
+        }
+    }
+
+    static func shortFieldName(_ name: String) -> String {
+        let last = name.split(separator: ".").last.map(String.init) ?? name
+        guard let bracket = last.firstIndex(of: "["), last.hasSuffix("]") else { return last }
+        return String(last[..<bracket])
+    }
+
+    /// Lowercase alphanumerics only — the comparison key for the
+    /// tolerant lookup (`Date of Birth` == `date_of_birth` == `DateOfBirth`).
+    static func normalizedFieldKey(_ name: String) -> String {
+        String(name.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
+    }
+
+    /// Model-facing inventory (also surfaced by `file_read` mode
+    /// "structure" as `form_fields`).
+    func formFields() -> [[String: Any]] {
+        formFieldGroups().map { field in
+            var out: [String: Any] = ["name": field.name, "type": field.kind.rawValue, "page": field.firstPage + 1]
+            if field.shortName != field.name { out["label"] = field.shortName }
+            if field.isReadOnly { out["read_only"] = true }
+            let first = field.widgets[0].annotation
+            switch field.kind {
+            case .checkbox:
+                out["value"] = first.buttonWidgetState == .onState
+                if let on = field.onStates.first { out["on_value"] = on }
+            case .radio:
+                out["options"] = field.onStates
+                out["value"] = field.widgets.first { $0.annotation.buttonWidgetState == .onState }?.annotation.buttonWidgetStateString ?? ""
+            case .choice:
+                out["value"] = first.widgetStringValue ?? ""
+                if let options = first.choices { out["options"] = options }
+            case .text:
+                out["value"] = first.widgetStringValue ?? ""
+            case .button:
+                out["fillable"] = false
+            case .signature:
+                out["fillable"] = false
+                out["value"] = first.widgetStringValue ?? ""
+            }
+            return out
+        }
+    }
+
+    /// Resolve a model-supplied key to one logical field: exact
+    /// fully-qualified name, then case-insensitive, then the short name,
+    /// then the normalized key. Each tier must be unique or it is an error
+    /// that lists the candidates.
+    private func resolveField(_ key: String, in fields: [FormField], op: DocumentOperation) throws -> FormField {
+        if let exact = fields.first(where: { $0.name == key }) { return exact }
+        let tiers: [(String, (FormField) -> Bool)] = [
+            ("case-insensitively", { $0.name.lowercased() == key.lowercased() }),
+            ("by its short name", { $0.shortName.lowercased() == key.lowercased() }),
+            ("ignoring punctuation and spacing", { Self.normalizedFieldKey($0.shortName) == Self.normalizedFieldKey(key) || Self.normalizedFieldKey($0.name) == Self.normalizedFieldKey(key) }),
+        ]
+        for (how, matches) in tiers {
+            let hits = fields.filter(matches)
+            if hits.count == 1 { return hits[0] }
+            if hits.count > 1 {
+                throw op.fail(
+                    "\"\(key)\" matches \(hits.count) fields \(how): \(hits.map { "\"\($0.name)\"" }.joined(separator: ", ")). Use the full field name.")
+            }
+        }
+        var message = "no field named \"\(key)\"."
+        if let closest = Self.closestField(to: key, in: fields) {
+            message += " Did you mean \"\(closest.name)\" (\(closest.kind.rawValue), page \(closest.firstPage + 1))?"
+        }
+        let fillable = fields.filter { $0.kind != .button && $0.kind != .signature }
+        message += " Fields: \(fillable.prefix(40).map { "\"\($0.name)\"" }.joined(separator: ", "))."
+        if fillable.count > 40 { message += " (\(fillable.count - 40) more — `file_read` mode \"structure\" lists them all.)" }
+        throw op.fail(message)
+    }
+
+    private static func closestField(to key: String, in fields: [FormField]) -> FormField? {
+        let target = normalizedFieldKey(key)
+        guard target.count >= 3 else { return nil }
+        var best: (FormField, Int)?
+        for field in fields where field.kind != .button {
+            for candidate in [field.shortName, field.name] {
+                let norm = normalizedFieldKey(candidate)
+                guard !norm.isEmpty else { continue }
+                // Similarity = shared length minus edit distance, so a
+                // transposition ("Nmae") or a dropped word still lands on
+                // the intended field while unrelated names score nothing.
+                let distance = editDistance(norm, target)
+                let allowed = max(2, target.count / 3)
+                let score: Int
+                if norm.contains(target) || target.contains(norm) {
+                    score = min(norm.count, target.count)
+                } else if distance <= allowed {
+                    score = max(norm.count, target.count) - distance
+                } else {
+                    continue
+                }
+                if score > (best?.1 ?? 0) { best = (field, score) }
+            }
+        }
+        guard let best, best.1 >= max(2, target.count / 2) else { return nil }
+        return best.0
+    }
+
+    /// Levenshtein distance on unicode scalars (names are short).
+    static func editDistance(_ a: String, _ b: String) -> Int {
+        let a = Array(a.unicodeScalars), b = Array(b.unicodeScalars)
+        if a.isEmpty { return b.count }
+        if b.isEmpty { return a.count }
+        var previous = Array(0...b.count)
+        var current = [Int](repeating: 0, count: b.count + 1)
+        for i in 1...a.count {
+            current[0] = i
+            for j in 1...b.count {
+                let cost = a[i - 1] == b[j - 1] ? 0 : 1
+                current[j] = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
+            }
+            swap(&previous, &current)
+        }
+        return previous[b.count]
     }
 
     private func fillForm(_ op: DocumentOperation) throws {
         guard let fields = op.args["fields"] as? [String: Any], !fields.isEmpty else {
             throw op.fail("`fields` must map form field names to values, e.g. {\"Name\": \"Ada\", \"Agree\": true}.")
         }
-        let all = widgets()
-        guard !all.isEmpty else { throw op.fail("this PDF has no fillable form fields.") }
-        let names = Set(all.compactMap { $0.annotation.fieldName })
-        let unknown = fields.keys.filter { !names.contains($0) }
-        guard unknown.isEmpty else {
-            throw op.fail("no field named \(unknown.sorted().map { "\"\($0)\"" }.joined(separator: ", ")). Fields: \(names.sorted().prefix(40).joined(separator: ", ")).")
-        }
-        for (_, annotation) in all {
-            guard let name = annotation.fieldName, let raw = fields[name] else { continue }
-            switch annotation.widgetFieldType {
+        let groups = formFieldGroups()
+        guard !groups.isEmpty else { throw op.fail(noFormFieldsExplanation()) }
+
+        // Resolve every key before touching any widget so a typo in the
+        // last field can't leave the form half-filled.
+        var planned: [(key: String, field: FormField, raw: Any)] = []
+        var seen: Set<String> = []
+        for key in fields.keys.sorted() {
+            let field = try resolveField(key, in: groups, op: op)
+            guard !seen.contains(field.name) else {
+                throw op.fail("\"\(key)\" and another key both resolve to field \"\(field.name)\"; pass it once.")
+            }
+            seen.insert(field.name)
+            switch field.kind {
             case .button:
-                let on: Bool
-                switch raw {
-                case let b as Bool: on = b
-                case let s as String: on = ["true", "yes", "on", "1", "x", "checked"].contains(s.lowercased())
-                case let n as NSNumber: on = n.boolValue
-                default: on = false
+                throw op.fail("\"\(field.name)\" is a push button (it runs an action), not a fillable field.")
+            case .signature:
+                throw op.fail("\"\(field.name)\" is a digital signature field; Osaurus can't sign PDFs. Fill the other fields and leave signing to the signer.")
+            default: break
+            }
+            if field.isReadOnly {
+                throw op.fail("\"\(field.name)\" is read-only in this form; it can't be filled.")
+            }
+            planned.append((key, field, fields[key] ?? NSNull()))
+        }
+
+        var filled: [String] = []
+        for (_, field, raw) in planned {
+            switch field.kind {
+            case .checkbox:
+                let onName = field.onStates.first
+                let on = try Self.truthy(raw, onState: onName, field: field, op: op)
+                for entry in field.widgets { entry.annotation.buttonWidgetState = on ? .onState : .offState }
+                filled.append("\(field.shortName)=\(on ? (onName ?? "on") : "off")")
+            case .radio:
+                let options = field.onStates
+                if raw is NSNull || (raw as? Bool) == false || ("\(raw)".isEmpty) {
+                    for entry in field.widgets { entry.annotation.buttonWidgetState = .offState }
+                    filled.append("\(field.shortName)=off")
+                    continue
                 }
-                annotation.buttonWidgetState = on ? .onState : .offState
+                let wanted = "\(raw)"
+                guard let choice = options.first(where: { $0 == wanted }) ?? options.first(where: { $0.lowercased() == wanted.lowercased() })
+                    ?? options.first(where: { Self.normalizedFieldKey($0) == Self.normalizedFieldKey(wanted) })
+                else {
+                    throw op.fail("\"\(wanted)\" isn't an option for radio group \"\(field.name)\". Options: \(options.joined(separator: ", ")).")
+                }
+                for entry in field.widgets {
+                    entry.annotation.buttonWidgetState = entry.annotation.buttonWidgetStateString == choice ? .onState : .offState
+                }
+                filled.append("\(field.shortName)=\(choice)")
             case .choice:
-                let value = "\(raw)"
-                if let options = annotation.choices, !options.isEmpty, !options.contains(value) {
-                    throw op.fail("\"\(value)\" isn't an option for \"\(name)\". Options: \(options.joined(separator: ", ")).")
+                let value = raw is NSNull ? "" : "\(raw)"
+                let first = field.widgets[0].annotation
+                if let options = first.choices, !options.isEmpty, !value.isEmpty, !options.contains(value) {
+                    if let relaxed = options.first(where: { $0.lowercased() == value.lowercased() }) {
+                        for entry in field.widgets { entry.annotation.widgetStringValue = relaxed }
+                        filled.append("\(field.shortName)=\(relaxed)")
+                        continue
+                    }
+                    throw op.fail("\"\(value)\" isn't an option for \"\(field.name)\". Options: \(options.joined(separator: ", ")).")
                 }
-                annotation.widgetStringValue = value
-            default:
-                annotation.widgetStringValue = raw is NSNull ? "" : "\(raw)"
+                for entry in field.widgets { entry.annotation.widgetStringValue = value }
+                filled.append("\(field.shortName)=\(value)")
+            case .text:
+                let value: String
+                switch raw {
+                case is NSNull: value = ""
+                case let b as Bool: value = b ? "Yes" : "No"
+                default: value = "\(raw)"
+                }
+                if value.contains("\n"), !field.widgets[0].annotation.isMultiline {
+                    warnings.append("\"\(field.name)\" is a single-line field; the line breaks in its value will show as one line.")
+                }
+                for entry in field.widgets { entry.annotation.widgetStringValue = value }
+                filled.append("\(field.shortName)=\(OOXMLText.preview(value, max: 40))")
+            case .button, .signature:
+                continue
             }
         }
-        summaries.append("Filled \(fields.count) form field\(fields.count == 1 ? "" : "s")")
+        filledFormFields += filled.count
+        summaries.append("Filled \(filled.count) form field\(filled.count == 1 ? "" : "s"): \(filled.joined(separator: ", "))")
+    }
+
+    private var filledFormFields = 0
+
+    private static func truthy(_ raw: Any, onState: String?, field: FormField, op: DocumentOperation) throws -> Bool {
+        switch raw {
+        case let b as Bool: return b
+        case let n as NSNumber: return n.boolValue
+        case is NSNull: return false
+        case let s as String:
+            let lower = s.trimmingCharacters(in: .whitespaces).lowercased()
+            if ["true", "yes", "on", "1", "x", "checked"].contains(lower) { return true }
+            if ["false", "no", "off", "0", "", "unchecked"].contains(lower) { return false }
+            if let onState, lower == onState.lowercased() { return true }
+            throw op.fail("\"\(s)\" isn't a checkbox value for \"\(field.name)\"; pass true/false\(onState.map { " (or its on-value \"\($0)\")" } ?? "").")
+        default:
+            throw op.fail("\"\(field.name)\" is a checkbox; pass true or false.")
+        }
+    }
+
+    /// Why `fill_form` has nothing to fill — distinguishes an XFA form
+    /// (LiveCycle; PDFKit exposes no widgets) from a flattened form whose
+    /// blanks are just printed text, and for the latter lists the label
+    /// positions so `add_text` can place values next to them.
+    private func noFormFieldsExplanation() -> String {
+        if isXFAForm {
+            return "this PDF is an XFA form (Adobe LiveCycle); its fields aren't AcroForm widgets, so they can't be filled here. Open it in Adobe Acrobat, or ask for an AcroForm/flattened version."
+        }
+        var message = "this PDF has no fillable form fields (the blanks are printed text, not widgets)."
+        let labels = printedLabels(limit: 8)
+        if !labels.isEmpty {
+            message += " To fill it anyway, place values with `add_text` at these label positions (x/y are points from the page's bottom-left; put the text box just right of the label):\n"
+            message += labels.map { "  page \($0.page): \"\($0.text)\" ends at x=\($0.x), y=\($0.y)" }.joined(separator: "\n")
+        } else {
+            message += " Use `add_text` with `page`, `x`, `y` to place values on the page."
+        }
+        return message
+    }
+
+    /// Raw-byte check for an `/XFA` entry; cheap and reliable enough for a
+    /// diagnostic (PDFKit exposes no AcroForm dictionary).
+    private var isXFAForm: Bool {
+        originalData.range(of: Data("/XFA".utf8)) != nil
+    }
+
+    /// Lines that look like form labels ("Name:", "Date of birth: ____")
+    /// with the point where the label's text ends.
+    private func printedLabels(limit: Int) -> [(page: Int, text: String, x: Int, y: Int)] {
+        var out: [(Int, String, Int, Int)] = []
+        for index in 0..<pageCount {
+            guard let page = document.page(at: index), let text = page.string else { continue }
+            for rawLine in text.components(separatedBy: .newlines) {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                guard !line.isEmpty else { continue }
+                let label: String
+                if let colon = line.firstIndex(of: ":") {
+                    label = String(line[...colon])
+                } else if line.contains("____") {
+                    label = line.replacingOccurrences(of: "_", with: "").trimmingCharacters(in: .whitespaces)
+                } else {
+                    continue
+                }
+                guard !label.isEmpty, label.count <= 60 else { continue }
+                guard let selection = document.findString(label, withOptions: []).first(where: { $0.pages.contains(page) }) else { continue }
+                let rect = selection.bounds(for: page)
+                out.append((index + 1, label, Int(rect.maxX.rounded()), Int(rect.minY.rounded())))
+                if out.count >= limit { return out }
+            }
+        }
+        return out
     }
 
     // MARK: - Annotations

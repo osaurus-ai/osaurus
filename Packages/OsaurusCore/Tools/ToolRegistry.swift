@@ -516,6 +516,7 @@ public final class ToolRegistry: ObservableObject {
             pluginToolNames.remove(sanitized)
         }
         toolsByName[sanitized] = tool
+        ToolWirePropertyOrder.register(toolName: sanitized, order: tool.parameterOrder)
     }
 
     /// Mark a previously-registered tool as a built-in so it's

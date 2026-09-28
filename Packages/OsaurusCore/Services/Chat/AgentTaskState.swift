@@ -1421,6 +1421,29 @@ public final class AgentTaskState {
         else { return nil }
         if let p = dict["path"] as? String, !p.isEmpty { return p }
         if let p = dict["file_path"] as? String, !p.isEmpty { return p }
+        // `file_edit` accepts a `path` carried identically by every
+        // `edits` / `operations` entry (hoisted before validation by
+        // `FileEditTool.normalizeArgumentsBeforeValidation`); the state
+        // machine sees the raw call, so it must resolve the same target or
+        // a verify-read after that edit would replay stale content.
+        return Self.sharedEntryPath(dict)
+    }
+
+    /// The one `path` every `edits` / `operations` entry names (entries may
+    /// arrive as a JSON string); nil when absent or when entries disagree.
+    static func sharedEntryPath(_ dict: [String: Any]) -> String? {
+        for key in ["edits", "operations"] {
+            var entries = dict[key] as? [[String: Any]]
+            if entries == nil, let encoded = dict[key] as? String, let bytes = encoded.data(using: .utf8) {
+                entries = try? JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]
+            }
+            guard let entries, !entries.isEmpty else { continue }
+            let paths = entries.compactMap { ($0["path"] as? String)?.trimmingCharacters(in: .whitespaces) }
+            guard paths.count == entries.count, let first = paths.first, !first.isEmpty,
+                Set(paths.map(canonicalPath)).count == 1
+            else { continue }
+            return first
+        }
         return nil
     }
 

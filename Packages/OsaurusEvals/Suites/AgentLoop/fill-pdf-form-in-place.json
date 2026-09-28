@@ -1,0 +1,50 @@
+{
+  "id": "agent_loop.fill-pdf-form-in-place",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 fill an AcroForm PDF (text, checkbox, radio group, dropdown, nested field) with file_edit fill_form",
+  "query": "Fill out intake-form.pdf with my details: name Ada Lovelace, email ada@example.com, state NY, pick the Pro plan, and tick the box agreeing to the terms. Fill the existing form fields in place \u2014 don't draw text over the page and don't create a new file.",
+  "notes": "Read-then-fill on a real AcroForm. `file_read` structure mode lists form_fields (Name text, Agree checkbox with on_value Yes, Plan radio with options Basic/Pro, State choice CA/NY/TX, applicant.email text with short label `email`, Submit push button). The checker reads the saved PDF bytes: text values serialized as /V (...), the checkbox /V /Yes, the radio kid /AS /Pro, the dropdown /V (NY), and /NeedAppearances so viewers redraw the fields. add_text over a fillable form is the wrong route and is forbidden through argsMustNotContain.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "intake-form.pdf",
+        "contentsFromFixture": "Documents/intake-form.pdf"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "maxToolCalls": 6,
+      "mustCallTools": [
+        "file_edit"
+      ],
+      "mustNotCallTools": [
+        "shell_run",
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 3,
+          "maxErrors": 1,
+          "argsMustContain": "fill_form",
+          "argsMustNotContain": "add_text"
+        }
+      ],
+      "files": [
+        {
+          "path": "intake-form.pdf",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c \"b = open('intake-form.pdf', 'rb').read(); import re; assert b'/V (Ada Lovelace)' in b, 'name not filled'; assert b'/V (ada@example.com)' in b, 'email not filled'; assert b'/V (NY)' in b, 'state not set'; assert re.search(rb'/V\\s*/Yes', b), 'checkbox not ticked'; assert re.search(rb'/AS\\s*/Pro', b), 'Pro radio not selected'; assert not re.search(rb'/AS\\s*/Basic', b), 'Basic radio selected'; assert re.search(rb'/NeedAppearances\\s+true', b), 'NeedAppearances missing'\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

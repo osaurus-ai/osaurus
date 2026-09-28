@@ -187,7 +187,7 @@ enum WorkspaceFileFormatPolicy {
 enum WorkspaceWriteSafety {
     struct Preview {
         var payload: [String: Any]
-        let warnings: [String]
+        var warnings: [String]
         let text: String
     }
 
@@ -253,9 +253,12 @@ enum WorkspaceWriteSafety {
         )
     }
 
-    /// Rejection for `file_edit` / redaction tools, which only operate on
-    /// UTF-8 text: any document extension (including the generated
-    /// `.xlsx`/`.docx`/`.pdf`) gets the read-then-regenerate pivot.
+    /// Rejection for text-only tools (`file_edit` on a route without
+    /// in-place document support, redaction) hitting a document extension.
+    /// `.docx`/`.xlsx`/`.pptx`/`.pdf` in the working folder never reach this
+    /// — `file_edit` routes them to `DocumentEditService` first — so it
+    /// covers legacy/other document types (`.doc`, `.xls`, `.odt`, …) and
+    /// sandbox `/workspace` paths, which get the read-then-regenerate pivot.
     static func documentEditRejection(
         path: String,
         fileExtension ext: String,
@@ -269,7 +272,7 @@ enum WorkspaceWriteSafety {
         return ToolEnvelope.failure(
             kind: .rejected,
             message:
-                "Refused to \(verb) '\(path)' with \(toolName): .\(ext) is a \(label), and \(toolName) \(verb)s UTF-8 text only. "
+                "Refused to \(verb) '\(path)' with \(toolName): .\(ext) is a \(label), and \(toolName) can't \(verb) it in place here. "
                 + "Read it with `file_read` (documents are extracted to text), apply the change to that text, then \(regenerateHint)",
             field: "path",
             expected: "a UTF-8 text file; for documents, read with file_read and regenerate with file_write",

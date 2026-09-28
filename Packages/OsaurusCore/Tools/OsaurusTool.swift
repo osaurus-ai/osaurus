@@ -24,6 +24,15 @@ protocol OsaurusTool: Sendable {
     /// JSON schema for function parameters (OpenAI-compatible minimal subset)
     var parameters: JSONValue? { get }
 
+    /// Authored order for `parameters.properties` on the provider wire.
+    /// Canonical encoding sorts keys alphabetically; schema-constrained
+    /// decoders (xAI, JSON-schema grammars) only let the model emit optional
+    /// keys in declared order, so a pair like `old_string`/`new_string`
+    /// must be declared in the order a model naturally writes it. Keys not
+    /// listed keep their sorted position after the listed ones. Default nil
+    /// (alphabetical). See `ToolWirePropertyOrder`.
+    var parameterOrder: [String]? { get }
+
     /// Execute the tool with arguments provided as a JSON string.
     ///
     /// **Cancellation contract:** the registry wraps every call with a
@@ -112,6 +121,9 @@ extension OsaurusTool {
     /// Default: every tool gets the registry's wall-clock safety net.
     /// Streaming tools (`sandbox_exec`, `shell_run`) override to `true`.
     var bypassRegistryTimeout: Bool { false }
+
+    /// Default: alphabetical wire order (no authored order).
+    var parameterOrder: [String]? { nil }
 
     /// Default: tools do not mutate the sandbox workspace. Sandbox
     /// write/exec/install/plugin tools override to `true`.

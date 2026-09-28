@@ -48,8 +48,8 @@ struct DocumentOperation {
         self.name = matches[0]
     }
 
-    func fail(_ message: String) -> DocumentEditError {
-        DocumentEditError("`operations[\(index)]` (\(name)): \(message)")
+    func fail(_ message: String, isMatchMiss: Bool = false) -> DocumentEditError {
+        DocumentEditError("`operations[\(index)]` (\(name)): \(message)", isMatchMiss: isMatchMiss)
     }
 
     func has(_ key: String) -> Bool {
@@ -57,7 +57,16 @@ struct DocumentOperation {
         return !(value is NSNull)
     }
 
+    /// The other keys this entry carries, for "you sent X, not Y" errors.
+    private func presentKeys(excluding key: String) -> String {
+        let keys = args.keys.filter { $0 != "op" && $0 != key && has($0) }.sorted()
+        return keys.isEmpty ? "no other keys" : "keys: " + keys.map { "`\($0)`" }.joined(separator: ", ")
+    }
+
     func string(_ key: String, allowEmpty: Bool = false) throws -> String {
+        guard has(key) else {
+            throw fail("`\(key)` is required (a string) — this entry has \(presentKeys(excluding: key)).")
+        }
         guard let value = args[key] as? String else {
             throw fail("`\(key)` must be a string.")
         }
@@ -71,7 +80,9 @@ struct DocumentOperation {
     }
 
     func int(_ key: String) throws -> Int {
-        guard let value = try optionalInt(key) else { throw fail("`\(key)` is required (a number).") }
+        guard let value = try optionalInt(key) else {
+            throw fail("`\(key)` is required (a number) — this entry has \(presentKeys(excluding: key)).")
+        }
         return value
     }
 
@@ -82,7 +93,9 @@ struct DocumentOperation {
     }
 
     func ints(_ key: String) throws -> [Int] {
-        guard let value = try optionalInts(key) else { throw fail("`\(key)` is required (an array of numbers).") }
+        guard let value = try optionalInts(key) else {
+            throw fail("`\(key)` is required (an array of numbers) — this entry has \(presentKeys(excluding: key)).")
+        }
         return value
     }
 

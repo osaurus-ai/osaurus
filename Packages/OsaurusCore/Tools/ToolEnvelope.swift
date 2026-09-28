@@ -494,6 +494,17 @@ public enum ToolEnvelope {
         return dict["result"]
     }
 
+    /// The `warnings` array of a success envelope (empty when absent or
+    /// unparseable). Lets a re-labelling bridge carry model-facing notes
+    /// (relaxed-match quotes, dry-run PREVIEW ONLY) across tool names.
+    public static func warnings(_ result: String) -> [String] {
+        guard isSuccess(result),
+            let data = result.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [] }
+        return dict["warnings"] as? [String] ?? []
+    }
+
     /// Extract a structured `result` payload from either a success envelope
     /// or a failure envelope that intentionally carries partial/aggregate
     /// result metadata. Unlike `successPayload`, this does not change the

@@ -3399,8 +3399,10 @@ public struct SystemPromptComposer: Sendable {
             required = ["path", "content"]
         case "file_edit":
             description =
-                "Replace exact text in a UTF-8 file: one unique `old_string`, every occurrence with "
-                + "`replace_all`, or several atomic `edits`. "
+                "Replace text in a UTF-8 file: one unique `old_string`, every occurrence with "
+                + "`replace_all`, or several atomic `edits`. Small drift (indentation, blank lines, curly quotes) "
+                + "is tolerated when the match stays unique; the result reports `match_strategy`. "
+                + "A multi-line `old_string` on a .docx matches consecutive paragraphs. "
                 + (editsDocuments
                     ? "Existing .docx/.xlsx/.pptx/.pdf are edited in place with `operations` (keeps formatting; "
                         + "`file_read` with mode \"structure\" lists the numbered parts) — don't regenerate them."
@@ -3441,7 +3443,7 @@ public struct SystemPromptComposer: Sendable {
                 ]),
                 "dry_run": .object([
                     "type": .string("boolean"),
-                    "description": .string("Preview without editing (host paths only)"),
+                    "description": .string("Preview the diff without editing"),
                 ]),
             ]
             if let operations = fullProperties["operations"] {

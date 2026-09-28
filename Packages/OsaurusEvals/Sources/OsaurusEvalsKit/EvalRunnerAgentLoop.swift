@@ -448,7 +448,7 @@ extension EvalRunner {
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
             maxTokens: exp.maxTokens,
-            enableThinking: exp.enableThinking,
+            enableThinking: EvalThinkingControlState.resolve(exp.enableThinking),
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
             sandbox: sandboxMode,
             useHostFolder: testCase.fixtures.useHostFolder ?? true,
