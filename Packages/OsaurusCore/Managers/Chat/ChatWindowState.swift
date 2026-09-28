@@ -1881,6 +1881,9 @@ final class ChatWindowState: ObservableObject {
         // `ChatSessionData` carries no composer text; carry the unsent
         // draft across so hibernating a tab does not eat it (#2708).
         cold.input = live.unsentComposerText
+        // Share (not copy) the saved scroll position: the tab's table may
+        // unmount and save after this swap, and the write must still land.
+        cold.scrollPositionStore = live.scrollPositionStore
         live.warmupController.shutdown()
         live.stop()
         live.onSessionChanged = nil

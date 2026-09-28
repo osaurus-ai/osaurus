@@ -301,6 +301,11 @@ final class ChatSession: ObservableObject {
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
 
+    /// Where the reader was in this session's thread when its table last
+    /// unmounted (tab switch), so the next mount restores it. `var` so a
+    /// hibernated tab's stand-in can share the live session's store.
+    var scrollPositionStore = ThreadScrollPositionStore()
+
     /// Thinking-block ids already auto-expanded once for a completed
     /// reasoning-only turn. Seeding the shared `expandedBlocksStore` (rather
     /// than force-expanding in the cell) lets the user collapse the block
@@ -10842,6 +10847,7 @@ struct ChatView: View {
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
                 expandedBlocksStore: session.expandedBlocksStore,
+                scrollPositionStore: session.scrollPositionStore,
                 scrollToBottomTrigger: scrollToBottomTrigger,
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
@@ -11069,6 +11075,7 @@ private struct IsolatedThreadView: View {
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     let expandedBlocksStore: ExpandedBlocksStore
+    let scrollPositionStore: ThreadScrollPositionStore
     let scrollToBottomTrigger: Int
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
@@ -11117,6 +11124,7 @@ private struct IsolatedThreadView: View {
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             expandedBlocksStore: expandedBlocksStore,
+            scrollPositionStore: scrollPositionStore,
             scrollToBottomTrigger: scrollToBottomTrigger,
             onScrolledToBottom: onScrolledToBottom,
             onScrolledAwayFromBottom: onScrolledAwayFromBottom,

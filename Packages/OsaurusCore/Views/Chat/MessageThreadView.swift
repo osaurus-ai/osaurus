@@ -22,6 +22,7 @@ struct MessageThreadView: View {
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
     var expandedBlocksStore: ExpandedBlocksStore = ExpandedBlocksStore()
+    var scrollPositionStore: ThreadScrollPositionStore = ThreadScrollPositionStore()
 
     // Scroll
     var scrollToBottomTrigger: Int = 0
@@ -107,6 +108,7 @@ struct MessageThreadView: View {
             autoScrollEnabled: autoScrollEnabled,
             theme: theme,
             expandedBlocksStore: expandedBlocksStore,
+            scrollPositionStore: scrollPositionStore,
             scrollToBottomTrigger: scrollToBottomTrigger,
             onScrolledToBottom: onScrolledToBottom,
             onScrolledAwayFromBottom: onScrolledAwayFromBottom,
