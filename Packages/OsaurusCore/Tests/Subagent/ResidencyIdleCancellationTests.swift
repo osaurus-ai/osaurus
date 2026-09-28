@@ -27,15 +27,17 @@ struct ResidencyIdleCancellationTests {
         #expect(outcome == (cancel ? "cancelled" : "busy"))
     }
 
-    @Test(arguments: [false, true])
-    func coexistenceIdleWaitPreservesCancellation(cancel: Bool) async {
+    @Test(arguments: [0, 1, 2])
+    func coexistenceIdleWaitPreservesCancellation(scenario: Int) async {
+        let cancel = scenario != 0
+        let wentIdle = scenario == 2
         let outcome = await Task {
             let handoff = CoexistenceHandoff(
                 maxElapsedSeconds: 1,
                 waitForIdle: { _ in
                     await Task.yield()
                     if cancel { withUnsafeCurrentTask { $0?.cancel() } }
-                    return false
+                    return wentIdle
                 },
                 retain: { _, _ in
                     Issue.record("A failed idle wait must not retain the parent")
