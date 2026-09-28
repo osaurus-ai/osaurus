@@ -249,11 +249,14 @@ final class BlockMemoizer {
             : nil
         // The response `previousTurn` belongs to may have started further
         // back; walk its assistant run so the footer's total time spans it all.
+        // Stop at the latest run's keypress (a regenerated step joins the old
+        // group), matching `ContentBlock.generateBlocks`.
         var previousGroupStartedAt: Date?
         if previousTurn?.role == .assistant {
             for turn in turns.prefix(turnIndex).reversed() where turn.role != .tool {
                 guard turn.role == .assistant else { break }
                 previousGroupStartedAt = turn.requestedAt ?? turn.createdAt
+                if turn.requestedAt != nil { break }
             }
         }
 

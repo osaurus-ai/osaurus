@@ -634,6 +634,11 @@ extension ContentBlock {
             let isFirstInGroup = turn.role != previousRole || turn.role == .user
             if isFirstInGroup {
                 groupStartedAt = turn.role == .assistant ? (turn.requestedAt ?? turn.createdAt) : nil
+            } else if let requestedAt = turn.requestedAt {
+                // A new run joined an existing group (Regenerate / retry on a
+                // later tool-calling step keeps the earlier steps): time from
+                // its own keypress, not the original send.
+                groupStartedAt = requestedAt
             }
 
             if isFirstInGroup, let prevId = previousTurnId {

@@ -79,6 +79,30 @@ struct ResponseTotalDurationTests {
         #expect(ChatTurn(from: data).requestedAt == start)
     }
 
+    /// Regenerate on a tool-calling response keeps the earlier steps, so the new
+    /// run joins the old assistant group; it must time from its own keypress.
+    @Test
+    func regeneratedStepTimesFromItsOwnKeypress() throws {
+        var turns = toolLoopTurns(steps: 3)
+        turns.removeLast()  // Regenerate drops the targeted final step
+        let hourLater = start.addingTimeInterval(3600)
+        let regenerated = ChatTurn(role: .assistant, content: "Again", createdAt: hourLater.addingTimeInterval(1))
+        regenerated.requestedAt = hourLater
+        regenerated.generationTokensPerSecond = 40
+        regenerated.completedAt = hourLater.addingTimeInterval(12)
+
+        let full = ContentBlock.generateBlocks(
+            from: turns + [regenerated], streamingTurnId: nil, agentName: "Assistant")
+        #expect(try totalDuration(in: full) == 12)
+
+        // Memoized: the regenerated turn appended to a cached transcript.
+        let memoizer = BlockMemoizer()
+        _ = memoizer.blocks(from: turns, streamingTurnId: nil, agentName: "Assistant")
+        let incremental = memoizer.blocks(from: turns + [regenerated], streamingTurnId: nil, agentName: "Assistant")
+        #expect(try totalDuration(in: incremental) == 12)
+        #expect(incremental == full)
+    }
+
     /// The memoizer's append path regenerates only a suffix of the transcript;
     /// the response's start must still come from its first assistant step.
     @Test
