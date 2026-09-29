@@ -23428,6 +23428,9 @@
         }
       }
     },
+    "Adds every existing agent to the Orchestrator's allowed list." : {
+
+    },
     "Adds %@ to the pool for %@ — no fee. Unlike the monthly grant, these credits don't expire." : {
       "localizations" : {
         "de" : {
