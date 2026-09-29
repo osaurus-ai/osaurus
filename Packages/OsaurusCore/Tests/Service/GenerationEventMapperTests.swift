@@ -16,6 +16,140 @@ import Testing
 
 @Suite("GenerationEventMapper bridge behaviour")
 struct GenerationEventMapperTests {
+    @Test func preparationFailureReachesCallerWithoutCompletion() async {
+        let failure = GenerationFailure(stage: .preparation, cause: "fixture projection shape mismatch")
+        let info = GenerateCompletionInfo(promptTokenCount: 8, generationTokenCount: 0,
+            promptTime: 0, generationTime: 0, stopReason: .cancelled,
+            generationFailure: failure)
+        var completed = false
+        do {
+            for try await event in GenerationEventMapper.map(events: makeStream([.info(info)])) {
+                if case .completionInfo = event { completed = true }
+            }
+            Issue.record("Expected originating preparation failure")
+        } catch let caught as GenerationFailure {
+            #expect(caught == failure)
+            #expect(caught.localizedDescription == failure.cause)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(!completed)
+    }
+
+    @Test func explicitCancellationRemainsCompletionWithoutFailure() async throws {
+        let info = GenerateCompletionInfo(promptTokenCount: 8, generationTokenCount: 0,
+            promptTime: 0, generationTime: 0, stopReason: .cancelled)
+        let events = try await collect(events: [.info(info)])
+        #expect(events.count == 1)
+        guard case .completionInfo(_, _, _, let reason, _, _) = events.first else {
+            Issue.record("Expected cancellation completion"); return
+        }
+        #expect(reason == "cancelled")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func preparationFailureFinishesSurfaceWhileProducerDrainStaysOwned() async {
+        let failure = GenerationFailure(stage: .preparation, cause: "fixture pending cleanup")
+        let source = MapperDelayedFailureSource(failure: failure)
+        let cancellation = MapperCancellationProbe()
+        let upstream = AsyncStream<Generation>(unfolding: {
+            await source.next()
+        }, onCancel: {
+            cancellation.markCancellation()
+        })
+        let mapped = GenerationEventMapper.map(
+            events: upstream,
+            onConsumerCancellation: { cancellation.markCancellation() }
+        )
+        let consumer = Task { () -> GenerationFailure? in
+            do {
+                for try await event in mapped {
+                    if case .completionInfo = event {
+                        Issue.record("A preparation failure must not emit successful completion")
+                    }
+                }
+                Issue.record("Expected originating preparation failure")
+                return nil
+            } catch let error as GenerationFailure {
+                return error
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+                return nil
+            }
+        }
+        await withTaskCancellationHandler {
+            #expect(await consumer.value == failure)
+            // next() signals this only after the mapper asks for the event AFTER
+            // terminal failure. Cleanup cannot finish until the test opens its gate.
+            await source.drainEntered.wait()
+            #expect(!cancellation.sawCancellation)
+            await source.releaseDrain.signal()
+            await source.drainFinished.wait()
+            #expect(!cancellation.sawCancellation)
+        } onCancel: {
+            // A failed watchdog must not strand the deliberately held producer.
+            consumer.cancel()
+            Task {
+                await source.releaseDrain.signal()
+                await source.drainEntered.signal()
+                await source.drainFinished.signal()
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingLiveConsumerIsNotPreparationFailure() async {
+        let (upstream, producer) = AsyncStream<Generation>.makeStream()
+        defer { producer.finish() }
+        let firstOutput = MapperAsyncLatch()
+        let cancellation = MapperCancellationProbe()
+        let mapped = GenerationEventMapper.map(
+            events: upstream,
+            onConsumerCancellation: { cancellation.markCancellation() }
+        )
+        let consumer = Task {
+            do {
+                for try await event in mapped {
+                    if case .tokens("started") = event { await firstOutput.signal() }
+                }
+            } catch is CancellationError {
+                // An explicitly cancelled consumer may terminate or throw this
+                // standard task error; neither is a preparation failure.
+            } catch {
+                Issue.record("Consumer cancellation became runtime failure: \(error)")
+            }
+        }
+        producer.yield(.chunk("started"))
+        await withTaskCancellationHandler {
+            await firstOutput.wait()
+            consumer.cancel()
+            await consumer.value
+            #expect(cancellation.sawCancellation)
+        } onCancel: {
+            consumer.cancel()
+            producer.finish()
+            Task { await firstOutput.signal() }
+        }
+    }
+
+    @Test func cancellationLikeDiagnosticStillPreservesTypedPreparationFailure() async {
+        // Error text is not authority to reclassify a reported runtime failure
+        // as an explicit user cancellation.
+        let failure = GenerationFailure(
+            stage: .preparation, cause: CancellationError().localizedDescription)
+        let info = GenerateCompletionInfo(
+            promptTokenCount: 1, generationTokenCount: 0, promptTime: 0,
+            generationTime: 0, stopReason: .cancelled, generationFailure: failure)
+        do {
+            for try await _ in GenerationEventMapper.map(events: makeStream([.info(info)])) {}
+            Issue.record("Expected typed preparation failure")
+        } catch let error as GenerationFailure {
+            #expect(error == failure)
+        } catch {
+            Issue.record("Originating failure was reclassified: \(error)")
+        }
+    }
+
     @Test func nativeXMLOrderSurvivesAppJSONHistory() async throws {
         let call = MLXLMCommon.ToolCall(function: .init(
             name: "write", arguments: ["path": .string("note.md"), "content": .string("007")],
@@ -691,5 +825,42 @@ private final class MapperCancellationProbe: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return cancellation
+    }
+}
+
+/// One-shot async barriers express ownership ordering without timing sleeps.
+private actor MapperAsyncLatch {
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func signal() {
+        opened = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending { waiter.resume() }
+    }
+    func wait() async {
+        guard !opened else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+}
+
+private actor MapperDelayedFailureSource {
+    let drainEntered = MapperAsyncLatch()
+    let releaseDrain = MapperAsyncLatch()
+    let drainFinished = MapperAsyncLatch()
+    private let failure: GenerationFailure
+    private var sentFailure = false
+    init(failure: GenerationFailure) { self.failure = failure }
+    func next() async -> Generation? {
+        if !sentFailure {
+            sentFailure = true
+            return .info(GenerateCompletionInfo(
+                promptTokenCount: 8, generationTokenCount: 0, promptTime: 0,
+                generationTime: 0, stopReason: .cancelled, generationFailure: failure))
+        }
+        await drainEntered.signal()
+        await releaseDrain.wait()
+        await drainFinished.signal()
+        return nil
     }
 }
