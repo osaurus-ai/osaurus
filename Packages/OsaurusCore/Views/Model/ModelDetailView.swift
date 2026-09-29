@@ -1216,7 +1216,7 @@ struct ModelDetailView: View, Identifiable {
                 }
             }
             Button {
-                Task { await modelManager.checkModelManifest(model, force: true) }
+                Task { await modelManager.checkModelManifest(model, force: true, reason: .manual) }
             } label: {
                 Text("Check for Model Updates", bundle: .module)
             }

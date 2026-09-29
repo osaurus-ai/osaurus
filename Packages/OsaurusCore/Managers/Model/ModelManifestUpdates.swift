@@ -40,7 +40,7 @@ extension ModelManager {
 
     /// Detail views and catalog refresh share one result per repository. No network
     /// request is made from SwiftUI body evaluation or from runtime admission.
-    func checkModelManifest(_ model: MLXModel, force: Bool = false) async {
+    func checkModelManifest(_ model: MLXModel, force: Bool = false, reason: HuggingFaceService.MetadataReason = .detail) async {
         guard !manifestChecksInFlight.contains(model.id.lowercased()) else {
             if force { pendingManifestChecks[model.id.lowercased()] = model }
             return
@@ -53,14 +53,14 @@ extension ModelManager {
             manifestChecksInFlight.remove(model.id.lowercased())
             // Download completion must not lose its refresh to an older check.
             if let pending = pendingManifestChecks.removeValue(forKey: model.id.lowercased()) {
-                Task { await checkModelManifest(pending, force: true) }
+                Task { await checkModelManifest(pending, force: true, reason: .pendingForced) }
             }
         }
         let remote: HuggingFaceService.ManifestSnapshot?
         let errorMessage: String?
         do {
             remote = try await HuggingFaceService.shared.fetchModelManifest(
-                repoId: model.id, previous: manifestChecks[model.id.lowercased()]?.remote
+                repoId: model.id, previous: manifestChecks[model.id.lowercased()]?.remote, reason: reason
             )
             errorMessage = nil
         } catch is CancellationError { return } catch {
@@ -91,7 +91,7 @@ extension ModelManager {
             let local = await Task.detached(priority: .utility) { ModelManifest.read(at: model.localDirectory) }.value
             guard local != .absent || Self.isRegisteredOfficialUpdateRepository(model.id, registered: registered)
             else { continue }
-            await checkModelManifest(model, force: force)
+            await checkModelManifest(model, force: force, reason: force ? .manual : .list)
         }
     }
 }
