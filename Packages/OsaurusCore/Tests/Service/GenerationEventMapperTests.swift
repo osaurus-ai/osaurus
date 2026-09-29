@@ -40,11 +40,25 @@ struct GenerationEventMapperTests {
         let info = GenerateCompletionInfo(promptTokenCount: 8, generationTokenCount: 0,
             promptTime: 0, generationTime: 0, stopReason: .cancelled)
         let events = try await collect(events: [.info(info)])
-        #expect(events.count == 1)
-        guard case .completionInfo(_, _, _, let reason, _, _) = events.first else {
-            Issue.record("Expected cancellation completion"); return
+        // Terminal stats publish the authoritative prompt count before completion,
+        // including for an explicit cancellation with no generated tokens.
+        #expect(info.generationFailure == nil)
+        #expect(events.count == 2)
+        guard events.count == 2 else { return }
+        guard case .inputTokenCount(let promptTokens) = events[0] else {
+            Issue.record("Expected authoritative input token count first")
+            return
         }
+        #expect(promptTokens == 8)
+        guard case .completionInfo(let tokens, _, let unclosedReasoning, let reason, _, let mtp) = events[1]
+        else {
+            Issue.record("Expected cancellation completion second")
+            return
+        }
+        #expect(tokens == 0)
+        #expect(!unclosedReasoning)
         #expect(reason == "cancelled")
+        #expect(mtp == nil)
     }
 
     @Test(.timeLimit(.minutes(1)))
