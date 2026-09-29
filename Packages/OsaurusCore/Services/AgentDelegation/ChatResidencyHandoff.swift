@@ -271,11 +271,17 @@ enum ChatResidencyHandoff {
         parentModelName: String? = nil,
         maxElapsedSeconds: Int,
         restoreParentWhenNotResident: Bool = false,
+        waitForIdle: @Sendable (Int) async -> Bool = {
+            await InferenceLoadCoordinator.shared.waitForChatIdle(timeoutMs: $0)
+        },
         onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
     ) async throws -> ChatResidencyLease {
         let waitMs = max(15, min(maxElapsedSeconds, 300)) * 1000
         onPhase("waiting_for_chat_idle", "waiting for local chat generation to become idle")
-        let wentIdle = await InferenceLoadCoordinator.shared.waitForChatIdle(timeoutMs: waitMs)
+        let wentIdle = await waitForIdle(waitMs)
+        // The coordinator returns false for either cancellation or timeout.
+        // Preserve Stop as cancellation before classifying an actual busy wait.
+        try Task.checkCancellation()
         guard wentIdle else { throw HandoffError.chatBusy }
 
         let requestedParent =
