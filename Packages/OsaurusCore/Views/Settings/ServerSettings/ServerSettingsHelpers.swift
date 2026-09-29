@@ -167,11 +167,8 @@ struct OptionalIntField: View {
     }
 }
 
-/// `StyledSettingsTextField` wrapper that mirrors a `Binding<Double?>`.
-/// Empty input clears the binding; non-numeric input is ignored.
-/// `clamp` (optional) caps parsed values to the supplied range.
-/// `format` (optional) controls how the bound value renders back into
-/// the text field; defaults to `String(value)`.
+/// Decimal input is buffered until Return, focus loss, or the form's Save.
+/// Invalid/non-finite input restores the existing bound value on commit.
 struct OptionalDoubleField: View {
     let label: String
     let placeholder: String
@@ -180,46 +177,151 @@ struct OptionalDoubleField: View {
     var clamp: ClosedRange<Double>? = nil
     var format: String? = nil
 
-    @State private var text: String = ""
-    @State private var initialized: Bool = false
+    @Environment(\.optionalDoubleFieldCommitter) private var committer
+    @State private var editor = OptionalDoubleFieldEditing()
+    @State private var fieldID = UUID()
+    @State private var initialized = false
 
     var body: some View {
         StyledSettingsTextField(
             label: label,
-            text: $text,
+            text: Binding(
+                get: { editor.text },
+                set: { text in
+                    editor.edit(text)
+                    updatePendingCommit()
+                }
+            ),
             placeholder: placeholder,
-            help: help
+            help: help,
+            onEditingChanged: { editing in
+                if editing { editor.beginEditing() } else { commit() }
+            }
         )
+        .onSubmit { commit() }
         .onAppear {
             guard !initialized else { return }
             initialized = true
-            text = stringValue(value)
+            editor.reset(value: value, format: format)
         }
         .onChange(of: value) { _, newValue in
-            let desired = stringValue(newValue)
-            if text != desired { text = desired }
+            editor.receive(value: newValue, format: format)
+            committer?.clear(id: fieldID)
         }
-        .onChange(of: text) { _, _ in commit() }
+        .onDisappear { commit() }
     }
 
-    private func stringValue(_ value: Double?) -> String {
-        guard let value else { return "" }
-        if let format { return String(format: format, value) }
-        return String(value)
+    private func updatePendingCommit() {
+        committer?.setPending(
+            id: fieldID,
+            changed: editor.text != OptionalDoubleFieldEditing.stringValue(value, format: format),
+            commit: { commit() },
+            discard: { editor.reset(value: value, format: format) }
+        )
     }
 
     private func commit() {
+        let next = editor.commit(value: value, clamp: clamp, format: format)
+        if value != next { value = next }
+        committer?.clear(id: fieldID)
+    }
+}
+
+/// The editing draft never changes or clamps the numeric value before commit.
+struct OptionalDoubleFieldEditing {
+    private(set) var text = ""
+    private(set) var isEditing = false
+
+    mutating func beginEditing() { isEditing = true }
+
+    mutating func edit(_ text: String) {
+        self.text = text
+        isEditing = true
+    }
+
+    mutating func receive(value: Double?, format: String?) {
+        // The binding only changes on commit or through an external authority.
+        // External Reset/model changes replace an old draft rather than later
+        // allowing it to overwrite the new value.
+        reset(value: value, format: format)
+    }
+
+    mutating func reset(value: Double?, format: String?) {
+        text = Self.stringValue(value, format: format)
+        isEditing = false
+    }
+
+    mutating func commit(value: Double?, clamp: ClosedRange<Double>?, format: String?) -> Double? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next: Double?
         if trimmed.isEmpty {
-            if value != nil { value = nil }
-            return
+            next = nil
+        } else if let parsed = Double(trimmed), parsed.isFinite {
+            next = clamp.map { min(max(parsed, $0.lowerBound), $0.upperBound) } ?? parsed
+        } else {
+            next = value
         }
-        guard let parsed = Double(trimmed) else { return }
-        let final: Double = {
-            guard let clamp else { return parsed }
-            return min(max(parsed, clamp.lowerBound), clamp.upperBound)
-        }()
-        if value != final { value = final }
+        reset(value: next, format: format)
+        return next
+    }
+
+    static func stringValue(_ value: Double?, format: String?) -> String {
+        guard let value else { return "" }
+        return format.map { String(format: $0, value) } ?? String(value)
+    }
+}
+
+/// A focused decimal draft must participate in Save/Reset before its binding changes.
+@MainActor
+final class OptionalDoubleFieldCommitter: ObservableObject {
+    @Published private(set) var hasPendingChanges = false
+    private var owner: UUID?
+    private var commitDraft: (() -> Void)?
+    private var discardDraft: (() -> Void)?
+
+    /// Save may flush a correction whose binding still contains the old invalid
+    /// value. The form must validate again after commit, before persistence.
+    func blocksSaveAttempt(hasBlockingIssues: Bool) -> Bool {
+        hasBlockingIssues && !hasPendingChanges
+    }
+
+    func setPending(id: UUID, changed: Bool, commit: @escaping () -> Void, discard: @escaping () -> Void) {
+        guard changed else { clear(id: id); return }
+        owner = id
+        commitDraft = commit
+        discardDraft = discard
+        hasPendingChanges = true
+    }
+
+    func clear(id: UUID) {
+        guard owner == id else { return }
+        owner = nil
+        commitDraft = nil
+        discardDraft = nil
+        hasPendingChanges = false
+    }
+
+    func commit() {
+        let action = commitDraft
+        if let owner { clear(id: owner) }
+        action?()
+    }
+
+    func discard() {
+        let action = discardDraft
+        if let owner { clear(id: owner) }
+        action?()
+    }
+}
+
+private struct OptionalDoubleFieldCommitterKey: EnvironmentKey {
+    static let defaultValue: OptionalDoubleFieldCommitter? = nil
+}
+
+extension EnvironmentValues {
+    var optionalDoubleFieldCommitter: OptionalDoubleFieldCommitter? {
+        get { self[OptionalDoubleFieldCommitterKey.self] }
+        set { self[OptionalDoubleFieldCommitterKey.self] = newValue }
     }
 }
 
