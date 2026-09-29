@@ -269,6 +269,278 @@ struct SystemPromptComposerToolResolutionTests {
         )
     }
 
+    @Test("Revocation or unregister during permission resolution cannot execute", arguments: [false, true])
+    func revocationWhilePermissionGateSuspends(unregister: Bool) async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let name = "permission_revoke_" + UUID().uuidString
+                let fixture = RevokingPermissionFixture(name: name) {
+                    await Task.yield()
+                    await MainActor.run {
+                        if unregister {
+                            ToolRegistry.shared.unregister(names: [name])
+                        } else {
+                            AgentManager.shared.updateEnabledToolNames([], for: agentId)
+                        }
+                    }
+                    return .auto
+                }
+                let registry = ToolRegistry.shared
+                registry.registerPluginTool(fixture)
+                registry.setEnabled(true, for: name)
+                defer { registry.unregister(names: [name]) }
+                AgentManager.shared.updateEnabledToolNames([name], for: agentId)
+                let scope = ToolExecutionScope(exposed: registry.specs(forTools: [name]))
+                await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                        do {
+                            let result = try await registry.execute(name: name, argumentsJSON: "{}")
+                            #expect(result != RevocableToolFixture.executed)
+                            #expect(result.contains("not available"))
+                        } catch {
+                            Issue.record("Unexpected permission probe error: \(error)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("Unknown sandbox tools retain the retryable initialization response")
+    func unknownSandboxToolRetainsInitializationEnvelope() async throws {
+        let name = "sandbox_not_registered_" + UUID().uuidString
+        let result = try await ToolRegistry.shared.execute(name: name, argumentsJSON: "{}")
+        #expect(result.contains("still initializing"))
+        #expect(result.contains("unavailable"))
+    }
+
+    @Test("A loaded dynamic tool is removed and refused after its grant is revoked")
+    func loadedToolRevocationAppliesToComposeAndDispatch() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let fixture = RevocableToolFixture(name: "revocation_probe_" + UUID().uuidString)
+                let registry = ToolRegistry.shared
+                registry.registerPluginTool(fixture)
+                registry.setEnabled(true, for: fixture.name)
+                defer { registry.unregister(names: [fixture.name]) }
+                AgentManager.shared.updateEnabledToolNames([fixture.name], for: agentId)
+                let first = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .none,
+                    additionalToolNames: [fixture.name]
+                )
+                #expect(first.contains { $0.function.name == fixture.name })
+                #expect(
+                    TextSubagentKind.agentChildToolSpecs(agentId: agentId)
+                        .contains { $0.function.name == fixture.name }
+                )
+                let staleScope = ToolExecutionScope(exposed: first)
+                AgentManager.shared.updateEnabledToolNames([], for: agentId)
+                let second = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .none,
+                    additionalToolNames: [fixture.name],
+                    frozenToolSpecs: first
+                )
+                #expect(!second.contains { $0.function.name == fixture.name })
+                #expect(
+                    !TextSubagentKind.agentChildToolSpecs(agentId: agentId)
+                        .contains { $0.function.name == fixture.name }
+                )
+                await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    await ChatExecutionContext.$toolExecutionScope.withValue(staleScope) {
+                        do {
+                            let result = try await registry.execute(
+                                name: fixture.name,
+                                argumentsJSON: "{}",
+                                permissionGateResolved: true
+                            )
+                            #expect(result != RevocableToolFixture.executed)
+                            #expect(result.contains("not available"))
+                        } catch {
+                            Issue.record("Unexpected dispatch error: \(error)")
+                        }
+                    }
+                }
+                // Restoring the agent grant does not override a global disable.
+                AgentManager.shared.updateEnabledToolNames([fixture.name], for: agentId)
+                registry.setEnabled(false, for: fixture.name)
+                let disabled = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .none,
+                    additionalToolNames: [fixture.name]
+                )
+                #expect(!disabled.contains { $0.function.name == fixture.name })
+                #expect(
+                    !TextSubagentKind.agentChildToolSpecs(agentId: agentId)
+                        .contains { $0.function.name == fixture.name }
+                )
+                registry.setEnabled(true, for: fixture.name)
+                let restored = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .none,
+                    additionalToolNames: [fixture.name]
+                )
+                #expect(restored.contains { $0.function.name == fixture.name })
+            }
+        }
+    }
+
+    @Test("An inaccessible plugin metadata update does not invalidate this agent's prefix")
+    func unrelatedDynamicCatalogChangePreservesIdentity() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let a = CatalogIdentityFixture(name: "catalog_a_" + UUID().uuidString, description: "A")
+                let b = CatalogIdentityFixture(name: "catalog_b_" + UUID().uuidString, description: "B v1")
+                let registry = ToolRegistry.shared
+                registry.registerPluginTool(a)
+                registry.registerPluginTool(b)
+                registry.setEnabled(true, for: a.name)
+                registry.setEnabled(true, for: b.name)
+                defer { registry.unregister(names: [a.name, b.name]) }
+                AgentManager.shared.updateEnabledToolNames([a.name], for: agentId)
+                let first = registry.toolGrantSnapshot(agentId: agentId)
+                #expect(first.schemas[b.name] == nil)
+                registry.registerPluginTool(CatalogIdentityFixture(name: b.name, description: "B v2"))
+                #expect(registry.toolGrantSnapshot(agentId: agentId) == first)
+                AgentManager.shared.updateEnabledToolNames([a.name, b.name], for: agentId)
+                let granted = registry.toolGrantSnapshot(agentId: agentId)
+                #expect(granted != first)
+                #expect(granted.schemas[b.name] != nil)
+                registry.registerPluginTool(CatalogIdentityFixture(name: b.name, description: "B v3"))
+                #expect(registry.toolGrantSnapshot(agentId: agentId) != granted)
+            }
+        }
+    }
+
+    @Test("Disabling web or all tools refuses a stale native dynamic scope")
+    func nativeFeatureRevocationRefusesStaleScope() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let registry = ToolRegistry.shared
+                guard var agent = AgentManager.shared.agent(for: agentId) else {
+                    Issue.record("Missing fixture agent")
+                    return
+                }
+                agent.settings.webSearchEnabled = true
+                AgentManager.shared.update(agent)
+                let scope = ToolExecutionScope(exposed: registry.specs(forTools: ["search_and_extract"]))
+                #expect(registry.isDynamicToolGranted("search_and_extract", agentId: agentId))
+                agent.settings.webSearchEnabled = false
+                AgentManager.shared.update(agent)
+                #expect(!registry.isDynamicToolGranted("search_and_extract", agentId: agentId))
+                await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                        do {
+                            // Malformed args guarantee this never performs network
+                            // work even if a regression bypasses the grant check.
+                            let result = try await registry.execute(name: "search_and_extract", argumentsJSON: "{")
+                            #expect(result.contains("not available"))
+                        } catch { Issue.record("Unexpected native gate error: \(error)") }
+                    }
+                }
+                // An explicit pick remains a separate grant; all-tools OFF wins.
+                AgentManager.shared.updateEnabledToolNames(["search_and_extract"], for: agentId)
+                #expect(registry.isDynamicToolGranted("search_and_extract", agentId: agentId))
+                guard var latest = AgentManager.shared.agent(for: agentId) else { return }
+                latest.toolsEnabled = false
+                AgentManager.shared.update(latest)
+                #expect(!registry.isDynamicToolGranted("search_and_extract", agentId: agentId))
+            }
+        }
+    }
+
+    @Test("Charts and web edits refresh frozen baseline names in both directions")
+    func capabilityTogglesRefreshFrozenBaseline() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let store = SessionToolStateStore()
+                let registry = ToolRegistry.shared
+                for enabled in [false, true, false] {
+                    guard var agent = AgentManager.shared.agent(for: agentId) else {
+                        Issue.record("Missing fixture agent")
+                        return
+                    }
+                    agent.settings.renderChartEnabled = enabled
+                    agent.settings.webSearchEnabled = enabled
+                    AgentManager.shared.update(agent)
+                    await store.reconcileToolGrants("caps", current: registry.toolGrantSnapshot(agentId: agentId))
+                    let state = await store.get("caps")
+                    let context = await SystemPromptComposer.composeChatContext(
+                        agentId: agentId,
+                        executionMode: .none,
+                        model: "gpt-5",
+                        frozenAlwaysLoadedNames: state?.initialAlwaysLoadedNames,
+                        frozenToolSpecs: state?.initialToolSpecs,
+                        frozenManifest: state?.frozenManifest
+                    )
+                    let names = Set(context.tools.map(\.function.name))
+                    #expect(names.contains("render_chart") == enabled)
+                    #expect(names.contains("web_search") == enabled)
+                    #expect(names.contains("search_and_extract") == enabled)
+                    await store.setInitial(
+                        "caps",
+                        alwaysLoadedNames: context.alwaysLoadedNames,
+                        toolSpecs: context.initialToolSpecs,
+                        manifest: context.enabledManifest
+                    )
+                }
+                let caps = AgentManager.shared.effectiveCapabilities(for: agentId)
+                var unrelated = caps
+                unrelated.memoryEnabled.toggle()
+                unrelated.screenContextEnabled.toggle()
+                #expect(caps.toolExposureIdentity == unrelated.toolExposureIdentity)
+            }
+        }
+    }
+
+    @Test("Grant edits refresh the next message manifest without changing an unchanged prefix")
+    func nextMessageManifestReflectsEditedGrants() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let a = capabilityManifestFixtureTool()
+                let b = capabilityManifestFixtureTool()
+                let registry = ToolRegistry.shared
+                registry.registerPluginTool(a)
+                registry.registerPluginTool(b)
+                registry.setEnabled(true, for: a.name)
+                registry.setEnabled(true, for: b.name)
+                defer { registry.unregister(names: [a.name, b.name]) }
+                let store = SessionToolStateStore()
+                AgentManager.shared.updateEnabledToolNames([a.name], for: agentId)
+                await store.reconcileToolGrants("manifest", current: registry.toolGrantSnapshot(agentId: agentId))
+                let first = await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .none,
+                    model: "gpt-5"
+                )
+                #expect(first.enabledManifest?.contains("tool/\(a.name)") == true)
+                await store.setInitial(
+                    "manifest",
+                    alwaysLoadedNames: [],
+                    toolSpecs: first.initialToolSpecs,
+                    manifest: first.enabledManifest
+                )
+                await store.reconcileToolGrants("manifest", current: registry.toolGrantSnapshot(agentId: agentId))
+                #expect(await store.get("manifest")?.frozenManifest == first.enabledManifest)
+                // Addition and revocation in one save: the next message must
+                // publish B, not the stale A-only manifest.
+                AgentManager.shared.updateEnabledToolNames([b.name], for: agentId)
+                await store.reconcileToolGrants("manifest", current: registry.toolGrantSnapshot(agentId: agentId))
+                let state = await store.get("manifest")
+                let second = await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .none,
+                    model: "gpt-5",
+                    frozenToolSpecs: state?.initialToolSpecs,
+                    frozenManifest: state?.frozenManifest
+                )
+                #expect(second.enabledManifest?.contains("tool/\(b.name)") == true)
+                #expect(second.enabledManifest?.contains("tool/\(a.name)") != true)
+            }
+        }
+    }
+
     @Test("custom plain chat publishes an enabled-tool manifest for the unified gateway")
     func customPlainChatPublishesGatewayAlignedManifest() async {
         // Lock order: Storage → Sandbox (inside `withSandboxAgent`) with the
@@ -2203,4 +2475,40 @@ struct SystemPromptComposerToolResolutionTests {
         #expect(!namesWithoutWeb.contains("web_search"))
         #expect(!namesWithoutWeb.contains("search_and_extract"))
     }
+}
+
+private struct RevocableToolFixture: OsaurusTool {
+    static let executed = "revocation-fixture-executed"
+    let name: String
+    let description = "Harmless grant revocation probe"
+    let parameters: JSONValue? = .object([
+        "type": .string("object"), "properties": .object([:]),
+    ])
+    var canExposeToSpawnedOperation: Bool { true }
+    func spawnedOperationCancellationSupport(argumentsJSON: String) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+    func execute(argumentsJSON: String) async throws -> String { Self.executed }
+}
+
+private struct RevokingPermissionFixture: OsaurusTool, PermissionedTool, ContextualPermissionedTool {
+    let name: String
+    let resolve: @Sendable () async -> ToolPermissionPolicy
+    let description = "Harmless asynchronous permission revocation probe"
+    let requirements: [String] = []
+    let defaultPermissionPolicy: ToolPermissionPolicy = .auto
+    let parameters: JSONValue? = .object([
+        "type": .string("object"), "properties": .object([:]),
+    ])
+    func resolveContextualPermissionPolicy(argumentsJSON: String) async -> ToolPermissionPolicy {
+        await resolve()
+    }
+    func execute(argumentsJSON: String) async throws -> String { RevocableToolFixture.executed }
+}
+
+private struct CatalogIdentityFixture: OsaurusTool {
+    let name: String
+    let description: String
+    let parameters: JSONValue? = nil
+    func execute(argumentsJSON: String) async throws -> String { "catalog-fixture" }
 }

@@ -282,41 +282,44 @@ extension ToolPermissionPromptQueueTests {
 
     @Test("the generic registry gate presents the tool's resolved surface")
     @MainActor
-    func gatePassesSurfaceToCard() async {
-        ToolPermissionPromptService.resetForTesting()
-        defer { ToolPermissionPromptService.resetForTesting() }
-        let tool = AskProbeTool(name: "test_surface_ask_probe_\(UUID().uuidString.prefix(8))")
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
-        let probe = SurfacePresenterProbe()
+    func gatePassesSurfaceToCard() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            ToolPermissionPromptService.resetForTesting()
+            defer { ToolPermissionPromptService.resetForTesting() }
+            let tool = AskProbeTool(name: "test_surface_ask_probe_\(UUID().uuidString.prefix(8))")
+            try fixture.register(tool)
+            ToolRegistry.shared.setPolicy(.ask, for: tool.name)
+            UserDefaults.standard.set(false, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+            let probe = SurfacePresenterProbe()
 
-        let gate = ToolPermissionPromptService.$presentationOverrideForTests.withValue(probe.presenter) {
-            Task { @MainActor in
-                do {
-                    try await ToolRegistry.shared.resolvePermissionGate(
-                        name: tool.name,
-                        argumentsJSON: "{}"
-                    )
-                    return true
-                } catch {
-                    return false
+            let gate = ToolPermissionPromptService.$presentationOverrideForTests.withValue(probe.presenter) {
+                Task { @MainActor in
+                    do {
+                        try await ToolRegistry.shared.resolvePermissionGate(
+                            name: tool.name,
+                            argumentsJSON: "{}"
+                        )
+                        return true
+                    } catch {
+                        return false
+                    }
                 }
             }
-        }
 
-        await probe.waitForPresented()
-        #expect(probe.presented.count == 1)
-        #expect(ToolPermissionPromptService.presentedExecutionSurfaceForTesting == .nativeHost)
+            await probe.waitForPresented()
+            #expect(probe.presented.count == 1)
+            #expect(ToolPermissionPromptService.presentedExecutionSurfaceForTesting == .nativeHost)
 
-        // A bounded wait that expires under full-suite load must fail this
-        // test, not take the whole process down with an out-of-range index.
-        guard let presentedId = probe.presented.first else {
-            Issue.record("permission card was never presented within the bounded wait")
-            return
+            // A bounded wait that expires under full-suite load must fail this
+            // test, not take the whole process down with an out-of-range index.
+            guard let presentedId = probe.presented.first else {
+                Issue.record("permission card was never presented within the bounded wait")
+                return
+            }
+            ToolPermissionPromptService.resolveForTesting(id: presentedId, outcome: .denied)
+            #expect(await gate.value == false)
+            #expect(ToolPermissionPromptService.presentedExecutionSurfaceForTesting == nil)
         }
-        ToolPermissionPromptService.resolveForTesting(id: presentedId, outcome: .denied)
-        #expect(await gate.value == false)
-        #expect(ToolPermissionPromptService.presentedExecutionSurfaceForTesting == nil)
     }
 
     @Test("policy prompts that are not about a machine show no surface")

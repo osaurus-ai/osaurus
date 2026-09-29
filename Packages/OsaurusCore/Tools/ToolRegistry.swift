@@ -763,6 +763,7 @@ public final class ToolRegistry: ObservableObject {
                 ]
             )
         }
+        guard dynamicGrantRefusal(for: name) == nil else { return }
         guard let tool = toolsByName[name] else { return }
         // Preflight first, mirroring `execute`: a batch member that cannot
         // pass schema validation must not raise an approval card, and the
@@ -1303,6 +1304,8 @@ public final class ToolRegistry: ObservableObject {
             ).toJSONString()
         }
 
+        if let refusal = dynamicGrantRefusal(for: name) { return refusal }
+
         // External-surface deny list: refuse workspace-mutating tool
         // classes for HTTP/MCP-initiated executions regardless of
         // registration state or permission policy.
@@ -1400,6 +1403,9 @@ public final class ToolRegistry: ObservableObject {
                     argumentsJSON: effectiveArgumentsJSON
                 )
             }
+            // Approval can suspend while the user revokes the capability.
+            if let refusal = dynamicGrantRefusal(for: name, requireRegistered: true) { return refusal }
+
             // Prefill diagnostics: time the actual tool body (sandbox boot,
             // embedding search, shell, network) so the /tmp log can separate
             // tool-execution latency from model decode between agent-loop steps.
@@ -1480,7 +1486,13 @@ public final class ToolRegistry: ObservableObject {
             // tool that ran and failed is still an attempt the model can
             // honestly report on, and only "nothing ran at all" is the signal
             // the Todo tool acts on.
-            ChatExecutionContext.agentTodoRunScope?.recordToolExecution(name: name)
+            let authorizeBody: @Sendable () async -> String? = {
+                await MainActor.run {
+                    if let refusal = self.dynamicGrantRefusal(for: name, requireRegistered: true) { return refusal }
+                    ChatExecutionContext.agentTodoRunScope?.recordToolExecution(name: name)
+                    return nil
+                }
+            }
 
             let runBody: () async throws -> String = {
                 try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
@@ -1500,7 +1512,8 @@ public final class ToolRegistry: ObservableObject {
                                         return Self.normalizeToolResult(
                                             try await Self.runToolBodyUntimed(
                                                 tool,
-                                                argumentsJSON: effectiveArgumentsJSON
+                                                argumentsJSON: effectiveArgumentsJSON,
+                                                authorizeBody: authorizeBody
                                             ),
                                             tool: name
                                         )
@@ -1509,7 +1522,8 @@ public final class ToolRegistry: ObservableObject {
                                         try await Self.runToolBody(
                                             tool,
                                             argumentsJSON: effectiveArgumentsJSON,
-                                            timeoutSeconds: Self.defaultToolTimeoutSeconds
+                                            timeoutSeconds: Self.defaultToolTimeoutSeconds,
+                                            authorizeBody: authorizeBody
                                         ),
                                         tool: name
                                     )
@@ -1669,9 +1683,13 @@ public final class ToolRegistry: ObservableObject {
     /// the underlying process signals) tear it down.
     nonisolated internal static func runToolBodyUntimed(
         _ tool: OsaurusTool,
-        argumentsJSON: String
+        argumentsJSON: String,
+        authorizeBody: (@Sendable () async -> String?)? = nil
     ) async throws -> String {
         do {
+            try Task.checkCancellation()
+            if let refusal = await authorizeBody?() { return refusal }
+            try Task.checkCancellation()
             return try await tool.execute(argumentsJSON: argumentsJSON)
         } catch is CancellationError {
             return ToolEnvelope.failure(
@@ -1887,7 +1905,8 @@ public final class ToolRegistry: ObservableObject {
         _ tool: OsaurusTool,
         argumentsJSON: String,
         timeoutSeconds: TimeInterval,
-        bodyGraceSeconds: TimeInterval = defaultBodyGraceSeconds
+        bodyGraceSeconds: TimeInterval = defaultBodyGraceSeconds,
+        authorizeBody: (@Sendable () async -> String?)? = nil
     ) async throws -> String {
         let toolName = tool.name
         let timeoutEnvelope = ToolEnvelope.failure(
@@ -1919,6 +1938,12 @@ public final class ToolRegistry: ObservableObject {
                 let bodyTask = Task {
                     defer { race.markBodyFinished() }
                     do {
+                        try Task.checkCancellation()
+                        if let refusal = await authorizeBody?() {
+                            race.complete(refusal)
+                            return
+                        }
+                        try Task.checkCancellation()
                         let result = try await tool.execute(argumentsJSON: argumentsJSON)
                         race.complete(result)
                     } catch is CancellationError {
@@ -1995,6 +2020,94 @@ public final class ToolRegistry: ObservableObject {
         toolsByName[name] != nil
             && !builtInToolNames.contains(name)
             && !runtimeManagedToolNames.contains(name)
+    }
+
+    private struct DynamicGrantContext {
+        let allowedNames: Set<String>?
+        let capabilities: AgentCapabilities?
+        let nativeGrantedNames: Set<String>
+    }
+
+    private func dynamicGrantContext(agentId: UUID?) -> DynamicGrantContext {
+        guard let agentId else {
+            return .init(allowedNames: nil, capabilities: nil, nativeGrantedNames: [])
+        }
+        let caps = AgentManager.shared.effectiveCapabilities(for: agentId)
+        var native: Set<String> = []
+        if caps.webSearchEnabled { native.insert("search_and_extract") }
+        if !AgentChannelAutoDestinationResolver.effectiveConfiguration()
+            .usableBindings(agentId: agentId, source: ChatExecutionContext.currentSessionSource).isEmpty
+        {
+            native.insert(AgentChannelPublishTool.toolName)
+        }
+        return .init(
+            allowedNames: AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init),
+            capabilities: caps,
+            nativeGrantedNames: native
+        )
+    }
+
+    func toolGrantSnapshot(agentId: UUID) -> SessionToolStateStore.ToolGrantSnapshot {
+        // Capture settings once. Inaccessible plugins are not part of this
+        // agent's prefix; their metadata changes must not discard its cache.
+        let context = dynamicGrantContext(agentId: agentId)
+        let granted = toolsByName.values.filter {
+            isDynamicRegisteredTool(named: $0.name)
+                && isDynamicToolGranted($0.name, context: context)
+        }
+        return .init(
+            agentAllowedNames: context.allowedNames,
+            enabledDynamicNames: Set(granted.map(\.name)),
+            schemas: Dictionary(
+                uniqueKeysWithValues: granted.map {
+                    ($0.name, $0.asOpenAITool().canonicalHashPayload())
+                }
+            ),
+            capabilities: context.capabilities?.toolExposureIdentity
+        )
+    }
+
+    /// A loaded schema is an exposure snapshot, not a permanent capability grant.
+    /// Recheck dynamic tools after settings edits, including while approval was pending.
+    func isDynamicToolGranted(_ name: String, agentId: UUID?, capabilityGranted: Bool = false) -> Bool {
+        guard isDynamicRegisteredTool(named: name) else { return true }
+        return isDynamicToolGranted(
+            name,
+            context: dynamicGrantContext(agentId: agentId),
+            capabilityGranted: capabilityGranted
+        )
+    }
+
+    private func isDynamicToolGranted(
+        _ name: String,
+        context: DynamicGrantContext,
+        capabilityGranted: Bool = false
+    ) -> Bool {
+        guard isGlobalEnabled(name), context.capabilities?.toolsEnabled != false else { return false }
+        if capabilityGranted || context.nativeGrantedNames.contains(name) { return true }
+        // Native dynamic capabilities can also be explicit user picks.
+        // Legacy nil plugin grants must not resurrect a disabled feature.
+        if context.capabilities != nil,
+            toolsByName[name] is SearchAndExtractTool || toolsByName[name] is AgentChannelPublishTool
+        {
+            return context.allowedNames?.contains(name) == true
+        }
+        return context.allowedNames?.contains(name) ?? true
+    }
+
+    private func dynamicGrantRefusal(for name: String, requireRegistered: Bool = false) -> String? {
+        guard
+            (requireRegistered && toolsByName[name] == nil)
+                || !isDynamicToolGranted(name, agentId: ChatExecutionContext.currentAgentId)
+        else {
+            return nil
+        }
+        return ToolErrorEnvelope(
+            kind: .toolNotFound,
+            reason: "\(name) is not available in this conversation.",
+            toolName: name,
+            retryable: false
+        ).toJSONString()
     }
 
     /// Immutable snapshot of every name `isDynamicRegisteredTool` currently

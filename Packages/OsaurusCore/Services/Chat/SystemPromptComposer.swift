@@ -3286,6 +3286,17 @@ public struct SystemPromptComposer: Sendable {
 
         }
 
+        // Previously loaded dynamic tools must not outlive the current grant.
+        // Keep built-in and workspace policy in the dedicated gates above.
+        byName = byName.filter {
+            ToolRegistry.shared.isDynamicToolGranted(
+                $0.key,
+                agentId: snapshot.agentId,
+                capabilityGranted: ($0.key == "search_and_extract" && snapshot.webSearchEnabled)
+                    || ($0.key == AgentChannelPublishTool.toolName && snapshot.hasChannelPublishDestinations)
+            )
+        }
+
         // Request-scoped sandbox authorization is fail-closed. Direct manual
         // selection or a stale loaded-tool name must not resurrect a private
         // backend adapter or a control-plane tool whose current captured agent

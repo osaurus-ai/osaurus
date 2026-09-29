@@ -6637,6 +6637,11 @@ final class ChatSession: ObservableObject {
                         return ChatMessage(role: "user", content: t.content)
                     }
 
+                    if !isRemoteAgentTarget {
+                        await PluginManager.shared.ensurePromptCatalogReady()
+                        guard isRunActive(runId) else { return }
+                    }
+
                     // Reuse the per-session always-loaded + capabilities_load
                     // union on subsequent sends so the schema stays stable.
                     // First, ask the store to drop the cache if the
@@ -6672,6 +6677,10 @@ final class ChatSession: ObservableObject {
                             liveFingerprint: liveFingerprint,
                             preservingLoadedToolNames: modeIndependentDynamicNames
                         )
+                        await SessionToolStateStore.shared.reconcileToolGrants(
+                            key,
+                            current: ToolRegistry.shared.toolGrantSnapshot(agentId: effectiveAgentId)
+                        )
                         cachedSession = await SessionToolStateStore.shared.get(key)
                     } else {
                         cachedSession = nil
@@ -6702,15 +6711,6 @@ final class ChatSession: ObservableObject {
                                 ContextBudgetManager.estimateTokens(for: $0)
                             } ?? 0
                         self.isScreenContextFrozen = true
-                    }
-
-                    // Keep the first real send byte-identical to warmup and
-                    // restart restore: plugin tools/skills are part of the
-                    // static prompt and must come from a completed catalog
-                    // snapshot, not launch-task timing.
-                    if !isRemoteAgentTarget {
-                        await PluginManager.shared.ensurePromptCatalogReady()
-                        guard isRunActive(runId) else { return }
                     }
 
                     // Resolve the pending one-off skill BEFORE composing.
