@@ -735,6 +735,16 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
 /// consumed by `AgentConfigSnapshot` so every gate reads one struct
 /// instead of calling a handful of `effective*` accessors.
 public struct AgentCapabilities: Sendable, Equatable {
+    /// Canonical tool-facing projection of the shared capability value.
+    /// Memory injection and ambient screen capture do not grant tools; changing
+    /// either must not discard the session's frozen tool catalog.
+    var toolExposureIdentity: Self {
+        var identity = self
+        identity.memoryEnabled = false
+        identity.screenContextEnabled = false
+        return identity
+    }
+
     /// Tools / preflight context are available to the model.
     public var toolsEnabled: Bool
     /// Memory is injected into prompts and recorded (per-agent AND global).

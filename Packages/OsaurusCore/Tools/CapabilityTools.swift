@@ -1292,19 +1292,24 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        // Idempotent re-load — checked BEFORE the enabled/grant guards. A
-        // tool already in this session's schema (the always-loaded baseline
-        // snapshot or an earlier capabilities_load) is ALREADY callable, so
-        // re-loading it must return success regardless of the current
-        // global-enabled or agent-grant state. Rejecting it here was a
-        // guard-ordering bug: the `isEnabled`/`allowedNames` guards fired
-        // first, so re-loading an already-baseline tool returned
-        // `{"ok":false,"kind":"rejected","message":"… is disabled"}` for a
-        // tool the model could already call — which derails the loop (the
-        // model believes a working capability failed). The early return also
-        // prevents re-buffering, which would re-trigger the deferred-schema
-        // bookkeeping and a redundant "callable now" notice.
+        // A loaded schema is not a permanent grant. Match dispatch before
+        // claiming that a previously loaded dynamic tool is still callable.
+        // Preserve first-load diagnostics and dedicated built-in policy below.
         if await isAlreadyLoadedInSession(toolId) {
+            let dynamicallyGranted = await MainActor.run {
+                ToolRegistry.shared.isDynamicToolGranted(
+                    toolId, agentId: ChatExecutionContext.currentAgentId
+                )
+            }
+            guard dynamicallyGranted else {
+                return .failure(
+                    LoadFailure(
+                        kind: .rejected,
+                        message: "Tool '\(toolId)' is not available in this conversation."
+                    )
+                )
+            }
+            // Never rebuffer an already-loaded schema.
             return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
         }
         // Built-ins are not dynamic capabilities. If the composer withheld one

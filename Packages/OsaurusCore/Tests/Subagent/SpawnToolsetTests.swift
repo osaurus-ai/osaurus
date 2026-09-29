@@ -139,64 +139,68 @@ struct SpawnToolsetTests {
     @Test("configured-agent tool dispatch uses target UUID at the registry boundary")
     @MainActor
     func configuredAgentDispatchUsesTargetIdentity() async throws {
-        let launcher = UUID()
-        let target = UUID()
-        let tool = SpawnAgentIdentityProbeTool()
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+        try await DynamicToolProbeFixture.run { fixture in
+            let launcher = UUID()
+            let target = UUID()
+            let tool = SpawnAgentIdentityProbeTool()
+            try fixture.register(tool)
+            defer { ToolRegistry.shared.unregister(names: [tool.name]) }
 
-        let executionAgentId = TextSubagentKind.childToolExecutionAgentId(
-            targetAgentId: target,
-            launcherAgentId: launcher
-        )
-        let toolset = await TextSubagentKind.makeToolset(
-            feed: nil,
-            agentSpecs: [spec(tool.name)],
-            executionAgentId: executionAgentId
-        )
-        let set = try #require(toolset)
+            let executionAgentId = TextSubagentKind.childToolExecutionAgentId(
+                targetAgentId: target,
+                launcherAgentId: launcher
+            )
+            let toolset = await TextSubagentKind.makeToolset(
+                feed: nil,
+                agentSpecs: [spec(tool.name)],
+                executionAgentId: executionAgentId
+            )
+            let set = try #require(toolset)
 
-        let (result, restoredLauncher) =
-            await ChatExecutionContext.$currentAgentId.withValue(launcher) {
-                let output = await set.execute(invocation(tool.name))
-                return (output, ChatExecutionContext.currentAgentId == launcher)
-            }
-        #expect(restoredLauncher)
-        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+            let (result, restoredLauncher) =
+                await ChatExecutionContext.$currentAgentId.withValue(launcher) {
+                    let output = await set.execute(invocation(tool.name))
+                    return (output, ChatExecutionContext.currentAgentId == launcher)
+                }
+            #expect(restoredLauncher)
+            let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
 
-        #expect(payload["text"] as? String == target.uuidString)
-        #expect(ChatExecutionContext.currentAgentId == nil)
+            #expect(payload["text"] as? String == target.uuidString)
+            #expect(ChatExecutionContext.currentAgentId == nil)
+        }
     }
 
     @Test("tool dispatch without a target persona preserves the launcher UUID")
     @MainActor
     func noTargetDispatchUsesLauncherIdentity() async throws {
-        let launcher = UUID()
-        let tool = SpawnAgentIdentityProbeTool()
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+        try await DynamicToolProbeFixture.run { fixture in
+            let launcher = UUID()
+            let tool = SpawnAgentIdentityProbeTool()
+            try fixture.register(tool)
+            defer { ToolRegistry.shared.unregister(names: [tool.name]) }
 
-        let executionAgentId = TextSubagentKind.childToolExecutionAgentId(
-            targetAgentId: nil,
-            launcherAgentId: launcher
-        )
-        let toolset = await TextSubagentKind.makeToolset(
-            feed: nil,
-            specs: [spec(tool.name)],
-            executionAgentId: executionAgentId
-        )
-        let set = try #require(toolset)
+            let executionAgentId = TextSubagentKind.childToolExecutionAgentId(
+                targetAgentId: nil,
+                launcherAgentId: launcher
+            )
+            let toolset = await TextSubagentKind.makeToolset(
+                feed: nil,
+                specs: [spec(tool.name)],
+                executionAgentId: executionAgentId
+            )
+            let set = try #require(toolset)
 
-        let (result, restoredLauncher) =
-            await ChatExecutionContext.$currentAgentId.withValue(launcher) {
-                let output = await set.execute(invocation(tool.name))
-                return (output, ChatExecutionContext.currentAgentId == launcher)
-            }
-        #expect(restoredLauncher)
-        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+            let (result, restoredLauncher) =
+                await ChatExecutionContext.$currentAgentId.withValue(launcher) {
+                    let output = await set.execute(invocation(tool.name))
+                    return (output, ChatExecutionContext.currentAgentId == launcher)
+                }
+            #expect(restoredLauncher)
+            let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
 
-        #expect(payload["text"] as? String == launcher.uuidString)
-        #expect(ChatExecutionContext.currentAgentId == nil)
+            #expect(payload["text"] as? String == launcher.uuidString)
+            #expect(ChatExecutionContext.currentAgentId == nil)
+        }
     }
 
     @Test("only the spawn family and clarify are excluded from a child schema")

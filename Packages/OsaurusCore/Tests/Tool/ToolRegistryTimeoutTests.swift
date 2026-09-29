@@ -17,6 +17,116 @@ import Testing
 @Suite
 struct ToolRegistryTimeoutTests {
 
+    private actor AuthorizationGate {
+        var entered = false
+        private var released = false
+        private var waiter: CheckedContinuation<Void, Never>?
+        func wait() async {
+            entered = true
+            if released { return }
+            await withCheckedContinuation { waiter = $0 }
+        }
+        func release() {
+            released = true
+            waiter?.resume()
+            waiter = nil
+        }
+    }
+
+    private actor ExecutionCounter {
+        var count = 0
+        func record() { count += 1 }
+    }
+
+    private struct CountedAuthorizationTool: OsaurusTool {
+        let counter: ExecutionCounter
+        let name = "authorization_cancellation_probe"
+        let description = "Harmless counted body"
+        let parameters: JSONValue? = nil
+        func execute(argumentsJSON: String) async throws -> String {
+            await counter.record()
+            return "unexpected-body-execution"
+        }
+    }
+
+    @Test
+    func cancelledUntimedAuthorizationNeverStartsTool() async throws {
+        let gate = AuthorizationGate()
+        let counter = ExecutionCounter()
+        let task = Task {
+            try await ToolRegistry.runToolBodyUntimed(
+                CountedAuthorizationTool(counter: counter),
+                argumentsJSON: "{}",
+                authorizeBody: {
+                    await withTaskCancellationHandler {
+                        await gate.wait()
+                    } onCancel: {
+                        Task { await gate.release() }
+                    }
+                    return nil
+                }
+            )
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+        while !(await gate.entered), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard await gate.entered else {
+            task.cancel()
+            await gate.release()
+            _ = try await task.value
+            Issue.record("Untimed authorization callback did not start within its bounded wait")
+            return
+        }
+        task.cancel()
+        await gate.release()
+        let result = try await task.value
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("cancelled"))
+        #expect(await counter.count == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func cancelledOrTimedOutAuthorizationNeverStartsTool(timeout: Bool) async throws {
+        let gate = AuthorizationGate()
+        let counter = ExecutionCounter()
+        let task = Task {
+            try await ToolRegistry.runToolBody(
+                CountedAuthorizationTool(counter: counter),
+                argumentsJSON: "{}",
+                timeoutSeconds: timeout ? 5 : 60,
+                bodyGraceSeconds: 2,
+                authorizeBody: {
+                    await withTaskCancellationHandler {
+                        await gate.wait()
+                    } onCancel: {
+                        Task { await gate.release() }
+                    }
+                    return nil
+                }
+            )
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+        while !(await gate.entered), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard await gate.entered else {
+            task.cancel()
+            await gate.release()
+            _ = try await task.value
+            Issue.record("Authorization callback did not start within its bounded wait")
+            return
+        }
+        if !timeout {
+            task.cancel()
+            await gate.release()
+        }
+        let result = try await task.value
+        #expect(ToolEnvelope.isError(result))
+        #expect(await counter.count == 0)
+        if timeout { #expect(result.contains("timeout")) }
+    }
+
     /// Tool body that sleeps longer than the test timeout. Mirrors a
     /// hung subprocess / blocked network call in production. Returns a
     /// success envelope only if it somehow completes — that branch is

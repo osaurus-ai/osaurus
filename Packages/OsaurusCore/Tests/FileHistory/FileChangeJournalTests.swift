@@ -790,7 +790,7 @@ struct FileChangeJournalTests {
 
     @Test @MainActor
     func toolRegistryCapturesHostFolderToolCalls() async throws {
-        try await SandboxTestLock.shared.run {
+        try await DynamicToolProbeFixture.runWithSandbox { fixture in
             let fm = FileManager.default
             let folder = fm.temporaryDirectory
                 .appendingPathComponent("osu-journal-registry-\(UUID().uuidString)", isDirectory: true)
@@ -799,8 +799,7 @@ struct FileChangeJournalTests {
             let sessionId = UUID().uuidString
             let target = folder.appendingPathComponent("host-tracked.txt")
 
-            ToolRegistry.shared.register(FakeHostMutatingTool(fileURL: target))
-            defer { ToolRegistry.shared.unregister(names: ["test_host_mutator"]) }
+            try fixture.register(FakeHostMutatingTool(fileURL: target))
 
             let result = try await ChatExecutionContext.$currentFolderRoot.withValue(folder) {
                 try await ChatExecutionContext.$currentToolCallId.withValue("call-1") {
