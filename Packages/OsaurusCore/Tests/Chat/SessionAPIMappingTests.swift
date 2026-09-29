@@ -115,6 +115,15 @@ struct RemoteSessionContinuationTests {
         )
     }
 
+    @Test func runRequestCarriesTheChatToContinue() throws {
+        let json = #"{"messages":[{"role":"user","content":"hi"}],"model":"","osaurus_session_id":"abc"}"#
+        let request = try JSONDecoder().decode(ChatCompletionRequest.self, from: Data(json.utf8))
+        #expect(request.osaurus_session_id == "abc")
+        // Never forwarded to a provider.
+        let encoded = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+        #expect(!encoded.contains("osaurus_session_id"))
+    }
+
     @Test func truncatingAnUnknownChatChangesNothing() {
         #expect(RemoteSessionContinuation.truncate(UUID(), fromTurnId: UUID()) == .sessionNotFound)
     }

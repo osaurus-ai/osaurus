@@ -855,6 +855,12 @@ struct ChatCompletionRequest: Codable, Sendable {
         case enable_thinking, reasoning_effort
     }
 
+    /// Osaurus Connect field, decoded only: it belongs to this Mac and is
+    /// never encoded into a request forwarded to a provider.
+    private enum OsaurusCodingKeys: String, CodingKey {
+        case osaurus_session_id
+    }
+
     func withModel(_ newModel: String) -> ChatCompletionRequest {
         var copy = ChatCompletionRequest(
             model: newModel,
@@ -994,6 +1000,8 @@ extension ChatCompletionRequest {
         top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
         enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
         reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
+        let osaurus = try decoder.container(keyedBy: OsaurusCodingKeys.self)
+        osaurus_session_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_session_id)
     }
 }
 
