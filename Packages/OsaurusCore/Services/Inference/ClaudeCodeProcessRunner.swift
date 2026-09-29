@@ -133,6 +133,58 @@ struct ClaudeCodeCommandResult: Sendable, Equatable {
     let timedOut: Bool
 }
 
+/// Owns pipe reads through delivery, including the final process-exit drain.
+/// Locking only the decoder is insufficient: a callback can already own bytes
+/// that the exit task can no longer read, but has not delivered them yet.
+final class ClaudeCodePipePump: @unchecked Sendable {
+    private let lock = NSLock()
+    private let handle: FileHandle
+    private let consume: @Sendable (Data) -> Void
+    private var finished = false
+
+    init(handle: FileHandle, consume: @escaping @Sendable (Data) -> Void) {
+        self.handle = handle
+        self.consume = consume
+    }
+
+    func start() {
+        handle.readabilityHandler = { [weak self] _ in self?.readAvailable() }
+    }
+
+    private func readAvailable() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return }
+        let chunk = handle.availableData
+        if chunk.isEmpty {
+            handle.readabilityHandler = nil
+        } else {
+            consume(chunk)
+        }
+    }
+
+    /// Call after child exit. Waits for any callback's read AND delivery before
+    /// claiming remaining bytes. Queued callbacks become harmless no-ops.
+    func finish() {
+        lock.lock()
+        if !finished {
+            let remaining = handle.availableData
+            if !remaining.isEmpty { consume(remaining) }
+            finished = true
+        }
+        lock.unlock()
+        handle.readabilityHandler = nil
+    }
+
+    /// Launch failure has no child output to drain.
+    func stop() {
+        lock.lock()
+        finished = true
+        lock.unlock()
+        handle.readabilityHandler = nil
+    }
+}
+
 /// Bounded output collector for short-lived CLI control commands.
 private final class ClaudeCodeCommandState: @unchecked Sendable {
     private let lock = NSLock()
@@ -203,29 +255,21 @@ public enum ClaudeCodeProcessRunner {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            state.appendStdout(chunk)
+        let stdoutPump = ClaudeCodePipePump(handle: stdoutPipe.fileHandleForReading) {
+            state.appendStdout($0)
         }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            state.appendStderr(chunk)
+        let stderrPump = ClaudeCodePipePump(handle: stderrPipe.fileHandleForReading) {
+            state.appendStderr($0)
         }
+        stdoutPump.start()
+        stderrPump.start()
 
         let terminator = ProcessTerminator(process: process)
         do {
             try process.run()
         } catch {
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            stdoutPump.stop()
+            stderrPump.stop()
             return nil
         }
         await ClaudeCodeProcessRegistry.shared.register(runId, terminator: terminator)
@@ -248,12 +292,8 @@ public enum ClaudeCodeProcessRunner {
             terminator.terminate()
         }
 
-        let residualOut = stdoutPipe.fileHandleForReading.availableData
-        if !residualOut.isEmpty { state.appendStdout(residualOut) }
-        let residualErr = stderrPipe.fileHandleForReading.availableData
-        if !residualErr.isEmpty { state.appendStderr(residualErr) }
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
+        stdoutPump.finish()
+        stderrPump.finish()
 
         return state.result(exitCode: process.terminationStatus)
     }
@@ -292,26 +332,14 @@ public enum ClaudeCodeProcessRunner {
         process.standardError = stderrPipe
         process.standardInput = stdinPipe
 
-        // Non-blocking, synchronous pumps. `continuation.yield` is cheap and
-        // Sendable-safe, so no Task per chunk (see ShellRunTool's note).
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            for event in state.ingestStdout(chunk) {
-                continuation.yield(event)
-            }
+        let stdoutPump = ClaudeCodePipePump(handle: stdoutPipe.fileHandleForReading) { chunk in
+            for event in state.ingestStdout(chunk) { continuation.yield(event) }
         }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
+        let stderrPump = ClaudeCodePipePump(handle: stderrPipe.fileHandleForReading) { chunk in
             state.appendStderr(chunk)
         }
+        stdoutPump.start()
+        stderrPump.start()
 
         let terminator = ProcessTerminator(process: process)
 
@@ -325,8 +353,8 @@ public enum ClaudeCodeProcessRunner {
                 try process.run()
             } catch {
                 try? stdinPipe.fileHandleForWriting.close()
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                stdoutPump.stop()
+                stderrPump.stop()
                 continuation.finish(
                     throwing: ClaudeCodeError.launchFailed(error.localizedDescription)
                 )
@@ -347,17 +375,10 @@ public enum ClaudeCodeProcessRunner {
                 terminator.terminate()
             }
 
-            // Drain whatever Foundation had buffered but not yet delivered,
-            // THEN detach the handlers — the other order loses the last frame
-            // and leaks the FileHandle.
-            let residualOut = stdoutPipe.fileHandleForReading.availableData
-            if !residualOut.isEmpty {
-                for event in state.ingestStdout(residualOut) { continuation.yield(event) }
-            }
-            let residualErr = stderrPipe.fileHandleForReading.availableData
-            if !residualErr.isEmpty { state.appendStderr(residualErr) }
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            // Pipe ownership includes delivery into state, so an exit cannot
+            // overtake a callback that has read the terminal frame already.
+            stdoutPump.finish()
+            stderrPump.finish()
             for event in state.finishStdout() { continuation.yield(event) }
 
             if Task.isCancelled {
