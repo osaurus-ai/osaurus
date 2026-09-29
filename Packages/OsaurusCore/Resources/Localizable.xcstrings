@@ -64280,6 +64280,9 @@
         }
       }
     },
+    "Continue Phone Chats on This Mac" : {
+
+    },
     "Continue to checkout" : {
       "comment" : "Primary button on the add-credits sheet that opens Stripe Checkout.",
       "localizations" : {
@@ -157422,6 +157425,9 @@
           }
         }
       }
+    },
+    "On This Mac" : {
+
     },
     "On This Network" : {
       "localizations" : {
@@ -271451,6 +271457,9 @@
           }
         }
       }
+    },
+    "When you come back to this Mac after using a chat on your iPhone, that chat opens in front, ready to pick up where you left off." : {
+
     },
     "When you turn it on for an agent, Browser Use lets that agent browse the web for you — navigating pages, reading content, filling forms, and working through a goal step by step, with every action shown in a live feed." : {
       "localizations" : {
