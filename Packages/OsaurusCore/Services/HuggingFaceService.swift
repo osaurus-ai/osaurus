@@ -388,7 +388,13 @@ actor HuggingFaceService {
         for attempt in 1 ... maxAttempts {
             var retryAfter: Double?
             do {
-                let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
+                let data: Data
+                let response: URLResponse
+                if let metadataRequest {
+                    (data, response) = try await metadataRequest(req)
+                } else {
+                    (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
+                }
                 guard let http = response as? HTTPURLResponse else { return nil }
                 if (200 ..< 300).contains(http.statusCode) {
                     let nodes = try JSONDecoder().decode([TreeNode].self, from: data)

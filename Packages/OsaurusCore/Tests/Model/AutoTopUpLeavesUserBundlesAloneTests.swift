@@ -2,14 +2,8 @@
 //  AutoTopUpLeavesUserBundlesAloneTests.swift
 //  OsaurusCoreTests
 //
-//  A user stripped tensors they did not need and osaurus quietly downloaded
-//  them again on the next load — the automatic top-up ran the same
-//  restore-to-the-repo logic as the Repair button. These pin the split: what
-//  an automatic pass may fetch, and what only an explicit Repair may.
-//
-//  The interesting assertion in every case is an ABSENCE. A live screenshot
-//  cannot show a file that was not downloaded, which is why the decision was
-//  extracted into a pure function.
+//  Installed bundles must not receive metadata from a newer remote revision
+//  during discovery or load. Explicit repair remains a separate operation.
 //
 
 import Foundation
@@ -48,11 +42,17 @@ struct AutoTopUpLeavesUserBundlesAloneTests {
         ]
 
         let auto = ModelDownloadService.filesToFetch(
-            remote: remoteFiles, under: dir, intent: .automatic)
+            remote: remoteFiles,
+            under: dir,
+            intent: .automatic
+        )
         #expect(auto.isEmpty, "automatic top-up must not restore a deleted shard")
 
         let repair = ModelDownloadService.filesToFetch(
-            remote: remoteFiles, under: dir, intent: .explicitRepair)
+            remote: remoteFiles,
+            under: dir,
+            intent: .explicitRepair
+        )
         #expect(repair.map(\.path) == ["model-00002-of-00002.safetensors"])
     }
 
@@ -67,23 +67,28 @@ struct AutoTopUpLeavesUserBundlesAloneTests {
         let remoteFiles = [remote("config.json", 300)]
 
         let auto = ModelDownloadService.filesToFetch(
-            remote: remoteFiles, under: dir, intent: .automatic)
+            remote: remoteFiles,
+            under: dir,
+            intent: .automatic
+        )
         #expect(auto.isEmpty, "automatic top-up must not overwrite an existing config")
 
         let repair = ModelDownloadService.filesToFetch(
-            remote: remoteFiles, under: dir, intent: .explicitRepair)
+            remote: remoteFiles,
+            under: dir,
+            intent: .explicitRepair
+        )
         #expect(repair.map(\.path) == ["config.json"], "Repair still restores it")
     }
 
-    @Test("Genuinely absent metadata is still filled in automatically")
-    func absentMetadataStillArrives() throws {
+    @Test("Absent metadata requires explicit repair")
+    func absentMetadataRequiresRepair() throws {
         let dir = try makeBundle()
         defer { try? FileManager.default.removeItem(at: dir) }
         try write(120, to: dir.appendingPathComponent("config.json"))
 
-        // The reason automatic top-up exists: a bundle downloaded before a
-        // pattern was added is missing a small sidecar, and without it the
-        // model misbehaves (see the chat_template.jinja instant-EOS bug).
+        // Latest remote metadata is not necessarily compatible with the
+        // installed weights, even when that metadata is absent locally.
         let remoteFiles = [
             remote("config.json", 120),
             remote("chat_template.jinja", 900),
@@ -91,8 +96,77 @@ struct AutoTopUpLeavesUserBundlesAloneTests {
         ]
 
         let auto = ModelDownloadService.filesToFetch(
-            remote: remoteFiles, under: dir, intent: .automatic)
-        #expect(Set(auto.map(\.path)) == ["chat_template.jinja", "tokenizer.json"])
+            remote: remoteFiles,
+            under: dir,
+            intent: .automatic
+        )
+        #expect(auto.isEmpty)
+        let repair = ModelDownloadService.filesToFetch(
+            remote: remoteFiles,
+            under: dir,
+            intent: .explicitRepair
+        )
+        #expect(Set(repair.map(\.path)) == ["chat_template.jinja", "tokenizer.json"])
+    }
+
+    @MainActor
+    @Test("Automatic completeness makes no requests or writes", arguments: [false, true])
+    func automaticCompletenessIsReadOnly(existingSentinel: Bool) async throws {
+        let dir = try makeBundle()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try write(120, to: dir.appendingPathComponent("config.json"))
+        try write(64, to: dir.appendingPathComponent("model.safetensors"))
+        if existingSentinel {
+            try Data("keep this sentinel".utf8).write(to: dir.appendingPathComponent(".topup_done"))
+        }
+        let before = try snapshot(dir)
+        let requests = CompletenessRequestFixture()
+        let service = HuggingFaceService(metadataRequest: { try await requests.respond($0) })
+        let model = MLXModel(id: "org/installed", name: "Installed", description: "", downloadURL: "")
+
+        let verified = await ModelDownloadService.ensureComplete(
+            for: model,
+            directory: dir,
+            clearSentinel: true,
+            intent: .automatic,
+            service: service
+        )
+        let downloaded = await ModelDownloadService.downloadMissingFiles(
+            for: model,
+            to: dir,
+            intent: .automatic,
+            service: service
+        )
+
+        #expect(!verified && !downloaded)
+        #expect(await requests.count == 0)
+        #expect(try snapshot(dir) == before)
+    }
+
+    @MainActor
+    @Test("Explicit completeness still reaches the real listing boundary")
+    func explicitCompletenessRequestControl() async throws {
+        let dir = try makeBundle()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try write(120, to: dir.appendingPathComponent("config.json"))
+        let requests = CompletenessRequestFixture()
+        let service = HuggingFaceService(metadataRequest: { try await requests.respond($0) })
+        let model = MLXModel(id: "org/installed", name: "Installed", description: "", downloadURL: "")
+        let verified = await ModelDownloadService.ensureComplete(
+            for: model,
+            directory: dir,
+            intent: .explicitRepair,
+            service: service
+        )
+        #expect(verified)
+        #expect(await requests.count == 1)
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent(".topup_done").path))
+        #expect(try Data(contentsOf: dir.appendingPathComponent("config.json")) == Data(repeating: 0x41, count: 120))
+    }
+
+    private func snapshot(_ directory: URL) throws -> [String: Data] {
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        return try Dictionary(uniqueKeysWithValues: files.map { ($0.lastPathComponent, try Data(contentsOf: $0)) })
     }
 
     @Test("Every weight extension is covered, not just .safetensors")
@@ -109,11 +183,29 @@ struct AutoTopUpLeavesUserBundlesAloneTests {
         ]
 
         let auto = ModelDownloadService.filesToFetch(
-            remote: remoteFiles, under: dir, intent: .automatic)
+            remote: remoteFiles,
+            under: dir,
+            intent: .automatic
+        )
         #expect(auto.isEmpty, "no weight format may be auto-fetched into a user's bundle")
 
         let repair = ModelDownloadService.filesToFetch(
-            remote: remoteFiles, under: dir, intent: .explicitRepair)
+            remote: remoteFiles,
+            under: dir,
+            intent: .explicitRepair
+        )
         #expect(repair.count == remoteFiles.count)
+    }
+}
+
+private actor CompletenessRequestFixture {
+    var count = 0
+
+    func respond(_ request: URLRequest) throws -> (Data, URLResponse) {
+        count += 1
+        let url = try #require(request.url)
+        #expect(url.path == "/api/models/org/installed/tree/main")
+        let body = #"[{"type":"file","path":"config.json","size":120}]"#
+        return (Data(body.utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     }
 }
