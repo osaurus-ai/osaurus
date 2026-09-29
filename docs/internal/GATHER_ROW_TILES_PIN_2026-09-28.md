@@ -1,45 +1,31 @@
-# Gather row tiles engine pin — proof pending
+# Gather row tiles engine pin — closeout in progress
 
-Candidate engine: `e8b5a7eb75ef76cd6629fb17c899e05ed4b1d359`.
-Core: `083a6742d` (osaurus-ai/mlx#12, draft).
+Candidate engine: `094cc09b8e0130504976a38370a5a92fbcf258b0`.
+Core: `083a6742d4beb0a2d3484e1ba35c7f360aec2a06` (osaurus-ai/mlx#12, merged).
+All six executable pin/contract locations agree. Historical receipts retain their original source and binary identities.
 
-All six executable pin/contract locations agree. The historical composite-cache
-receipt remains unchanged because it describes the previous tested app.
+The engine consumes expert-boundary scheduling for floating-point and eligible affine gathered Metal matmul, the partial-K NAX bounds correction, dynamic Qwen compiled B2-to-B1 score expansion, safe media-cache boundaries, tied-head activation dtype and native Gemma KV storage precision. It also contains the previously merged Unicode BPE, BPE ordering, quantization_config and SDK-gated JACCL changes. Small decode and custom quantization paths are not claimed to accelerate. The pin introduces no sampling or residency setting override.
 
-This consumes expert-boundary scheduling for floating-point and affine gathered
-Metal matmul, a partial-K NAX bounds correction, and the already-merged Unicode
-BPE, BPE merge ordering, quantization_config, and SDK-gated JACCL changes.
-No application sampling or residency setting is changed by this pin.
+## Completed evidence and source boundaries
 
-Required before merge:
-- [ ] Exact-head engine CI and numerical/batch/cache regressions.
-- [ ] Fresh pinned Release app build and recorded binary identity.
-- [ ] Text multi-turn and concurrent requests with bundle defaults.
-- [ ] Real image/video payloads, repeated-media cache hits and changed-media misses.
-- [ ] Prefix/disk restoration with architecture companion state and truthful telemetry.
-- [ ] Applicable full eval results, every failed/skipped row attributed, final CI.
+The prior app `2608bc55aae8a8538181f843322451fa616c8433` pinned engine `e8b5a7eb75ef76cd6629fb17c899e05ed4b1d359` and passed a Release build plus actual GUI cold generation, follow-up disk restore and process-restart restore. Binary SHA256: `afd4a9a454fbad66fae5515ae2cb090590c66266f60b9566ddeb2f90a4297290`. The three answers completed naturally and coherently at 55.8, 57.2 and 57.8 tokens/s (57, 31 and 25 tokens). Eleven new cache payloads each retained 60 FP16 tensors, without FP32 promotion. Peak physical footprint was 13.87 GB. This proves those cache-correctness rows; it is not a paired speed benchmark or proof of requested compiled execution.
 
-The smart-swapping/batching setting audit is a separate follow-up: new-user ON,
-persisted OFF, same-model shared batching, different-model unload/load/restore,
-OFF coexistence with memory admission, cancellation and parent continuation.
-Source defaults alone do not close those live proof rows.
+The current engine's complete tree equals the tested Xcode wiring candidate `c0deb299e4c0c65233135e57a5491135e76d56ed`. Its only changes from e8 are the standalone Xcode project/config inclusion of existing SDK-gated JACCL wrappers. SwiftPM configuration and all runtime source/test files are unchanged from e8. The standalone Xcode link omission was reproduced before the wiring fix; candidate build passes, with remaining test status tracked separately. This does not establish distributed hardware or collective execution.
 
-No release or tag. Merge only after the required live evidence is complete.
+Exact-e8 local checks completed: SwiftPM build, Cmlx 2/2, MLX XCTest 545 passes with three documented skips, Swift Testing 11/11, and CMake 251/251. Prior numerical, batch and cache diagnostics include 396 numerical cases, 64 targeted regressions, real concurrent requests on three architectures and supported generated media replay/follow-up. Four focused dtype/cache tests passed at e8. The prior app's nine CI checks pass. Eval CI is scripted/model-free and cannot supply live AgentLoop/Frontier model scores.
 
-The updated candidate also fixes a shapeless compiled Qwen MoE batch contraction
-crash and propagates canonical Qwen image/video and Nemotron image cache
-boundaries. Engine diagnostics passed real concurrent requests on three
-architectures, generated restored Qwen image/video and Nemotron/Gemma image
-replays, changed-media misses, and parsed follow-ups. These do not close the
-pinned app GUI gate.
+This app candidate merges upstream main `0a114acdb` before repinning. Upstream application changes mean the new app must be built and checked; the historical2608 GUI run is not relabeled as execution of the new app.
 
-Known separate follow-up: Nemotron video EVS still falls back to full prefill
-because a safe recurrent prefix checkpoint is absent. No video-cache reuse
-claim for that path. Gemma4 video is explicitly unsupported. Full-model
-performance remains under paired measurement; no universal chip speed claim.
+## Remaining promotion gates
 
-The pin also consumes the focused tied-head activation-dtype correction (vmlx-swift#523). Optional Q6 head conversion now preserves the source FP16 stream instead of promoting Gemma arithmetic through mixed BF16/FP16 types. Engine numerical, matched-output performance, two-slot concurrency and image-cache replay tests pass. The newly pinned app must be rebuilt and re-proven; previous GUI rows describe the prior pin.
+- [ ] Final-head engine CI/local standalone Xcode test closeout with skips attributed.
+- [ ] Fresh pinned Release app build, binary identity and final app CI.
+- [ ] Current pinned app B2 concurrency with coherent completed responses and throughput/residency evidence.
+- [ ] Current pinned GUI real-media replay, changed-media miss and generated history follow-up, preserving architecture companion state and truthful cache telemetry.
+- [ ] Applicable live model eval scores, with every failure/skip attributed; model-free CI is insufficient.
 
-The app cache identity now includes the optional tied-head policy (including diagnostic bit/group overrides) and the source-dtype activation contract. Old incompatible entries remain on disk but cannot match the new namespace. Compile diagnostics distinguish a requested path from proof that compilation executed. These host changes require fresh tests/build/GUI evidence.
+Gemma cache telemetry must distinguish rotating/full KV and disk restore from TurboQuant layers and paged RAM; requested settings alone are not execution evidence. The cache namespace includes tied-head policy and source activation contract, while native Gemma storage has its own versioned identity.
 
-The latest engine also preserves native Gemma KV storage precision on disk/paged restore, through a model-owned versioned namespace. The preceding pinned app exposed FP16 cold caches becoming BF16 on restore and FP32 on append. Two new Metal tests pass on both Gemma entrypoints and mixed sliding/full caches across FP16/BF16/FP32. Fresh app proof for this follow-up is pending.
+Nemotron EVS video still falls back to full prefill without a safe recurrent checkpoint; video-cache reuse is not claimed. Gemma4 video is unsupported. No universal-chip speedup or physical M3/M4 result is claimed.
+
+Smart-swap default ON, persisted OFF, same-model batching, different-model unload/load/restore, OFF coexistence, cancellation and parent continuation remain separately scoped live proof. No release or tag. Merge only after the applicable live gates close.
