@@ -2852,8 +2852,9 @@ extension FloatingInputCard {
         // A remote agent's run (workspace or directly shared) never draws
         // from this Mac's wallet, so the personal balance is noise there.
         let showCredits = showCreditsChip && !remoteConnectionPending && !isRemoteAgentRun
-        // Team-agent chat: the run is billed to the workspace pool (relayed
-        // live by the host), so show that spend explicitly rather than the
+        // Pool-billed chat — a teammate's agent (billed by its host, relayed
+        // live) or one of this Mac's own shared agents with "Bill the
+        // workspace pool" on: show that spend explicitly rather than the
         // personal wallet, which this session never draws from.
         if let workspacePoolLabel, !remoteConnectionPending {
             FloatingWorkspacePoolChip(

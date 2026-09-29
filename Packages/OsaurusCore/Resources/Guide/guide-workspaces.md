@@ -13,7 +13,7 @@ Workspaces need an Osaurus identity (see the Identity topic) and Osaurus Router 
 ## Sharing and the roster
 
 - **Members** join through invite links the owner or an admin creates; the roster shows every member and their shared agents with online/offline presence. Roles: owner, admin, member (all three can share agents), viewer (chat only).
-- **Share agent** (Workspaces → *workspace* → Shared Agents) publishes one of your agents to the workspace; **Unshare** revokes it for everyone at once. Each shared agent has a **Bill the workspace pool** switch: on, the cloud calls it makes for teammates draw from the pool instead of your balance.
+- **Share agent** (Workspaces → *workspace* → Shared Agents) publishes one of your agents to the workspace; **Unshare** revokes it for everyone at once. Teammates' runs of a shared agent always draw from the workspace pool. Each agent you share also has a **Bill the workspace pool** switch for *your own* chats with it — on by default once the agent is shared, so your cloud calls draw from the pool too; turn it off to bill them to your personal balance instead. The composer's pool chip (workspace name · pool · balance) shows which balance a chat is spending; when the switch is off you see your personal credits chip.
 - **Workspace pool** is the shared balance on the overview; pool-billed runs show up there. A paused or suspended workspace pauses invites, shared agents, and pool-billed inference until the owner renews.
 - Leaving a workspace drops your access to its shared agents and pool and revokes the agents you shared.
 

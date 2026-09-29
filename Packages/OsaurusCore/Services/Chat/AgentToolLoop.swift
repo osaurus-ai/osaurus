@@ -1345,9 +1345,18 @@ enum AgentToolLoop {
         if !recovery.workspaceBlocked.isEmpty {
             text += " " + recovery.workspaceBlocked.sorted().joined(separator: ", ")
                 + " need a workspace attached to THIS chat and there is none, so no call can write, read or run "
-                + "files here; do not announce that again. Tell the user to attach a folder via the Folder chip "
-                + "(or enable Autonomous execution) and give them the content directly in your answer"
-                + (recovery.exposed.contains("share_artifact") ? " (share_artifact can carry it)." : ".")
+                + "files here; do not announce that again. "
+            // The picker-backed ask is the one actionable step when it is in
+            // the schema; otherwise the user has to reach for the chip.
+            if recovery.exposed.contains(PromptWorkingFolderTool.toolName) {
+                text += "Call prompt_working_folder now to open a folder picker for the user — the run "
+                    + "continues with the file tools once they pick; if they cancel, the turn ends "
+                    + "with a notice and the content can go directly in your next answer"
+            } else {
+                text += "Tell the user to attach a folder via the Folder chip "
+                    + "(or enable Autonomous execution) and give them the content directly in your answer"
+            }
+            text += recovery.exposed.contains("share_artifact") ? " (share_artifact can carry it)." : "."
         }
         text += " If what you described needs a tool in none of these groups, say plainly that you cannot do it "
             + "in this chat and give the user the result you have."
@@ -1953,12 +1962,16 @@ enum AgentToolLoop {
     /// serial model-order execution — running siblings in parallel would
     /// let calls AFTER the intercept execute and land in history, where
     /// the serial path stops immediately.
-    static let interceptToolNames: Set<String> = ["complete", "clarify"]
+    static let interceptToolNames: Set<String> = [
+        "complete", "clarify", PromptWorkingFolderTool.toolName,
+    ]
 
     /// Agent-loop control calls are not user-task actions and therefore do
     /// not consume the structural tracking threshold. `share_artifact` is an
     /// action because it performs the requested delivery.
-    static let taskTrackingControlToolNames: Set<String> = ["todo", "complete", "clarify"]
+    static let taskTrackingControlToolNames: Set<String> = [
+        "todo", "complete", "clarify", PromptWorkingFolderTool.toolName,
+    ]
 
     static let taskTrackingRequiredReason = "task_tracking_required"
     static let todoProgressUpdateRequiredReason = "todo_progress_update_required"

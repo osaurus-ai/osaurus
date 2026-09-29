@@ -517,6 +517,14 @@ final class ChatSession: ObservableObject {
     /// Privacy review cancel restores the draft instead of committing the run;
     /// it must not auto-dispatch a queued follow-up during cleanup.
     private var suppressQueuedSendFlushForCurrentRun = false
+    /// Set by the `prompt_working_folder` intercept after the user picked a
+    /// folder mid-run. The run ends there (the folder root, execution mode
+    /// and tool schema are all frozen per turn), and `completeRunCleanup`
+    /// immediately continues the conversation with `send("")` so the model
+    /// resumes with the folder bound — without the user typing anything.
+    /// Cleared by every fresh send / stop / reset so a stale flag can never
+    /// auto-continue an unrelated run.
+    private var pendingWorkingFolderContinuation = false
 
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
@@ -2953,6 +2961,7 @@ final class ChatSession: ObservableObject {
         awaitingPreSendHandshake = false
         turnsRollbackOnCancel = nil
         suppressQueuedSendFlushForCurrentRun = false
+        pendingWorkingFolderContinuation = false
         // Clear session identity for new chat
         if let prev = sessionId {
             let key = sessionStateKey(prev)
@@ -4358,6 +4367,23 @@ final class ChatSession: ObservableObject {
             flushQueuedSendIfEligible()
         }
         suppressQueuedSendFlushForCurrentRun = false
+        continueAfterWorkingFolderAttachIfEligible()
+    }
+
+    /// Auto-continue after a mid-run `prompt_working_folder` pick. Runs
+    /// AFTER the queued-send flush: a user message the user queued while the
+    /// picker was up already carries the conversation forward (and `send`
+    /// clears the flag), so the continuation only fires when nothing else
+    /// did. Stopped or errored runs leave the transcript as-is — the folder
+    /// is attached, the user decides what happens next.
+    private func continueAfterWorkingFolderAttachIfEligible() {
+        guard pendingWorkingFolderContinuation else { return }
+        pendingWorkingFolderContinuation = false
+        guard !stopRequested, lastStreamError == nil else { return }
+        guard activeRunId == nil, !isStreaming else { return }
+        guard folderState.hasActiveFolder else { return }
+        debugLog("send: continuing after prompt_working_folder attached a folder")
+        send("")
     }
 
     /// Outcome of the auto-title eligibility check for one clean run
@@ -6291,6 +6317,7 @@ final class ChatSession: ObservableObject {
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
         suppressQueuedSendFlushForCurrentRun = false
+        pendingWorkingFolderContinuation = false
 
         // Any new user input clears a prior completion banner — we're
         // moving on to a follow-up. Clarify prompts (when active) live
@@ -6480,6 +6507,9 @@ final class ChatSession: ObservableObject {
                 }
 
                 var assistantTurn = ChatTurn(role: .assistant, content: "")
+                // The footer's total response time runs from the keypress, so
+                // it covers the pre-send warm-up (model load) and setup above.
+                assistantTurn.requestedAt = sendRequestedAt
                 turns.append(assistantTurn)
                 // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
                 // user-only while isStreaming is true and the table early-returns without assistant rows.
@@ -7156,6 +7186,28 @@ final class ChatSession: ObservableObject {
                             }
                             // Fall through on failure (empty question,
                             // etc.) so the model sees the rejection.
+                        }
+                        if inv.toolName == PromptWorkingFolderTool.toolName {
+                            // The user picked a folder inside the tool call
+                            // and the session already holds it (per-chat
+                            // folder + sticky agent record + sandbox off).
+                            // Nothing in THIS run can use it, though: the
+                            // folder root TaskLocal, the execution mode and
+                            // the tool schema were all frozen when the turn
+                            // started. End the run here and let
+                            // `completeRunCleanup` re-enter `send("")`, which
+                            // recomposes with the folder bound and the file
+                            // tools in the schema — the model continues from
+                            // the success envelope in history without the
+                            // user typing anything. A cancel / failure
+                            // envelope falls through so the model sees it
+                            // and delivers without the folder.
+                            if !ToolEnvelope.isError(resultText) {
+                                self.turns.append(recordToolTurn(resultText, callId: callId))
+                                self.rebuildVisibleBlocks()
+                                self.pendingWorkingFolderContinuation = true
+                                return AgentLoopToolExecution(result: resultText, endRun: true)
+                            }
                         }
 
                         // Tools loaded via capabilities, first-use sandbox
@@ -9068,14 +9120,27 @@ struct ChatView: View {
     }
 
     /// Workspace name for the composer's "Workspace pool" spend chip when the
-    /// active tab chats with a teammate's shared agent; nil for local agents
-    /// and for read-only teammate conversations served by this host.
+    /// active tab's cloud calls bill a workspace pool: a teammate's shared
+    /// agent (billed by its host), or one of this Mac's own agents whose
+    /// "Bill the workspace pool" preference is on. Nil for personally billed
+    /// local agents and for read-only teammate conversations served here.
     private var workspacePoolLabel: String? {
         // Agents shared directly (invite link) carry no workspace id and
         // bill nothing to a pool.
-        guard let workspaceId = activeWorkspaceId else { return nil }
+        guard let workspaceId = poolBillingWorkspaceId else { return nil }
         return rosterStore.rosters.first(where: { $0.id == workspaceId })?.workspace.name
             ?? L("Workspace")
+    }
+
+    /// The workspace whose pool this tab's turns bill, for the composer chip.
+    /// Remote tabs: the tab's workspace share. Local tabs: the agent's own
+    /// pool-billing preference — the same lookup `RemoteProviderService`
+    /// makes when it attaches `workspace_context`, so chip and charge agree.
+    /// `workspacesService` is observed so flipping the switch re-renders.
+    private var poolBillingWorkspaceId: String? {
+        if let workspaceId = activeWorkspaceId { return workspaceId }
+        guard observedSession.workspaceContext == nil else { return nil }
+        return WorkspacesService.workspaceContext(forAgentId: windowState.agentId)?.workspaceId
     }
 
     /// Where the composer lock's settings shortcut lands: the workspace
@@ -9428,6 +9493,10 @@ struct ChatView: View {
     @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
     @ObservedObject private var workspaceConnectService = WorkspaceAgentConnectService.shared
+    /// Per-agent pool-billing preference for the composer chip on local
+    /// tabs; publishes when the "Bill the workspace pool" switch changes or
+    /// the roster-driven default binds an agent.
+    @ObservedObject private var workspacesService = WorkspacesService.shared
 
     /// Convenience accessor for the session (uses observedSession for proper SwiftUI updates)
     private var session: ChatSession { observedSession }
@@ -9947,7 +10016,7 @@ struct ChatView: View {
                                     }(),
                                     isRouterBilledSession: observedSession.isOsaurusRouterSession,
                                     workspacePoolLabel: workspacePoolLabel,
-                                    workspacePoolId: activeWorkspaceId,
+                                    workspacePoolId: poolBillingWorkspaceId,
                                     imageComposerSettings: $observedSession.imageComposerSettings,
                                     onSend: { manualText in
                                         if let manualText = manualText {

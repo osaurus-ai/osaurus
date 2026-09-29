@@ -98,7 +98,8 @@ enum ContentBlockKind: Equatable {
         tokenCount: Int?,
         unclosedReasoning: Bool,
         modelLoad: TimeInterval?,
-        cachedInputTokens: Int?
+        cachedInputTokens: Int?,
+        totalDuration: TimeInterval?
     )
     /// Bouncing-dots progress row. `.generating` while the model is still
     /// producing output (load / prefill / first token); `.finishing` once the
@@ -178,14 +179,15 @@ enum ContentBlockKind: Equatable {
             return lName == rName && lSize == rSize
 
         case let (
-            .generationStats(lTtft, lTps, lCount, lUnclosed, lLoad, lCached),
-            .generationStats(rTtft, rTps, rCount, rUnclosed, rLoad, rCached)
+            .generationStats(lTtft, lTps, lCount, lUnclosed, lLoad, lCached, lTotal),
+            .generationStats(rTtft, rTps, rCount, rUnclosed, rLoad, rCached, rTotal)
         ):
             // `modelLoad` / `cachedInputTokens` participate: this equality
             // decides whether the cell re-renders, so omitting them would leave
             // a stale (or missing) chip on screen when only that value changed.
             return lTtft == rTtft && lTps == rTps && lCount == rCount
                 && lUnclosed == rUnclosed && lLoad == rLoad && lCached == rCached
+                && lTotal == rTotal
 
         case let (.typingIndicator(lPhase), .typingIndicator(rPhase)):
             // The phase decides the label the cell shows; a change must
@@ -467,6 +469,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         unclosedReasoning: Bool = false,
         modelLoad: TimeInterval? = nil,
         cachedInputTokens: Int? = nil,
+        totalDuration: TimeInterval? = nil,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
@@ -478,7 +481,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 tokenCount: tokenCount,
                 unclosedReasoning: unclosedReasoning,
                 modelLoad: modelLoad,
-                cachedInputTokens: cachedInputTokens
+                cachedInputTokens: cachedInputTokens,
+                totalDuration: totalDuration
             ),
             position: position
         )
@@ -591,6 +595,11 @@ extension ContentBlock {
         activeTurnId: UUID? = nil,
         agentName: String,
         previousTurn: ChatTurn? = nil,
+        // `requestedAt ?? createdAt` of the first assistant turn in `previousTurn`'s group,
+        // for suffix regenerations whose response began before `turns[0]`.
+        // Anchors the footer's total response time. Ignored unless
+        // `previousTurn` is an assistant turn.
+        previousGroupStartedAt: Date? = nil,
         // Gates the marker-less watcher envelope parse (see `DispatchEnvelope`).
         // `.chat` for callers that never render dispatched sessions.
         sessionSource: SessionSource = .chat,
@@ -603,6 +612,10 @@ extension ContentBlock {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
         var previousTurnId: UUID? = previousTurn?.id
+        // Start of the assistant group being built: the first assistant turn
+        // after the user message. A tool-calling response spans several
+        // assistant turns, and the footer's total time covers all of them.
+        var groupStartedAt: Date? = previousTurn?.role == .assistant ? previousGroupStartedAt : nil
 
         let filteredTurns = turns.filter { $0.role != .tool }
 
@@ -619,6 +632,14 @@ extension ContentBlock {
             // User messages always start a new group (each is distinct input).
             // Assistant messages group consecutive turns (continuing responses).
             let isFirstInGroup = turn.role != previousRole || turn.role == .user
+            if isFirstInGroup {
+                groupStartedAt = turn.role == .assistant ? (turn.requestedAt ?? turn.createdAt) : nil
+            } else if let requestedAt = turn.requestedAt {
+                // A new run joined an existing group (Regenerate / retry on a
+                // later tool-calling step keeps the earlier steps): time from
+                // its own keypress, not the original send.
+                groupStartedAt = requestedAt
+            }
 
             if isFirstInGroup, let prevId = previousTurnId {
                 // Use the previous turn ID for the stable block ID (referencing the gap)
@@ -1015,9 +1036,22 @@ extension ContentBlock {
             // landed.
             let isPendingIntermediateStep = isActive && turn.pendingToolName != nil
 
+            // Wall-clock from the keypress to the moment the run ended: model
+            // load, prefill, every tool step, approval prompts and the local
+            // cache-store tail all included. Withheld while the run is still
+            // open so the chip lands once, final.
+            let totalDuration: TimeInterval? = {
+                guard turn.role == .assistant, !isActive, let start = groupStartedAt,
+                    let end = turn.completedAt ?? turn.lastOutputAt
+                else { return nil }
+                let elapsed = end.timeIntervalSince(start)
+                return elapsed >= 0.05 ? elapsed : nil
+            }()
+
             // stats must be shown only on the final turn (intermediate tool calling turns should not display them)
             if !isStreaming && !isPendingIntermediateStep && turn.role == .assistant && isLastInGroup,
                 turn.timeToFirstToken != nil || turn.generationTokensPerSecond != nil
+                    || (totalDuration != nil && turn.lastOutputAt != nil)
             {
                 turnBlocks.append(
                     .generationStats(
@@ -1028,6 +1062,7 @@ extension ContentBlock {
                         unclosedReasoning: turn.unclosedReasoning,
                         modelLoad: turn.modelLoadSeconds,
                         cachedInputTokens: turn.effectiveCachedInputTokens,
+                        totalDuration: totalDuration,
                         position: .middle
                     )
                 )

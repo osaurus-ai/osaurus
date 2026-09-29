@@ -33,7 +33,7 @@ final class AgentTodoRunScope: @unchecked Sendable {
     /// Loop-control tools. Calling these is bookkeeping, never task progress,
     /// so they must not count as work toward a newly checked item.
     static let loopControlToolNames: Set<String> = [
-        "todo", "complete", "clarify", "share_artifact",
+        "todo", "complete", "clarify", "share_artifact", PromptWorkingFolderTool.toolName,
     ]
 
     var hasCurrentRunTodo: Bool {

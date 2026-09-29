@@ -293,6 +293,9 @@ struct MCPHTTPHandlerTests {
                 == ToolRegistry.externallyDeniedHostToolNames
                 .union(ToolRegistry.agentChannelToolNames)
                 .union(AppleApp.allToolNames)
+                // Pops an AppKit folder picker on a chat window — never
+                // reachable from a remote surface.
+                .union([PromptWorkingFolderTool.toolName])
         )
         // Every REGISTERED agent_channel_* tool must be in the deny family.
         let registeredChannelNames = Set(

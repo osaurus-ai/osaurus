@@ -1276,10 +1276,10 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         "Tool '\(toolId)' is a workspace tool and cannot be loaded here — "
                         + "it activates only when a working folder is attached to this "
                         + "chat, and this chat has none (no folder was picked, or it was "
-                        + "cleared). Ask the user to attach a folder via the Folder chip — "
-                        + "that also becomes the agent's Working Folder for future chats and "
-                        + "background runs — or enable Autonomous execution; deliver file "
-                        + "content with share_artifact meanwhile."
+                        + "cleared). " + PromptWorkingFolderTool.attachFolderSteer
+                        + " An attached folder also becomes the agent's Working Folder for "
+                        + "future chats and background runs; enabling Autonomous execution is "
+                        + "the other option. Deliver file content with share_artifact meanwhile."
                 )
             )
         }

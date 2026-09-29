@@ -347,7 +347,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
 
                     ## Boundaries
                     - Only use the tools above that are actually in your tool list. In sandbox mode the folder may be read-only and shell/git run in the sandbox instead — the `## Files` rules in your system prompt win over this skill
-                    - If none of these tools are present, ask the user to attach a working folder
+                    - If none of these tools are present, call `prompt_working_folder` so the user can pick a working folder (if that tool is missing too, ask them to attach one via the Folder chip)
                     - Stay inside the mounted folder; do not attempt paths outside it
                     """,
                 isBuiltIn: true,

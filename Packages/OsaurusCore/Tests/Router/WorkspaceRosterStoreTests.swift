@@ -277,4 +277,55 @@ struct WorkspaceRosterStoreTests {
         store.apply(rosters: [ws1, ws2])
         #expect(box.calls.count == 2)
     }
+
+    // MARK: - Default pool-billing hook
+
+    /// `apply` hands the pool-billing reconciler only the rosters the router
+    /// just VERIFIED: a workspace whose agent fetch failed keeps stale agents
+    /// and must not seed a billing binding. Nothing is called without an
+    /// installed reconciler, so roster fixtures never touch UserDefaults.
+    @Test func apply_reportsOnlyVerifiedRostersToDefaultPoolBillingReconciler() throws {
+        let store = makeStore()
+        let previous = WorkspaceRosterStore.defaultPoolBillingReconciler
+        defer { WorkspaceRosterStore.defaultPoolBillingReconciler = previous }
+
+        final class Box: @unchecked Sendable {
+            var calls: [[String]] = []
+        }
+        let box = Box()
+        WorkspaceRosterStore.defaultPoolBillingReconciler = { rosters in
+            box.calls.append(rosters.map(\.id))
+        }
+
+        let ws1 = WorkspaceRosterStore.WorkspaceRoster(
+            workspace: try Self.workspace(id: "ws-1", name: "Acme"),
+            agents: [try Self.agent(address: "0xaa", online: "true")]
+        )
+        let ws2 = WorkspaceRosterStore.WorkspaceRoster(
+            workspace: try Self.workspace(id: "ws-2", name: "Beta"),
+            agents: [try Self.agent(address: "0xbb", online: "false")]
+        )
+
+        store.apply(rosters: [ws1, ws2], verifiedWorkspaceIds: ["ws-1"])
+        #expect(box.calls == [["ws-1"]])
+
+        // Full refresh: every roster is verified.
+        store.apply(rosters: [ws1, ws2])
+        #expect(box.calls.count == 2)
+        #expect(Set(box.calls[1]) == ["ws-1", "ws-2"])
+
+        // Targeted `update` verifies just that one workspace.
+        store.update(workspaceId: "ws-2", agents: [try Self.agent(address: "0xcc", online: "true")])
+        #expect(box.calls.count == 3)
+        #expect(box.calls[2] == ["ws-2"])
+
+        // Nothing verified → nothing to seed from.
+        store.apply(rosters: [ws1], verifiedWorkspaceIds: [])
+        #expect(box.calls.count == 3)
+
+        // No reconciler installed → no call.
+        WorkspaceRosterStore.defaultPoolBillingReconciler = nil
+        store.apply(rosters: [ws1, ws2])
+        #expect(box.calls.count == 3)
+    }
 }

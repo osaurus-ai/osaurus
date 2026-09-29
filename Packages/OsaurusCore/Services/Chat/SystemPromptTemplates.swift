@@ -1255,7 +1255,8 @@ public enum SystemPromptTemplates {
             text +=
                 "You have no working folder and none of the listed agents has one, so agents "
                 + "cannot write files to disk — ask for the result in the answer, or for a file "
-                + "via `share_artifact`. "
+                + "via `share_artifact`; if the user wants files on disk, call "
+                + "`prompt_working_folder` first when it is in your tools. "
         }
         if !withFolder.isEmpty {
             let names = withFolder.map(\.name).joined(separator: ", ")

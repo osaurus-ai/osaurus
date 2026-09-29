@@ -390,6 +390,11 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// time-to-first-token window, or nil when the model was already resident
     /// (the overwhelmingly common case, and the one that must look unchanged).
     var modelLoadSeconds: TimeInterval?
+    /// When the user pressed Enter (or Regenerate / Save & Regenerate) for the
+    /// run this turn opened. Earlier than `createdAt` by the pre-send warm-up
+    /// (model load) and setup awaits. Set only on a run's first assistant turn;
+    /// anchors the footer's total response time.
+    var requestedAt: Date?
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
     /// remote APIs). Persisted as displayed; do not recompute it from a
     /// wall-clock interval that includes prefill or cache finalization.

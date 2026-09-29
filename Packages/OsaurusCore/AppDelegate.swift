@@ -225,6 +225,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // pruned). Installed here rather than in the store so unit tests
         // that replay roster fixtures never write the delegation config.
         WorkspaceRosterStore.installSpawnPoolAutoJoin()
+        // Own agents shared into a workspace bill that workspace's pool by
+        // default (opt-out via the "Bill the workspace pool" switch). Same
+        // reasoning for installing here: roster fixtures in tests must not
+        // write the billing preference.
+        WorkspaceRosterStore.installDefaultPoolBilling()
 
         // A phone paired before this launch: take the keep-awake assertion
         // and keep agents created from now on reachable over the relay. The

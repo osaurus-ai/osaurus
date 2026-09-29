@@ -328,7 +328,7 @@ enum FolderToolHelpers {
             kind: .unavailable,
             message:
                 "No working folder is selected for this chat — folder tools are "
-                + "unavailable. Ask the user to pick a folder via the Folder chip.",
+                + "unavailable. " + PromptWorkingFolderTool.attachFolderSteer,
             tool: tool,
             retryable: false
         )
