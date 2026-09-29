@@ -451,12 +451,16 @@ public enum SubagentToolVisibility {
         isDefault ? false : perAgentEnabled
     }
 
+    /// Whether `video` is available for an agent. Same contract as `image`:
+    /// only a custom agent's own toggle enables it. The Orchestrator never
+    /// generates video itself — it delegates to an agent that has it — so
+    /// the legacy `delegation.video_enabled` switch is ignored here.
     static func videoAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool
     ) -> Bool {
-        isDefault ? config.videoDelegationEnabled : perAgentEnabled
+        isDefault ? false : perAgentEnabled
     }
 
     /// Whether `applescript` is available for an agent. Only a custom agent's

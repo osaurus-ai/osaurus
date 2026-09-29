@@ -63,6 +63,20 @@ public struct SystemPromptComposer: Sendable {
         append(.static(id: PromptSectionID.persona, label: L("Persona"), content: effective))
     }
 
+    /// Replace the persona section in place (same position, same
+    /// cacheability). No-op when the rendered content is unchanged, so a
+    /// reconcile pass that agrees with the preview leaves the prefix bytes
+    /// untouched. Appends when no persona section exists yet.
+    mutating func replacePersona(systemPrompt: String) {
+        let effective = SystemPromptTemplates.effectivePersona(systemPrompt)
+        guard let index = sections.firstIndex(where: { $0.id == PromptSectionID.persona }) else {
+            append(.static(id: PromptSectionID.persona, label: L("Persona"), content: effective))
+            return
+        }
+        guard sections[index].content != effective else { return }
+        sections[index] = .static(id: PromptSectionID.persona, label: L("Persona"), content: effective)
+    }
+
     // MARK: - Memory Assembly
 
     /// Assemble the memory snippet for an agent. Returns `nil` when memory
@@ -240,6 +254,12 @@ public struct SystemPromptComposer: Sendable {
             frozenToolSpecs: frozenToolSpecs,
             frozenManifest: frozenManifest,
             trace: trace
+        )
+        reconcileOrchestratorAddendum(
+            composer: &comp,
+            snapshot: snapshot,
+            executionMode: executionMode,
+            toolset: toolset
         )
         appendGatedSections(
             composer: &comp,
@@ -1387,7 +1407,11 @@ public struct SystemPromptComposer: Sendable {
                             workspaceAgents: toolset.spawnTargets.workspaceAgents,
                             maxParallel: spawnBudgets.maxParallelSpawns,
                             maxRemoteParallel: spawnBudgets.maxRemoteParallelSpawns,
-                            launcherHasFolder: executionMode.usesHostFolderTools
+                            launcherHasFolder: executionMode.usesHostFolderTools,
+                            // The Orchestrator's delegation policy lives in its
+                            // addendum; it gets the roster + limits only so the
+                            // two blocks cannot contradict each other.
+                            targetsOnly: PromptProfile.resolve(snapshot: snapshot) == .osaurusAssistant
                         )
                     )
                 )
@@ -2335,6 +2359,12 @@ public struct SystemPromptComposer: Sendable {
             executionMode: executionMode
         )
         let toolset = previewToolset(snapshot: snapshot, executionMode: executionMode)
+        reconcileOrchestratorAddendum(
+            composer: &composer,
+            snapshot: snapshot,
+            executionMode: executionMode,
+            toolset: toolset
+        )
         // Sync soul read — the preview path is itself sync and the file
         // is tiny + local. `resolveSoul` is just an async wrapper around
         // `loadSoulContent` for trace marks, so calling the underlying
@@ -3667,24 +3697,99 @@ public struct SystemPromptComposer: Sendable {
         let basePrompt: String
         switch profile {
         case .osaurusAssistant:
-            let window = ContextSizeResolver.resolve(modelId: snapshot.model)
-            let toolsOff = resolveEffectiveToolsOff(
-                toolsDisabled: snapshot.toolsDisabled,
-                globalToolsDisabled: snapshot.globalToolsDisabled,
-                sizeClassDisablesTools: window.sizeClass.disablesTools,
-                executionMode: executionMode
+            // Preview exposure from durable state (configured pool, bound
+            // folder). `finalizeContext` re-renders against the resolved
+            // schema when the two disagree (cold model discovery, a target
+            // whose model is missing), so the shipped addendum never names
+            // a tool the request lacks.
+            basePrompt = orchestratorBasePrompt(
+                snapshot: snapshot,
+                executionMode: executionMode,
+                exposure: previewOrchestratorExposure(
+                    snapshot: snapshot,
+                    executionMode: executionMode
+                )
             )
-            let addendum = DefaultAgentSystemPromptBuilder.render(
-                compact: window.prefersCompactPrompt,
-                toolsAvailable: !toolsOff
-            )
-            let userPersona = snapshot.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            basePrompt = userPersona.isEmpty ? addendum : addendum + "\n\n" + snapshot.systemPrompt
         case .customAgent:
             basePrompt = snapshot.systemPrompt
         }
         composer.appendBasePrompt(systemPrompt: basePrompt)
         return composer
+    }
+
+    /// The Default agent's persona slot: the addendum rendered for the given
+    /// exposure, followed by the user's own persona text when set.
+    @MainActor
+    static func orchestratorBasePrompt(
+        snapshot: AgentConfigSnapshot,
+        executionMode: ExecutionMode,
+        exposure: DefaultAgentSystemPromptBuilder.Exposure
+    ) -> String {
+        let window = ContextSizeResolver.resolve(modelId: snapshot.model)
+        let toolsOff = resolveEffectiveToolsOff(
+            toolsDisabled: snapshot.toolsDisabled,
+            globalToolsDisabled: snapshot.globalToolsDisabled,
+            sizeClassDisablesTools: window.sizeClass.disablesTools,
+            executionMode: executionMode
+        )
+        let addendum = DefaultAgentSystemPromptBuilder.render(
+            compact: window.prefersCompactPrompt,
+            toolsAvailable: !toolsOff,
+            exposure: exposure
+        )
+        let userPersona = snapshot.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return userPersona.isEmpty ? addendum : addendum + "\n\n" + snapshot.systemPrompt
+    }
+
+    /// Synchronous exposure estimate for the Default agent, from the same
+    /// inputs `resolveTools` uses when no request-resolved `spawnTargets`
+    /// are available (`SpawnDescriptors.resolveForPreview`) and the
+    /// execution-mode folder gate. Matches the schema on the warm path;
+    /// `reconcileOrchestratorAddendum` closes the cold-miss gap.
+    @MainActor
+    static func previewOrchestratorExposure(
+        snapshot: AgentConfigSnapshot,
+        executionMode: ExecutionMode
+    ) -> DefaultAgentSystemPromptBuilder.Exposure {
+        let pools = configuredSpawnPools(snapshot: snapshot)
+        let targets = SpawnDescriptors.resolveForPreview(
+            agentIDs: pools.agents,
+            launcherModelOverride: pools.launcherModelOverride,
+            workspaceAgents: pools.workspaceAgents
+        )
+        let spawnAvailable =
+            targets.runnableAgentIDs.contains { $0 != snapshot.agentId }
+            || !targets.runnableWorkspaceAgents.isEmpty
+        let folderReadable =
+            executionMode.usesHostFolderTools || executionMode.usesSandboxTools
+        return DefaultAgentSystemPromptBuilder.Exposure(
+            spawnAvailable: spawnAvailable,
+            folderReadable: folderReadable
+        )
+    }
+
+    /// After the request schema is final, re-render the Default agent's
+    /// persona slot from the ACTUAL tool names when the preview exposure
+    /// guessed wrong. A no-op (byte-identical) on the common path, so the
+    /// KV prefix is unaffected; when it fires, the prompt now agrees with
+    /// the `tools[]` array instead of advertising `spawn_agent` /
+    /// `file_read` the request would refuse.
+    @MainActor
+    static func reconcileOrchestratorAddendum(
+        composer: inout SystemPromptComposer,
+        snapshot: AgentConfigSnapshot,
+        executionMode: ExecutionMode,
+        toolset: ResolvedToolset
+    ) {
+        guard PromptProfile.resolve(snapshot: snapshot) == .osaurusAssistant else { return }
+        let names = Set(toolset.tools.map(\.function.name))
+        let actual = DefaultAgentSystemPromptBuilder.Exposure.from(toolNames: names)
+        let basePrompt = orchestratorBasePrompt(
+            snapshot: snapshot,
+            executionMode: executionMode,
+            exposure: actual
+        )
+        composer.replacePersona(systemPrompt: basePrompt)
     }
 
     // MARK: - Message Array Helpers

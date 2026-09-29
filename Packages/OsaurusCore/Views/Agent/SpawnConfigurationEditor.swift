@@ -51,6 +51,14 @@ struct SpawnConfigurationEditor: View {
     @State private var isRefreshingModels = false
     @State private var connectedSpawnTargetIndex =
         RemoteProviderManager.ConnectedSpawnModelTargetIndex.empty
+    /// Bumped when `server-runtime.json` is saved so the "Configured
+    /// same-model local ceiling" row re-reads the runtime snapshot. The
+    /// Max-local stepper mirrors into Server Concurrent Sessions
+    /// asynchronously (`ServerController.applySpawnBatchLimit`), after this
+    /// body has already rendered; without a re-render the row kept showing
+    /// the pre-edit ceiling until the user left and came back (live proof,
+    /// 2026-09-29: stepper 2, row "up to 1").
+    @State private var runtimeSettingsRevision = 0
 
     private var isOrchestrator: Bool { excludedAgentID == nil }
 
@@ -89,6 +97,12 @@ struct SpawnConfigurationEditor: View {
         }
         .onDisappear { roster.endObserving() }
         .onReceive(agentManager.$agents) { _ in pruneMissingAgents() }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: ServerRuntimeSettingsStore.didSaveNotification
+            )
+            .receive(on: DispatchQueue.main)
+        ) { _ in runtimeSettingsRevision &+= 1 }
     }
 
     private func anchor(_ suffix: String) -> String? {
@@ -125,11 +139,18 @@ struct SpawnConfigurationEditor: View {
         return VStack(alignment: .leading, spacing: 8) {
             AgentSheetSectionLabel("Allowed agents")
             if selected.isEmpty {
-                emptyHint(
-                    isOrchestrator
-                        ? "No agents yet. Create starter agents below, or create your own in Agents — every new agent joins this list."
-                        : "None yet. Add an agent to delegate a task to it (using its own prompt + model)."
-                )
+                if isOrchestrator, !agentCandidates.isEmpty {
+                    // The silent failure state: agents exist but none is in
+                    // the pool, so the Orchestrator has no `spawn_agent` and
+                    // cannot delegate. Say so and offer the one-click repair.
+                    emptyPoolNotice(agentCount: agentCandidates.count)
+                } else {
+                    emptyHint(
+                        isOrchestrator
+                            ? "No agents yet. Create starter agents below, or create your own in Agents — every new agent joins this list."
+                            : "None yet. Add an agent to delegate a task to it (using its own prompt + model)."
+                    )
+                }
             } else {
                 FlowLayout(spacing: 6) {
                     ForEach(selected, id: \.self) { id in
@@ -159,11 +180,58 @@ struct SpawnConfigurationEditor: View {
                     }
                 }
                 if isOrchestrator, selected.isEmpty {
+                    if !agentCandidates.isEmpty {
+                        addAllAgentsButton
+                    }
                     starterAgentsButton
                 }
             }
         }
         .settingsLandingAnchor(anchor("allowedAgents"))
+    }
+
+    /// Orchestrator-only notice for an empty pool while custom agents exist.
+    private func emptyPoolNotice(agentCount: Int) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            Text(
+                String(
+                    format: L(
+                        "None of your %d agents is in this list, so the Orchestrator has no `spawn_agent` tool and cannot delegate. Add them here (or use Add all agents) to turn delegation back on."
+                    ),
+                    agentCount
+                )
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// One click puts every existing custom agent back in the pool — the
+    /// repair for a pool that ended up empty (a replace-list apply, an old
+    /// migration) while the agents themselves still exist.
+    private var addAllAgentsButton: some View {
+        Button {
+            var ids = spawnableAgentIDs
+            for candidate in agentCandidates where !ids.contains(candidate.id) {
+                ids.append(candidate.id)
+            }
+            spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(ids)
+            onChange()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "plus.circle").font(.system(size: 10, weight: .bold))
+                Text("Add all agents", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.accentColor)
+        }
+        .buttonStyle(.plain)
+        .help(L("Adds every existing agent to the Orchestrator's allowed list."))
+        .settingsLandingAnchor(anchor("addAllAgents"))
     }
 
     /// One-click runnable pool for a fresh install: Coder + Researcher +
@@ -559,6 +627,8 @@ struct SpawnConfigurationEditor: View {
                 .foregroundColor(theme.primaryText)
                 .frame(width: 76, alignment: .trailing)
         }
+        // Re-read the runtime snapshot after the mirrored Server save lands.
+        .id(runtimeSettingsRevision)
     }
 
     private var localExecutionContractSubtitle: LocalizedStringKey {

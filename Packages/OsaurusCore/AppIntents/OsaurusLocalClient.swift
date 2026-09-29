@@ -47,13 +47,15 @@ public final class OsaurusLocalClient: Sendable {
 
     // MARK: - Agent resolution
 
-    /// The currently active agent's id. "Ask Osaurus" targets whatever agent
-    /// the user has selected in the app (`AgentManager.activeAgentId`), which is
-    /// restored from persistence on launch. This may resolve to the built-in
-    /// "Osaurus" agent when that is the active one — which is why the run/dispatch
-    /// endpoints relax their built-in guard for loopback callers.
+    /// The agent a fresh "Ask Osaurus" targets: the new-chat agent
+    /// (`AgentManager.newChatAgentId` — the Orchestrator unless
+    /// `new_chat_agent` was applied), restored from persistence on launch.
+    /// Not the foreground chat's agent: a Siri/Shortcuts ask is a new
+    /// conversation, so it follows the same default as ⌘N. This commonly
+    /// resolves to the built-in "Osaurus" agent — which is why the
+    /// run/dispatch endpoints relax their built-in guard for loopback callers.
     public func activeAgentID() async -> String {
-        await MainActor.run { AgentManager.shared.activeAgentId.uuidString }
+        await MainActor.run { AgentManager.shared.newChatAgentId.uuidString }
     }
 
     // MARK: - Execution

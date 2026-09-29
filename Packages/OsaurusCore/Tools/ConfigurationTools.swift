@@ -241,6 +241,13 @@ enum ConfigurationReadNextStep {
         case "commands": return [.commands]
         case "channels": return [.channels]
         case "search": return [.searchProviders]
+        // Settings document sections read through `documentSectionRead`:
+        // the same inspect → apply short-circuit, so a `delegation` read
+        // carries the replace-list semantics of `spawnable_agents` with it.
+        case "memory": return [.memory]
+        case "default_agent": return [.defaultAgent]
+        case "tools": return [.tools]
+        case "delegation": return [.delegation]
         default: return nil
         }
     }
@@ -423,6 +430,8 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
         let envelope: String = await MainActor.run {
             let activeAgentId = AgentManager.shared.activeAgentId
             let activeAgent = AgentManager.shared.agent(for: activeAgentId)
+            let newChatAgentId = AgentManager.shared.newChatAgentId
+            let newChatAgent = AgentManager.shared.agent(for: newChatAgentId)
             let defaultConfig = DefaultAgentConfigurationStore.load()
 
             let visibleProviders = ConfigurationProviderReadVisibility.visibleProviders()
@@ -496,11 +505,52 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     "\(downloadingModels.count) model(s) downloading — poll osaurus_inspect({action: 'status'}) again.")
             }
 
+            // The Orchestrator's spawn pool. An empty pool is the one state
+            // in which the Orchestrator has no `spawn_agent` at all — the
+            // status read must say so instead of letting it pass as "no
+            // agents", and name the repair (a `delegation.spawnable_agents`
+            // apply, or Settings → Orchestrator → Add all agents).
+            let delegation = SubagentConfigurationStore.snapshot()
+            let customAgents = AgentManager.shared.agents.filter { !$0.isBuiltIn }
+            let poolMembers = delegation.spawnableAgentIDs.filter { id in
+                customAgents.contains { $0.id == id }
+            }
+            let poolState: String
+            if !poolMembers.isEmpty || !delegation.spawnableWorkspaceAgents.isEmpty {
+                poolState = "ready"
+            } else if customAgents.isEmpty {
+                poolState = "no_agents"
+            } else {
+                poolState = "empty"
+            }
+            if poolState == "empty" {
+                suggestions.append(
+                    "Spawn pool is EMPTY although \(customAgents.count) custom agent(s) exist — the "
+                        + "Orchestrator has no spawn_agent tool. Restore delegation with "
+                        + "osaurus_config apply `delegation: {spawnable_agents: [<names to allow>]}` "
+                        + "(the list replaces the pool) or Settings → Orchestrator → Add all agents.")
+            }
+
             let snapshot: [String: Any] = [
+                "spawn_pool": [
+                    "state": poolState,
+                    "local_agents": poolMembers.count,
+                    "workspace_agents": delegation.spawnableWorkspaceAgents.count,
+                    "custom_agents_total": customAgents.count,
+                    "max_parallel_local": SpawnBatchConcurrencyContract.configuredLimit(
+                        for: ServerRuntimeSettingsStore.snapshot()),
+                ],
                 "active_agent": [
                     "id": activeAgentId.uuidString,
                     "name": activeAgent?.displayName ?? "Default",
                     "is_built_in": activeAgent?.isBuiltIn ?? true,
+                ],
+                // The `new_chat_agent` section value: which agent NEW chats
+                // open with (the Orchestrator unless applied otherwise).
+                "new_chat_agent": [
+                    "id": newChatAgentId.uuidString,
+                    "name": newChatAgent?.displayName ?? "Default",
+                    "is_built_in": newChatAgent?.isBuiltIn ?? true,
                 ],
                 "default_agent": [
                     "model": defaultConfig.defaultModel ?? "",
@@ -1115,7 +1165,8 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
         case "find":
             let queryReq = requireString(args, "query", expected: "setting query", tool: name)
             guard case .value(let query) = queryReq else { return queryReq.failureEnvelope ?? "" }
-            let hits = SettingsSearchIndex.search(query).prefix(8).map { entry -> [String: Any] in
+            let lookup = Self.findSettings(query)
+            let hits = lookup.entries.prefix(8).map { entry -> [String: Any] in
                 var row: [String: Any] = [
                     "id": entry.id,
                     "title": entry.title,
@@ -1130,23 +1181,57 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
                 }
                 return row
             }
-            return ConfigurationReadNextStep.success(
-                tool: name,
-                result: [
-                    "query": query,
-                    "matches": Array(hits),
-                    "note": hits.isEmpty
-                        ? "No catalog match. Try another name, or action 'topics' then 'read'. "
-                            + "Do not spawn an agent or use Computer Use to hunt Settings. "
-                            + "Do not claim you changed a Settings-UI-only control."
-                        : "Quote the `path` breadcrumb. Settings-UI-only rows cannot be changed "
-                            + "with osaurus_config — tell the user to open that Management path. "
-                            + "Never spawn an agent or use Computer Use to find a setting.",
-                ]
-            )
+            var result: [String: Any] = [
+                "query": query,
+                "matches": Array(hits),
+                "note": hits.isEmpty
+                    ? "No catalog match. Try another name, or action 'topics' then 'read'. "
+                        + "Do not spawn an agent or use Computer Use to hunt Settings. "
+                        + "Do not claim you changed a Settings-UI-only control."
+                    : "Quote the `path` breadcrumb. Settings-UI-only rows cannot be changed "
+                        + "with osaurus_config — tell the user to open that Management path. "
+                        + "Never spawn an agent or use Computer Use to find a setting.",
+            ]
+            if let relaxed = lookup.relaxedQuery {
+                result["relaxed_query"] = relaxed
+            }
+            return ConfigurationReadNextStep.success(tool: name, result: result)
         default:
             return actionReq.failureEnvelope ?? ""
         }
+    }
+
+    /// Words a user (or the model relaying the user) wraps around a setting
+    /// name that never appear in a catalog title or keyword: intent verbs,
+    /// on/off state, and filler. Stripped only for the second, relaxed pass.
+    static let findIntentWords: Set<String> = [
+        "turn", "on", "off", "the", "a", "an", "my", "setting", "settings", "option",
+        "toggle", "switch", "where", "is", "are", "how", "to", "do", "i", "change",
+        "set", "find", "for", "in", "of", "can", "you", "please", "enable", "disable",
+        "enabled", "disabled", "stop", "start", "make", "it", "me", "up", "get",
+    ]
+
+    /// Catalog lookup for `osaurus_help find`. The catalog matcher requires
+    /// every query token inside ONE title/section/keyword, so a natural ask
+    /// like "turn off memory" misses the `Enable Memory` row (no keyword
+    /// carries "turn", "off" and "memory" together) even though the row is
+    /// exactly what the user means. When the strict pass is empty, retry
+    /// with intent/state words removed and report the query that matched so
+    /// the model can see what was searched. Management search (the UI) is
+    /// unchanged: it matches what the user typed.
+    static func findSettings(_ query: String) -> (entries: [SettingsSearchEntry], relaxedQuery: String?) {
+        let strict = SettingsSearchIndex.search(query)
+        if !strict.isEmpty { return (strict, nil) }
+        let kept =
+            query.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { !findIntentWords.contains($0) }
+        guard !kept.isEmpty else { return ([], nil) }
+        let relaxed = kept.joined(separator: " ")
+        guard relaxed != query.lowercased() else { return ([], nil) }
+        let hits = SettingsSearchIndex.search(relaxed)
+        return (hits, hits.isEmpty ? nil : relaxed)
     }
 }
 

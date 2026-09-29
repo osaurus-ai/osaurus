@@ -37,6 +37,13 @@ public struct AgentLoopTranscript: Sendable, Codable {
         /// Failure envelope kind (`execution_error`, `user_denied`, …) when
         /// `ok` is false.
         public let failureKind: String?
+        /// The worker the runtime actually resolved (`agent` / `agent_id` in
+        /// the settled `spawn_result`). `spawn_agent` accepts a name, a UUID
+        /// or a workspace address, so a scorer that pins a target must accept
+        /// any of them — Raptor addresses fixture workers by their visible
+        /// name ("Agent B") while cases list the fixture UUID.
+        public let resolvedAgentName: String?
+        public let resolvedAgentId: String?
 
         public init(
             target: String?,
@@ -46,7 +53,9 @@ public struct AgentLoopTranscript: Sendable, Codable {
             summary: String? = nil,
             sessionId: String? = nil,
             needsInput: Bool? = nil,
-            failureKind: String? = nil
+            failureKind: String? = nil,
+            resolvedAgentName: String? = nil,
+            resolvedAgentId: String? = nil
         ) {
             self.target = target
             self.continuedSessionId = continuedSessionId
@@ -56,6 +65,21 @@ public struct AgentLoopTranscript: Sendable, Codable {
             self.sessionId = sessionId
             self.needsInput = needsInput
             self.failureKind = failureKind
+            self.resolvedAgentName = resolvedAgentName
+            self.resolvedAgentId = resolvedAgentId
+        }
+
+        /// True when `expected` names this row's worker by the raw `agent`
+        /// argument, the resolved agent name, or the resolved agent UUID
+        /// (case-insensitive). An empty `expected` pins a row that passed no
+        /// `agent` at all (a `continue`-only follow-up).
+        public func addresses(_ expected: String) -> Bool {
+            let want = expected.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let raw = target?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !want.isEmpty else { return raw.isEmpty }
+            return [target, resolvedAgentName, resolvedAgentId]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .contains(want)
         }
     }
 
@@ -313,7 +337,9 @@ public struct AgentLoopTranscript: Sendable, Codable {
                 model: payload?["model"] as? String,
                 summary: payload?["summary"] as? String,
                 sessionId: payload?["session_id"] as? String,
-                needsInput: payload?["needs_input"] as? Bool
+                needsInput: payload?["needs_input"] as? Bool,
+                resolvedAgentName: payload?["agent"] as? String,
+                resolvedAgentId: payload?["agent_id"] as? String
             )
         }
         return SpawnCallObservation(
@@ -1039,8 +1065,21 @@ public enum AgentLoopEvaluator {
                 let loaded = await CapabilityLoadBuffer.shared.drain()
                 toolScope.activate(loaded)
             }
+            // Chat-surface parity: the model reads the compact spawn result
+            // (digest, handles, deliverables, one accounting line — shorter
+            // digest on a compact launcher); the transcript rows below keep
+            // the full envelope for scoring and telemetry.
+            let modelVisible =
+                inv.toolName == SubagentCapabilityRegistry.spawnAgentToolName
+                    && SpawnResultCompaction.applies(to: result)
+                ? SpawnResultCompaction.modelVisible(
+                    result,
+                    prefersCompactPrompt: ContextSizeResolver.resolve(modelId: resolvedModel)
+                        .prefersCompactPrompt
+                )
+                : result
             history.append(
-                ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
+                ChatMessage(role: "tool", content: modelVisible, tool_calls: nil, tool_call_id: callId)
             )
             transcriptCalls.append(
                 .init(

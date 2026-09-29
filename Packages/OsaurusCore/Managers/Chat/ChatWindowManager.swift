@@ -140,7 +140,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         let windowId = UUID()
-        let effectiveAgentId = agentId ?? AgentManager.shared.activeAgentId
+        // A brand-new chat opens on the new-chat agent (the Orchestrator
+        // unless `new_chat_agent` says otherwise) — not on whichever agent
+        // the last window happened to be browsing.
+        let effectiveAgentId = agentId ?? AgentManager.shared.newChatAgentId
 
         let info = ChatWindowInfo(
             id: windowId,

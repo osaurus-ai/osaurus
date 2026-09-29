@@ -34,6 +34,12 @@ public protocol SubagentKind: Sendable {
     /// mirror it into a duplicate Activity row. Defaults to false.
     var suppressActivityMirror: Bool { get }
 
+    /// The persisted worker session this run will create or resume, known
+    /// BEFORE the run starts, so a `background: true` acknowledgment can
+    /// hand the parent the `session_id` it will later `continue` with or
+    /// open. Nil (the default) for kinds without a persisted session.
+    var plannedSessionId: UUID? { get }
+
     /// Bounded request facts for RAM-admission pricing: the seed/input size
     /// and configured max output THIS run will actually ask the child model
     /// to hold. nil (the default) means "unknown" and admission falls back
@@ -116,6 +122,9 @@ extension SubagentKind {
 
     /// Default: ordinary in-memory subagent runs are mirrored to the Activity section.
     public var suppressActivityMirror: Bool { false }
+
+    /// Default: no persisted worker session to announce ahead of the run.
+    public var plannedSessionId: UUID? { nil }
 
     /// Default: no residency change. Model-swapping kinds override.
     public func makeHandoff() -> SubagentHandoff { PassthroughHandoff() }

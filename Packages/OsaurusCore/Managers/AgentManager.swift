@@ -13,6 +13,8 @@ import SwiftUI
 /// Notification posted when the active agent changes or an agent is updated
 extension Notification.Name {
     static let activeAgentChanged = Notification.Name("activeAgentChanged")
+    /// Posted when the agent NEW chats open with (`new_chat_agent`) changes.
+    static let newChatAgentChanged = Notification.Name("newChatAgentChanged")
     static let agentUpdated = Notification.Name("agentUpdated")
     /// Posted from `AgentManager.add(_:)` after the new agent is persisted
     /// and an address has been assigned (best effort). `userInfo["agentId"]`
@@ -123,12 +125,29 @@ public final class AgentManager: ObservableObject {
         APIKeyValidatorEpoch.shared.bump()
     }
 
-    /// The currently active agent ID
+    /// The agent in the FOREGROUND chat window — moved by the chat picker,
+    /// `/agent`, and `ChatWindowState.switchAgent`. Sandbox tool registration,
+    /// MCP probes and plugin hosts key on it as "the agent the user is
+    /// looking at". It is NOT what a brand-new chat opens with; that is
+    /// `newChatAgentId`.
     @Published public private(set) var activeAgentId: UUID = Agent.defaultId
 
     /// The currently active agent
     public var activeAgent: Agent {
         agents.first { $0.id == activeAgentId } ?? Agent.default
+    }
+
+    /// The agent NEW chats open with (a new window, the menu-bar chat, the
+    /// "Ask Osaurus" App Intent). Defaults to the Orchestrator and changes
+    /// ONLY through an explicit `new_chat_agent` apply / `setNewChatAgent`:
+    /// browsing to a custom agent's chat (`switchAgent`) must never re-target
+    /// the next chat away from the Orchestrator, which is what happened while
+    /// this and `activeAgentId` were one value.
+    @Published public private(set) var newChatAgentId: UUID = Agent.defaultId
+
+    /// The agent NEW chats open with.
+    public var newChatAgent: Agent {
+        agents.first { $0.id == newChatAgentId } ?? Agent.default
     }
 
     /// Agents currently flagged as "approaching their storage
@@ -166,6 +185,14 @@ public final class AgentManager: ObservableObject {
             if agents.contains(where: { $0.id == savedId }) {
                 activeAgentId = savedId
             }
+        }
+        // The new-chat agent is its own persisted choice. Nothing is
+        // inferred from `activeAgentId` (that would re-create the "browsed
+        // to a custom agent → every new chat opens there" behavior); an
+        // install that never applied `new_chat_agent` opens on the
+        // Orchestrator.
+        if let savedId = loadNewChatAgentId(), agents.contains(where: { $0.id == savedId }) {
+            newChatAgentId = savedId
         }
 
         // Auto-grow per-agent enabled tool sets when new tools register so users
@@ -360,6 +387,16 @@ public final class AgentManager: ObservableObject {
             saveActiveAgentId(targetId)
             NotificationCenter.default.post(name: .activeAgentChanged, object: nil)
         }
+    }
+
+    /// Set the agent NEW chats open with (`new_chat_agent`). Falls back to
+    /// the Orchestrator when the agent does not exist.
+    public func setNewChatAgent(_ id: UUID) {
+        let targetId = agents.contains(where: { $0.id == id }) ? id : Agent.defaultId
+        guard newChatAgentId != targetId else { return }
+        newChatAgentId = targetId
+        saveNewChatAgentId(targetId)
+        NotificationCenter.default.post(name: .newChatAgentChanged, object: nil)
     }
 
     /// Create a new agent
@@ -832,6 +869,10 @@ public final class AgentManager: ObservableObject {
         if activeAgentId == id {
             setActiveAgent(Agent.defaultId)
         }
+        // …and new chats fall back to the Orchestrator.
+        if newChatAgentId == id {
+            setNewChatAgent(Agent.defaultId)
+        }
 
         // Drop the agent from the DEFAULT / main-chat spawn pool. Agent
         // UUIDs are never reused, so a stale entry would keep the
@@ -1005,6 +1046,17 @@ public final class AgentManager: ObservableObject {
 
     private func saveActiveAgentId(_ id: UUID) {
         UserDefaults.standard.set(id.uuidString, forKey: Self.activeAgentKey)
+    }
+
+    private static let newChatAgentKey = "newChatAgentId"
+
+    private func loadNewChatAgentId() -> UUID? {
+        guard let string = UserDefaults.standard.string(forKey: Self.newChatAgentKey) else { return nil }
+        return UUID(uuidString: string)
+    }
+
+    private func saveNewChatAgentId(_ id: UUID) {
+        UserDefaults.standard.set(id.uuidString, forKey: Self.newChatAgentKey)
     }
 }
 

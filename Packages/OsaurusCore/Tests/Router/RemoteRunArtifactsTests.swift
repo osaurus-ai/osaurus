@@ -188,15 +188,31 @@ struct RemoteRunArtifactsTests {
                 sessionId, target: .workspace(ref), targetAgentName: "Research")
             #expect(row.id == sessionId)
 
-            // Another teammate's agent → denied.
-            #expect(throws: SubagentError.self) {
-                try AgentDelegationDispatcher.validateResumeSession(
+            // Another teammate's agent → refused as a correctable argument
+            // error (nothing ran), never as a turn-ending `rejected`.
+            do {
+                _ = try AgentDelegationDispatcher.validateResumeSession(
                     sessionId, target: .workspace(other), targetAgentName: "Other")
+                Issue.record("expected invalid_args")
+            } catch let error as SubagentError {
+                let envelope = error.envelope(tool: "spawn_agent")
+                #expect(envelope.contains("\"kind\":\"invalid_args\""))
+                #expect(envelope.contains("omit `continue`"))
+                #expect(
+                    !AgentToolLoop.shouldStopAfterToolOutcome(
+                        AgentLoopToolOutcome(
+                            invocation: ServiceToolInvocation(
+                                toolName: "spawn_agent", jsonArguments: "{}", toolCallId: nil),
+                            callId: "c1", result: envelope, wasDeduped: false, wasError: true)),
+                    "a wrong-agent continue must leave the parent one correction")
             }
             // A local agent must not adopt a workspace transcript.
-            #expect(throws: SubagentError.self) {
-                try AgentDelegationDispatcher.validateResumeSession(
+            do {
+                _ = try AgentDelegationDispatcher.validateResumeSession(
                     sessionId, target: .local(UUID()), targetAgentName: "Local")
+                Issue.record("expected invalid_args")
+            } catch let error as SubagentError {
+                #expect(error.envelope(tool: "spawn_agent").contains("\"kind\":\"invalid_args\""))
             }
             // Unknown id → unavailable with a "start a new task" hint.
             do {

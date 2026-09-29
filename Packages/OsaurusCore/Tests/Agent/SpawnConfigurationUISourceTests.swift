@@ -173,6 +173,12 @@ struct SpawnConfigurationUISourceTests {
         // used at run time instead of cloning min/clamp policy in SwiftUI.
         #expect(editor.contains("SubagentBatchAdmissionPlanner.plan("))
         #expect(editor.contains(#""Configured same-model local ceiling""#))
+        // The ceiling row reads `ServerRuntimeSettingsStore.snapshot()` at
+        // render time while the Max-local stepper mirrors into Server
+        // Concurrent Sessions asynchronously, so the row must re-render on
+        // the store's save notification or it shows the pre-edit value.
+        #expect(editor.contains("ServerRuntimeSettingsStore.didSaveNotification"))
+        #expect(editor.contains(".id(runtimeSettingsRevision)"))
         #expect(editor.contains("share one configured local limit"))
         #expect(editor.contains("Remote subagents use the separate remote limit"))
         #expect(editor.contains("This agent and Server Concurrent Sessions share"))

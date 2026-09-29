@@ -383,6 +383,14 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// Tool-call ids of `background: true` spawns the CURRENT run launched.
+    /// Their workers run in unstructured tasks outside this run's task tree,
+    /// so cancelling `currentTask` cannot reach them; `stop()` trips their
+    /// interrupt tokens (the same path as the Activity row's Stop) so a user
+    /// Stop on the launching turn does not leave orphaned workers. Cleared
+    /// when the run ends normally — workers then outlive the turn by design
+    /// and report back later.
+    private var backgroundSpawnCallIdsThisRun: [String] = []
     /// True when this session's folder was restored from a bookmark that a
     /// background DISPATCH supplied (a Watcher's watched folder, a scheduled
     /// task's folder, or a plugin's `folder_bookmark`), as opposed to a
@@ -2598,6 +2606,9 @@ final class ChatSession: ObservableObject {
         // mounted, and the input bar hit-test disabled.
         promptQueue.drainAll()
         stopRequested = true
+        // Background workers this run launched sit outside the task tree:
+        // stop them explicitly before the run's own cancellation.
+        interruptBackgroundSpawnsOfCurrentRun()
         let task = currentTask
         task?.cancel()
         if let runId = activeRunId {
@@ -2621,6 +2632,17 @@ final class ChatSession: ObservableObject {
             turns.append(cancelledTurn)
             isDirty = true
             rebuildVisibleBlocks()
+        }
+    }
+
+    /// Trip the interrupt token of every `background: true` worker the
+    /// current run launched (`SubagentSession.dispatchInBackground` registers
+    /// one per tool call id). Idempotent; the list is cleared either way.
+    private func interruptBackgroundSpawnsOfCurrentRun() {
+        let callIds = backgroundSpawnCallIdsThisRun
+        backgroundSpawnCallIdsThisRun.removeAll()
+        for callId in callIds {
+            _ = SubagentInterruptCenter.shared.interrupt(callId)
         }
     }
 
@@ -4343,6 +4365,9 @@ final class ChatSession: ObservableObject {
     private func completeRunCleanup() {
         currentTask = nil
         isStreaming = false
+        // The run ended; background workers it launched now outlive it on
+        // purpose (they report back later) and stop only from Activity.
+        backgroundSpawnCallIdsThisRun.removeAll()
         // Successful run finished — drop the saved draft so a later
         // unrelated cancel doesn't accidentally repopulate the input
         // with a turn the user already sent.
@@ -7244,6 +7269,27 @@ final class ChatSession: ObservableObject {
                             // a second artifact-sharing step.
                             toolCardOverrides[callId] = resultText
                             resultText = compactResult
+                        } else if inv.toolName == SubagentCapabilityRegistry.spawnAgentToolName,
+                            SubagentSession.isBackgroundAck(resultText)
+                        {
+                            // A background worker outlives this tool call in
+                            // an unstructured task; remember it so a Stop on
+                            // THIS run can reach it (`stop()`).
+                            self.backgroundSpawnCallIdsThisRun.append(callId)
+                        } else if inv.toolName == SubagentCapabilityRegistry.spawnAgentToolName,
+                            SpawnResultCompaction.applies(to: resultText)
+                        {
+                            // The card and telemetry keep the full envelope
+                            // (structured usage/context/residency); the model
+                            // reads the digest, continuation handles and
+                            // deliverable paths with one accounting line —
+                            // and a shorter digest on a compact launcher.
+                            toolCardOverrides[callId] = resultText
+                            resultText = SpawnResultCompaction.modelVisible(
+                                resultText,
+                                prefersCompactPrompt: ContextSizeResolver.resolve(modelId: turnModelId)
+                                    .prefersCompactPrompt
+                            )
                         } else if inv.toolName == "share_artifact" {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,

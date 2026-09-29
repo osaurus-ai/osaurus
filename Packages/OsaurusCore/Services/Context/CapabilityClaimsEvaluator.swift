@@ -270,8 +270,18 @@ public enum CapabilityClaimsEvaluator {
                 text: String, calls: [CapabilityClaimsTranscript.ToolInvocation], loaded: [String], iters: Int,
                 cap: Bool, prompt: String, err: String?
             )
+        // A headless launching session, bound for the whole loop exactly like
+        // `ChatSession.send` binds itself: `ConfigApplier.stageSpawnToolsIfPoolGrew`
+        // stages same-turn `spawn_agent` specs only for a bound session (an
+        // unbound apply has no loop to drain the buffer), and the drain
+        // below is that loop here.
+        let launchingSession = ChatSession()
+        launchingSession.agentId = resolvedAgentId
+        let launchingSessionBox = WeakChatSessionBox(launchingSession)
+        defer { withExtendedLifetime(launchingSession) {} }
         do {
             result = try await ChatExecutionContext.$currentAgentId.withValue(resolvedAgentId) {
+              try await ChatExecutionContext.$currentChatSessionBox.withValue(launchingSessionBox) {
                 // Compose ONCE; prompt + tool schema stay frozen for the
                 // whole run (deferred-schema policy, same as production).
                 let composed = await SystemPromptComposer.composeChatContext(
@@ -282,7 +292,18 @@ public enum CapabilityClaimsEvaluator {
                     messages: history
                 )
                 firstTurnPrompt = composed.prompt
-                let frozenTools = composed.tools
+                // Frozen for the run, with ONE production-parity growth path:
+                // an `osaurus_config` apply that grows the launcher's spawn
+                // pool stages constrained `spawn_agent` specs
+                // (`ConfigApplier.stageSpawnToolsIfPoolGrew`), and the chat
+                // loop activates them for the next iteration. Without that,
+                // a Default agent that starts with an EMPTY pool (the
+                // isolated eval store) could never delegate in the same turn
+                // it created an agent — the addendum's "create, then spawn"
+                // contract would be untestable here. Capability-loaded tools
+                // keep the historical harness policy (callable by name, not
+                // patched into the schema).
+                var frozenTools = composed.tools
 
                 while iterations < maxIterations {
                     var requestMessages: [ChatMessage] = [
@@ -479,10 +500,23 @@ public enum CapabilityClaimsEvaluator {
                         {
                             hasGroundedApply = true
                         }
+                        // Chat-surface parity: the model reads the compact
+                        // spawn result (digest, handles, deliverables, one
+                        // accounting line); `resultPreview` above keeps the
+                        // raw envelope for scoring.
+                        let modelVisible =
+                            call.function.name == SubagentCapabilityRegistry.spawnAgentToolName
+                                && SpawnResultCompaction.applies(to: toolResult)
+                            ? SpawnResultCompaction.modelVisible(
+                                toolResult,
+                                prefersCompactPrompt: ContextSizeResolver.resolve(modelId: resolvedModel)
+                                    .prefersCompactPrompt
+                            )
+                            : toolResult
                         history.append(
                             ChatMessage(
                                 role: "tool",
-                                content: toolResult,
+                                content: modelVisible,
                                 tool_calls: nil,
                                 tool_call_id: call.id
                             )
@@ -510,6 +544,14 @@ public enum CapabilityClaimsEvaluator {
                         let name = spec.function.name
                         if !loadedToolNames.contains(name) {
                             loadedToolNames.append(name)
+                        }
+                        // Same-turn spawn staging (see `frozenTools` above):
+                        // only genuinely new spawn-family names join the
+                        // offered schema, mirroring `ToolExecutionScope.activate`.
+                        if SubagentCapabilityRegistry.spawn.toolNames.contains(name),
+                            !frozenTools.contains(where: { $0.function.name == name })
+                        {
+                            frozenTools.append(spec)
                         }
                     }
 
@@ -573,6 +615,7 @@ public enum CapabilityClaimsEvaluator {
                     }
                 }
                 return (finalText, toolCalls, loadedToolNames, iterations, hitCap, firstTurnPrompt, nil)
+              }
             }
         } catch {
             return CapabilityClaimsTranscript(

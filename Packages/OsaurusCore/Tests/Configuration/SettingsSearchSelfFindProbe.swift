@@ -158,6 +158,8 @@ struct SettingsSearchSelfFindProbe {
             ("allowed agents", "settings.orchestrator.delegation.mainChat"),
             ("shared workspace agents", "settings.orchestrator.delegation.mainChat"),
             ("create starter agents", "settings.orchestrator.delegation.starterAgents"),
+            ("Add all agents", "settings.orchestrator.delegation.addAllAgents"),
+            ("spawn pool empty", "settings.orchestrator.delegation.addAllAgents"),
             ("permission for shared", "settings.orchestrator.delegation.permission"),
             ("max output tokens per subagent", "settings.orchestrator.delegation.limits"),
             ("max turns per subagent", "settings.orchestrator.delegation.limits"),

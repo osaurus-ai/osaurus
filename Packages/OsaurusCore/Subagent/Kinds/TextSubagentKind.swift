@@ -50,6 +50,11 @@ final class TextSubagentKind:
     /// (returned as `session_id` by an earlier call) instead of starting a
     /// fresh one, so the worker keeps its context for a follow-up.
     private let continueSessionId: UUID?
+    /// The persisted worker session a fresh delegated run will be created
+    /// under (a `continue` reuses `continueSessionId` instead). Allocated
+    /// here, before dispatch, so a background acknowledgment can name the
+    /// `session_id` the parent will `continue` with or open.
+    private let freshSessionId = UUID()
     /// Eval seam (nil in production): force the run model and keep residency
     /// passthrough, so a live spawn lane is a real cross-model column in the
     /// local-vs-frontier matrix without depending on GPU residency. The agent
@@ -353,6 +358,16 @@ final class TextSubagentKind:
     /// A teammate's shared workspace agent: always a dispatched (Mode 2)
     /// session on the host — there is no in-memory runner path for it.
     var isWorkspaceTarget: Bool { workspaceTargetRef != nil }
+
+    /// The worker session this run will resume or create — the same value
+    /// `runDelegated` / `runWorkspaceDelegated` hand the dispatcher, so the
+    /// background ack's `session_id` equals the eventual result's. Nil for
+    /// the in-memory (eval model-override) path, which has no persisted
+    /// session.
+    var plannedSessionId: UUID? {
+        guard isDelegatedAgentTarget || isWorkspaceTarget else { return nil }
+        return continueSessionId ?? freshSessionId
+    }
 
     /// The permission kind that gates this target: `spawn` for a local
     /// agent, `spawn_workspace` for a teammate's shared agent (separate
@@ -1224,7 +1239,8 @@ final class TextSubagentKind:
             interrupt: interrupt,
             parentSessionId: parentSessionId,
             launcherWorkingFolder: launcherFolder,
-            continueSessionId: continueSessionId
+            continueSessionId: continueSessionId,
+            freshSessionId: freshSessionId
         )
         let digest = outcome.finalText
         let capped =
@@ -1254,6 +1270,24 @@ final class TextSubagentKind:
         // `SpawnArtifactCollector`, never through this model-visible payload.
         if outcome.artifactsShared > 0 {
             payload["artifacts_shared"] = outcome.artifactsShared
+        }
+        // `NEEDS INPUT:` is a prefix contract. A marker buried mid-text keeps
+        // `needs_input` false but is flagged so the flag/text mismatch is
+        // visible in the payload and the log instead of silently dropped.
+        if AgentDelegationDispatcher.hasOffPrefixNeedsInputMarker(digest) {
+            payload["needs_input_marker_off_prefix"] = true
+            print(
+                "[TextSubagentKind] worker \(resolvedAgentName) (\(outcome.sessionId.uuidString)) "
+                    + "used NEEDS INPUT off-prefix; needs_input stays false")
+        }
+        // Deliverables: the files the child's session wrote (its file-change
+        // journal, net of reverts), as paths the parent can `file_read` when
+        // it needs the content instead of asking for it in the digest.
+        let artifactPaths = await SpawnResultCompaction.artifactPaths(
+            forWorkerSession: outcome.sessionId
+        )
+        if !artifactPaths.isEmpty {
+            payload["artifact_paths"] = artifactPaths
         }
         // Usage parity with the ephemeral path: measured completion tokens +
         // throughput from the child's persisted turns, and the context-saved
@@ -1308,7 +1342,8 @@ final class TextSubagentKind:
             feed: feed,
             interrupt: interrupt,
             parentSessionId: parentSessionId,
-            continueSessionId: continueSessionId
+            continueSessionId: continueSessionId,
+            freshSessionId: freshSessionId
         )
         let digest = outcome.finalText
         let capped =

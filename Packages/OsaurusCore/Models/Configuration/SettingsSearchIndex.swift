@@ -1260,6 +1260,20 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "settings.orchestrator.delegation.addAllAgents",
+            tab: .orchestrator,
+            section: "Subagents",
+            title: "Add all agents",
+            keywords: [
+                "add all agents", "empty pool", "spawn pool empty", "no spawn_agent",
+                "cannot delegate", "orchestrator cannot delegate", "re-add agents",
+                "restore delegation", "agents not in list",
+            ],
+            disambiguation:
+                "Shown only while the Orchestrator's allowed list is empty but agents exist; puts every existing agent back in the list so spawn_agent returns.",
+            declarativeSection: "delegation"
+        ),
+        .init(
             id: "settings.orchestrator.delegation.permission",
             tab: .orchestrator,
             section: "Subagents",

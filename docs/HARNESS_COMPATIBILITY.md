@@ -667,6 +667,257 @@ hung in `xcodebuild` while the user's Xcode session was active. The
 authoritative full run for this branch is therefore the CI `test-core`
 job on the PR.
 
+## Orchestrator checkpoint (Raptor-0.6.1-preview-4B-JANG_6M)
+
+Orchestrator audit remediation, uncommitted worktree on
+`3dad2dad457b64f863f67209df3c278e88cd4a1d`, 2026-09-28/29. Tested source:
+worktree diff `r3` sha256
+`3e45e451f4610f3041e24d8120796bab127e5312b0847ac201d65f605029724b`
+(`/tmp/osaurus-orch-proof/worktree-r3.diff`, untracked-file hashes in
+`untracked-sha256.txt`) for every live row and every eval lane; the final
+tree `r4` (`worktree-r4.diff`, sha256
+`9d798fd5c8d055149f7029fa7b66885c12396e75aadb4eb4ff18abbe18738313`)
+differs from r3 only by the spawn-wave scorer fix described under the
+`--thinking off` AgentLoop lane (`AgentLoopEvaluator.SpawnCallObservation`,
+`EvalRunnerAgentLoop.scoreSpawnWave`, its test) and these two docs — no
+runtime, prompt, tool or UI code changed after r3. Scope: Orchestrator addendum rendered from actual
+tool exposure (spawn available / pool empty / no folder) with a
+prompt-truthfulness test; one delegation policy; apply-first
+`osaurus_config`; pool-emptying applies flagged HIGH RISK on the card;
+empty pool surfaced in `osaurus_inspect status` and Settings → Orchestrator
+(“Add all agents”); new chats open on the Orchestrator unless
+`new_chat_agent` is set (`AgentManager.newChatAgentId`, separate from the
+browsed agent); same-turn `spawn_agent` staging for every bound session
+including `.http`; compact `spawn_result` envelope (`artifact_paths`,
+usage line, scaled digest cap); background spawn ack carries `session_id`
+and is tied to parent cancellation; `spawn_agent continue` mismatches are
+`invalid_args` (one model correction) instead of turn-ending `rejected`;
+`osaurus_help find` relaxed fallback; ceiling label re-render in Settings.
+Task list and open rows: `docs/RUNTIME_AND_ORCHESTRATOR_TODO.md` § 2b.
+
+Run setup (all rows): `OsaurusAI/Raptor-0.6.1-preview-4B-JANG_6M` from
+`~/MLXModels` (`model_type spark2_5`, JANG affine bits=6 gs=64, 181
+per-layer quant overrides; weights 3,662,928,280 B, per-file sha256 in
+`/tmp/osaurus-orch-proof/bundle-sha256.txt` — `config.json d5539a47…`,
+`generation_config.json b7f38232…`, `model-00001-of-00001.safetensors
+02d22bf6…`), vMLX `osaurus-ai/vmlx-swift@094cc09b8e0130504976a38370a5a92fbcf258b0`,
+Apple M4 Pro 14 cores / 48 GB, macOS 26.5.2, AC power. Generation defaults
+come from the bundle's `generation_config.json` (temperature 1.0, top_p
+0.95, top_k -1, repetition_penalty 1.0, do_sample true); no sampler
+override, no reasoning override — every row below runs with the bundle
+default (**thinking on**) unless the row is explicitly labelled
+`--thinking off`. Cases are sampled, one trial each. Judge: **self-judge**
+(no XAI/ANTHROPIC/OPENAI/GEMINI key on this host) — rubric rows the
+self-judge could not parse are graded manually below from the recorded
+transcripts, never re-scored as passes by the harness.
+
+### Live Release app
+
+Keychain-free Release build (`scripts/live-proof/build-keychain-free-osaurus.sh`,
+bundle id `com.dinoki.osaurus.orchproof`, isolated root
+`/tmp/osaurus-orch-proof/live`, models dir pointed at the real bundle). Two
+builds were exercised: build-2 (binary sha256 `9642909e…`, source diff
+`31922cdc…`) for every chat row, and build-3 (binary
+`555c20c445ea228080e1c2a4d31d5a05ad48d746dba380a426650993a03f05e5`, the
+final tree) for the `continue`→`invalid_args` fix and the Settings
+ceiling-label fix. Server runtime during the rows: prefix cache on (128 MB /
+15 %), block disk L2 on, paged KV off, safe_auto slider 2, idle unload 30 s.
+Chat sessions `EA7485FF…`, `680D54CD…`, `5FBEC153…`, `A3E62AF6…` in
+`/tmp/osaurus-orch-proof/live-history-final.sqlite`. No first-use permission
+popup appeared (local `spawn_agent` policy is `.alwaysAllow`), so no grant
+was recorded.
+
+| Row | Result | Evidence |
+|---|---|---|
+| `osaurus_help find "turn off memory"` | PASS | strict match empty → `relaxed_query: "memory"`, hit `memory.settings.enabled`; answer quotes Settings → Memory → Enable Memory; 53.4–54.9 tok/s |
+| `osaurus_config` apply + approval card | PASS | `memory.enabled: false` applied from the card, `memory.json` persisted across relaunch, `/health memory_enabled false`. One card expired at the 120 s review window (`ConfigApprovalQueue.requestApproval` default) while AX polling was slow; the model received `timeout`, re-applied, third apply landed — pre-existing gap, documented not changed |
+| create agent + `spawn_agent` in the same turn | PASS | `agents: [Summarizer]` applied, `spawn_agent` inserted into the live schema mid-turn and dispatched in the same turn. Cost of the mid-turn schema insertion: next-step ttft 19.8 s (vs 1–3.6 s) — full re-prefill of the ~9k-token context |
+| wave under Max local = 1 | PASS ×2 | gate admitted 1, refused 1 with a retryable `unavailable`; parent re-sent the second worker after the first returned; `WAVE_DONE`. First attempt exposed the `continue`-with-wrong-agent → `rejected` turn stop (fixed; `RemoteRunArtifactsTests.continueValidatesWorkspaceSessions`); re-plan step reasoned 94 s / 16.5k chars |
+| `continue` after `NEEDS INPUT` | PASS | same `session_id` `D187E581…` resumed, worker returned `WAVE_ALPHA_7`; 45.5–46.3 tok/s |
+| Stop mid-worker | PASS | worker and parent `stop: cancelled`, card “Delegated run for 'Summarizer' was cancelled with the parent run.”, input unlocked, follow-up turn truthful at 44.7 tok/s |
+| worker output-token cap | PASS | typed `execution_error` in the envelope; parent reported the failure instead of inventing a result |
+| relaunch persistence | PASS | memory off, pool 2, maxParallel 1, 3 agents survived; New Chat → Orchestrator; `new_chat_agent: Echo` applied from the card → relaunch → new window opened on Echo (default chat then truthfully has no config tools) → reset to default applied; `UserDefaults newChatAgentId` confirmed both ways |
+| Settings → Orchestrator mirror | PASS | Max local 1→2 mirrored to `agent-delegation.json`, `server-runtime.json maxConcurrentSequences 2`, `/admin/cache-stats max_concurrent_sequences 2`, `/health configured_engine_capacity 2`; ceiling label “up to 2” within ~2 s (build-3); back to 1 |
+| empty pool → notice → Add all | PASS | HIGH RISK card for `spawnable_agents: ["Summarizer","Echo"] -> []`; Settings notice “None of your 2 agents is in this list…”; “Add all agents” restored the pool |
+| parallel same-model wave, limit 2 | **PARTIAL** | fresh session issued 2 `spawn_agent` calls, both admitted; with “Check memory before delegating” ON the second waited `waiting for local GPU` 9.53 s (engine high-watermark 1); with it OFF inflight 2 / high-watermark 2 / no wait. The RAM-plan clamp reason is not surfaced in `spawn_result` or the feed (open in TODO § 2b). In-context precedent later made Raptor self-serialize in the same chat |
+
+Footprint (`footprint <pid>` phys): 1,945 MB loaded idle, 3,746 MB peak
+single-stream, 5,361 MB peak with two concurrent workers (mlx peak 7.25 GB);
+RSS 1.0–1.27 GB after idle unload. Parent decode 43.7–55.2 tok/s, decaying
+with context (worker envelope tok/s 3.6–35.7 is completion/elapsed, not
+decode). `/admin/cache-stats` end of session 1: `disk_l2 hits 16 / misses
+78 / stores 130`, `prefix_hits 0 / prefix_misses 0` for the whole session —
+the 128 MB prefix budget never held the conversation, so every
+prompt-changing event (schema insertion, pool/limit change, in-place worker
+on the same model) re-prefilled the full context at ~450 tok/s (ttft 19.8–24
+s). Snapshots: `live/cache-stats-03-after-echo.json` … `-06-final.json`.
+
+### Eval lanes
+
+Driver: `/tmp/osaurus-orch-proof/run-suite.sh` (per-case watchdog 900 s,
+`--resume` once on a watchdog trip, `--transcripts --report-forensics`),
+`osaurus-evals` built from the final tree (`evals-build.log`). Reports and
+failed-case transcripts under `/tmp/osaurus-orch-proof/<lane>/`.
+
+| Lane (thinking) | Suite | Raw | Adjusted after manual grading | Artifacts (sha256) |
+|---|---|---|---|---|
+| bundle default | DefaultAgent (55) | 49 ✓ / 6 ✗ | **53 ✓ / 2 ✗** — 4 rows were self-judge parse failures on correct output | `think/DefaultAgent.json` `5fa25a03…` |
+| bundle default | Subagent (46) | 32 ✓ / 14 skip (host: image delegation off, residency lanes need `Qwen3.5-4B-OptiQ-4bit` / `xai/grok-4.3`) | 32 / 32 runnable | `think/Subagent.json` `ef9d760f…` |
+| bundle default | AgentLoop (70) | **BLOCKED (wall clock)**: 1 judged, 1 errored, 68 not run | see below | `think/AgentLoop.json` `ef509460…` |
+| bundle default | AgentLoopFrontier (43) | **BLOCKED (wall clock)**: 4 ✓, 1 errored, 38 not run | 4 ✓ / 0 ✗ of 5 reached | `think/AgentLoopFrontier.json` `4dc87e9c…` |
+| `--thinking off` (NON-DEFAULT) | AgentLoop (70) | 56 ✓ / 10 ✗ / 4 skip (sandbox container networking ×1, no AppleScript model ×3) | 57 ✓ / 9 ✗ after the scorer fix below (`route-by-agent-description`) | `nothink/AgentLoop.json` |
+| `--thinking off` (NON-DEFAULT) | AgentLoopFrontier (43) | 32 ✓ / 11 ✗ | 32 ✓ / 11 ✗ — every miss is a model row | `nothink/AgentLoopFrontier.json` |
+
+DefaultAgent decode 42.2–55.8 tok/s (median 52.1) on every case, peak phys
+footprint 1,796–4,491 MB, peak context 22,085 tokens, 55.4 min of case
+latency (11:45–12:44Z). The four new DefaultAgent cases:
+`apply-first-single-change` ✓, `delegate-from-empty-pool` ✓,
+`general-question-no-help` and `no-folder-honesty` ✓ after manual grading.
+
+Timing overlaps to weigh against the numbers: the DefaultAgent lane ran
+concurrently with the build-3 `xcodebuild` (11:43–~12:00Z) and the live UI
+rows (through ~12:15Z); the think AgentLoop/Frontier lanes (12:44–13:49Z)
+ran concurrently with a full `make test` attempt (12:14Z onward, see below).
+
+Failed-case attribution, DefaultAgent (bundle default):
+
+- **self-judge → manual PASS** `error-recovery-missing-id`: `osaurus_inspect
+  list providers` → empty → `osaurus_config schema` → “There is no OpenAI
+  provider currently configured … nothing to remove.” Nothing fabricated,
+  no false deletion claim. Judge returned unparseable output.
+- **self-judge → manual PASS** `general-question-no-help`: no tool calls,
+  three-paragraph plain answer on context windows and memory; no Settings
+  or guide mention.
+- **self-judge → manual PASS** `no-folder-honesty`: `osaurus_inspect status`
+  then “this chat has no working folder set … Settings → Orchestrator →
+  Working Folder”; no invented path, no claimed read.
+- **self-judge → manual PASS (borderline on brevity)**
+  `quick-question-no-spawn`: no tool calls, correct TCP/UDP answer in three
+  sentences plus one meta sentence (“No tools needed — …”) against a rubric
+  of “about two sentences”.
+- **harness + model** `handoff-non-osaurus-task`: the model did the right
+  thing first — applied `agents: [code_specialist]` and called
+  `spawn_agent` on it three times — but the DefaultAgent lane abandons any
+  tool after `DefaultAgentConfigurationEvaluator.toolExecutionTimeout` = 25
+  s (sized for configure tools), and a same-model thinking worker cannot
+  return in 25 s, so each call came back `execution_error`. The model then
+  wrote the script inline (“The agent delegation isn't working in this
+  environment”), which the rubric forbids. The self-judge's second reason
+  (“does not invoke spawn_agent”) is wrong. Follow-up: a per-tool budget
+  for `spawn_agent` in this lane.
+- **model** `watcher-create`: three `osaurus_help` reads, `osaurus_inspect
+  list agents`, `osaurus_config schema`, then ended the turn narrating the
+  apply (“This single apply creates both new entities.”) without calling
+  it; `argsMustContain {action=apply}` unmet.
+
+AgentLoop / Frontier (bundle default) are **BLOCKED on wall clock**, not
+faked: `append-preserve-existing` reasoned 59,336 chars on step 6 (584 s
+at 34.9 tok/s, six `file_*` tool calls before it) and was still on step 7
+at the 900 s watchdog, on both the first pass and the `--resume` pass;
+`audit-file-write` likewise (25,106 reasoning chars on step 5). The one
+AgentLoop case that completed, `answer-direct-no-complete`, is the same
+TCP/UDP question as above: `mustNotCallTools` ok, correct prose answer,
+self-judge unparseable → manual PASS. No prompt, template or sampler change
+was made to fit the think lane; the `--thinking off` rows are the explicit,
+recorded non-default mode (`environment.thinkingControl = "off"`).
+
+`--thinking off` AgentLoop (13:56–14:30Z, 38.4–56.0 tok/s, median 54.6;
+peak phys 3,277 MB; the three new spawn cases
+`spawn-wave-serialized-local-limit-one`, `spawn-continue-after-needs-input`,
+`spawn-background-ack-carries-session-id` all ✓). Failed-case attribution:
+
+- **harness → fixed** `route-by-agent-description`: the model called
+  `spawn_agent {"agent":"Agent B"}` — the worker the description pointed
+  at — and the runtime resolved it to the fixture UUID and returned 42, but
+  `scoreSpawnWave` compared the raw `agent` argument with the case's UUID.
+  `SpawnCallObservation` now carries the resolved `agent` / `agent_id` from
+  the real envelope and `expectedTargets` / `expectedRows[].target` accept
+  the raw argument, the resolved name or the resolved UUID
+  (`AgentLoopSpawnWaveEvalTests.expectedTargetsAcceptResolvedNameOrUUID`).
+- **case (stale, pre-existing)** `rejection-stops-run`: expects
+  `file_write report.pptx` to be `rejected`; since the file-tool hardening
+  checkpoint `file_write` renders `.pptx` (`format: pptx`, 7,332 bytes), so
+  the run ends `finalResponse`. Not touched by this branch; the case needs a
+  format the tool still refuses.
+- **model** `append-preserve-existing`: `file_read`, then ended the turn
+  narrating the append (“Now I'll append exactly the required section”)
+  without a `file_edit`.
+- **model** `avoid-unneeded-described-agent`: delegated 17 + 25 with no
+  `agent` (`invalid_args`), then answered 42 itself.
+- **model** `clarify-before-destructive`: asked which backup in prose
+  instead of `clarify`; first `file_read` on a hallucinated `/var/folders/…`
+  path (rejected, recovered).
+- **model** `compaction-stress`: zero tool calls — the reply narrates five
+  reads that never happened (“Reading log1.txt. It contains the word
+  ERROR.”). Fabricated tool results with thinking off; the one row here
+  that is a safety concern rather than a discipline miss.
+- **model** `edit-xlsx-in-place`: text-pair edits on `.xlsx`, an invalid
+  `delete_rows`, then the forbidden `file_write` regeneration; iteration
+  cap (same shape as the previous checkpoint).
+- **model** `list-folder-contents`: hallucinated `/var/folders/…` path
+  first (typed rejection), correct listing second.
+- **model** `no-clarify-when-default-obvious`: empty `old_string` insert
+  rejected, then a rewrite that dropped the last line.
+- **model** `spawn-wave-two-different-local-workers`: emitted an
+  Anthropic-style `<function_calls><invoke name="spawn_agent">…` block as
+  visible text (with a non-existent `agent_id` parameter) instead of a
+  native tool call; nothing was dispatched. Model output-format failure,
+  not a parser leak — the runtime never produced those markers.
+
+`--thinking off` AgentLoopFrontier (14:30–15:11Z, 42.8–56.1 tok/s, median
+54.7; peak phys 7,573 MB on `constraint-retention-ordering-rule` at 16,233
+context tokens, 2,684 MB floor; prefix hits 0 across the lane, disk L2 163
+hits / 767 misses). 32 / 43, in the 28–36 band of the previous checkpoint's
+five no-think runs. All eleven misses are model rows, none harness:
+
+- **model, byte contract** `audit-file-write`, `exact-bytes-version-contract`,
+  `ordered-sort-count-pipeline`: the content assertions pass (the
+  `python3` checks on `sorted.txt`/`count.txt` exit 0) but `files.equals`
+  differs — trailing-newline / byte drift, as in the previous checkpoint.
+- **model, skipped the deliverable** `constraint-adherence` (report written
+  inline, no `report_v2.md`), `constraint-retention-format-marker` (no reads,
+  no `report.txt`, reply is just `CONSTRAINT-OK`).
+- **model, wrong facts** `contract-search-then-cite` (counterparty “Orion
+  Logistics” for a PDF that names Spice Cooperative), `data-analysis-artifact`
+  (cleaning narrated correctly, totals missing from `REPORT.md`),
+  `code-review-findings` (3 of 4 planted defects; `status_label` missed).
+- **model, format/lifecycle discipline** `document-drafting-revisions`
+  (“Scope and Timeline” merged into one heading — the same miss as the
+  previous checkpoint), `kitchen-sink` (first `todo` as a numbered list →
+  `invalid_args`, recovered; never called `complete`), `long-horizon-project`
+  (deliverable and tests correct; the identical `shell_run` executed three
+  times).
+
+### Unit tests
+
+Touched areas pass under `swift test --filter` (RemoteRunArtifacts +
+SpawnWaveGate 18, SpawnConfigurationUISource 9, DefaultAgentSystemPrompt-
+Builder, ConfigureToolExposure, SpawnGuidance, OrchestratorSpawnDefaults,
+SettingsSearchSelfFindProbe, OsaurusHelpTool, ConfigurationGapClosure,
+SubagentBackgroundDispatch, SpawnResultCompaction, AgentLoopSpawnWaveEval,
+DefaultAgentArgsMatcher). The single full `make test` (12:14Z, log
+`/tmp/osaurus-orch-proof/full-make-test.log`) ran concurrently with the
+think AgentLoop lane and reproduced the starvation documented for the
+previous checkpoint: 10,181 tests passed, then a ~4-minute stall
+(12:17–12:21Z) in which every deadline-style test (AsyncDeadline,
+ToolRegistryTimeout, MCP probes, PluginProcessHost, ShortcutsProcessRunner,
+MainThreadWatchdogAttribution, …) recorded a timeout, and the run wedged
+with rows still open; it was killed at 13:55Z. The 34 suites that recorded
+an issue were re-run together on an idle machine
+(`/tmp/osaurus-orch-proof/rerun-failed-suites.sh`, 261 tests): every
+timeout row passed; 3 issues remained, and the identical 3 reproduce on the
+untouched base commit `3dad2dad` under the same filter
+(`rerun-failed-suites-base.log`, 259 tests) — pre-existing cross-suite
+interactions, not regressions from this branch:
+`SubagentJobEvaluatorSeedTests` ×2 (agents created by
+`ConfigurationReadScopeFunctionalTests` through `AgentManager.create` land
+in the sandboxed spawn pool via `registerInDefaultSpawnPool` while the
+seed test holds the sandbox lease) and `SubagentAdmissionTests` “child-card
+Stop unwinds a parked recovery” (1.13 s against a 1 s budget under
+parallel suites). All three suites pass in isolation. `OsaurusEvals`
+package: 368 tests / 47 suites pass (`evals-package-tests-3.log`). The
+authoritative full run for this branch is the CI `test-core` job on the PR.
+
 ## Provider wire-format requirements
 
 Quirks discovered live, handled automatically by Osaurus. Useful if you

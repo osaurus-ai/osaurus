@@ -243,7 +243,6 @@ public enum ConfigManifest {
             comment: "Orchestrator delegation: who it may spawn, permission, worker limits",
             value: .mapping([
                 ConfigKeySpec("local_text_enabled", .scalar(.boolean, example: "true")),
-                ConfigKeySpec("video_enabled", .scalar(.boolean, example: "false")),
                 ConfigKeySpec(
                     "applescript_execution_mode",
                     .scalar(
@@ -254,7 +253,10 @@ public enum ConfigManifest {
                 ConfigKeySpec(
                     "spawnable_agents", .scalarList(.string, example: []),
                     comment: "custom agent NAMES the Orchestrator may spawn;",
-                    moreComments: ["replaces the pool"]),
+                    moreComments: [
+                        "REPLACES the whole pool: list every agent to keep;",
+                        "[] empties it (HIGH RISK: no spawn_agent)",
+                    ]),
                 ConfigKeySpec(
                     "spawnable_workspace_agents", .scalarList(.string, example: []),
                     comment: "teammates' shared agents as Name@Workspace or",

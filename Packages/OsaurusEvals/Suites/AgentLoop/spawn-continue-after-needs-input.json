@@ -1,0 +1,82 @@
+{
+  "id": "agent_loop.spawn-continue-after-needs-input",
+  "domain": "agent_loop",
+  "label": "agent loop • NEEDS INPUT is answered with continue on the same worker session",
+  "query": "Delegate this to agent `A11CE004-0000-4000-8000-000000000001` (Osaurus Eval Color Worker): \"Return the color token.\" The worker will ask which color; the answer is blue. When its result starts with NEEDS INPUT, answer it yourself by calling spawn_agent again with `continue` set to the session_id from that result and `input` set to \"blue\" — do not start a new worker and do not ask me. Then report the final token and stop.",
+  "notes": "Continuation contract: the worker's prompt makes it return exactly `NEEDS INPUT: which color?` when no color is supplied, and exactly `COLOR_BLUE` once told. The parent must recognise the prefix (row 0 `needs_input: true`), reuse the SAME `session_id` via `continue` (row 1 `continuesEarlierRow`), and deliver the token. Two sequential single calls, both settled, no clarify to the user. Bundle generation defaults stay authoritative.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE004-0000-4000-8000-000000000001",
+          "name": "Osaurus Eval Color Worker",
+          "description": "Returns a color token; asks for the color when it is not given.",
+          "systemPrompt": "You return color tokens. If the conversation so far does not name a color, reply with exactly this text and nothing else: NEEDS INPUT: which color? Once a color has been named anywhere in the conversation, reply with exactly COLOR_ followed by that color in uppercase (for example COLOR_BLUE) and nothing else. Never explain."
+        }
+      ],
+      "maxParallelSpawns": 1
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "maxModelSteps": 6,
+      "mustCallTools": [
+        "spawn_agent"
+      ],
+      "mustNotCallTools": [
+        "clarify"
+      ],
+      "maxToolCalls": 2,
+      "noToolErrors": true,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "COLOR_BLUE"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "spawn_agent",
+          "minCalls": 2,
+          "maxCalls": 2,
+          "maxErrors": 0
+        },
+        {
+          "tool": "spawn_agent",
+          "minCalls": 2,
+          "maxCalls": 2,
+          "argsMustContain": "\"continue\""
+        }
+      ],
+      "spawnWave": {
+        "exactCallCount": 2,
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedWaveSizes": [
+          1,
+          1
+        ],
+        "expectedRows": [
+          {
+            "ok": true,
+            "hasSessionId": true,
+            "needsInput": true,
+            "summaryContains": [
+              "NEEDS INPUT"
+            ]
+          },
+          {
+            "ok": true,
+            "hasSessionId": true,
+            "continuesEarlierRow": true,
+            "needsInput": false,
+            "summaryContains": [
+              "COLOR_BLUE"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

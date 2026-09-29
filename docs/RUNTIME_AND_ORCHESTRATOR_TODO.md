@@ -93,6 +93,19 @@ CI35950002391 passed every job except one WhatsApp helper-restart test (`notRunn
 
 Detailed acceptance checklist and recommendations: [Agent descriptions](NEXT_AFTER_MIMO_AGENT_DESCRIPTIONS.md).
 
+## 2b. Orchestrator audit remediation (chief-of-staff default path) — ACTIVE, PR pending
+
+Uncommitted worktree on top of `3dad2dad457b64f863f67209df3c278e88cd4a1d`, 2026-09-28/29. Scope: make the Orchestrator the reliable default entrypoint on `OsaurusAI/Raptor-0.6.1-preview-4B-JANG_6M` with bundle-default reasoning — truthful addendum variants (spawn available / pool empty / no folder), one delegation policy, apply-first `osaurus_config`, pool guard + Settings notice, new-chat agent separated from the browsed agent, remote same-turn staging, compact `spawn_result` envelope, background `session_id` + parent-cancel tie, and the eval cases that pin each contract. Full proof table, scores and failed-row attribution: [Harness compatibility → Orchestrator checkpoint](HARNESS_COMPATIBILITY.md#orchestrator-checkpoint-raptor-061-preview-4b-jang_6m).
+
+Live Release app (`/tmp/osaurus-orch-proof/app`, bundle `com.dinoki.osaurus.orchproof`, isolated root `/tmp/osaurus-orch-proof/live`): help/find, config apply + approval card, create + same-turn spawn, wave under limit 1 and limit 2, `continue` after `NEEDS INPUT`, Stop mid-worker with a truthful follow-up, high-risk pool-emptying card → Settings notice → Add all agents, `new_chat_agent` apply → relaunch → new window opens on it → reset, Max local ↔ Server Concurrent Sessions mirror — all exercised in the built app at 43.7–55.2 tok/s parent decode. Two rows are PARTIAL and stay open here:
+
+- [ ] **Same-model 2-wave with "Check memory before delegating" ON runs one child at a time** (`waiting for local GPU` 9.5 s, engine high-watermark 1) although Max local = Server Concurrent Sessions = 2 and the engine reports capacity 2; with the check OFF both children batch (high-watermark 2, inflight 2). The RAM plan's clamp reason is not surfaced in the `spawn_result` envelope or the feed. Trace `SubagentSession.localInPlaceCapacityDecision` → `SpawnFanOutPolicy.makeLocalAdmissionPlan` (`failClosedWhenEstimateUnknown: true`) for this Spark2_5 bundle and report the clamp reason; do not loosen the guard.
+- [ ] **Prefix cache never hits for the Orchestrator chat** (`prefix_hits 0 / prefix_misses 0` for the whole session; only the L2 disk cache moves). Every prompt-changing event — pool growth adding `spawn_agent` mid-turn (ttft 19.8 s), a pool/limit change between turns (ttft 21–24 s), an in-place worker run on the same model (ttft 21 s next turn) — re-prefills the full ~9–10k-token context at ~450 tok/s. The 128 MB / 15 % prefix budget cannot hold one conversation's KV for this model; measure and decide the budget policy in Task 3 rather than here.
+- [x] Approval-card review window is 120 s (`ConfigApprovalQueue.requestApproval` default); a card left unanswered returns `timeout` to the model and the model re-applies. Documented, not changed.
+- [x] `spawn_agent continue` with the wrong agent or a non-worker session is `invalid_args` (one model correction) instead of turn-ending `rejected` — live wave on 2026-09-29 lost the second worker to the old behavior.
+- [x] `osaurus_help find` falls back to a relaxed query (intent words stripped) when the strict all-token match is empty; the result names `relaxed_query`.
+- [x] Settings → Orchestrator "Configured same-model local ceiling" re-renders on the runtime-settings save instead of showing the pre-edit value until the user leaves the tab.
+
 ## 3. Raptor 0.6 JANG6M / Spark x2.5 speed and SSD cache — QUEUED
 
 Do not begin implementation before Task2 is proven/merged. Eric plans a Product Hunt showcase next Monday; use verified calendar/source context rather than inventing a date or promising an unmeasured speed target.

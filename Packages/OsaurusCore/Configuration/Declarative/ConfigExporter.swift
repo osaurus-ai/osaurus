@@ -74,10 +74,12 @@ enum ConfigExporter {
         return section
     }
 
+    /// `new_chat_agent`: the agent NEW chats open with — the persisted
+    /// choice, never the foreground window's agent.
     private static func exportActiveAgent() -> String {
         let manager = AgentManager.shared
-        if manager.activeAgentId == Agent.defaultId { return "default" }
-        return manager.agents.first { $0.id == manager.activeAgentId }?.name ?? "default"
+        if manager.newChatAgentId == Agent.defaultId { return "default" }
+        return manager.agents.first { $0.id == manager.newChatAgentId }?.name ?? "default"
     }
 
     // MARK: - Agents
@@ -125,7 +127,6 @@ enum ConfigExporter {
         let agents = AgentManager.shared.agents
         var section = DelegationSection()
         section.localTextEnabled = config.localTextDelegationEnabled
-        section.videoEnabled = config.videoDelegationEnabled
         section.applescriptExecutionMode =
             ConfigAppBehaviorEnums.applescriptModeKey(for: config.defaultAppleScriptExecutionMode)
         // The pool stores agent UUIDs; the document uses names. Ids without a

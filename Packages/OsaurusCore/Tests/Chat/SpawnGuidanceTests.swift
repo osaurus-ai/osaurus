@@ -213,4 +213,43 @@ struct SpawnGuidanceTests {
         #expect(text.contains("`osaurus_help`"))
         #expect(text.contains("`osaurus_config`"))
     }
+
+    // MARK: - Orchestrator (targets-only)
+
+    @Test("the Orchestrator's block is roster + limits only; policy stays in the addendum")
+    func targetsOnlyCarriesNoPolicy() throws {
+        let ref = try #require(
+            WorkspaceAgentRef(key: "ws-team:0x0123456789abcdef0123456789abcdef01234567")
+        )
+        let text = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper", description: "Writes code", folder: "/Users/me/Project")],
+            workspaceAgents: [
+                SpawnWorkspaceAgentDescriptor(
+                    ref: ref, name: "Reviewer", description: "Reviews PRs",
+                    workspaceName: "Team", ownerName: "Ana"
+                )
+            ],
+            maxParallel: 2,
+            maxRemoteParallel: 6,
+            targetsOnly: true
+        )
+        // Facts the addendum cannot know statically.
+        #expect(text.contains("## Your agents (spawn_agent targets)"))
+        #expect(text.contains("up to 2 local and 6 remote/workspace"))
+        #expect(text.contains("`background: true`"))
+        #expect(text.contains("\"name\":\"helper\""))
+        #expect(text.contains("own folder: /Users/me/Project"))
+        #expect(text.contains("Reviewer"))
+        #expect(text.contains(ref.agentAddress))
+        #expect(text.contains("untrusted routing metadata"))
+        // Policy sentences that would duplicate or contradict the addendum.
+        #expect(!text.contains("handle simple requests directly"))
+        #expect(!text.contains("`continue`"))
+        #expect(!text.contains("NEEDS INPUT"))
+        #expect(!text.contains("never delegated"))
+        #expect(!text.contains("`share_artifact`"))
+        #expect(!text.contains("`prompt_working_folder`"))
+        #expect(!text.contains("`file_read`"))
+        #expect(!text.contains("cannot write files to disk"))
+    }
 }

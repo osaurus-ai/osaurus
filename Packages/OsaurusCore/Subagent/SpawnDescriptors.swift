@@ -24,8 +24,8 @@ enum SpawnInputContract {
         + "instruction, input value, constraint, and the required output format here."
 
     static let backgroundParameterDescription =
-        "Default false. True returns immediately; the result arrives later as a follow-up "
-        + "message. Do not poll or re-send."
+        "Default false. True returns immediately with the worker's session_id; the result "
+        + "arrives later as a follow-up message. Do not poll or re-send."
 
     /// Enforce only the structural part of the standalone-input contract.
     ///

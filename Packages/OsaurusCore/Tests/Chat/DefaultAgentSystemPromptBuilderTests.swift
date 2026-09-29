@@ -535,6 +535,165 @@ struct DefaultAgentSystemPromptBuilderTests {
         #expect(full.contains("delegation.spawnable_workspace_agents"))
     }
 
+    // MARK: - Exposure variants (spawn pool / working folder)
+
+    private static let configDomain = [probe(id: "config", writeToolNames: ["osaurus_config"])]
+
+    /// The default `render(compact:)` is the full-exposure variant, so every
+    /// caller that predates exposure-aware rendering keeps its bytes.
+    @Test
+    func render_defaultExposureIsFull() {
+        for compact in [false, true] {
+            let implicit = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: Self.configDomain, compact: compact)
+            let explicit = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: Self.configDomain, compact: compact, exposure: .full)
+            #expect(implicit == explicit, "compact=\(compact)")
+        }
+    }
+
+    /// Empty pool: `spawn_agent` is NOT in the schema, so the addendum must
+    /// say so and teach create → apply-stages-the-tool → spawn, in that
+    /// order, instead of telling the model to call a tool the request
+    /// refuses (the live `tool_not_found` loop on Raptor-class models).
+    @Test
+    func render_emptyPoolTeachesCreateBeforeSpawn() {
+        for compact in [false, true] {
+            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: Self.configDomain, compact: compact,
+                exposure: .init(spawnAvailable: false, folderReadable: true))
+            #expect(rendered.contains("no agents yet"), "compact=\(compact)")
+            #expect(
+                rendered.contains("`spawn_agent` is NOT in your tools")
+                    || rendered.contains("`spawn_agent` is not in your tools"),
+                "compact=\(compact)")
+            #expect(rendered.contains("adds `spawn_agent` to your tools in the same turn"), "compact=\(compact)")
+            #expect(rendered.contains("Never call `spawn_agent` before that apply"), "compact=\(compact)")
+            // The with-pool wording must be gone.
+            #expect(!rendered.contains("A fitting agent exists → call"), "compact=\(compact)")
+            #expect(!rendered.contains("When a fitting agent exists, call"), "compact=\(compact)")
+            // Apple-app routing cannot point at `spawn_agent` an existing agent either.
+            #expect(!rendered.contains("`spawn_agent` an agent that has that app"), "compact=\(compact)")
+            #expect(rendered.contains("create an agent with that app enabled"), "compact=\(compact)")
+        }
+    }
+
+    /// No working folder: `file_read` / `file_search` are absent, so the
+    /// addendum must not tell the model to read deliverables with them and
+    /// must name the way to get a folder (Folder chip / Settings path).
+    @Test
+    func render_noFolderNeverNamesTheFileTools() {
+        for compact in [false, true] {
+            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: Self.configDomain, compact: compact,
+                exposure: .init(spawnAvailable: true, folderReadable: false))
+            #expect(!rendered.contains("`file_read`"), "compact=\(compact)")
+            #expect(!rendered.contains("`file_search`"), "compact=\(compact)")
+            #expect(rendered.contains("No working folder is set on this chat"), "compact=\(compact)")
+            #expect(rendered.contains("Settings → Orchestrator"), "compact=\(compact)")
+            #expect(rendered.contains("Working Folder"), "compact=\(compact)")
+            // Raptor 0.6.1 live row: the earlier "have workers put the
+            // result in their summary" line made it create a "ProjectReader"
+            // agent and spawn it to read a README it could never see. The
+            // variant must say a worker cannot read the files either and
+            // must not invite delegation for a file ask.
+            #expect(
+                rendered.contains("neither you nor a worker you create can read"),
+                "compact=\(compact)")
+            #expect(!rendered.contains("have workers put the result"), "compact=\(compact)")
+            // With a folder the reads are taught.
+            let withFolder = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: Self.configDomain, compact: compact, exposure: .full)
+            #expect(withFolder.contains("`file_read`"), "compact=\(compact)")
+        }
+    }
+
+    /// Truthfulness contract: for every (compact, exposure) variant, each
+    /// registered tool the addendum names in backticks is in the schema the
+    /// composer resolves for that exposure. The registered universe comes
+    /// from the live registry so an addendum typo (`file_reed`) does not
+    /// pass as "not a tool".
+    @Test
+    func render_everyAdvertisedToolIsInTheMatchingSchema() async {
+        ConfigurationDomainBootstrap.registerBuiltIns()
+        let lease = await acquireSubagentStoreSandbox("addendum-truth")
+        defer { lease.release() }
+        let known = Set(ToolRegistry.shared.registeredToolNames())
+            .union(ToolRegistry.orchestratorAllowedToolNames)
+            .union(["spawn_agent", "file_read", "file_search"])
+        // The static surface every variant may name (the resolver always
+        // publishes it for the Default agent); spawn / folder tools are the
+        // conditional part the exposure describes.
+        let staticSchema = ToolRegistry.orchestratorAllowedToolNames
+        let exposures: [DefaultAgentSystemPromptBuilder.Exposure] = [
+            .init(spawnAvailable: false, folderReadable: false),
+            .init(spawnAvailable: false, folderReadable: true),
+            .init(spawnAvailable: true, folderReadable: false),
+            .init(spawnAvailable: true, folderReadable: true),
+        ]
+        for compact in [false, true] {
+            for exposure in exposures {
+                var schema = staticSchema
+                if exposure.spawnAvailable { schema.insert("spawn_agent") }
+                if exposure.folderReadable { schema.formUnion(["file_read", "file_search"]) }
+                let rendered = DefaultAgentSystemPromptBuilder.render(compact: compact, exposure: exposure)
+                let advertised = DefaultAgentSystemPromptBuilder.advertisedToolNames(
+                    in: rendered, known: known)
+                // The only tolerated absent name is one the variant declares
+                // as staged, and then the text must carry the disclaimer.
+                let missing = advertised.subtracting(schema).subtracting(exposure.stagedToolNames)
+                #expect(
+                    missing.isEmpty,
+                    "compact=\(compact) exposure=\(exposure): addendum names tools the schema lacks: \(missing.sorted())"
+                )
+                if !exposure.stagedToolNames.isEmpty {
+                    #expect(
+                        rendered.localizedCaseInsensitiveContains("`spawn_agent` is not in your tools"),
+                        "compact=\(compact): staged tool named without the not-yet disclaimer")
+                }
+                // Sanity: the extractor sees the always-required trio.
+                #expect(advertised.isSuperset(of: DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames))
+            }
+        }
+        // And the resolver's actual Default-agent schema (no pool, no folder)
+        // agrees with the minimal variant end to end.
+        let snapshot = AgentConfigSnapshot(
+            agentId: Agent.defaultId, toolsDisabled: false, memoryDisabled: true,
+            autonomousConfig: nil, toolMode: .auto, model: nil, manualToolNames: nil,
+            systemPrompt: "", dbEnabled: false)
+        let resolved = Set(
+            SystemPromptComposer.resolveTools(snapshot: snapshot, executionMode: .none)
+                .map(\.function.name))
+        let minimalExposure = DefaultAgentSystemPromptBuilder.Exposure.from(toolNames: resolved)
+        let minimal = DefaultAgentSystemPromptBuilder.render(compact: true, exposure: minimalExposure)
+        let advertised = DefaultAgentSystemPromptBuilder.advertisedToolNames(in: minimal, known: known)
+        #expect(
+            advertised.isSubset(of: resolved.union(minimalExposure.stagedToolNames)),
+            "\(advertised.subtracting(resolved).sorted())")
+    }
+
+    /// The composer's persona slot follows the resolved schema: with an
+    /// empty pool and no folder the Default agent's prompt carries the
+    /// empty-pool / no-folder wording and never the with-pool wording.
+    @Test
+    func forChat_defaultAgentAddendumMatchesExposure() async {
+        ConfigurationDomainBootstrap.registerBuiltIns()
+        let lease = await acquireSubagentStoreSandbox("addendum-forChat")
+        defer { lease.release() }
+        let snapshot = AgentConfigSnapshot(
+            agentId: Agent.defaultId, toolsDisabled: false, memoryDisabled: true,
+            autonomousConfig: nil, toolMode: .auto, model: nil, manualToolNames: nil,
+            systemPrompt: "", dbEnabled: false)
+        let rendered = SystemPromptComposer.forChat(
+            snapshot: snapshot, agentId: Agent.defaultId, executionMode: .none
+        ).render()
+        #expect(rendered.contains("no agents yet"))
+        #expect(rendered.contains("No working folder is set on this chat"))
+        #expect(!rendered.contains("`file_read`"))
+        #expect(!rendered.contains("A fitting agent exists → call"))
+        #expect(!rendered.contains("When a fitting agent exists, call"))
+    }
+
     @Test
     func render_warnsAboutSecretsNotInChatContext() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(

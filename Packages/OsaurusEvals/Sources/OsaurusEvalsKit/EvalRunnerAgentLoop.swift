@@ -1624,8 +1624,15 @@ extension EvalRunner {
         let targets = rows.map { $0.target ?? "" }
         let succeeded = rows.filter(\.ok).count
         let failed = rows.count - succeeded
-        if let expected = assertion.expectedTargets, targets != expected {
-            failures.append("targets \(targets) != \(expected)")
+        // Order-sensitive; each expected entry may be the raw `agent`
+        // argument, the resolved worker name, or the resolved UUID.
+        if let expected = assertion.expectedTargets {
+            let matches =
+                rows.count == expected.count
+                && zip(rows, expected).allSatisfy { $0.addresses($1) }
+            if !matches {
+                failures.append("targets \(targets) != \(expected)")
+            }
         }
         if let expected = assertion.expectedSucceeded, succeeded != expected {
             failures.append("succeeded \(succeeded) != \(expected)")
@@ -1655,7 +1662,7 @@ extension EvalRunner {
             }
             for (index, pair) in zip(rows, expectedRows).enumerated() {
                 let (observed, expected) = pair
-                if let value = expected.target, observed.target != value {
+                if let value = expected.target, !observed.addresses(value) {
                     failures.append(
                         "row[\(index)].target \(String(describing: observed.target)) != \(value)"
                     )
@@ -1685,6 +1692,27 @@ extension EvalRunner {
                     for needle in needles where !summary.contains(needle) {
                         failures.append("row[\(index)].summary missing '\(needle)'")
                     }
+                }
+                if let value = expected.hasSessionId,
+                    (observed.sessionId?.isEmpty == false) != value
+                {
+                    failures.append(
+                        "row[\(index)].session_id present=\(observed.sessionId != nil) != \(value)")
+                }
+                if let value = expected.continuesEarlierRow {
+                    let earlierHandles = Set(
+                        rows.prefix(index).compactMap { $0.sessionId?.lowercased() })
+                    let continued = observed.continuedSessionId?.lowercased()
+                    let observedContinues = continued.map(earlierHandles.contains) ?? false
+                    if observedContinues != value {
+                        failures.append(
+                            "row[\(index)].continue=\(String(describing: observed.continuedSessionId)) "
+                                + "reuses an earlier session_id: \(observedContinues) != \(value)")
+                    }
+                }
+                if let value = expected.needsInput, (observed.needsInput ?? false) != value {
+                    failures.append(
+                        "row[\(index)].needs_input \(String(describing: observed.needsInput)) != \(value)")
                 }
             }
         }

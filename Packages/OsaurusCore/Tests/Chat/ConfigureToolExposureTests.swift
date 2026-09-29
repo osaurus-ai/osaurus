@@ -95,6 +95,40 @@ struct ConfigureToolExposureTests {
         }
     }
 
+    /// With a working folder bound, the Orchestrator's folder surface is
+    /// exactly the two reads its addendum promises (`file_read` /
+    /// `file_search`). Copy, undo, history, and redaction are folder WORK
+    /// and stay with the workers — before this pin `file_copy`, `file_undo`,
+    /// `file_operation_history`, and `detect_pii` leaked through.
+    @Test
+    func defaultAgent_folderSurfaceIsReadOnly() async {
+        Self.ensureBootstrapped()
+        let lease = await acquireSubagentStoreSandbox("configure-exposure-folder")
+        defer { lease.release() }
+        let folder = FolderContext(
+            rootPath: URL(fileURLWithPath: "/tmp/osaurus-configure-exposure-\(UUID().uuidString)"),
+            projectType: .swift,
+            tree: "./\nREADME.md",
+            manifest: nil,
+            gitStatus: nil,
+            isGitRepo: false
+        )
+        FolderToolManager.shared.ensureFolderToolsRegistered()
+        defer { FolderToolManager.shared._unregisterAllForTesting() }
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: Self.makeSnapshot(agentId: Agent.defaultId),
+            executionMode: .hostFolder(folder)
+        )
+        let names = Set(tools.map { $0.function.name })
+        let folderTools = names.intersection(
+            ToolRegistry.coreWorkspaceToolNames.union(ToolRegistry.hostFolderExtraToolNames)
+        )
+        #expect(folderTools == ["file_read", "file_search"], "got \(folderTools.sorted())")
+        for leaked in ["file_copy", "file_undo", "file_operation_history", "detect_pii", "redact_file"] {
+            #expect(ToolRegistry.orchestratorExcludedToolNames.contains(leaked))
+        }
+    }
+
     @Test
     func defaultAgent_includesEveryConsolidatedWriteDirectly() async {
         Self.ensureBootstrapped()
