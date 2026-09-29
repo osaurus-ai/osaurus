@@ -325,7 +325,7 @@ let package = Package(
         // quantization_config, and SDK-gated JACCL fixes merged after #518.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "9e011603d437adac19334fe02e25a9a296dc80d7"
+            revision: "55ef175d0fa355d111c2568bba70654249f66d13"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
