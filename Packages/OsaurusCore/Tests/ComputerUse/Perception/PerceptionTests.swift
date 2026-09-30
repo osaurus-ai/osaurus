@@ -206,21 +206,40 @@ final class ComputerUseRunMetricsTests: XCTestCase {
 
 final class AxResolvableSweepTests: XCTestCase {
     func testSweepTalliesResolutionOutcomes() async {
-        let driver = MockMacDriver.demo()  // pid 4242: Search textfield + Go button
+        let pid: Int32 = 4242
+        let snapshot = CUSnapshot(
+            snapshotId: 1,
+            pid: pid,
+            app: "Demo",
+            focusedWindow: "Main",
+            tier: .ax,
+            truncated: false,
+            windows: [CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)],
+            elements: [
+                CUElement(id: "go", role: "button", label: "Go"),
+                CUElement(id: "search", role: "textfield", label: "Search"),
+                CUElement(id: "reply-all", role: "button", label: "Reply all"),
+                CUElement(id: "reply-sender", role: "button", label: "Reply sender"),
+            ],
+            image: nil
+        )
+        let driver = MockMacDriver(snapshots: [pid: [snapshot]])
         let probe = AxProbe(
-            pid: 4242,
+            pid: pid,
             targets: [
                 AgentTarget(describe: "Go"),  // exact label → resolved
                 AgentTarget(describe: "Search"),  // exact label → resolved
+                AgentTarget(describe: "reply"),  // multiple matches → ambiguous
                 AgentTarget(describe: "zzzzz"),  // no match → reobserve
             ]
         )
         let result = await AxResolvableSweep.run(driver: driver, probes: [probe])
-        XCTAssertEqual(result.total, 3)
+        XCTAssertEqual(result.total, 4)
         XCTAssertEqual(result.resolved, 2)
+        XCTAssertEqual(result.ambiguous, 1)
         XCTAssertEqual(result.reobserve, 1)
         XCTAssertEqual(result.deadEnd, 0)
-        XCTAssertEqual(result.resolvableRate, 2.0 / 3.0, accuracy: 0.0001)
+        XCTAssertEqual(result.resolvableRate, 0.5, accuracy: 0.0001)
     }
 
     func testEmptySweepHasZeroRate() async {
