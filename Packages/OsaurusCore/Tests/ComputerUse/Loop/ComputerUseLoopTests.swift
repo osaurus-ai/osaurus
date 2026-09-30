@@ -49,3 +49,43 @@ final class ComputerUsePolicySummaryTests: XCTestCase {
         XCTAssertFalse(summary.contains("capped at"))
     }
 }
+
+final class ComputerUseModelPrivacyTests: XCTestCase {
+    func testAllowsFoundationAliasesAndInstalledMLXModels() {
+        let installed: ComputerUseModelPrivacy.InstalledModelResolver = { model in
+            model == "local-qwen" || model == "org/local-qwen"
+        }
+
+        XCTAssertTrue(
+            ComputerUseModelPrivacy.isOnDeviceModel("default", installedModelResolver: installed)
+        )
+        XCTAssertTrue(
+            ComputerUseModelPrivacy.isOnDeviceModel("foundation", installedModelResolver: installed)
+        )
+        XCTAssertTrue(
+            ComputerUseModelPrivacy.isOnDeviceModel("local-qwen", installedModelResolver: installed)
+        )
+        XCTAssertTrue(
+            ComputerUseModelPrivacy.isOnDeviceModel("org/local-qwen", installedModelResolver: installed)
+        )
+    }
+
+    func testBlocksRemoteProviderPrefixedModelsForAXPrivacy() {
+        let installed: ComputerUseModelPrivacy.InstalledModelResolver = { _ in false }
+
+        XCTAssertFalse(
+            ComputerUseModelPrivacy.isOnDeviceModel("openai/gpt-4o", installedModelResolver: installed)
+        )
+        XCTAssertFalse(
+            ComputerUseModelPrivacy.isOnDeviceModel("osaurus-router/gemma-4", installedModelResolver: installed)
+        )
+
+        let envelope = ComputerUseModelPrivacy.remoteModelFailureEnvelope(
+            modelId: "openai/gpt-4o",
+            tool: ComputerUseTool.toolName
+        )
+        XCTAssertTrue(envelope.contains("local-only"))
+        XCTAssertTrue(envelope.contains("AX-derived screen state"))
+        XCTAssertTrue(envelope.contains(ComputerUseTool.toolName))
+    }
+}
