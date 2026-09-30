@@ -586,7 +586,7 @@ private final class Counter: @unchecked Sendable {
 /// Exactly one request is in flight per lane, so the per-request state below
 /// needs no queue — only a lock, since the delegate callbacks land on a
 /// `URLSession` thread.
-private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var handle: FileHandle?
     private var expected: Int64 = 0

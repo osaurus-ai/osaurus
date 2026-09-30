@@ -1,4 +1,5 @@
 name: CI
+# Diagnostic baseline branch only: expected invalidated-session exception. Do not merge.
 
 on:
   pull_request:
@@ -274,12 +275,13 @@ jobs:
             -skipPackagePluginValidation \
             -skipMacroValidation \
             -enableCodeCoverage NO \
+            -only-testing:OsaurusCoreTests/ChunkedFileDownloaderTests/invalidatedLaneRejectsFetchBeforeCreatingTask\(\) \
             -parallel-testing-enabled NO \
             -parallel-testing-worker-count 1 \
             -maximum-parallel-testing-workers 1 \
             -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 180 \
-            -maximum-test-execution-time-allowance 300 \
+            -default-test-execution-time-allowance 60 \
+            -maximum-test-execution-time-allowance 90 \
             | xcbeautify --renderer github-actions --is-ci \
             | tee "$XCBEAUTIFY_LOG"
 
