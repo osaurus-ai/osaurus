@@ -234,7 +234,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // A phone paired before this launch: take the keep-awake assertion
         // and keep agents created from now on reachable over the relay. The
         // service does both in its init, which otherwise waited for Settings
-        // → Osaurus Connect or the first pairing request to touch it.
+        // → Mobile or the first pairing request to touch it.
         _ = MobilePairingService.shared
         // Phone chats from before they were titled by content, once.
         ChatSessionsManager.shared.retitleLegacyPhoneChats()

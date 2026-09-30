@@ -300,7 +300,7 @@ public enum SettingsSearchIndex {
             title: "Generate Pairing Code",
             keywords: [
                 "iphone", "ios", "ipad", "mobile", "phone", "pair", "pairing code", "6 digit",
-                "iosaurus", "remote", "osaurus connect",
+                "iosaurus", "remote", "osaurus connect", "mobile",
             ]
         ),
         .init(

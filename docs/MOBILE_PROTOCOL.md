@@ -27,7 +27,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 8. [Crypto inventory for iOS](#8-crypto-inventory-for-ios)
 9. [Compatibility contract](#9-compatibility-contract)
 10. [Sequence diagrams](#10-sequence-diagrams)
-11. [Osaurus Connect pairing (6-digit code)](#11-osaurus-connect-pairing-6-digit-code)
+11. [Mobile pairing (6-digit code)](#11-mobile-pairing-6-digit-code)
 12. [Choosing a model](#12-choosing-a-model)
 13. [Agent avatars](#13-agent-avatars)
 14. [Reading the Mac's chats](#14-reading-the-macs-chats)
@@ -748,10 +748,10 @@ sequenceDiagram
 
 ---
 
-## 11. Osaurus Connect pairing (6-digit code)
+## 11. Mobile pairing (6-digit code)
 
 The Osaurus iPhone app pairs with **one** Mac by typing a 6-digit code shown in
-Settings → Osaurus Connect. It needs no master key on the phone and yields a
+Settings → Mobile. It needs no master key on the phone and yields a
 master-scoped `osk-v1` key covering every agent on that Mac, plus each agent's
 crypto address for the Secure Channel (§6.2). One phone per Mac: a new
 pairing revokes the previous phone's key.
@@ -801,7 +801,7 @@ plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
 | `429` | — | Per-IP rate limit (shared with `/pair`) |
 
 `isSimulator` (optional) only drives a "Simulator" badge next to the paired
-device in Settings → Osaurus Connect.
+device in Settings → Mobile.
 
 The phone pins every returned `address` against its agent `id` and uses the
 key as the Bearer inside the Secure Channel. `GET /agents` and
@@ -834,7 +834,7 @@ it.
 
 ### 11.6 Reaching the Mac away from the LAN
 
-"Reach From Anywhere" (Settings → Osaurus Connect, default on) turns on the
+"Reach From Anywhere" (Settings → Mobile, default on) turns on the
 relay tunnel (§6.1) for every remote agent while a phone is paired, and off
 again — only for tunnels it turned on — when disabled or unpaired. Agents
 created later are added automatically.

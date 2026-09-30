@@ -155,7 +155,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .credits: L("Credits")
         case .workspaces: L("Workspaces")
-        case .connect: L("Osaurus Connect")
+        case .connect: L("Mobile")
         case .models: L("Local Models")
         case .providers: L("Providers")
         case .agents: L("Agents")

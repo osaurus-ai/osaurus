@@ -4821,7 +4821,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// POST /pair/unpair — the paired phone unpairs itself (revokes its own
-    /// key and clears Settings → Osaurus Connect). Authenticated by the auth
+    /// key and clears Settings → Mobile). Authenticated by the auth
     /// gate; only the key minted for the current paired device is accepted.
     private func handlePairUnpairEndpoint(
         head: HTTPRequestHead,

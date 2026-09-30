@@ -37,7 +37,7 @@ When the description is blank and the agent has a system prompt, Osaurus generat
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies and **Auto-Allow All Tool Calls** live under Tools & MCP → All Tools.
 - Tools & MCP: **Services** (connected MCP services, **Add Service**, and the **Directory** of services you can add), **All Tools** (every tool with its permission policy), **Plugins** (native plugin registry).
 - Images: **Defaults** (default generation and edit models, image/video job permissions, cloud video defaults; the **Image model load policy** is under Advanced) and **Image Models**.
-- Osaurus Connect: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
+- Mobile: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
 - Privacy: **Filter** (the redaction filter, AI detection, per-provider overrides, background-request review, and Send Crash Reports), **Rules**, and **Models** (the detection model).
 - Identity, General → Advanced → **Data & Storage** (encryption/backup, and **File History**: **Keep File History** — until the chat is deleted (default), 90 days, or 30 days — and **File History Size Limit**, which clears the oldest changes first but always keeps the most recent one; history that is cleared can no longer be reverted, and deleting a chat always deletes its file history), Channels credentials.
 - Secrets of any kind (API keys, tokens) are always entered in native secure fields, never chat.
@@ -150,7 +150,7 @@ macOS manages swap. Osaurus no longer shows swap warnings or requires a
 
 ## Management sidebar
 
-General, Conversation, Voice, Themes, Credits, Workspaces, Osaurus Connect, Identity, Permissions, Privacy, Local Models, Providers, Images, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools & MCP, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
+General, Conversation, Voice, Themes, Credits, Workspaces, Mobile, Identity, Permissions, Privacy, Local Models, Providers, Images, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools & MCP, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
 
 Older names still resolve: the former **Chat** tab is now **Conversation**, **Media** is **Images**, **Tools** is **Tools & MCP**, and the separate **Storage** tab (encryption, backup, file history) now lives under General → Advanced → Data & Storage. The Command Line Tool installer moved to Server → Overview.
 

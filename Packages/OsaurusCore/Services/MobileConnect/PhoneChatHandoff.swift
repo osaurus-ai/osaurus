@@ -2,7 +2,7 @@
 //  PhoneChatHandoff.swift
 //  osaurus
 //
-//  Settings → Osaurus Connect → Continue Phone Chats on This Mac: when the
+//  Settings → Mobile → Continue Phone Chats on This Mac: when the
 //  user worked on a chat from their paired iPhone while away from the Mac,
 //  that chat comes to the front as they return (the screen unlocks, or the
 //  mouse or keyboard moves after a while untouched). On by default: it only

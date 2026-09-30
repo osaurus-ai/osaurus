@@ -283,7 +283,7 @@ final class ChatSessionsManager: ObservableObject {
     /// phone's list. Retitles them once from what was asked; the transcript
     /// is read off the main thread, and `updatedAt` is left alone.
     func retitleLegacyPhoneChats() {
-        let legacyPrefix = "\(MobilePairingService.keyLabel) → "
+        let legacyPrefix = "\(MobilePairingService.legacyKeyLabel) → "
         let stale = sessions.filter {
             $0.title.hasPrefix(legacyPrefix) && RemoteSessionContinuation.isFromPairedPhone($0)
         }.map(\.id)

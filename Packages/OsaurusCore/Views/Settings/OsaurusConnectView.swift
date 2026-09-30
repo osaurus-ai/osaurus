@@ -2,7 +2,7 @@
 //  OsaurusConnectView.swift
 //  osaurus
 //
-//  Settings → Osaurus Connect: pair the Osaurus iPhone app with a 6-digit
+//  Settings → Mobile: pair the Osaurus iPhone app with a 6-digit
 //  code, see / revoke the paired phone, and keep the Mac awake for it.
 //  All state lives in `MobilePairingService`; this view only renders it.
 //
@@ -28,7 +28,7 @@ struct OsaurusConnectView: View {
     var body: some View {
         VStack(spacing: 0) {
             ManagerHeader(
-                title: L("Osaurus Connect"),
+                title: L("Mobile"),
                 subtitle: L("Use your agents from your iPhone")
             )
             .managerHeaderEntrance(hasAppeared: hasAppeared)

@@ -200,7 +200,7 @@ final class InboundSharedRunBridge {
             let staleTitle =
                 stored.title == "New Chat"
                 || (RemoteSessionContinuation.isFromPairedPhone(context)
-                    && stored.title.hasPrefix("\(MobilePairingService.keyLabel) → "))
+                    && stored.title.hasPrefix("\(MobilePairingService.legacyKeyLabel) → "))
             data.title = staleTitle ? title : stored.title
         } else {
             data = ChatSessionData(
