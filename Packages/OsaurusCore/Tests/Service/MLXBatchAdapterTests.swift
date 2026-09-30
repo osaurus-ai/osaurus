@@ -1181,6 +1181,70 @@ struct MLXBatchAdapterTests {
 
     /// An unreadable bundle must take a cold prefill rather than risk reusing some
     /// other pack's KV: fail toward a slow request, never toward a wrong one.
+    @Test func weightsFingerprint_detectsSameSizeMetadataWithPreservedTimestamp() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let config = dir.appendingPathComponent("config.json")
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000.25)
+        try Data("{\"head_dim\":64}".utf8).write(to: config)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: config.path)
+        let before = ModelRuntime.weightsFingerprint(for: dir)
+        try Data("{\"head_dim\":96}".utf8).write(to: config)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: config.path)
+        #expect(ModelRuntime.weightsFingerprint(for: dir) != before)
+    }
+
+    @Test func weightsFingerprint_detectsSubsecondMetadataChanges() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let config = dir.appendingPathComponent("config.json")
+        try Data("{\"head_dim\":64}".utf8).write(to: config)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000.25)], ofItemAtPath: config.path)
+        let before = ModelRuntime.weightsFingerprint(for: dir)
+        try Data("{\"head_dim\":96}".utf8).write(to: config)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000.75)], ofItemAtPath: config.path)
+        #expect(ModelRuntime.weightsFingerprint(for: dir) != before)
+    }
+
+    @Test func weightsFingerprint_tracksSidecarAndIndexContent() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+        for name in ["jang_config.json", "model.safetensors.index.json"] {
+            let file = dir.appendingPathComponent(name)
+            try Data("{\"value\":1}".utf8).write(to: file)
+            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+            let timestamp = try #require(attributes[.modificationDate] as? Date)
+            let before = ModelRuntime.weightsFingerprint(for: dir)
+            try Data("{\"value\":2}".utf8).write(to: file)
+            try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: file.path)
+            #expect(ModelRuntime.weightsFingerprint(for: dir) != before, "\(name) content is cache identity")
+        }
+    }
+
+    @Test func weightsFingerprint_rejectsOversizedMetadataWithoutHashingWeightPayloads() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("model.safetensors")
+        #expect(FileManager.default.createFile(atPath: file.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: 65 * 1024 * 1024)
+        try handle.close()
+        let first = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(!first.hasPrefix("unknown-"), "Weight shards are stat-only and have no metadata size cap")
+        #expect(first == ModelRuntime.weightsFingerprint(for: dir))
+        try FileManager.default.moveItem(at: file, to: dir.appendingPathComponent("tokenizer.json"))
+        let rejected = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(rejected.hasPrefix("unknown-"))
+        #expect(rejected != ModelRuntime.weightsFingerprint(for: dir), "Never reuse a partial fingerprint")
+    }
+
     @Test func weightsFingerprint_unreadableBundleNeverMatches() {
         let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)")
         let a = ModelRuntime.weightsFingerprint(for: missing)
