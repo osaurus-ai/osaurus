@@ -268,12 +268,21 @@ public struct ManifestValidate {
         }
     }
 
-    /// Loose semver shape check: at least three dot-separated integer
-    /// components. Mirrors what `SemanticVersion.parse` accepts without
-    /// re-implementing it (the CLI module deliberately doesn't depend
-    /// on `OsaurusRepository`'s parser).
+    /// Loose semver shape check: exactly three dot-separated integer core
+    /// components, after stripping build metadata and prerelease. Mirrors
+    /// what `SemanticVersion.parse` accepts without re-implementing it (the
+    /// CLI module deliberately doesn't depend on `OsaurusRepository`'s
+    /// parser). Build metadata (`+...`) is stripped first, exactly as the
+    /// parser does, so `1.2.3+build` is accepted; and both splits keep empty
+    /// subsequences so a leading `-` or `+` (e.g. `-1.2.3`) yields an empty
+    /// core component and is rejected, matching the parser instead of
+    /// silently passing.
     private static func looksLikeSemver(_ s: String) -> Bool {
-        let core = s.split(separator: "-", maxSplits: 1).first ?? Substring(s)
+        let withoutBuild =
+            s.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false).first ?? Substring(s)
+        let core =
+            withoutBuild.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).first
+            ?? withoutBuild
         let nums = core.split(separator: ".", omittingEmptySubsequences: false)
         guard nums.count == 3 else { return false }
         return nums.allSatisfy { Int($0) != nil }
