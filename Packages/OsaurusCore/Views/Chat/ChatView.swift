@@ -1146,14 +1146,18 @@ final class ChatSession: ObservableObject {
                     previousModel: previousModel,
                     newModel: model,
                     hasConversation: self.hasVisibleThreadMessages,
-                    isRemoteAgentTarget: isRemoteAgentTarget
+                    isRemoteAgentTarget: isRemoteAgentTarget,
+                    previousModelIsLocal: previousModel.map(self.isLocalChatModel) ?? false,
+                    newModelIsMedia: self.isMediaModel(model)
                 ), let previousModel
                 {
                     self.modelSwitchContinuityWarning = ModelSwitchContinuityWarning(
                         previousModelId: previousModel,
                         newModelId: model
                     )
-                } else if isRemoteAgentTarget || previousModel == nil || !self.hasVisibleThreadMessages {
+                } else {
+                    // Any non-warning switch leaves an earlier advisory naming
+                    // models that are no longer both in play.
                     self.modelSwitchContinuityWarning = nil
                 }
                 self.lastManualModelSelection = model
@@ -1286,14 +1290,33 @@ final class ChatSession: ObservableObject {
     /// as its effective model, the user didn't pick anything, and inference
     /// (and any cache) lives on the remote host — so a pin refresh, or the
     /// host owner changing their agent's model, is not a local model switch.
+    /// Only a switch away from an on-device MLX model drops an Osaurus-held
+    /// prefix/KV cache, so remote, Foundation, Claude Code and media models
+    /// never warn, and neither does a switch into a media model (it never
+    /// reads the transcript).
     nonisolated static func shouldWarnAboutModelSwitch(
         previousModel: String?,
         newModel: String,
         hasConversation: Bool,
-        isRemoteAgentTarget: Bool = false
+        isRemoteAgentTarget: Bool = false,
+        previousModelIsLocal: Bool,
+        newModelIsMedia: Bool
     ) -> Bool {
         guard !isRemoteAgentTarget, hasConversation, let previousModel else { return false }
+        guard previousModelIsLocal, !newModelIsMedia else { return false }
         return previousModel.caseInsensitiveCompare(newModel) != .orderedSame
+    }
+
+    /// True when `modelId` is an on-device MLX chat model in the picker.
+    /// Unknown ids (uninstalled, provider gone) count as not local.
+    private func isLocalChatModel(_ modelId: String) -> Bool {
+        guard let item = pickerItems.first(where: { $0.id == modelId }) else { return false }
+        if case .local = item.source, item.mediaModel == nil { return true }
+        return false
+    }
+
+    private func isMediaModel(_ modelId: String) -> Bool {
+        pickerItems.first(where: { $0.id == modelId })?.isMediaGeneration == true
     }
 
     deinit {
