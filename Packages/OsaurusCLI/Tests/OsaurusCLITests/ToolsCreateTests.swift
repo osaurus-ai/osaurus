@@ -89,6 +89,30 @@ final class ToolsCreateTests: XCTestCase {
         XCTAssertTrue(content.contains("api.version = 2"))
     }
 
+    func testSwiftManifestUsesValidTripleQuoteDelimiter() throws {
+        ToolsCreate.scaffoldPlugin(name: "test-plugin", language: "swift", rootDirectory: tempDir)
+
+        let pluginPath =
+            tempDir
+            .appendingPathComponent("test-plugin")
+            .appendingPathComponent("Sources/test_plugin/Plugin.swift")
+        let content = try String(contentsOf: pluginPath, encoding: .utf8)
+
+        // The generated `get_manifest` body opens a Swift multiline string literal.
+        // The template must emit a bare `"""` delimiter, not an escaped-quote triple
+        // (`\"\"\"`), which is a Swift syntax error that makes the scaffold fail to compile.
+        let escapedTriple = "\\\"\\\"\\\""  // \" \" \"
+        let bareTriple = "\"\"\""  // """
+        XCTAssertFalse(
+            content.contains("let manifest = " + escapedTriple),
+            "Generated Plugin.swift must not open the manifest with an escaped-quote triple"
+        )
+        XCTAssertTrue(
+            content.contains("let manifest = " + bareTriple),
+            "Generated Plugin.swift must open the manifest with a bare triple-quote delimiter"
+        )
+    }
+
     func testSwiftManifestContainsPluginId() throws {
         ToolsCreate.scaffoldPlugin(name: "my-tool", language: "swift", rootDirectory: tempDir)
 
