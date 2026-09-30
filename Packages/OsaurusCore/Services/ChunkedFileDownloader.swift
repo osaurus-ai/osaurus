@@ -586,7 +586,7 @@ private final class Counter: @unchecked Sendable {
 /// Exactly one request is in flight per lane, so the per-request state below
 /// needs no queue — only a lock, since the delegate callbacks land on a
 /// `URLSession` thread.
-private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var handle: FileHandle?
     private var expected: Int64 = 0
@@ -595,9 +595,11 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
     private var continuation: CheckedContinuation<Void, Error>?
     private var failure: Error?
 
-    private lazy var session: URLSession = {
-        GlobalProxySettings.makeSession(base: .default, delegate: self)
-    }()
+    // The lane is terminal after invalidation. Session construction and task
+    // creation share the state lock so cancellation cannot invalidate a session
+    // between the admission check and dataTask(with:).
+    private var session: URLSession?
+    private var invalidated = false
 
     func fetch(
         url: URL,
@@ -612,18 +614,45 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
 
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             lock.lock()
+            guard !invalidated else {
+                lock.unlock()
+                c.resume(throwing: CancellationError())
+                return
+            }
+            let session: URLSession
+            if let existing = self.session {
+                session = existing
+            } else {
+                session = GlobalProxySettings.makeSession(base: .default, delegate: self)
+                self.session = session
+            }
             self.handle = handle
             self.expected = expected
             self.onBytes = onBytes
             self.received = 0
             self.failure = nil
             self.continuation = c
+            let task = session.dataTask(with: request)
             lock.unlock()
-            session.dataTask(with: request).resume()
+            // Cancellation after task creation is a normal URLSession task
+            // cancellation. Never hold the lane lock while resuming callbacks.
+            task.resume()
         }
     }
 
-    func invalidate() { session.invalidateAndCancel() }
+    func invalidate() {
+        lock.lock()
+        guard !invalidated else {
+            lock.unlock()
+            return
+        }
+        invalidated = true
+        let session = self.session
+        lock.unlock()
+        // Do not eagerly create a session merely to invalidate an unused lane.
+        // Completion of an admitted task still owns its continuation.
+        session?.invalidateAndCancel()
+    }
 
     private func setFailure(_ error: Error) {
         lock.lock()
