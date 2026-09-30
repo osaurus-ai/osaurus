@@ -239,32 +239,32 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mobile"
+            "state" : "translated",
+            "value" : "Mobil"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mobile"
+            "state" : "translated",
+            "value" : "모바일"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mobile"
+            "state" : "translated",
+            "value" : "Мобильные устройства"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mobile"
+            "state" : "translated",
+            "value" : "移动设备"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mobile"
+            "state" : "translated",
+            "value" : "行動裝置"
           }
         }
       }
@@ -7232,32 +7232,32 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld connected"
+            "state" : "translated",
+            "value" : "%lld verbunden"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld connected"
+            "state" : "translated",
+            "value" : "%lld개 연결됨"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld connected"
+            "state" : "translated",
+            "value" : "%lld подключено"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld connected"
+            "state" : "translated",
+            "value" : "%lld 个已连接"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld connected"
+            "state" : "translated",
+            "value" : "%lld 個已連線"
           }
         }
       }
@@ -9634,32 +9634,32 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld need attention"
+            "state" : "translated",
+            "value" : "%lld benötigen Aufmerksamkeit"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld need attention"
+            "state" : "translated",
+            "value" : "%lld개 확인 필요"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld need attention"
+            "state" : "translated",
+            "value" : "%lld требуют внимания"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld need attention"
+            "state" : "translated",
+            "value" : "%lld 个需要处理"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld need attention"
+            "state" : "translated",
+            "value" : "%lld 個需要處理"
           }
         }
       }
@@ -14416,32 +14416,32 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 connected"
+            "state" : "translated",
+            "value" : "1 verbunden"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 connected"
+            "state" : "translated",
+            "value" : "1개 연결됨"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 connected"
+            "state" : "translated",
+            "value" : "1 подключено"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 connected"
+            "state" : "translated",
+            "value" : "1 个已连接"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 connected"
+            "state" : "translated",
+            "value" : "1 個已連線"
           }
         }
       }
@@ -15324,32 +15324,32 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 needs attention"
+            "state" : "translated",
+            "value" : "1 benötigt Aufmerksamkeit"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 needs attention"
+            "state" : "translated",
+            "value" : "1개 확인 필요"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 needs attention"
+            "state" : "translated",
+            "value" : "1 требует внимания"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 needs attention"
+            "state" : "translated",
+            "value" : "1 个需要处理"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "1 needs attention"
+            "state" : "translated",
+            "value" : "1 個需要處理"
           }
         }
       }
@@ -21610,7 +21610,39 @@
     },
     "Add all agents" : {
       "comment" : "A button that adds all existing agents to the",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Agenten hinzufügen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 에이전트 추가"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить всех агентов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加所有智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入所有智能體"
+          }
+        }
+      }
     },
     "Add another Slack workspace" : {
       "comment" : "Label for a button that allows the user to add another Slack workspace.",
@@ -22974,7 +23006,39 @@
     },
     "Add Service" : {
       "comment" : "A heading for the MCP service selection screen.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dienst hinzufügen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서비스 추가"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить сервис"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入服務"
+          }
+        }
+      }
     },
     "Add shared agent" : {
 
@@ -23665,7 +23729,38 @@
       }
     },
     "Adds every existing agent to the Orchestrator's allowed list." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fügt jeden vorhandenen Agenten zur Freigabeliste des Orchestrators hinzu."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기존의 모든 에이전트를 오케스트레이터의 허용 목록에 추가합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавляет всех существующих агентов в список разрешённых для Оркестратора."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将所有现有智能体添加到编排器的允许列表。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將所有現有智能體加入編排器的允許列表。"
+          }
+        }
+      }
     },
     "Adds this workspace back to your subscription right away" : {
       "localizations" : {
@@ -53901,7 +53996,39 @@
     },
     "Choose which other apps' models appear in your catalog. Files are referenced in place and never copied, modified, or deleted." : {
       "comment" : "A description of how the user can configure which other apps' models appear in their catalog.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle, welche Modelle anderer Apps in deinem Katalog erscheinen. Die Dateien werden an ihrem Ort referenziert und niemals kopiert, verändert oder gelöscht."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 앱의 모델 중 카탈로그에 표시할 항목을 선택하세요. 파일은 원래 위치에서 참조되며 복사, 수정 또는 삭제되지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите, какие модели других приложений появятся в вашем каталоге. Файлы используются на месте и никогда не копируются, не изменяются и не удаляются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择哪些其他应用的模型显示在你的目录中。文件在原位置引用，绝不会被复制、修改或删除。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇哪些其他 App 的模型顯示在你的目錄中。檔案在原位置引用，絕不會被複製、修改或刪除。"
+          }
+        }
+      }
     },
     "Choose which tools agents can use" : {
       "extractionState" : "stale",
@@ -58441,7 +58568,39 @@
     },
     "Complete these steps to enable Wake Word" : {
       "comment" : "A description of the setup required to enable",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schließe diese Schritte ab, um das Aktivierungswort zu aktivieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "호출어를 활성화하려면 다음 단계를 완료하세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполните эти шаги, чтобы включить фразу активации"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成以下步骤以启用唤醒词"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成以下步驟以啟用喚醒詞"
+          }
+        }
+      }
     },
     "Completed" : {
       "localizations" : {
@@ -86871,7 +87030,39 @@
     },
     "Edit Service" : {
       "comment" : "A title for a sheet that edits an MCP provider.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dienst bearbeiten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서비스 편집"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменить сервис"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯服務"
+          }
+        }
+      }
     },
     "Edit Skill" : {
       "localizations" : {
@@ -89240,7 +89431,39 @@
     },
     "Enable this service" : {
       "comment" : "A label for a toggle that enables a service.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diesen Dienst aktivieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 서비스 활성화"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить этот сервис"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用此服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "啟用此服務"
+          }
+        }
+      }
     },
     "Enable to read assistant replies aloud" : {
       "comment" : "A description of the functionality of enabling text-to-speech.",
@@ -93558,7 +93781,39 @@
     },
     "Every tool call will run immediately without asking for approval, including tools that can execute code, modify files, or send data. You can turn this off at any time under Tools & MCP → All Tools." : {
       "comment" : "Confirmation message for the \"Auto-Allow All Tool Calls\" toggle.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jeder Tool-Aufruf wird sofort ohne Nachfrage ausgeführt – auch Tools, die Code ausführen, Dateien ändern oder Daten senden können. Du kannst dies jederzeit unter „Tools & MCP → Alle Tools“ deaktivieren."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드 실행, 파일 수정, 데이터 전송이 가능한 도구를 포함하여 모든 도구 호출이 승인 없이 즉시 실행됩니다. 도구 및 MCP → 모든 도구에서 언제든지 끌 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждый вызов инструмента будет выполняться сразу без запроса подтверждения, включая инструменты, которые могут выполнять код, изменять файлы или отправлять данные. Это можно отключить в любой момент в разделе «Инструменты и MCP → Все инструменты»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所有工具调用都将立即执行而不再请求批准，包括可以执行代码、修改文件或发送数据的工具。你可以随时在“工具与 MCP → 所有工具”中关闭此选项。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所有工具呼叫都將立即執行而不再請求批准，包括可以執行程式碼、修改檔案或傳送資料的工具。你可以隨時在「工具與 MCP → 所有工具」中關閉此選項。"
+          }
+        }
+      }
     },
     "Every workspace comes with a shared monthly credit pool." : {
       "localizations" : {
@@ -104443,7 +104698,39 @@
     },
     "Generates this agent's follow-up questions on a separate, usually cheaper or faster model, so the chat model is never interrupted. Applies only while Suggest Follow-Up Questions is on in Conversation settings." : {
       "comment" : "A description of how follow-up questions are generated.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erzeugt die Folgefragen dieses Agenten mit einem separaten, meist günstigeren oder schnelleren Modell, damit das Chat-Modell nie unterbrochen wird. Gilt nur, solange „Folgefragen vorschlagen“ in den Konversationseinstellungen aktiviert ist."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트의 후속 질문을 별도의(보통 더 저렴하거나 빠른) 모델에서 생성하여 채팅 모델이 중단되지 않도록 합니다. 대화 설정에서 후속 질문 제안이 켜져 있을 때만 적용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Генерирует уточняющие вопросы этого агента на отдельной, обычно более дешёвой или быстрой модели, чтобы модель чата не прерывалась. Действует только пока в настройках Беседы включено «Предлагать уточняющие вопросы»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用单独的（通常更便宜或更快的）模型生成此智能体的后续问题，这样聊天模型永远不会被中断。仅在对话设置中开启“建议后续问题”时生效。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用單獨的（通常更便宜或更快的）模型生成此智能體的後續問題，這樣聊天模型永遠不會被中斷。僅在對話設定中開啟「建議後續問題」時生效。"
+          }
+        }
+      }
     },
     "Generating" : {
       "localizations" : {
@@ -111104,7 +111391,39 @@
     },
     "How local data is protected on disk, and how long agent file changes stay revertible." : {
       "comment" : "A description of how data is stored and backed up.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wie lokale Daten auf der Festplatte geschützt werden und wie lange Dateiänderungen von Agenten rückgängig gemacht werden können."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬 데이터가 디스크에서 어떻게 보호되는지, 그리고 에이전트의 파일 변경을 얼마나 오래 되돌릴 수 있는지 설정합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как локальные данные защищены на диске и как долго изменения файлов агентами можно откатить."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地数据在磁盘上如何受到保护，以及智能体的文件更改可撤销的时长。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本機資料在磁碟上如何受到保護，以及智能體的檔案變更可還原的時長。"
+          }
+        }
+      }
     },
     "How many prompt tokens are prefilled per step." : {
       "localizations" : {
@@ -118831,7 +119150,39 @@
     },
     "Install the `osaurus` CLI into your PATH for terminal access. If installed to ~/.local/bin, make sure that folder is in your PATH." : {
       "comment" : "A description of the command line tool.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installiere die `osaurus`-CLI in deinem PATH für den Terminalzugriff. Bei Installation nach ~/.local/bin stelle sicher, dass dieser Ordner in deinem PATH liegt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "터미널에서 사용할 수 있도록 `osaurus` CLI를 PATH에 설치합니다. ~/.local/bin에 설치한 경우 해당 폴더가 PATH에 포함되어 있는지 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установите CLI `osaurus` в ваш PATH для доступа из терминала. Если установлено в ~/.local/bin, убедитесь, что эта папка есть в PATH."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将 `osaurus` 命令行工具安装到你的 PATH 以便在终端中使用。如果安装到 ~/.local/bin，请确保该文件夹在你的 PATH 中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將 `osaurus` 命令列工具安裝到你的 PATH 以便在終端機中使用。如果安裝到 ~/.local/bin，請確保該資料夾在你的 PATH 中。"
+          }
+        }
+      }
     },
     "Install the ~2.8 GB on-device model to also catch names, addresses, dates, and secrets. Pattern rules in the Rules tab already work without it." : {
       "comment" : "A description of the on-device model installation process.",
@@ -127065,7 +127416,39 @@
     },
     "Lightweight model used for memory consolidation, chat titles and transcription cleanup. If unset, your active chat model is used as a fallback. Note: tools must also be enabled on the active agent — check Agent → Capabilities." : {
       "comment" : "A description of the Core Model.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leichtgewichtiges Modell für Gedächtniskonsolidierung, Chat-Titel und Transkriptionsbereinigung. Ohne Auswahl wird dein aktives Chat-Modell verwendet. Hinweis: Tools müssen auch beim aktiven Agenten aktiviert sein – siehe Agent → Funktionen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메모리 정리, 채팅 제목, 전사 정리에 사용하는 경량 모델입니다. 설정하지 않으면 활성 채팅 모델이 대신 사용됩니다. 참고: 활성 에이전트에서도 도구가 활성화되어 있어야 합니다 — 에이전트 → 기능을 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лёгкая модель для консолидации памяти, заголовков чатов и очистки транскрипций. Если не задана, используется активная модель чата. Примечание: инструменты также должны быть включены у активного агента — см. Агент → Возможности."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用于记忆整理、聊天标题和转录清理的轻量模型。若未设置，则回退到当前聊天模型。注意：当前智能体也必须启用工具 — 请检查智能体 → 能力。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用於記憶整理、聊天標題和轉錄清理的輕量模型。若未設定，則回退到目前聊天模型。注意：目前智能體也必須啟用工具 — 請檢查智能體 → 能力。"
+          }
+        }
+      }
     },
     "Likes" : {
       "localizations" : {
@@ -140089,7 +140472,39 @@
     },
     "Model used to summarize older messages when a chat outgrows its context window. Runs automatically near the limit and on demand from the context budget popover. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes." : {
       "comment" : "A description of the chat's context model.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell, das ältere Nachrichten zusammenfasst, wenn ein Chat sein Kontextfenster überschreitet. Läuft automatisch nahe der Grenze und auf Wunsch über das Kontextbudget-Popover. Entfernte Modelle durchlaufen deinen Datenschutzfilter. Ohne Auswahl fasst das aktuelle Chat-Modell zusammen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅이 컨텍스트 창을 초과할 때 이전 메시지를 요약하는 모델입니다. 한도에 가까워지면 자동으로, 컨텍스트 예산 팝오버에서는 수동으로 실행됩니다. 원격 모델은 개인정보 필터를 거칩니다. 설정하지 않으면 채팅의 현재 모델이 요약합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель для сжатия старых сообщений, когда чат превышает контекстное окно. Запускается автоматически у предела и по запросу из окна бюджета контекста. Удалённые модели проходят через Фильтр конфиденциальности. Если не задана, резюмирует текущая модель чата."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当聊天超出上下文窗口时用于总结较早消息的模型。接近上限时自动运行，也可在上下文预算弹窗中手动运行。远程模型会经过你的隐私过滤器。若未设置，由聊天的当前模型进行总结。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當聊天超出上下文視窗時用於總結較早訊息的模型。接近上限時自動執行，也可在上下文預算彈出視窗中手動執行。遠端模型會經過你的隱私過濾器。若未設定，由聊天的目前模型進行總結。"
+          }
+        }
+      }
     },
     "Model version compatibility" : {
       "extractionState" : "manual",
@@ -140353,7 +140768,39 @@
     },
     "Modify this MCP service" : {
       "comment" : "A description of a service being edited.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diesen MCP-Dienst bearbeiten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 MCP 서비스 수정"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменить этот MCP-сервис"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修改此 MCP 服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修改此 MCP 服務"
+          }
+        }
+      }
     },
     "Modify your API connection" : {
       "localizations" : {
@@ -152209,14 +152656,109 @@
     },
     "No services match \"%@\". Try another name, or pick Custom Server above." : {
       "comment" : "A message that appears when there are no matching services in the directory. The argument is the user's search query.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Dienste passen zu „%@“. Versuche einen anderen Namen oder wähle oben „Benutzerdefinierter Server“."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\"과(와) 일치하는 서비스가 없습니다. 다른 이름을 시도하거나 위의 사용자 지정 서버를 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет сервисов, соответствующих «%@». Попробуйте другое имя или выберите выше «Пользовательский сервер»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有与“%@”匹配的服务。请尝试其他名称，或选择上方的自定义服务器。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有與「%@」相符的服務。請嘗試其他名稱，或選擇上方的自定義服務器。"
+          }
+        }
+      }
     },
     "No services match this filter." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Dienste entsprechen diesem Filter."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 필터와 일치하는 서비스가 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет сервисов, соответствующих этому фильтру."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有符合此筛选条件的服务。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有符合此篩選條件的服務。"
+          }
+        }
+      }
     },
     "No services yet" : {
       "comment" : "A label displayed when a user has not yet configured any services.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Dienste"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서비스가 아직 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервисов пока нет"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚無服務"
+          }
+        }
+      }
     },
     "No sessions yet. A session appears here the first time an agent uses the browser." : {
       "localizations" : {
@@ -154119,7 +154661,39 @@
     },
     "None of your %d agents is in this list, so the Orchestrator has no `spawn_agent` tool and cannot delegate. Add them here (or use Add all agents) to turn delegation back on." : {
       "comment" : "A notice that an empty agent pool is not an error, but a special case where the Orchestrator cannot delegate. The argument is the number of agents.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keiner deiner %d Agenten steht in dieser Liste, daher hat der Orchestrator kein `spawn_agent`-Tool und kann nicht delegieren. Füge sie hier hinzu (oder nutze „Alle Agenten hinzufügen“), um die Delegation wieder einzuschalten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d개의 에이전트 중 이 목록에 있는 것이 없어 오케스트레이터에 `spawn_agent` 도구가 없고 위임할 수 없습니다. 여기에 추가하거나 모든 에이전트 추가를 사용하여 위임을 다시 켜세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ни один из ваших %d агентов не в этом списке, поэтому у Оркестратора нет инструмента `spawn_agent` и он не может делегировать. Добавьте их здесь (или используйте «Добавить всех агентов»), чтобы снова включить делегирование."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 %d 个智能体都不在此列表中，因此编排器没有 `spawn_agent` 工具，无法委派。在此添加它们（或使用“添加所有智能体”）以重新开启委派。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 %d 個智能體都不在此列表中，因此編排器沒有 `spawn_agent` 工具，無法委派。在此加入它們（或使用「加入所有智能體」）以重新開啟委派。"
+          }
+        }
+      }
     },
     "None selected — speculation falls back to the model's own MTP head, per Mode above." : {
       "comment" : "Text displayed in a field that shows when no drafter is selected.",
@@ -172663,7 +173237,39 @@
     },
     "Pick a service below to give your agents more tools." : {
       "comment" : "A description of the benefits of adding a service.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle unten einen Dienst, um deinen Agenten mehr Tools zu geben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아래에서 서비스를 선택하여 에이전트에 더 많은 도구를 제공하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите сервис ниже, чтобы дать вашим агентам больше инструментов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在下方选择一个服务，为你的智能体添加更多工具。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在下方選擇一個服務，為你的智能體加入更多工具。"
+          }
+        }
+      }
     },
     "Pick a starter, name it, write a prompt" : {
       "localizations" : {
@@ -193730,7 +194336,39 @@
     },
     "Remote models pass through your Privacy Filter. You can change this anytime in Settings → Conversation → Advanced." : {
       "comment" : "A description of how remote models are processed by the Privacy Filter.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entfernte Modelle durchlaufen deinen Datenschutzfilter. Du kannst dies jederzeit unter Einstellungen → Konversation → Erweitert ändern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원격 모델은 개인정보 필터를 거칩니다. 설정 → 대화 → 고급에서 언제든지 변경할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалённые модели проходят через Фильтр конфиденциальности. Это можно изменить в любой момент в Настройки → Беседа → Дополнительно."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "远程模型会经过你的隐私过滤器。你可以随时在“设置 → 对话 → 高级”中更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遠端模型會經過你的隱私過濾器。你可以隨時在「設定 → 對話 → 高級」中更改。"
+          }
+        }
+      }
     },
     "Remote n8n needs a local agent as the default: it is the endpoint the relay serves and the key n8n encrypts to." : {
       "localizations" : {
@@ -214363,7 +215001,39 @@
     },
     "Search services" : {
       "comment" : "A label displayed in a search field.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dienste suchen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서비스 검색"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск сервисов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋服務"
+          }
+        }
+      }
     },
     "Search settings" : {
       "comment" : "Deep-link shown on a failed search tool row in chat; opens Settings > Search.",
@@ -216844,7 +217514,39 @@
     },
     "Select at least one agent to enable Wake Word" : {
       "comment" : "A warning message displayed when no agents are selected.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle mindestens einen Agenten, um das Aktivierungswort zu aktivieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "호출어를 활성화하려면 에이전트를 하나 이상 선택하세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите хотя бы одного агента, чтобы включить фразу активации"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "至少选择一个智能体以启用唤醒词"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "至少選擇一個智能體以啟用喚醒詞"
+          }
+        }
+      }
     },
     "Select custom directory" : {
       "localizations" : {
@@ -219706,10 +220408,40 @@
       "comment" : "A label that reads the name of a service and the number of tools available for it.",
       "isCommentAutoGenerated" : true,
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dienst %1$@, %2$lld Tools"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "Service %1$@, %2$lld tools"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서비스 %1$@, 도구 %2$lld개"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервис %1$@, %2$lld инструментов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务 %1$@，%2$lld 个工具"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服務 %1$@，%2$lld 個工具"
           }
         }
       }
@@ -236095,7 +236827,39 @@
     },
     "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Conversation → Advanced → Compaction Model." : {
       "comment" : "Text describing the effect of using a different model for context compaction.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fasst ältere Nachrichten mit dem aktuellen Chat-Modell zusammen, um Kontext freizugeben. Der sichtbare Chat bleibt unverändert. Ein eigenes Modell wählst du unter Einstellungen → Konversation → Erweitert → Kompaktierungsmodell."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "현재 채팅 모델로 이전 메시지를 요약하여 컨텍스트를 확보합니다. 표시되는 채팅은 변경되지 않습니다. 설정 → 대화 → 고급 → 압축 모델에서 전용 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резюмирует старые сообщения текущей моделью чата, чтобы освободить контекст. Видимый чат не меняется. Отдельную модель можно выбрать в Настройки → Беседа → Дополнительно → Модель сжатия."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用当前聊天模型总结较早的消息以释放上下文。可见的聊天内容不变。可在“设置 → 对话 → 高级 → 压缩模型”中选择专用模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用目前聊天模型總結較早的訊息以釋放上下文。可見的聊天內容不變。可在「設定 → 對話 → 高級 → 壓縮模型」中選擇專用模型。"
+          }
+        }
+      }
     },
     "Summarizing older messages…" : {
       "comment" : "Label for a context-compaction dialog phase.",
@@ -243648,7 +244412,39 @@
     },
     "The legacy “osaurus.messages” plugin is still installed. It is superseded — its tools no longer load, and the built-in Messages tools (Agents → Abilities → Tools → Messages) send through their own path that does not use these allowlists. Uninstall the plugin from Settings… (⌘,) → Tools & MCP → Plugins to clear this notice." : {
       "comment" : "A warning message that instructs the user to uninstall the legacy Messages plugin.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das alte Plugin „osaurus.messages“ ist noch installiert. Es wurde abgelöst – seine Tools werden nicht mehr geladen, und die integrierten Nachrichten-Tools (Agenten → Abilities → Tools → Nachrichten) senden über einen eigenen Pfad, der diese Freigabelisten nicht verwendet. Deinstalliere das Plugin unter Einstellungen… (⌘,) → Tools & MCP → Plugins, um diesen Hinweis zu entfernen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기존 “osaurus.messages” 플러그인이 아직 설치되어 있습니다. 이 플러그인은 대체되었으며 해당 도구는 더 이상 로드되지 않고, 내장 메시지 도구(에이전트 → Abilities → 도구 → 메시지)는 이 허용 목록을 사용하지 않는 자체 경로로 전송합니다. 설정… (⌘,) → 도구 및 MCP → 플러그인에서 플러그인을 제거하면 이 알림이 사라집니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устаревший плагин «osaurus.messages» всё ещё установлен. Он заменён — его инструменты больше не загружаются, а встроенные инструменты Сообщений (Агенты → Abilities → Инструменты → Сообщения) отправляют через собственный путь, не использующий эти списки разрешений. Удалите плагин в Настройки… (⌘,) → Инструменты и MCP → Плагины, чтобы убрать это уведомление."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "旧版“osaurus.messages”插件仍已安装。它已被取代 — 其工具不再加载，内置的信息工具（智能体 → 能力 → 工具 → 信息）通过自己的路径发送，不使用这些允许列表。在“设置… (⌘,) → 工具与 MCP → 插件”中卸载该插件即可清除此提示。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "舊版「osaurus.messages」插件仍已安裝。它已被取代 — 其工具不再載入，內建的訊息工具（智能體 → 能力 → 工具 → 訊息）透過自己的路徑傳送，不使用這些允許列表。在「設定… (⌘,) → 工具與 MCP → 插件」中解除安裝該插件即可清除此提示。"
+          }
+        }
+      }
     },
     "The link will stop working. Anyone trying to use it will be turned away." : {
       "localizations" : {
@@ -251703,7 +252499,39 @@
     },
     "This URL answers like an MCP server, not a chat completions API. Add it under Tools & MCP > Services instead of as an API provider." : {
       "comment" : "User-facing replacement for the generic discovery failure once the base URL has been identified as an MCP server.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese URL antwortet wie ein MCP-Server, nicht wie eine Chat-Completions-API. Füge sie unter „Tools & MCP > Dienste“ hinzu statt als API-Anbieter."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 URL은 채팅 완성 API가 아니라 MCP 서버처럼 응답합니다. API 제공자 대신 도구 및 MCP > 서비스에서 추가하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот URL отвечает как MCP-сервер, а не как API chat completions. Добавьте его в «Инструменты и MCP > Сервисы», а не как API-провайдера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 URL 的响应方式像 MCP 服务器，而不是聊天补全 API。请在“工具与 MCP > 服务”中添加，而不是作为 API 提供商。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 URL 的回應方式像 MCP 伺服器，而不是聊天補全 API。請在「工具與 MCP > 服務」中加入，而不是作為 API 提供者。"
+          }
+        }
+      }
     },
     "This URL answers like an MCP server, not a chat completions API. Add it under Tools > Connections instead of as an API provider." : {
       "extractionState" : "stale",
@@ -251777,7 +252605,39 @@
     },
     "This URL answers like an MCP server, not a chat completions API. Osaurus can add it as an MCP service instead — the URL and token you entered will be carried over." : {
       "comment" : "Alert message when a user is prompted to add a server as an MCP service.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese URL antwortet wie ein MCP-Server, nicht wie eine Chat-Completions-API. Osaurus kann sie stattdessen als MCP-Dienst hinzufügen – die eingegebene URL und der Token werden übernommen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 URL은 채팅 완성 API가 아니라 MCP 서버처럼 응답합니다. Osaurus가 대신 MCP 서비스로 추가할 수 있으며, 입력한 URL과 토큰은 그대로 유지됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот URL отвечает как MCP-сервер, а не как API chat completions. Osaurus может добавить его как MCP-сервис — введённые URL и токен будут перенесены."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 URL 的响应方式像 MCP 服务器，而不是聊天补全 API。Osaurus 可以改为将其添加为 MCP 服务 — 你输入的 URL 和令牌将被保留。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 URL 的回應方式像 MCP 伺服器，而不是聊天補全 API。Osaurus 可以改為將其加入為 MCP 服務 — 你輸入的 URL 和權杖將被保留。"
+          }
+        }
+      }
     },
     "This uses the exact same search your agents get — what you see here is what they see." : {
       "comment" : "A description under the Try-it box, explaining that the results shown here are the same as those that the user's agents would see.",
@@ -272875,7 +273735,39 @@
     },
     "Where Osaurus downloads and stores its own models." : {
       "comment" : "A description of the location of the models directory.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wo Osaurus seine eigenen Modelle herunterlädt und speichert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 자체 모델을 다운로드하고 저장하는 위치입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Где Osaurus загружает и хранит собственные модели."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 下载并存储自身模型的位置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 下載並儲存自身模型的位置。"
+          }
+        }
+      }
     },
     "Where Osaurus listens for client requests. Changes restart the server." : {
       "extractionState" : "manual",
