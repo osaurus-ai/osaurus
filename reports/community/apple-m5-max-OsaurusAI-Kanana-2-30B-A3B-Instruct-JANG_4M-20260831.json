@@ -1,0 +1,186 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-09-01T07:11:58.911Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.900709219858156,
+      "agentLoopDiagnostics" : {
+        "exitCounts" : {
+          "cancelled" : 5,
+          "emptyResponseExhausted" : 1,
+          "finalResponse" : 129,
+          "iterationCapReached" : 5,
+          "overBudget" : 1
+        },
+        "exitOriginCounts" : {
+          "ordinaryModelFinal" : 127,
+          "typedTerminal" : 5,
+          "unrecorded" : 9
+        },
+        "measuredRows" : 141,
+        "recoveryRetriesTotal" : 4,
+        "rowsWithExitTelemetry" : 141
+      },
+      "cacheTotals" : {
+        "diskL2Evictions" : 420,
+        "diskL2Hits" : 779,
+        "diskL2Misses" : 10493,
+        "diskL2Stores" : 2564,
+        "kvPrefixHits" : 0,
+        "kvPrefixMisses" : 0,
+        "pagedEvictions" : 0,
+        "ssmCompanionHits" : 0,
+        "ssmCompanionMisses" : 0,
+        "ssmCompanionReDerives" : 0
+      },
+      "chatModelPassed" : 247,
+      "chatModelScored" : 328,
+      "correctFileDeliveryRate" : 0.7083333333333334,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "1bbd959",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Kanana-2-30B-A3B-Instruct-JANG_4M",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 1,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.8794326241134752,
+      "meanAgentLoopWallTimeMs" : 47702.53216713033,
+      "meanCpuPercent" : 109.69876327549713,
+      "meanDecodeTokensPerSecond" : 25.522659466362054,
+      "meanFirstActionMs" : 6394.321840579116,
+      "meanFirstStepContextTokens" : 3453.8214285714284,
+      "meanFrictionCalls" : 0.4097222222222222,
+      "meanPromptTokensPerTask" : 17789.17,
+      "meanTotalTokensPerTask" : 16745.97685185185,
+      "meanTtftMs" : 303.13586127268127,
+      "medianModelSteps" : 3,
+      "modelId" : "OsaurusAI/Kanana-2-30B-A3B-Instruct-JANG_4M",
+      "peakCpuPercent" : 634.4756238924219,
+      "peakPhysFootprintMb" : 92315.13278198242,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 96,
+          "scored" : 141,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3
+          },
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 28,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 7,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 19,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 34,
+          "scored" : 49,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 14,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 51346" : 1,
+            "other: scenario: multimodal_video · port 51346" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 1,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errorCategories" : {
+            "runtime_other" : 1
+          },
+          "errored" : 1,
+          "passed" : 35,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-09-01T04:28:28Z",
+      "subsystemPassed" : 14,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "§pluginCreator=714",
+        "tool:redact_file=491",
+        "§enabledManifest=432",
+        "tool:search_and_extract=371",
+        "tool:detect_pii=353",
+        "tool:file_read=279"
+      ],
+      "totalPassed" : 261,
+      "totalScored" : 344
+    }
+  ]
+}
