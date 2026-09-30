@@ -362,6 +362,7 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
             kind: .eval,
             source: Self.evidenceSource,
             artifactPath: path,
+            artifactLocator: URL(fileURLWithPath: path).lastPathComponent,
             status: evidenceStatus,
             counts: evidenceCounts,
             startedAt: parseEvalReviewEvidenceDate(manifest.generatedAt),
