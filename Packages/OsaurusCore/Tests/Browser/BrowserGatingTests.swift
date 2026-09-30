@@ -46,6 +46,10 @@ import Testing
     }
 
     @Test func explicitSubmitEscalatesToConsequential() {
+        #expect(
+            BrowserEffectClassifier.classify(action: "click", target: "Continue", submit: true)
+                == .consequential
+        )
         // type(submit: true) and Enter fold the caller's submit intent in.
         #expect(
             BrowserEffectClassifier.classify(action: "type", target: nil, submit: true)
@@ -69,6 +73,13 @@ import Testing
                     == .consequential,
                 "click on '\(label)' must be consequential")
         }
+    }
+
+    @Test func liveControlSemanticsOverrideUnknownLabels() {
+        #expect(BrowserEffectClassifier.clickEffect(label: "Créer un compte", kind: .submit) == .consequential)
+        #expect(BrowserEffectClassifier.clickEffect(label: "Remember me", kind: .edit) == .edit)
+        #expect(BrowserEffectClassifier.clickEffect(label: "Read more", kind: .link) == .navigate)
+        #expect(BrowserEffectClassifier.clickEffect(label: "Delete account", kind: .link) == .consequential)
     }
 
     @Test func authSessionAndScriptActionsAreAlwaysConsequential() {
