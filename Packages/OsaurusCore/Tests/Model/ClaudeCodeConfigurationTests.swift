@@ -125,18 +125,22 @@ struct ClaudeCodeConfigurationTests {
         #expect(args[formatIndex + 1] == "stream-json")
     }
 
+    /// Every alias, not just one: the aliases are the CLI's own, so a new
+    /// generation is added here by name and must reach `--model` unchanged.
     @Test func modelAliasIsPassedThrough() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .opus,
-            mode: .agent,
-            allowedTools: [],
-            systemPrompt: nil
-        )
-        guard let modelIndex = args.firstIndex(of: "--model") else {
-            Issue.record("expected a --model flag in \(args)")
-            return
+        for model in ClaudeCodeModel.allCases {
+            let args = ClaudeCodeConfiguration.arguments(
+                model: model,
+                mode: .agent,
+                allowedTools: [],
+                systemPrompt: nil
+            )
+            guard let modelIndex = args.firstIndex(of: "--model") else {
+                Issue.record("expected a --model flag in \(args)")
+                return
+            }
+            #expect(args[modelIndex + 1] == model.rawValue)
         }
-        #expect(args[modelIndex + 1] == "opus")
     }
 
     /// Appending rather than replacing keeps Claude Code's own tool contract
