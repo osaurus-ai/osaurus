@@ -525,6 +525,9 @@ struct SettingsToggle: View {
             Toggle("", isOn: $isOn)
                 .toggleStyle(SwitchToggleStyle(tint: themeManager.currentTheme.accentColor))
                 .labelsHidden()
+                // The visible title sits beside a hidden-label switch; name the
+                // switch itself so VoiceOver reads which setting it changes.
+                .accessibilityLabel(Text(LocalizedStringKey(title), bundle: .module))
         }
         .padding(12)
         .background(

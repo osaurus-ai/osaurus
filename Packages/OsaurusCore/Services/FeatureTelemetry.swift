@@ -642,6 +642,7 @@ enum FeatureTelemetry {
         case .orchestrator: return "orchestrator"
         case .models: return "models"
         case .providers: return "providers"
+        case .distributed: return "distributed_inference"
         case .imageGeneration: return "image_generation"
         case .agents: return "agents"
         case .agentChannels: return "agent_channels"

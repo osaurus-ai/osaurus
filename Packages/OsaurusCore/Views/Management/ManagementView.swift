@@ -197,6 +197,8 @@ private extension ManagementView {
             ImageGenerationView()
         case .providers:
             RemoteProvidersView()
+        case .distributed:
+            DistributedInferenceSettingsView()
         case .agents:
             AgentsView(deeplinkAgentId: deeplinkAgentId)
         case .agentChannels:
