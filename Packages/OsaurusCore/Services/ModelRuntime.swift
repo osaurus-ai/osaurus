@@ -5352,8 +5352,12 @@ public actor ModelRuntime {
             "tokenizer.model", "vocab.json", "merges.txt", "chat_template.jinja",
             "processor_config.json", "preprocessor_config.json",
         ]
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
         else { return "unknown-\(UUID().uuidString)" }
         let relevant = entries.filter {
             let name = $0.lastPathComponent

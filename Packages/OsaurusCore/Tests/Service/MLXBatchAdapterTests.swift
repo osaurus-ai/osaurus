@@ -1179,8 +1179,6 @@ struct MLXBatchAdapterTests {
         )
     }
 
-    /// An unreadable bundle must take a cold prefill rather than risk reusing some
-    /// other pack's KV: fail toward a slow request, never toward a wrong one.
     @Test func weightsFingerprint_detectsSameSizeMetadataWithPreservedTimestamp() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1202,11 +1200,15 @@ struct MLXBatchAdapterTests {
         let config = dir.appendingPathComponent("config.json")
         try Data("{\"head_dim\":64}".utf8).write(to: config)
         try FileManager.default.setAttributes(
-            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000.25)], ofItemAtPath: config.path)
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000.25)],
+            ofItemAtPath: config.path
+        )
         let before = ModelRuntime.weightsFingerprint(for: dir)
         try Data("{\"head_dim\":96}".utf8).write(to: config)
         try FileManager.default.setAttributes(
-            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000.75)], ofItemAtPath: config.path)
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000.75)],
+            ofItemAtPath: config.path
+        )
         #expect(ModelRuntime.weightsFingerprint(for: dir) != before)
     }
 
@@ -1245,6 +1247,8 @@ struct MLXBatchAdapterTests {
         #expect(rejected != ModelRuntime.weightsFingerprint(for: dir), "Never reuse a partial fingerprint")
     }
 
+    /// An unreadable bundle must take a cold prefill rather than risk reusing some
+    /// other pack's KV: fail toward a slow request, never toward a wrong one.
     @Test func weightsFingerprint_unreadableBundleNeverMatches() {
         let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)")
         let a = ModelRuntime.weightsFingerprint(for: missing)
