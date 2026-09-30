@@ -1,0 +1,65 @@
+{
+  "domains" : [
+    "agent_loop"
+  ],
+  "generatedAt" : "2026-08-28T08:20:57.573Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0,
+      "chatModelPassed" : 0,
+      "chatModelScored" : 17,
+      "correctFileDeliveryRate" : 0,
+      "environment" : {
+        "caseCount" : 17,
+        "catalogHash" : "f2f4dab21df21cfe",
+        "chip" : "Apple M5 Max",
+        "commit" : "f4b6ffa",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/gemma-4-E2B-it-8bit",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "harness" : "osaurus",
+      "loopFreeRate" : 0,
+      "meanAgentLoopWallTimeMs" : 510747.601481045,
+      "meanCpuPercent" : 111.00578751723268,
+      "meanDecodeTokensPerSecond" : 28.57757647058824,
+      "meanFirstStepContextTokens" : 2939.0588235294117,
+      "meanFrictionCalls" : 0,
+      "meanPromptTokensPerTask" : 2939.0588235294117,
+      "meanTotalTokensPerTask" : 16864.117647058825,
+      "meanTtftMs" : 119.70011626972871,
+      "medianModelSteps" : 1,
+      "modelId" : "OsaurusAI/gemma-4-E2B-it-8bit",
+      "peakCpuPercent" : 128.1017907798671,
+      "peakPhysFootprintMb" : 12033.548683166504,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 0,
+          "scored" : 17,
+          "skipped" : 0
+        }
+      },
+      "startedAt" : "2026-08-28T05:55:00Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 0,
+      "topContextContributors" : [
+        "tool:file_read=276",
+        "tool:share_artifact=266",
+        "§pluginCreator=252",
+        "§sandbox=211",
+        "tool:clarify=196",
+        "tool:file_write=176"
+      ],
+      "totalPassed" : 0,
+      "totalScored" : 17
+    }
+  ]
+}
