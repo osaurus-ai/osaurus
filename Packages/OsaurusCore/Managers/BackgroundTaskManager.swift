@@ -1906,6 +1906,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     private func persistRetainedTabs() {
         guard persistsRetainedTabs else { return }
+        // Snapshot is built on the main actor (fast, in-memory).
         let records =
             backgroundTasks.values
             // Mirrors have no persisted session to rehydrate — a retained
@@ -1913,12 +1914,19 @@ public final class BackgroundTaskManager: ObservableObject {
             .filter { $0.showToast && $0.status.isTerminal && !$0.isSubagentMirror }
             .compactMap(RetainedActivityTabRecord.init(state:))
             .sorted { $0.createdAt < $1.createdAt }
-        guard !records.isEmpty else {
-            retainedTabsDefaults.removeObject(forKey: Self.retainedTabsDefaultsKey)
-            return
-        }
-        if let data = try? JSONEncoder().encode(records) {
-            retainedTabsDefaults.set(data, forKey: Self.retainedTabsDefaultsKey)
+        let key = Self.retainedTabsDefaultsKey
+        let defaults = retainedTabsDefaults
+        // JSON encoding and NSUserDefaults IPC are dispatched off the main
+        // actor to avoid blocking the main thread. NSUserDefaults is
+        // thread-safe, and `records` is an immutable value-type snapshot.
+        Task.detached(priority: .utility) {
+            guard !records.isEmpty else {
+                defaults.removeObject(forKey: key)
+                return
+            }
+            if let data = try? JSONEncoder().encode(records) {
+                defaults.set(data, forKey: key)
+            }
         }
     }
 
