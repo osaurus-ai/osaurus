@@ -819,6 +819,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     isLoopback: isPhysicalLoopbackConnection(context),
                     operation: .apply
                 )
+            } else if head.method == .GET, path == "/admin/downloads" {
+                handleDownloadsAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context),
+                    operation: .list
+                )
+            } else if head.method == .POST, path == "/admin/downloads/cancel" {
+                handleDownloadsAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context),
+                    operation: .cancel
+                )
             } else if head.method == .GET, path == "/models/picker" {
                 handleModelPickerEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST || head.method == .PUT, path == "/models/options" {
@@ -2259,7 +2281,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 if !started.isEmpty {
                     notes.append(
-                        "\(started.count) download(s) started — poll `osaurus status` "
+                        "\(started.count) download(s) started — poll `GET /admin/downloads` "
                             + "or the app for completion.")
                 }
                 if !notes.isEmpty { payload["note"] = notes.joined(separator: " ") }
@@ -2270,6 +2292,242 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private static func configAdminBody(_ object: [String: Any]) -> String {
         jsonObjectString(object)
+    }
+
+    /// `/admin/downloads` — status of model downloads, and
+    /// `/admin/downloads/cancel` to stop one. `/admin/config/apply` starts
+    /// downloads as fire-and-forget tasks; these routes let the CLI or a
+    /// local client follow them to completion. They read and drive the same
+    /// `ModelDownloadService` state the Models UI renders. Loopback-only on
+    /// the PHYSICAL address, like `/admin/config/*`, since that is the only
+    /// HTTP route that can start a download.
+    private func handleDownloadsAdminEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String,
+        isLoopback: Bool,
+        operation: DownloadsAdminOperation
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+        let parsedBody = head.method == .POST ? readRequestBody() : nil
+
+        func respond(status: HTTPResponseStatus, body: String) {
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")] + cors
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: parsedBody?.text,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: logStartTime
+            )
+        }
+
+        func respondError(status: HTTPResponseStatus, message: String) {
+            respond(
+                status: status,
+                body: Self.errorBody(.openai(type: "invalid_request_error"), message: message)
+            )
+        }
+
+        guard isLoopback else {
+            respondError(
+                status: .forbidden,
+                message:
+                    "/admin/downloads is restricted to local (loopback) callers. "
+                    + "Run the osaurus CLI on this machine or use the Osaurus app."
+            )
+            return
+        }
+
+        // Same gate as `/admin/config/*`: a browser page cannot send
+        // application/json cross-origin without a preflight.
+        if head.method == .POST,
+            let contentType = head.headers.first(name: "Content-Type"),
+            !contentType.lowercased().contains("application/json")
+        {
+            respondError(
+                status: .unsupportedMediaType,
+                message: "POST /admin/downloads/* expects Content-Type: application/json."
+            )
+            return
+        }
+
+        let requestURI = head.uri
+        runRequestTask(priority: .userInitiated) {
+            switch operation {
+            case .list:
+                let model = Self.queryParameter("model", in: requestURI)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let (states, metrics) = await MainActor.run {
+                    (ModelManager.shared.downloadStates, ModelManager.shared.downloadMetrics)
+                }
+                let object = Self.downloadsJSONObject(
+                    states: states,
+                    metrics: metrics,
+                    model: model?.isEmpty == true ? nil : model
+                )
+                respond(status: .ok, body: Self.jsonObjectString(object))
+
+            case .cancel:
+                guard let parsedBody, !parsedBody.data.isEmpty,
+                    let request = try? JSONSerialization.jsonObject(with: parsedBody.data)
+                        as? [String: Any],
+                    let requested = (request["model"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                    !requested.isEmpty
+                else {
+                    respondError(
+                        status: .badRequest,
+                        message: "POST a JSON body: {\"model\": \"<repo id>\"}."
+                    )
+                    return
+                }
+                enum Outcome {
+                    case cancelled(String)
+                    case notRunning(String, String)
+                    case unknown
+                }
+                let outcome: Outcome = await MainActor.run {
+                    let manager = ModelManager.shared
+                    let states = manager.downloadStates
+                    guard let id = Self.downloadKey(matching: requested, in: states),
+                        let state = states[id]
+                    else { return .unknown }
+                    switch state {
+                    case .downloading, .paused:
+                        manager.cancelDownload(id)
+                        return .cancelled(id)
+                    default:
+                        return .notRunning(id, Self.downloadStateName(state))
+                    }
+                }
+                switch outcome {
+                case .cancelled(let id):
+                    respond(
+                        status: .ok,
+                        body: Self.jsonObjectString(["status": "cancelled", "model": id])
+                    )
+                case .notRunning(let id, let state):
+                    respondError(
+                        status: .conflict,
+                        message: "\(id) has no download to cancel (state: \(state))."
+                    )
+                case .unknown:
+                    respondError(status: .notFound, message: "Unknown model: \(requested).")
+                }
+            }
+        }
+    }
+
+    enum DownloadsAdminOperation {
+        case list
+        case cancel
+    }
+
+    /// The `/admin/downloads` body. Without `model`, lists downloads that
+    /// are in flight, paused, or failed (every installed model is
+    /// `completed`, so listing those would enumerate the whole library).
+    /// With `model`, returns that one entry whatever its state, so a caller
+    /// can confirm a download finished; an unknown id yields an empty list.
+    static func downloadsJSONObject(
+        states: [String: DownloadState],
+        metrics: [String: ModelDownloadService.DownloadMetrics],
+        model: String?
+    ) -> [String: Any] {
+        let modelKey = model.flatMap { downloadKey(matching: $0, in: states) }
+        let selected = states.filter { id, state in
+            if model != nil {
+                return id == modelKey
+            }
+            switch state {
+            case .downloading, .paused, .failed: return true
+            case .notStarted, .completed: return false
+            }
+        }
+        // JSONSerialization throws on NaN / infinity, which a speed or ETA
+        // estimate can briefly produce; report those as null.
+        func finite(_ value: Double?) -> Any {
+            guard let value, value.isFinite else { return NSNull() }
+            return value
+        }
+        let rows: [[String: Any]] = selected.keys.sorted().map { id in
+            let state = selected[id] ?? .notStarted
+            let metric = metrics[id]
+            let progress: Double
+            let error: Any
+            switch state {
+            case .downloading(let value), .paused(let value):
+                progress = value
+                error = NSNull()
+            case .completed:
+                progress = 1.0
+                error = NSNull()
+            case .failed(let message):
+                progress = 0.0
+                error = message
+            case .notStarted:
+                progress = 0.0
+                error = NSNull()
+            }
+            return [
+                "id": id,
+                "state": downloadStateName(state),
+                "progress": progress,
+                "bytes_received": metric?.bytesReceived as Any? ?? NSNull(),
+                "total_bytes": metric?.totalBytes as Any? ?? NSNull(),
+                "bytes_per_second": finite(metric?.bytesPerSecond),
+                "eta_seconds": finite(metric?.etaSeconds),
+                "error": error,
+            ]
+        }
+        return ["downloads": rows]
+    }
+
+    /// The state key for a requested repo id: an exact match, else the
+    /// first case-insensitive match in sorted order, so a lookup is stable
+    /// even if two keys differ only by case.
+    private static func downloadKey(
+        matching requested: String,
+        in states: [String: DownloadState]
+    ) -> String? {
+        if states[requested] != nil { return requested }
+        return states.keys.sorted().first {
+            $0.caseInsensitiveCompare(requested) == .orderedSame
+        }
+    }
+
+    private static func downloadStateName(_ state: DownloadState) -> String {
+        switch state {
+        case .notStarted: return "not_started"
+        case .downloading: return "downloading"
+        case .paused: return "paused"
+        case .completed: return "completed"
+        case .failed: return "failed"
+        }
     }
 
     /// A response body from a dictionary, properly escaped whatever the
