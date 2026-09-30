@@ -1034,7 +1034,7 @@ enum ConfigApplier {
                     results.append(
                         ConfigApplyResult(
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
-                            message: "Finish sign-in / token entry in Settings → Tools → Remote."))
+                            message: "Finish sign-in / token entry in Settings → Tools & MCP → Services."))
                 } else {
                     results.append(
                         ConfigApplyResult(
@@ -1108,7 +1108,7 @@ enum ConfigApplier {
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
                             message: "Registered, but could not store secret env "
                                 + storeFailures.joined(separator: ", ")
-                                + " — Keychain unavailable; set them in Settings → Tools → Remote."))
+                                + " — Keychain unavailable; set them in Settings → Tools & MCP → Services."))
                 }
             } else {
                 guard let url = entry.url else {
@@ -1154,7 +1154,7 @@ enum ConfigApplier {
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
                             message: "Registered. Finish "
                                 + (auth == .oauth ? "sign-in" : "token entry")
-                                + " in Settings → Tools → Remote."))
+                                + " in Settings → Tools & MCP → Services."))
                 } else {
                     results.append(
                         ConfigApplyResult(section: "mcp_servers", target: entry.name, status: .done))
@@ -1210,7 +1210,7 @@ enum ConfigApplier {
                 results.append(
                     ConfigApplyResult(
                         section: "plugins", target: pluginId, status: .needsUserAction,
-                        message: "Installed. Needs secrets in Settings… (⌘,) → Tools → Native Plugins (Configure Secrets on the plugin card): "
+                        message: "Installed. Needs secrets in Settings… (⌘,) → Tools & MCP → Plugins (Configure Secrets on the plugin card): "
                             + missingSecretLabels.joined(separator: ", ")))
             }
         }

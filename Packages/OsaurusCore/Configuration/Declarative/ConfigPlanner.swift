@@ -1720,7 +1720,7 @@ enum ConfigPlanner {
                 } else if auth != .none {
                     changes.append(
                         "auth: \(ConfigMCPAuth.key(for: auth)) — finish sign-in in "
-                            + "Settings → Tools → Remote (secrets never travel through the document)")
+                            + "Settings → Tools & MCP → Services (secrets never travel through the document)")
                 }
                 actions.append(
                     ConfigPlanAction(

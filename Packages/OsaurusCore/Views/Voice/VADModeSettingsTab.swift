@@ -2,8 +2,9 @@
 //  VADModeSettingsTab.swift
 //  osaurus
 //
-//  VAD (Voice Activity Detection) mode settings.
-//  Configure wake-word agent activation.
+//  Voice → Wake Word: always-on listening that opens a chat with an agent
+//  when you say its name. (Internally "VAD mode"; the tab raw value and
+//  service names keep that spelling.)
 //
 
 import SwiftUI
@@ -119,83 +120,58 @@ struct VADModeSettingsTab: View {
     // MARK: - VAD Toggle Card
 
     private var vadToggleCard: some View {
-        SettingsSection(title: "VAD Mode", icon: "waveform.circle") {
-            VStack(alignment: .leading, spacing: 12) {
-                SettingsToggle(
-                    title: L("Enable VAD Mode"),
-                    description: vadEnabled
-                        ? L("Always listening for wake words")
-                        : L("Voice-activated agent switching"),
-                    isOn: $vadEnabled
-                )
-                .disabled(!canEnableVAD)
-                .opacity(canEnableVAD ? 1 : 0.6)
-                .onChange(of: vadEnabled) { _, newValue in
-                    saveSettings()
-                    Task {
-                        if newValue {
-                            try? await vadService.start()
-                        } else {
-                            await vadService.stop()
-                        }
+        SettingsSection(title: "Wake Word", icon: "waveform.circle", anchorId: "voice.stt.vad") {
+            SettingsToggle(
+                title: L("Enable Wake Word"),
+                description: vadEnabled
+                    ? L("Always listening for agent names")
+                    : L("Say an agent's name to open a chat with it"),
+                isOn: $vadEnabled
+            )
+            .disabled(!canEnableVAD)
+            .opacity(canEnableVAD ? 1 : 0.6)
+            .onChange(of: vadEnabled) { _, newValue in
+                saveSettings()
+                Task {
+                    if newValue {
+                        try? await vadService.start()
+                    } else {
+                        await vadService.stop()
                     }
                 }
+            }
 
-                // Status indicator
-                if vadEnabled {
-                    HStack(spacing: 8) {
-                        VoiceStatusIndicator(
-                            state: vadServiceState,
-                            showLabel: true,
-                            compact: false
-                        )
+            // Status indicator
+            if vadEnabled {
+                HStack(spacing: 8) {
+                    VoiceStatusIndicator(
+                        state: vadServiceState,
+                        showLabel: true,
+                        compact: false
+                    )
 
-                        Spacer()
+                    Spacer()
 
-                        if vadService.state == .listening {
-                            WaveformView(level: vadService.audioLevel, style: .minimal)
-                                .frame(width: 36, height: 36)
-                        }
+                    if vadService.state == .listening {
+                        WaveformView(level: vadService.audioLevel, style: .minimal)
+                            .frame(width: 36, height: 36)
                     }
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(theme.tertiaryBackground.opacity(0.8))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(theme.successColor.opacity(0.15), lineWidth: 1)
-                    )
                 }
-
-                infoBox(
-                    "When enabled, Osaurus will continuously listen for agent names. Say a agent's name to automatically open a chat with that agent."
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(theme.tertiaryBackground.opacity(0.8))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(theme.successColor.opacity(0.15), lineWidth: 1)
                 )
             }
-        }
-    }
 
-    /// Accent-tinted informational callout shared by this tab's sections.
-    private func infoBox(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 12))
-                .foregroundColor(theme.accentColor)
-
-            Text(LocalizedStringKey(text), bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+            VoiceInfoBox(
+                "When enabled, Osaurus will continuously listen for agent names. Say an agent's name to automatically open a chat with that agent."
+            )
         }
-        .padding(12)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.accentColor.opacity(0.08))
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.accentColor.opacity(0.12), lineWidth: 1)
-            }
-        )
     }
 
     private var vadServiceState: VoiceState {
@@ -211,35 +187,31 @@ struct VADModeSettingsTab: View {
 
     private var requirementsCard: some View {
         SettingsSection(title: "Setup Required", icon: "exclamationmark.triangle.fill") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Complete these steps to enable VAD mode", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+            Text("Complete these steps to enable Wake Word", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
 
-                VStack(spacing: 12) {
-                    RequirementRow(
-                        title: L("Microphone Access"),
-                        isComplete: speechService.microphonePermissionGranted,
-                        action: {
-                            Task {
-                                _ = await speechService.requestMicrophonePermission()
-                            }
-                        }
-                    )
-
-                    RequirementRow(
-                        title: L("Speech Model Downloaded"),
-                        isComplete: modelManager.downloadedModelsCount > 0,
-                        action: nil
-                    )
-
-                    RequirementRow(
-                        title: L("Model Selected"),
-                        isComplete: modelManager.selectedModel != nil,
-                        action: nil
-                    )
+            VoiceRequirementRow(
+                title: L("Microphone Access"),
+                isComplete: speechService.microphonePermissionGranted,
+                action: {
+                    Task {
+                        _ = await speechService.requestMicrophonePermission()
+                    }
                 }
-            }
+            )
+
+            VoiceRequirementRow(
+                title: L("Speech Model Downloaded"),
+                isComplete: modelManager.downloadedModelsCount > 0,
+                action: nil
+            )
+
+            VoiceRequirementRow(
+                title: L("Model Selected"),
+                isComplete: modelManager.selectedModel != nil,
+                action: nil
+            )
         }
     }
 
@@ -257,7 +229,7 @@ struct VADModeSettingsTab: View {
                         Image(systemName: "info.circle")
                             .font(.system(size: 12))
                             .foregroundColor(theme.warningColor)
-                        Text("Select at least one agent to enable VAD", bundle: .module)
+                        Text("Select at least one agent to enable Wake Word", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.warningColor)
                     }
@@ -298,19 +270,25 @@ struct VADModeSettingsTab: View {
     // MARK: - Wake Word Settings Card
 
     private var wakeWordSettingsCard: some View {
-        SettingsSection(title: "Wake Word", icon: "text.bubble") {
-            VStack(alignment: .leading, spacing: 12) {
-                StyledSettingsTextField(
-                    label: "Custom Wake Phrase (Optional)",
-                    text: $customWakePhrase,
-                    placeholder: "e.g., Hey Osaurus",
-                    help: "Leave empty to only use agent names as wake words"
-                )
-                .onChange(of: customWakePhrase) { _, _ in
-                    saveSettings()
-                }
+        SettingsSection(title: "Custom Phrase", icon: "text.bubble") {
+            StyledSettingsTextField(
+                label: "Custom Wake Phrase (Optional)",
+                text: $customWakePhrase,
+                placeholder: "e.g., Hey Osaurus",
+                help: "Leave empty to only use agent names as wake words"
+            )
+            .onChange(of: customWakePhrase) { _, _ in
+                saveSettings()
+            }
 
-                infoBox("Detection sensitivity is configured in the Setup tab")
+            SettingsLinkRow(
+                title: "Detection Sensitivity",
+                description: "Configured once in Setup and shared by every voice mode.",
+                icon: "arrow.right",
+                actionTitle: "Open Setup"
+            ) {
+                SettingsHighlightCoordinator.shared.request("voice.setup.sensitivity")
+                ManagementStateManager.shared.voiceSubTabRequest = VoiceTab.setup.rawValue
             }
         }
     }
@@ -565,80 +543,6 @@ struct VADModeSettingsTab: View {
 }
 
 // MARK: - Helper Views
-
-private struct RequirementRow: View {
-    @Environment(\.theme) private var theme
-
-    let title: String
-    let isComplete: Bool
-    var action: (() -> Void)?
-
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 18))
-                .foregroundColor(isComplete ? theme.successColor : theme.tertiaryText)
-                .animation(.easeOut(duration: 0.2), value: isComplete)
-
-            Text(title)
-                .font(.system(size: 14))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            if !isComplete, let action = action {
-                Button(action: action) {
-                    Text("Fix", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(isHovered ? .white : theme.accentColor)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(isHovered ? theme.accentColor : Color.clear)
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .strokeBorder(theme.accentColor, lineWidth: 1)
-                            }
-                        )
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        isHovered = hovering
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isComplete ? theme.successColor.opacity(0.06) : theme.tertiaryBackground.opacity(0.7))
-
-                if isComplete {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [theme.successColor.opacity(0.05), Color.clear],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                }
-            }
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    isComplete ? theme.successColor.opacity(0.2) : theme.primaryBorder.opacity(0.08),
-                    lineWidth: 1
-                )
-        )
-    }
-}
 
 private struct AgentToggleRow: View {
     @Environment(\.theme) private var theme

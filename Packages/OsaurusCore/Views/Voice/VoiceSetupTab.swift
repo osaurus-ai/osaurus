@@ -205,6 +205,8 @@ struct VoiceSetupTab: View {
 
     private var modelRequirementItem: some View {
         HStack(spacing: 8) {
+            // `voice.stt.model` landing: the checklist item is the fastest
+            // route to a working transcription model.
             // Icon with status
             modelStatusIcon
                 .frame(width: 20, height: 20)
@@ -217,6 +219,7 @@ struct VoiceSetupTab: View {
             // Download action or model name
             modelActionView
         }
+        .settingsLandingAnchor("voice.stt.model")
     }
 
     @ViewBuilder
@@ -429,7 +432,7 @@ struct VoiceSetupTab: View {
     }
 
     private var sensitivitySettingsCard: some View {
-        SettingsSection(title: "Voice Sensitivity", icon: "waveform") {
+        SettingsSection(title: "Voice Sensitivity", icon: "waveform", anchorId: "voice.setup.sensitivity") {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Adjust how sensitive voice detection is", bundle: .module)
                     .font(.system(size: 12))

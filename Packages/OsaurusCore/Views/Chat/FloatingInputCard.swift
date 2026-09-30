@@ -6799,7 +6799,7 @@ private struct ContextBreakdownPopover: View {
         let configured = ContextCompactionService.configuredModelIdentifier()
         if ContextCompactionService.usesChatModelFallback(configured: configured) {
             return L(
-                "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Chat → Compaction Model."
+                "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Conversation → Advanced → Compaction Model."
             )
         }
         let name = configured.map(Self.shortModelName) ?? ""

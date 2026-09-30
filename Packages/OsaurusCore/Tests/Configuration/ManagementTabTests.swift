@@ -62,9 +62,9 @@ struct ManagementTabTests {
         #expect(ManagementTab.resolved(from: "channels") == .agentChannels)
         #expect(ManagementTab.resolved(from: "integrations") == .agentChannels)
         #expect(ManagementTab.resolved(from: "agent-channels") == .agentChannels)
-        // The removed Storage tab: its raw value lands on Privacy, which
-        // hosts the storage-encryption panel now.
-        #expect(ManagementTab.resolved(from: "storage") == .privacy)
+        // The removed Storage tab: its raw value lands on General, whose
+        // Advanced → Data & Storage subsection hosts encryption + file history.
+        #expect(ManagementTab.resolved(from: "storage") == .settings)
     }
 
     @Test func resolvedRoundTripsCurrentRawValues() {
@@ -79,5 +79,16 @@ struct ManagementTabTests {
         // now reads "General"; its raw value stays stable for deep links.
         #expect(ManagementTab.settings.rawValue == "settings")
         #expect(ManagementTab.settings.label == "General")
+    }
+
+    @Test func renamedTabsKeepStableRawValues() {
+        // Labels changed in the settings IA cleanup; raw values (deep-link
+        // ids, persisted selection) must not.
+        #expect(ManagementTab.chat.rawValue == "chat")
+        #expect(ManagementTab.chat.label == "Conversation")
+        #expect(ManagementTab.tools.rawValue == "tools")
+        #expect(ManagementTab.tools.label == "Tools & MCP")
+        #expect(ManagementTab.imageGeneration.rawValue == "imageGeneration")
+        #expect(ManagementTab.imageGeneration.label == "Images")
     }
 }

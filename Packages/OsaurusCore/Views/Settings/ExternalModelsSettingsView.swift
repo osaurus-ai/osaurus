@@ -35,7 +35,7 @@ struct ExternalModelsSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(
-                "Discover and run models already on this Mac from other tools. Osaurus references these files in place and never copies, modifies, or deletes them.",
+                "Choose which other apps' models appear in your catalog. Files are referenced in place and never copied, modified, or deleted.",
                 bundle: .module
             )
             .font(.system(size: 12))

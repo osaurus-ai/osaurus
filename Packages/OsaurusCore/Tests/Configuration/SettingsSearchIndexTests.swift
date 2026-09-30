@@ -63,6 +63,11 @@ struct SettingsSearchIndexTests {
                     PrivacyTab(rawValue: subTab) != nil,
                     "\(entry.id): \(subTab) is not a PrivacyTab raw value"
                 )
+            case .tools:
+                #expect(
+                    ToolsTab(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a ToolsTab raw value"
+                )
             case .agents:
                 // Routed by `AgentsView.routeSettingsLanding` from the landing
                 // id; the subTab must still be a real detail tab raw value.
@@ -99,9 +104,9 @@ struct SettingsSearchIndexTests {
     }
 
     @Test func searchFindsRelocatedStorageEntries() {
-        // The standalone Storage tab is gone: the models directory +
-        // external sources live on the General tab, and the encryption
-        // panel lives on the Privacy tab's Storage sub-tab.
+        // The standalone Storage tab is gone: everything storage-shaped now
+        // lives on the General tab (Models on This Mac in the open; Models
+        // Directory, encryption and file history under Advanced).
         let directoryHits = SettingsSearchIndex.search("models directory")
         #expect(directoryHits.contains { $0.id == "storage.location" && $0.tab == .settings })
 
@@ -109,7 +114,66 @@ struct SettingsSearchIndexTests {
         #expect(externalHits.contains { $0.id == "storage.externalModels" && $0.tab == .settings })
 
         let encryptionHits = SettingsSearchIndex.search("sqlcipher")
-        #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .privacy })
+        #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .settings })
+
+        let historyHits = SettingsSearchIndex.search("file history")
+        #expect(historyHits.contains { $0.id == "storage.fileHistory.retention" && $0.tab == .settings })
+        #expect(!historyHits.contains { $0.tab == .privacy })
+    }
+
+    @Test func searchFindsRelocatedCLIAndToolPermissionEntries() {
+        // Command Line Tool moved from General to Server → Overview.
+        let cliHits = SettingsSearchIndex.search("command line tool")
+        // The Server page opens on Overview by default, so the row carries no subTab.
+        #expect(cliHits.contains { $0.id == "server.cli" && $0.tab == .server && $0.subTab == nil })
+        #expect(!SettingsSearchIndex.entries.contains { $0.id == "settings.general.cli" })
+
+        // Auto-Allow moved from Chat to Tools & MCP → All Tools.
+        let autoAllowHits = SettingsSearchIndex.search("auto allow")
+        #expect(autoAllowHits.contains { $0.id == "tools.autoAllowAll" && $0.tab == .tools && $0.subTab == "All" })
+        #expect(!SettingsSearchIndex.entries.contains { $0.id == "settings.chat.autoAllowAllTools" })
+
+        // Retired toast knobs have no rows.
+        for retired in [
+            "settings.notifications.position", "settings.notifications.timeout",
+            "settings.notifications.maxVisible", "settings.toolPermissions",
+        ] {
+            #expect(!SettingsSearchIndex.entries.contains { $0.id == retired }, "\(retired) should be gone")
+        }
+    }
+
+    @Test func toolsServicesRowsLandOnTheServicesTab() {
+        for id in ["tools.services", "tools.addService", "tools.directory"] {
+            let entry = SettingsSearchIndex.entries.first { $0.id == id }
+            #expect(entry?.tab == .tools, "\(id) must live on Tools & MCP")
+            #expect(entry?.subTab == ToolsTab.services.rawValue, "\(id) must open the Services tab")
+        }
+        #expect(SettingsSearchIndex.search("mcp").contains { $0.id == "tools.services" })
+        #expect(SettingsSearchIndex.search("add connection").contains { $0.id == "tools.addService" })
+    }
+
+    @Test func voiceRowsUseTheSplitSubTabs() {
+        let transcription = SettingsSearchIndex.entries.filter { $0.subTab == VoiceTab.transcription.rawValue }
+        #expect(transcription.contains { $0.id == "voice.transcription.enable" })
+        #expect(transcription.contains { $0.id == "voice.stt.hotkey" })
+        #expect(transcription.contains { $0.id == "voice.stt.stopMode" })
+        let chatVoice = SettingsSearchIndex.entries.filter { $0.subTab == VoiceTab.speechToText.rawValue }
+        #expect(chatVoice.map(\.id) == ["voice.chat.enable"])
+        #expect(
+            SettingsSearchIndex.entries.first { $0.id == "voice.stt.vad" }?.subTab == VoiceTab.vadMode.rawValue
+        )
+    }
+
+    @Test func privacyRowsLandOnFilterOrModels() {
+        let privacyRows = SettingsSearchIndex.entries.filter { $0.tab == .privacy && $0.subTab != nil }
+        #expect(!privacyRows.isEmpty)
+        for row in privacyRows {
+            #expect(
+                row.subTab == PrivacyTab.overview.rawValue || row.subTab == PrivacyTab.model.rawValue,
+                "\(row.id) points at a retired Privacy sub-tab"
+            )
+        }
+        #expect(!SettingsSearchIndex.entries.contains { $0.tab == .privacy && $0.subTab == "storage" })
     }
 
     @Test func searchFindsAgentEntries() {

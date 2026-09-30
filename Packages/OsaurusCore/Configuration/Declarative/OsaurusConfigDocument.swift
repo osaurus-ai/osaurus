@@ -450,7 +450,7 @@ public struct MCPServerEntry: Codable, Equatable, Sendable {
     public var url: String?
     /// One of: none, bearer, oauth (HTTP only). Secrets never travel
     /// through the document — a keyed server is registered and the user
-    /// finishes auth in Settings → Tools → Remote.
+    /// finishes auth in Settings → Tools & MCP → Services.
     public var auth: String?
     public var enabled: Bool?
     /// stdio transport: the executable to launch. Required to create.

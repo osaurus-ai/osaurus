@@ -1651,11 +1651,11 @@ extension OsaurusInspectTool {
                     + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             case "chat":
                 path =
-                    "Settings… (⌘,) → Chat (compaction, clipboard, streaming). "
-                    + "Context Window Cap is Server → Settings → Cache, not Chat."
+                    "Settings… (⌘,) → Conversation (streaming, clipboard; compaction under Advanced). "
+                    + "Context Window Cap is Server → Settings → Cache, not Conversation."
             default:
                 path =
-                    "Settings… (⌘,) → General (login, dock icon, hotkey, toasts). "
+                    "Settings… (⌘,) → General (login, dock icon, hotkey, notifications). "
                     + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             }
             return ToolEnvelope.failure(

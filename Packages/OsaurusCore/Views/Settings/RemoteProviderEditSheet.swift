@@ -177,7 +177,7 @@ private struct AddProviderFlow: View {
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
     /// The connect test found an MCP server at the entered URL; offer to move
-    /// the setup to Tools > Connections instead of leaving a dead-end error.
+    /// the setup to Tools & MCP > Services instead of leaving a dead-end error.
     @State private var showMCPRedirectPrompt = false
     @State private var hasAppeared = false
     /// Guards against saving twice: a successful test auto-finalizes the add,
@@ -308,11 +308,11 @@ private struct AddProviderFlow: View {
             L("This looks like an MCP server"),
             isPresented: $showMCPRedirectPrompt,
             message: L(
-                "This URL answers like an MCP server, not a chat completions API. Osaurus can add it as an MCP connection instead — the URL and token you entered will be carried over."
+                "This URL answers like an MCP server, not a chat completions API. Osaurus can add it as an MCP service instead — the URL and token you entered will be carried over."
             ),
             buttons: [
                 .cancel(L("Cancel")),
-                .primary(L("Add as MCP Connection")) { redirectToMCPConnections() },
+                .primary(L("Add as MCP Service")) { redirectToMCPConnections() },
             ],
             // Wide enough that the CTA label stays on one line and both
             // buttons keep the same height.
@@ -1605,7 +1605,7 @@ private struct AddProviderFlow: View {
     }
 
     /// Hand the entered endpoint off to the MCP connections flow: navigate to
-    /// Tools > Connections and open the add sheet prefilled with the URL and
+    /// Tools & MCP > Services and open the add sheet prefilled with the URL and
     /// (when present) the API key as a bearer token.
     private func redirectToMCPConnections() {
         let trimmedName = customName.trimmingCharacters(in: .whitespaces)
@@ -1637,7 +1637,7 @@ private struct AddProviderFlow: View {
             url: url,
             bearerToken: trimmedKey.isEmpty ? nil : trimmedKey
         )
-        management.pendingToolsSubTab = ToolsTab.connections.rawValue
+        management.pendingToolsSubTab = ToolsTab.services.rawValue
         management.selectedTab = .tools
         dismiss()
     }

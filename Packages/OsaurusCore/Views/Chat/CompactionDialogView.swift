@@ -104,7 +104,7 @@ struct CompactionDialogView: View {
                     .foregroundColor(theme.secondaryText)
                 modelPickerButton
                 Text(
-                    "Remote models pass through your Privacy Filter. You can change this anytime in Settings → Chat.",
+                    "Remote models pass through your Privacy Filter. You can change this anytime in Settings → Conversation → Advanced.",
                     bundle: .module
                 )
                 .font(.system(size: 10.5))

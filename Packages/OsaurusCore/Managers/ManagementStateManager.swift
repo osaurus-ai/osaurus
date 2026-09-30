@@ -201,7 +201,7 @@ public final class ManagementStateManager: ObservableObject {
     /// One-shot request to open the MCP provider add sheet prefilled with a
     /// draft — used when the API provider connect test detects that the
     /// pasted URL is actually an MCP server and redirects the user to
-    /// Tools > Connections. `ProvidersView` observes this and resets it to
+    /// Tools & MCP > Services. `ProvidersView` observes this and resets it to
     /// nil after presenting the sheet. The token only lives in memory here;
     /// it reaches the Keychain when the user saves the provider.
     @Published public var pendingMCPProviderDraft: MCPProviderDraft?

@@ -483,18 +483,14 @@ struct ThemesView: View {
         // Review, Duplicates) ride `badges` so they keep their warning accent.
         let neutralCounts = filterCounts.filter { !$0.key.isAttentionFilter }
         let attentionBadges = filterCounts.filter { $0.key.isAttentionFilter && $0.value > 0 }
-        return HStack(spacing: 12) {
-            AnimatedTabSelector(
-                selection: $selectedFilter,
-                tabs: availableFilters,
-                counts: neutralCounts,
-                badges: attentionBadges.isEmpty ? nil : attentionBadges
-            )
-
-            Spacer(minLength: 12)
-
-            SearchField(text: $searchText, placeholder: "Search themes", width: 220, compact: true)
-        }
+        return HeaderTabsRow(
+            selection: $selectedFilter,
+            tabs: availableFilters,
+            counts: neutralCounts,
+            badges: attentionBadges.isEmpty ? nil : attentionBadges,
+            searchText: $searchText,
+            searchPlaceholder: "Search themes"
+        )
     }
 
     /// Only surface filters that currently have results (All is always shown).

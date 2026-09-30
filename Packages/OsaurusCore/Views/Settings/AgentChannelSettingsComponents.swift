@@ -539,44 +539,10 @@ struct AgentChannelSheetActionButton: View {
 // MARK: - Advanced Disclosure
 
 /// Collapsed-by-default section for rarely used options, so channel sheets
-/// stay focused on the fields most users need.
-struct AgentChannelAdvancedSection<Content: View>: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @State private var isExpanded = false
-
-    @ViewBuilder let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    Text("Advanced", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer(minLength: 0)
-                }
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            if isExpanded {
-                content
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-}
+/// stay focused on the fields most users need. Now the shared
+/// `SettingsAdvancedDisclosure` (SettingsKit.swift); kept as a name so the
+/// channel sheets read the same as before.
+typealias AgentChannelAdvancedSection = SettingsAdvancedDisclosure
 
 // MARK: - Secret Field
 

@@ -55,7 +55,7 @@ Inside the panel, the header row summarizes “N files changed · M changes” a
 - Files too large to keep in history are marked “can't be restored”; word documents, spreadsheets, slides and PDFs show changed paragraphs, cells, slides or pages instead of raw file contents.
 - While the chat is still running a command, the panel says so and reverts wait until it finishes, so a revert never races the tool that is writing.
 
-Settings → Privacy → Storage → **File History** controls how long snapshots are kept; deleting a chat always deletes its history. When retention has trimmed a file's oldest changes, its **Revert File** preview says “back to the oldest change still in history” instead of “back to before this chat”.
+Settings → General → Advanced → Data & Storage → **File History** controls how long snapshots are kept; deleting a chat always deletes its history. When retention has trimmed a file's oldest changes, its **Revert File** preview says “back to the oldest change still in history” instead of “back to before this chat”.
 
 ## Sandbox toggle
 
@@ -66,8 +66,8 @@ On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an
 - `/screenshot` captures your main display into the chat's artifacts (needs Screen Recording permission).
 - `/skill-name` force-loads a skill for one message.
 - Voice: the mic button dictates locally (see the Voice topic); the speaker button reads replies aloud when TTS is enabled.
-- Clipboard monitoring (Settings → Chat) offers recently copied text as context.
-- Context window cap (how much history fits) is Settings… (⌘,) → Server → Settings → Cache → Context Window Cap, not the Chat tab. The composer Context Budget popover is read-only.
+- Clipboard monitoring (Settings → Conversation → Behavior) offers recently copied text as context.
+- Context window cap (how much history fits) is Settings… (⌘,) → Server → Settings → Cache → Context Window Cap, not the Conversation tab (Conversation → Advanced has a link that jumps there). The composer Context Budget popover is read-only.
 
 ## Tips
 
