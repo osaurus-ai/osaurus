@@ -205,20 +205,25 @@ struct ExternalModelsSettingsView: View {
     }
 
     private func refreshCounts() {
-        let models = ExternalModelLocator.models()
-        scanReport = ExternalModelLocator.lastScanReport()
-        hfCount =
-            models.filter {
+        Task.detached(priority: .utility) {
+            let models = ExternalModelLocator.models()
+            let report = ExternalModelLocator.lastScanReport()
+            let hf = models.filter {
                 $0.externalSource == ExternalModelLocator.Source.huggingFaceCache.rawValue
             }.count
-        lmStudioCount =
-            models.filter {
+            let lmStudio = models.filter {
                 $0.externalSource == ExternalModelLocator.Source.lmStudio.rawValue
             }.count
-        customFolderCount =
-            models.filter {
+            let custom = models.filter {
                 $0.externalSource == ExternalModelLocator.Source.customModelFolder.rawValue
             }.count
+            await MainActor.run {
+                self.scanReport = report
+                self.hfCount = hf
+                self.lmStudioCount = lmStudio
+                self.customFolderCount = custom
+            }
+        }
     }
 
     private func rescan() {
@@ -243,7 +248,6 @@ struct ExternalModelsSettingsView: View {
     }
 
     private func schedulePathRescan() {
-        refreshCounts()
         pathRescanTask?.cancel()
         pathRescanTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 400_000_000)
