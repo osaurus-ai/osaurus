@@ -100,9 +100,12 @@ private struct ChatModelPickerPreview: View {
                     isExplicit: thinkingOverride != nil,
                     onSetEnabled: { newValue in
                         setOverride(newValue.map(ModelOptionValue.bool), for: "sampleThinking", model: selectedModel)
-                    }
+                    },
+                    supportsUnspecifiedDefault: true
                 )
                 : nil,
+            // The local thinker also carries a segmented and a toggle option so
+            // Canvas exercises every section type of the Model options column.
             options: hasReasoning
                 ? [
                     ModelOptionDefinition(
@@ -116,9 +119,26 @@ private struct ChatModelPickerPreview: View {
                         ])
                     )
                 ]
-                : [],
+                : [
+                    ModelOptionDefinition(
+                        id: "sampleDepth",
+                        label: "Speculative depth",
+                        icon: "hare",
+                        kind: .segmented([
+                            ModelOptionSegment(id: "off", label: "Off"),
+                            ModelOptionSegment(id: "auto", label: "Auto"),
+                            ModelOptionSegment(id: "2", label: "2"),
+                        ]),
+                        help: "Sample footnote: depth controls speculation, not sampling."
+                    ),
+                    ModelOptionDefinition(
+                        id: "sampleToggle",
+                        label: "Sample toggle",
+                        kind: .toggle(default: false)
+                    ),
+                ],
             values: values,
-            defaults: hasReasoning ? ["reasoningEffort": .string("medium")] : [:],
+            defaults: hasReasoning ? ["reasoningEffort": .string("medium")] : ["sampleDepth": .string("off")],
             onChange: { key, value in setOverride(value, for: key, model: selectedModel) }
         )
     }

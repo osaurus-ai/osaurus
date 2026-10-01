@@ -1523,7 +1523,7 @@ final class ChatSession: ObservableObject {
     }
 
     /// The temporary first-run Cloud model used while a pinned local model is
-    /// downloading. DeepSeek V4 Flash is the product-selected experience;
+    /// downloading. DeepSeek V4.1 Flash is the product-selected experience;
     /// Foundation, local, and BYOK models never qualify.
     ///
     /// "Lower-cost but capable" is catalog-driven rather than a hardcoded model
@@ -1846,11 +1846,11 @@ final class ChatSession: ObservableObject {
 
     /// Friendly name for the temporary first-run Cloud status shown alongside
     /// local download progress. Router ids are slug-like; preserve the product
-    /// spelling for DeepSeek V4 Flash.
+    /// spelling for DeepSeek V4.1 Flash.
     var temporaryCloudModelDisplayName: String? {
         guard isOsaurusRouterSession, let item = selectedPickerItem else { return nil }
         if RemoteProviderManager.isFirstRunOsaurusModelId(item.id) {
-            return "DeepSeek V4 Flash"
+            return "DeepSeek V4.1 Flash"
         }
         return item.displayName
     }

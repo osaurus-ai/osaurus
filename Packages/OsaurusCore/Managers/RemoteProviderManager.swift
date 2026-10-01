@@ -48,9 +48,10 @@ public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
     public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
     /// Product-selected temporary model for the first-run local-download
-    /// experience. Match by final path component because Router ids are
-    /// provider-prefixed (for example `osaurus/deepseek-ai/...`).
-    static let firstRunOsaurusModelSlug = "deepseek-v4-flash"
+    /// experience: DeepSeek V4.1 Flash on Osaurus Cloud. Match by final path
+    /// component because Router ids are provider-prefixed (for example
+    /// `osaurus/deepseek-v4-1-flash`).
+    static let firstRunOsaurusModelSlug = "deepseek-v4-1-flash"
 
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration
@@ -466,6 +467,9 @@ public final class RemoteProviderManager: ObservableObject {
 
             print("[Osaurus] Remote Provider '\(provider.name)': Connected with \(models.count) models")
 
+            if provider.providerType == .osaurusRouter {
+                seedStarterFavoritesFromOsaurusRouterCatalog()
+            }
             notifyStatusChanged()
             notifyModelsChanged()
 
@@ -1080,8 +1084,31 @@ public final class RemoteProviderManager: ObservableObject {
         if let service = services[providerId] {
             await service.updateModels(merged)
         }
+        if provider.providerType == .osaurusRouter {
+            // A starter favourite the Router did not offer at first connect
+            // (e.g. a model added to the catalog later) lands on refetch.
+            seedStarterFavoritesFromOsaurusRouterCatalog()
+        }
         notifyModelsChanged()
         return true
+    }
+
+    /// Seed the Osaurus Cloud starter favourites from the Router's current
+    /// picker-prefixed catalog. Cheap and idempotent; see
+    /// `FavoriteModelsStore.seedStarterFavoritesIfNeeded`.
+    private func seedStarterFavoritesFromOsaurusRouterCatalog() {
+        guard
+            let entry = cachedAvailableModels().first(where: {
+                $0.providerId == Self.osaurusRouterProviderId
+            })
+        else { return }
+        FavoriteModelsStore.shared.seedStarterFavoritesIfNeeded(
+            routerModelIds: entry.models,
+            routerSourceKey: ModelPickerItem.Source.remote(
+                providerName: entry.providerName,
+                providerId: Self.osaurusRouterProviderId
+            ).uniqueKey
+        )
     }
 
     /// Refresh every enabled provider's model list, coalesced and throttled.
@@ -1431,7 +1458,7 @@ public final class RemoteProviderManager: ObservableObject {
             ?? entry.models.first
     }
 
-    /// DeepSeek V4 Flash for first-run Cloud, with the normal chat-capable
+    /// DeepSeek V4.1 Flash for first-run Cloud, with the normal chat-capable
     /// provider fallback if the Router temporarily omits that model.
     public func firstRunOsaurusRouterModelId() -> String? {
         guard
