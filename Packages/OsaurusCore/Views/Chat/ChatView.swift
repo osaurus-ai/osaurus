@@ -10289,17 +10289,30 @@ struct ChatView: View {
                     windowState.isSidebarAutoHidden = hidden
                 }
             }
-            // Same for the right rail's width: the strip insets its trailing
-            // edge by it so the tabs end where the chat column ends.
+            // The rails' on-screen widths: the strip insets its leading and
+            // trailing edges by them so the tabs span exactly the chat
+            // column. `sidebarWidth` is already 0 while hidden or stepped
+            // aside and live during a resize drag (the persisted default
+            // only updates on release), so the strip never lags the rail.
+            .onChange(of: sidebarWidth, initial: true) { _, width in
+                if windowState.sidebarColumnWidth != width {
+                    windowState.sidebarColumnWidth = width
+                }
+            }
             .onChange(of: inspectorWidth, initial: true) { _, width in
                 if windowState.inspectorColumnWidth != width {
                     windowState.inspectorColumnWidth = width
                 }
             }
-            .onDisappear {
-                windowState.isSidebarAutoHidden = false
-                windowState.inspectorColumnWidth = 0
-            }
+            // Deliberately NO `.onDisappear` reset of these published values.
+            // `ChatWindowRootView` remounts `ChatView` (`.id` on the session)
+            // for every tab switch / new tab, and SwiftUI runs the incoming
+            // instance's `initial: true` publish BEFORE the outgoing
+            // instance's `onDisappear`. A reset there found the value already
+            // equal, so the incoming publish was skipped and the reset then
+            // zeroed it: the tabs ran under the open inspector until its
+            // width next changed. The replacement instance republishes the
+            // real geometry, and a window that closes takes its state with it.
         }
         // Allow the window to narrow down to 800pt so it tiles beside other
         // windows. With the sidebar open by default (260pt) plus the tab strip,

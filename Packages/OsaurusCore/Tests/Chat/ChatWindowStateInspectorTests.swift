@@ -249,8 +249,14 @@ struct ChatWindowStateInspectorTests {
     func tabStripInsetsFollowTheRails() async throws {
         // Sidebar 260 with the 76pt sidebar-button chrome ahead of the strip.
         #expect(ChatTabStripView.leadingInset(sidebarWidth: 260, chromeWidth: 76) == 184)
+        // Mid-drag the strip follows the LIVE on-screen width, not the
+        // persisted one, so every value in the range is a valid input.
+        #expect(ChatTabStripView.leadingInset(sidebarWidth: 333, chromeWidth: 76) == 257)
         // Never negative: a rail narrower than its chrome needs no inset.
         #expect(ChatTabStripView.leadingInset(sidebarWidth: 60, chromeWidth: 76) == 0)
+        // Hidden or stepped aside for the inspector: ChatView reports 0 and
+        // the tabs return to the window's left edge.
+        #expect(ChatTabStripView.leadingInset(sidebarWidth: 0, chromeWidth: 76) == 0)
 
         // Inspector closed: nothing to clear.
         #expect(ChatTabStripView.trailingInset(inspectorWidth: 0, chromeWidth: 80) == 0)
@@ -260,11 +266,13 @@ struct ChatWindowStateInspectorTests {
         #expect(ChatTabStripView.trailingInset(inspectorWidth: 300, chromeWidth: 80) == 220)
         #expect(ChatTabStripView.trailingInset(inspectorWidth: 50, chromeWidth: 80) == 0)
 
-        // A fresh window has no rail on screen until ChatView lays one out.
+        // A fresh window has no rail on screen until ChatView lays one out:
+        // both widths come from its geometry, never from the defaults key.
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
             #expect(window.inspectorColumnWidth == 0)
+            #expect(window.sidebarColumnWidth == 0)
         }
     }
 }
