@@ -123,24 +123,17 @@ struct ChatTabStripView: View {
     @State private var draggingTabId: UUID?
     @State private var dragOffset: CGFloat = 0
 
-    /// The sidebar's user-chosen width, shared with the resizable sidebar
-    /// via the same defaults key so the strip tracks the content edge.
-    @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
-
-    /// Leading inset that keeps the first tab at the CONTENT area's left
-    /// edge while the sidebar is open — without it the tabs float over the
-    /// sidebar.
-    private var sidebarOpenInset: CGFloat {
-        let clamped = min(max(storedSidebarWidth, 260), 460)
-        return Self.leadingInset(
-            sidebarWidth: CGFloat(clamped),
-            chromeWidth: measuredChromeX ?? leadingChromeWidth)
-    }
-
-    /// Follows the sidebar actually on screen — while the inspector pushes
-    /// it aside at narrow widths the tabs return to the window's left edge.
+    /// Keeps the first tab at the CONTENT area's left edge while the
+    /// sidebar is open — without it the tabs float over the sidebar.
+    /// `sidebarColumnWidth` is the rail's on-screen width as `ChatView`
+    /// laid it out: 0 while hidden or pushed aside by the inspector at
+    /// narrow widths (the tabs return to the window's left edge), and the
+    /// LIVE value during a resize drag — reading the persisted defaults key
+    /// here instead made the tabs lag the rail until the drag released.
     private var leadingInset: CGFloat {
-        windowState.isSidebarVisible ? sidebarOpenInset : 0
+        Self.leadingInset(
+            sidebarWidth: windowState.sidebarColumnWidth,
+            chromeWidth: measuredChromeX ?? leadingChromeWidth)
     }
 
     /// Keeps the tabs clear of the right rail (chat inspector or Project
@@ -210,10 +203,10 @@ struct ChatTabStripView: View {
                 }
                 .frame(width: 0)
             }
-            .animation(windowState.theme.animationQuick(), value: windowState.isSidebarVisible)
-            // Rail open/close slides the tabs like the sidebar does; keyed
-            // on presence, not width, so a live resize drag is not lagged
-            // by the animation.
+            // Rail open/close slides the tabs along with the rail; keyed on
+            // presence, not width, so a live resize drag is not lagged by
+            // the animation.
+            .animation(windowState.theme.animationQuick(), value: windowState.sidebarColumnWidth > 0)
             .animation(windowState.theme.animationQuick(), value: windowState.inspectorColumnWidth > 0)
             // Leaving the strip ends a close streak: widths relax to fit.
             .onHover { inside in
