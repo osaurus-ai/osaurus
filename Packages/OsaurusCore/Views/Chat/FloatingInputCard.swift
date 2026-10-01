@@ -587,6 +587,10 @@ struct FloatingInputCard: View {
         // nothing sends until the lock clears.
         guard composerLock == nil else { return false }
 
+        // Mid-conversation model switch advisory: the user must keep the
+        // original model or start a new chat before anything sends.
+        guard modelSwitchContinuityWarning == nil else { return false }
+
         // Hard token gate: when the NON-compactable prefix alone (system
         // prompt + tools + memory + input + response reservation) can't
         // fit the model window, the request would fail no matter how much
@@ -4211,7 +4215,12 @@ extension FloatingInputCard {
             let next =
                 pickerItems.first { $0.id == warning.newModelId }?.displayName
                 ?? warning.newModelId
-            modelSwitchContinuityBanner(previous: previous, next: next, pointerCenterX: 28)
+            modelSwitchContinuityBanner(
+                previousModelId: warning.previousModelId,
+                previous: previous,
+                next: next,
+                pointerCenterX: 28
+            )
                 .frame(width: Self.ramBannerWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 20)
@@ -4222,6 +4231,7 @@ extension FloatingInputCard {
     }
 
     private func modelSwitchContinuityBanner(
+        previousModelId: String,
         previous: String,
         next: String,
         pointerCenterX: CGFloat
@@ -4251,14 +4261,18 @@ extension FloatingInputCard {
             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
             .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 10) {
-                bannerPrimaryButton(String(localized: "Start New Chat", bundle: .module), tint: tint) {
-                    onDismissModelSwitchContinuityWarning?()
-                    onClearChat?()
-                }
-                bannerTextButton(String(localized: "Continue with This Model", bundle: .module)) {
+                // Switching back clears the advisory in the session's model
+                // sink. Dismiss explicitly too, since that sink skips changes
+                // made while a model is loading.
+                bannerPrimaryButton(String(localized: "Keep Using \(previous)", bundle: .module), tint: tint) {
                     withAnimation(.easeOut(duration: 0.2)) {
+                        selectedModel = previousModelId
                         onDismissModelSwitchContinuityWarning?()
                     }
+                }
+                bannerTextButton(String(localized: "Start New Chat", bundle: .module)) {
+                    onDismissModelSwitchContinuityWarning?()
+                    onClearChat?()
                 }
             }
             .frame(maxWidth: .infinity)
