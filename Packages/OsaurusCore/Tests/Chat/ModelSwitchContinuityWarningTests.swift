@@ -28,6 +28,24 @@ struct ModelSwitchContinuityWarningTests {
         #expect(!rows.contains("if modelSwitchContinuityWarning != nil"))
     }
 
+    @Test("advisory blocks send and only offers keep-original or new chat")
+    func advisoryBlocksSendAndDropsContinue() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Views/Chat/FloatingInputCard.swift"),
+            encoding: .utf8
+        )
+        let canSendStart = try #require(source.range(of: "private var canSend: Bool {"))
+        let canSendBody = String(source[canSendStart.upperBound...].prefix(2000))
+        #expect(canSendBody.contains("guard modelSwitchContinuityWarning == nil else { return false }"))
+
+        #expect(source.contains("\"Keep Using \\(previous)\""))
+        #expect(!source.contains("Continue with This Model"))
+    }
+
     @Test("warns only for a real mid-conversation switch away from a local model")
     func warningGate() {
         func warns(
@@ -162,10 +180,36 @@ struct ModelSwitchContinuityWarningTests {
             session.selectedModel = "org/local"
             #expect(session.modelSwitchContinuityWarning == nil)
 
-            // Local -> remote warns, and the next remote hop clears it.
+            // Local -> remote warns, and further hops keep naming the local
+            // model the conversation still belongs to.
             session.selectedModel = "openai/gpt-5.5"
             #expect(session.modelSwitchContinuityWarning != nil)
             session.selectedModel = "openai/gpt-5.6-sol"
+            #expect(
+                session.modelSwitchContinuityWarning
+                    == ModelSwitchContinuityWarning(
+                        previousModelId: "org/local",
+                        newModelId: "openai/gpt-5.6-sol"
+                    )
+            )
+            session.selectedModel = "org/local"
+            #expect(session.modelSwitchContinuityWarning == nil)
+        }
+    }
+
+    @Test("switching back to the original model clears the advisory")
+    func revertClearsWarning() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.pickerItems = [Self.localItem("org/a"), Self.localItem("org/b")]
+            session.selectedModel = "org/a"
+            session.turns = [ChatTurn(role: .user, content: "hello")]
+
+            session.selectedModel = "org/b"
+            #expect(session.modelSwitchContinuityWarning != nil)
+
+            // b is local too, so before this compared b -> a and re-warned.
+            session.selectedModel = "org/a"
             #expect(session.modelSwitchContinuityWarning == nil)
         }
     }
