@@ -44,6 +44,9 @@ struct CellRenderingContext {
     /// to also delete the prompting user message. Distinct from `onDelete`,
     /// which truncates a user turn and everything after it.
     var onDeleteMessage: ((UUID) -> Void)? = nil
+    /// Read at menu-open time so late generation statistics do not leave a
+    /// recycled action row showing a stale response's metrics.
+    var responseStatsForTurn: ((UUID) -> String?)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
     /// Inline markdown image (e.g. a generated image) clicked → full screen
@@ -674,6 +677,7 @@ final class NativeAssistantActionsView: NSView {
 
     private var turnId: UUID = UUID()
     private var responseTimestamp: Date = Date()
+    private var responseStatsForTurn: ((UUID) -> String?)?
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
     var onSpeak: ((UUID) -> Void)?
@@ -910,7 +914,8 @@ final class NativeAssistantActionsView: NSView {
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
         onSpeak: ((UUID) -> Void)?,
-        onDeleteMessage: ((UUID) -> Void)?
+        onDeleteMessage: ((UUID) -> Void)?,
+        responseStatsForTurn: ((UUID) -> String?)? = nil
     ) {
         self.turnId = turnId
         self.responseTimestamp = timestamp
@@ -919,6 +924,7 @@ final class NativeAssistantActionsView: NSView {
         self.onRegenerate = onRegenerate
         self.onSpeak = onSpeak
         self.onDeleteMessage = onDeleteMessage
+        self.responseStatsForTurn = responseStatsForTurn
         self.currentTheme = theme
 
         let pointSize = CGFloat(theme.captionSize) - 1
@@ -971,6 +977,25 @@ final class NativeAssistantActionsView: NSView {
             keyEquivalent: ""
         )
         inspect.target = self
+        if let stats = responseStatsForTurn?(turnId), !stats.isEmpty {
+            let details = NSMenu()
+            details.autoenablesItems = false
+            for value in stats.components(separatedBy: " \u{2022} ") {
+                let item = NSMenuItem(title: value, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                details.addItem(item)
+            }
+            details.addItem(.separator())
+            let log = NSMenuItem(
+                title: L("Open request and response log"),
+                action: #selector(inspectFromMenu),
+                keyEquivalent: ""
+            )
+            log.target = self
+            details.addItem(log)
+            inspect.action = nil
+            inspect.submenu = details
+        }
         if let theme = currentTheme {
             let pointSize = CGFloat(theme.captionSize)
             let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
@@ -1569,7 +1594,8 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
 
 // MARK: - NativeStatsView
 
-/// Lightweight AppKit view that displays generation benchmarks (total time, TTFT and tok/s).
+/// Incomplete-response warning. Generation metrics are available in the
+/// response's overflow menu instead of occupying a row in the conversation.
 final class NativeStatsView: NSView {
     private let label = NSTextField(labelWithString: "")
 
@@ -1600,15 +1626,8 @@ final class NativeStatsView: NSView {
         totalDuration: TimeInterval? = nil,
         theme: any ThemeProtocol
     ) {
-        label.stringValue = Self.statsText(
-            ttft: ttft,
-            tokensPerSecond: tokensPerSecond,
-            tokenCount: tokenCount,
-            unclosedReasoning: unclosedReasoning,
-            modelLoad: modelLoad,
-            cachedInputTokens: cachedInputTokens,
-            totalDuration: totalDuration
-        )
+        label.stringValue = unclosedReasoning
+            ? L("⚠ thinking didn't close — answer may be in reasoning above") : ""
         label.font = NSFont.monospacedDigitSystemFont(
             ofSize: CGFloat(theme.captionSize) - 1,
             weight: .regular
@@ -1616,8 +1635,7 @@ final class NativeStatsView: NSView {
         label.textColor = NSColor(theme.tertiaryText)
     }
 
-    /// Pure footer text so the chip composition is unit-testable without a
-    /// view hierarchy.
+    /// Response metrics for the Inspect response menu, without a view hierarchy.
     static func statsText(
         ttft: TimeInterval?,
         tokensPerSecond: Double?,
@@ -1629,8 +1647,7 @@ final class NativeStatsView: NSView {
     ) -> String {
         var parts: [String] = []
         // Wall-clock from the keypress to the end of the run: model load, every
-        // tool-calling step and approval prompt included. Leads the row: it's
-        // the number users look for.
+        // tool-calling step and approval prompt included.
         if let totalDuration {
             parts.append(String(format: L("Worked for %@"), Self.formatLoad(totalDuration)))
         }
@@ -3024,7 +3041,8 @@ final class NativeMessageCellView: NSTableCellView {
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
             onSpeak: context.onSpeak,
-            onDeleteMessage: context.onDeleteMessage
+            onDeleteMessage: context.onDeleteMessage,
+            responseStatsForTurn: context.responseStatsForTurn
         )
     }
 
