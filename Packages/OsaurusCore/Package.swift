@@ -323,9 +323,11 @@ let package = Package(
         // Gather row scheduling includes affine expert prefill and partial-K
         // bounds correction. This pin also consumes the Unicode/BPE ordering,
         // quantization_config, and SDK-gated JACCL fixes merged after #518.
+        // GLM native history retains reasoning, tool metadata and argument order;
+        // text-only cache checkpoints use exact active-template prefix proofs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "6072a145727e03db1c053ccf96b722951eac9a11"
+            revision: "f45bc51d11608cbd67cbd70d7a475dec81bdf61a"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
