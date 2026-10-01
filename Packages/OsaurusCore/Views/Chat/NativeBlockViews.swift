@@ -595,7 +595,7 @@ final class NativeCodeBlockView: NSView {
 
     private let headerView = NSView()
     private let langLabel = NSTextField(labelWithString: L("code"))
-    private let copyButton = NSButton()
+    private let copyButton = PointingHandButton()
     private var codeView: CodeNSTextView?
     private var codeHeightConstraint: NSLayoutConstraint?
 
@@ -1076,6 +1076,32 @@ final class NativeCodeBlockView: NSView {
             self.copyButton.image = SymbolImageCache.image("doc.on.doc", accessibilityDescription: nil)
             self.copyButton.contentTintColor = nil
         }
+    }
+}
+
+// MARK: - PointingHandButton
+
+/// Borderless button that shows the pointing-hand cursor on hover. Uses a
+/// `.cursorUpdate` tracking area rather than cursor rects, which don't
+/// survive layer-backed table-cell recycling in the message list.
+private final class PointingHandButton: NSButton {
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTrackingArea { removeTrackingArea(cursorTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        cursorTrackingArea = area
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.pointingHand.set()
     }
 }
 
