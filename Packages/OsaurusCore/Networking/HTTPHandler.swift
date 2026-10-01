@@ -61,6 +61,18 @@ private final class SendableConnectionBox: @unchecked Sendable {
     }
 }
 
+/// Off-loop-readable client address for the current request (set at `.head`,
+/// read by `logRequest` from inside `runRequestTask`). Same reasoning as
+/// `SendableConnectionBox`: the `NIOLoopBound` state traps off the loop.
+private final class SendableClientIPBox: @unchecked Sendable {
+    private var _value: String = "unknown"
+    private let _lock = NSLock()
+    var value: String {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
 private final class ChannelCloseFutureBox: @unchecked Sendable {
     private var future: EventLoopFuture<Void>?
     private let lock = NSLock()
@@ -210,6 +222,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// (set by the auth gate, cleared on each `.head`). See
     /// `SendableConnectionBox` for why this isn't read off the `RequestState`.
     private let _inboundConnection = SendableConnectionBox()
+    /// Off-loop-readable mirror of the current request's client address
+    /// (loopback / LAN peer / first `X-Forwarded-For` hop for relay traffic).
+    /// Attribution hint for Insights `inboundAPI` rows, never an identity claim.
+    private let _clientIP = SendableClientIPBox()
     private static let openResponsesContextStore = OpenResponsesContextStore()
 
     /// Internal marker header stamped by `RelayTunnelManager` on every request
@@ -345,6 +361,55 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// must not cancel. It is not tracked with the connection's tasks and is
     /// stopped through its `DetachedPhoneRun` instead.
     @discardableResult
+    /// Paths whose handler logs its own Insights row (see
+    /// `ActivityCategory.mediaCategory(forPath:)`); in-process emitters on
+    /// the same code path skip when `ChatExecutionContext.currentRequestSource`
+    /// is `.httpAPI`.
+    static func handlerWritesOwnActivityRow(path: String) -> Bool {
+        RequestLog.mediaCategory(forPath: path) != nil
+    }
+
+    /// Row facts for `/v1/embeddings` and `/api/embed`. Never the texts.
+    static func embeddingActivityDetails(texts: [String], dimensions: Int?) -> [String: String] {
+        var details: [String: String] = [
+            "texts": String(texts.count),
+            "chars": String(texts.reduce(0) { $0 + $1.count }),
+        ]
+        if let dimensions { details["dims"] = String(dimensions) }
+        return details
+    }
+
+    /// Row facts for the `/v1/images/*` and `/v1/videos/*` handlers; mirrors
+    /// the keys `MediaActivityLogger` writes for in-app media jobs so the
+    /// Insights detail pane renders both the same way.
+    static func mediaActivityDetails(
+        kind: String,
+        operation: String,
+        backend: MediaGenerationBackend,
+        count: Int?,
+        width: Int?,
+        height: Int?,
+        aspect: String?,
+        resolution: String?,
+        extra: [String: String] = [:]
+    ) -> [String: String] {
+        var details: [String: String] = [
+            "media_kind": kind,
+            "operation": operation,
+            "backend": String(describing: backend),
+        ]
+        if let count { details["count"] = String(count) }
+        if let width, let height {
+            details["size"] = "\(width)x\(height)"
+        } else if let resolution, !resolution.isEmpty {
+            details["size"] = aspect.map { "\(resolution) \($0)" } ?? resolution
+        } else if let aspect, !aspect.isEmpty {
+            details["size"] = aspect
+        }
+        details.merge(extra) { current, _ in current }
+        return details
+    }
+
     private func runRequestTask(
         priority: TaskPriority? = nil,
         outlivesConnection: Bool = false,
@@ -361,10 +426,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let callerContext = HTTPCallerContext(
             hasVerifiedAccessKey: stateRef.value.callerHasVerifiedAccessKey
         )
+        // Activity-log double-write guard: these handlers write their own
+        // Insights row with the HTTP request/response, so the in-process
+        // emitters they call (embedder, SpeechService, media coordinators)
+        // must stay quiet for the duration of this task.
+        let activityGuard: RequestSource? =
+            Self.handlerWritesOwnActivityRow(path: stateRef.value.normalizedPath) ? .httpAPI : nil
         let task = Task(priority: priority) {
             defer { requestTasks.remove(id: id) }
             await HTTPCallerContext.$current.withValue(callerContext) {
-                await operationBox.run()
+                await ChatExecutionContext.$currentRequestSource.withValue(activityGuard) {
+                    await operationBox.run()
+                }
             }
         }
         guard !outlivesConnection else { return task }
@@ -396,6 +469,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // trust so the relay marker can strip loopback privileges.
             stateRef.value.isRelayOrigin =
                 head.headers.first(name: HTTPHandler.relayOriginHeaderName) != nil
+            _clientIP.value = remoteIP(context)
             stateRef.value.corsHeaders = computeCORSHeaders(
                 for: head,
                 isPreflight: false,
@@ -11343,7 +11417,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: logRequestBody,
                     responseBody: json,
                     responseStatus: 200,
-                    startTime: logStartTime
+                    startTime: logStartTime,
+                    model: EmbeddingService.modelName,
+                    details: Self.embeddingActivityDetails(texts: texts, dimensions: embeddings.first?.count)
                 )
             } catch {
                 let errorJson =
@@ -11370,7 +11446,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseBody: errorJson,
                     responseStatus: 500,
                     startTime: logStartTime,
-                    errorMessage: error.localizedDescription
+                    model: EmbeddingService.modelName,
+                    errorMessage: error.localizedDescription,
+                    details: Self.embeddingActivityDetails(texts: texts, dimensions: nil)
                 )
             }
         }
@@ -11800,7 +11878,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: requestBody,
                     responseBody: json,
                     responseStatus: 200,
-                    startTime: startTime
+                    startTime: startTime,
+                    model: target.modelID,
+                    details: Self.mediaActivityDetails(
+                        kind: "image", operation: "generate", backend: target.backend,
+                        count: generated.count, width: width, height: height,
+                        aspect: req.aspect_ratio, resolution: req.resolution)
                 )
             } catch {
                 let status = Self.mediaErrorStatus(error)
@@ -11879,7 +11962,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: loggedBody,
                     responseBody: json,
                     responseStatus: 200,
-                    startTime: startTime
+                    startTime: startTime,
+                    model: request.target.modelID,
+                    details: Self.mediaActivityDetails(
+                        kind: "video", operation: "quote", backend: request.target.backend,
+                        count: nil, width: nil, height: nil,
+                        aspect: request.aspectRatio, resolution: request.resolution,
+                        extra: ["duration": request.duration, "quote_usd": String(format: "%.4f", quote.usd)])
                 )
             } catch {
                 let status = Self.mediaErrorStatus(error)
@@ -11975,7 +12064,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: loggedBody,
                     responseBody: json,
                     responseStatus: 202,
-                    startTime: startTime
+                    startTime: startTime,
+                    model: request.target.modelID,
+                    details: Self.mediaActivityDetails(
+                        kind: "video", operation: "generate", backend: request.target.backend,
+                        count: 1, width: nil, height: nil,
+                        aspect: request.aspectRatio, resolution: request.resolution,
+                        extra: ["duration": request.duration, "job_id": job.id.uuidString])
                 )
             } catch {
                 let status = Self.mediaErrorStatus(error)
@@ -12265,7 +12360,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBody: bodyString,
             streaming: req.stream ?? false,
             responseFormat: req.response_format ?? "url",
-            jobID: jobID
+            jobID: jobID,
+            model: editModelId,
+            activityDetails: Self.mediaActivityDetails(
+                kind: "image", operation: "edit", backend: .local,
+                count: nil, width: params.width, height: params.height,
+                aspect: nil, resolution: nil,
+                extra: ["source_images": String(sources.count), "job_id": jobID])
         ) { await ImageGenerationService.shared.edit(params, jobID: jobID) }
     }
 
@@ -12309,7 +12410,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBody: bodyString,
             streaming: req.stream ?? false,
             responseFormat: req.response_format ?? "url",
-            jobID: jobID
+            jobID: jobID,
+            model: req.model,
+            activityDetails: Self.mediaActivityDetails(
+                kind: "image", operation: "upscale", backend: .local,
+                count: nil, width: nil, height: nil, aspect: nil, resolution: nil,
+                extra: ["scale": String(params.scale), "job_id": jobID])
         ) { await ImageGenerationService.shared.upscale(params, jobID: jobID) }
     }
 
@@ -12370,6 +12476,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         streaming: Bool,
         responseFormat: String,
         jobID: String,
+        model: String? = nil,
+        activityDetails: [String: String] = [:],
         build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
     ) {
         let cors = stateRef.value.corsHeaders
@@ -12439,7 +12547,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: requestBody,
                     responseBody: "[stream]",
                     responseStatus: 200,
-                    startTime: startTime
+                    startTime: startTime,
+                    model: model,
+                    details: activityDetails
                 )
             }
             return
@@ -12457,6 +12567,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             path: path,
             requestBody: requestBody,
             responseFormat: responseFormat,
+            model: model,
+            activityDetails: activityDetails,
             build: build
         )
     }
@@ -12472,6 +12584,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         path: String,
         requestBody: String?,
         responseFormat: String,
+        model: String? = nil,
+        activityDetails: [String: String] = [:],
         build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
     ) {
         runRequestTask(priority: .userInitiated) {
@@ -12512,7 +12626,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: requestBody,
                     responseStatus: Int(status.code),
                     startTime: startTime,
-                    errorMessage: failure.message
+                    model: model,
+                    errorMessage: failure.message,
+                    details: activityDetails
                 )
                 return
             }
@@ -12527,6 +12643,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers.append(contentsOf: cors)
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
             }
+            var details = activityDetails
+            details["count"] = String(produced.count)
             logSelf.logRequest(
                 method: "POST",
                 path: path,
@@ -12534,7 +12652,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: requestBody,
                 responseBody: json,
                 responseStatus: 200,
-                startTime: startTime
+                startTime: startTime,
+                model: model,
+                details: details
             )
         }
     }
@@ -16480,6 +16600,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Get SpeechService and transcribe
                 let service = await MainActor.run { SpeechService.shared }
                 let result = try await service.transcribe(audioURL: audioURL)
+                let loadedModel = await MainActor.run { service.loadedModelId }
+                var activityDetails: [String: String] = [
+                    "mode": "file",
+                    "audio_bytes": String(audioData.count),
+                    "transcript_chars": String(result.text.count),
+                ]
+                if let seconds = result.durationSeconds, seconds > 0 {
+                    activityDetails["audio_seconds"] = String(format: "%.1f", seconds)
+                }
 
                 // Format response based on response_format
                 let responseBody: String
@@ -16527,7 +16656,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseBody: responseBody,
                     responseStatus: 200,
                     startTime: logStartTime,
-                    model: modelParam
+                    model: loadedModel ?? modelParam,
+                    details: activityDetails
                 )
             } catch {
                 let errorBody = #"{"error":{"message":"\#(error.localizedDescription)","type":"api_error"}}"#
@@ -16550,7 +16680,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseBody: errorBody,
                     responseStatus: 500,
                     startTime: logStartTime,
-                    errorMessage: error.localizedDescription
+                    model: modelParam,
+                    errorMessage: error.localizedDescription,
+                    details: ["mode": "file", "audio_bytes": String(audioData.count)]
                 )
             }
         }
@@ -17694,12 +17826,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         finishReason: RequestLog.FinishReason? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        details: [String: String]? = nil
     ) {
         let durationMs = Date().timeIntervalSince(startTime) * 1000
         InsightsService.logAsync(
             method: method,
             path: path,
+            clientIP: _clientIP.value,
             userAgent: userAgent,
             requestBody: requestBody,
             responseBody: responseBody,
@@ -17713,7 +17847,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             toolCalls: toolCalls,
             finishReason: finishReason,
             errorMessage: errorMessage,
-            connection: inboundConnectionInfo()
+            connection: inboundConnectionInfo(),
+            details: details
         )
     }
 

@@ -450,6 +450,15 @@ public final class TTSService: ObservableObject {
             PocketTTSVoiceCatalog.availableVoices.contains(requestedVoice)
             ? requestedVoice : TTSConfiguration.defaultVoice
         let temperature = Float(config.temperature)
+        // Activity log: local synthesis, one row per utterance.
+        let activity = MediaActivityLogger.beginSpeech(
+            text: text,
+            model: "kyutai/pocket-tts",
+            voice: voice,
+            provider: "PocketTTS",
+            endpoint: nil,
+            trigger: activeSpeakCallId != nil ? .speakTool : .readAloud
+        )
 
         playbackTask = Task { [weak self] in
             // Engine configure + start makes synchronous XPC round-trips to
@@ -460,9 +469,14 @@ public final class TTSService: ObservableObject {
             } catch {
                 self?.modelState = .failed(error.localizedDescription)
                 self?.playingMessageId = nil
+                activity.finish(audioSeconds: nil, error: error.localizedDescription)
                 return
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                activity.finish(audioSeconds: nil, error: nil, cancelled: true)
+                return
+            }
+            var totalAudioSec = 0.0
             do {
                 // Synthesize one utterance at a time instead of handing the
                 // whole paste to a single streaming call. PocketTTS keeps a
@@ -506,6 +520,7 @@ public final class TTSService: ObservableObject {
                     // keep up and the player node will starve between chunks.
                     let synthSec = Date().timeIntervalSince(chunkStart)
                     let audioSec = Double(sampleCount) / 24_000.0
+                    totalAudioSec += audioSec
                     let rtf = audioSec > 0 ? synthSec / audioSec : 0
                     TTSDebugLog.log(
                         "  chunk \(index + 1)/\(chunks.count) done frames=\(frameCount) "
@@ -519,9 +534,12 @@ public final class TTSService: ObservableObject {
                         format: "playback synthesis complete id=%@ totalWallSec=%.2f",
                         messageId.uuidString, Date().timeIntervalSince(playbackStart)))
                 self?.markStreamFinished(for: messageId)
+                activity.finish(audioSeconds: totalAudioSec, error: nil, cancelled: Task.isCancelled)
             } catch is CancellationError {
                 // stop() already cleared state
+                activity.finish(audioSeconds: totalAudioSec, error: nil, cancelled: true)
             } catch {
+                activity.finish(audioSeconds: totalAudioSec, error: error.localizedDescription)
                 self?.handleStreamError(error, for: messageId)
             }
         }
@@ -536,6 +554,16 @@ public final class TTSService: ObservableObject {
 
         let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
         let voice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.remoteVoice)
+        // Activity log: the text is about to leave this Mac for the TTS
+        // provider. One Cloud row per utterance with the destination host.
+        let activity = MediaActivityLogger.beginSpeech(
+            text: text,
+            model: config.remoteModel,
+            voice: voice,
+            provider: EgressInfo.host(from: config.remoteEndpoint) ?? L("OpenAI-compatible TTS"),
+            endpoint: OpenAICompatibleTTSClient.resolvedEndpoint(config.remoteEndpoint),
+            trigger: activeSpeakCallId != nil ? .speakTool : .readAloud
+        )
 
         playbackTask = Task { [weak self] in
             // Keychain read is blocking XPC; a detached task keeps it off the
@@ -543,7 +571,10 @@ public final class TTSService: ObservableObject {
             let apiKey = await Task.detached(priority: .userInitiated) {
                 TTSRemoteAPIKeyStore.loadSync()
             }.value
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                activity.finish(audioSeconds: nil, error: nil, cancelled: true)
+                return
+            }
             let client = OpenAICompatibleTTSClient(
                 endpoint: config.remoteEndpoint,
                 model: config.remoteModel,
@@ -556,19 +587,28 @@ public final class TTSService: ObservableObject {
             } catch {
                 self?.lastRemoteError = error.localizedDescription
                 self?.playingMessageId = nil
+                activity.finish(audioSeconds: nil, error: error.localizedDescription)
                 return
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                activity.finish(audioSeconds: nil, error: nil, cancelled: true)
+                return
+            }
+            var sampleCount = 0
             do {
                 let stream = try client.synthesizeStreaming(text: text)
                 for try await samples in stream {
                     if Task.isCancelled { break }
+                    sampleCount += samples.count
                     self?.schedule(samples: samples)
                 }
                 self?.markStreamFinished(for: messageId)
+                activity.finish(audioSeconds: Double(sampleCount) / 24_000.0, error: nil, cancelled: Task.isCancelled)
             } catch is CancellationError {
                 // stop() already cleared state
+                activity.finish(audioSeconds: Double(sampleCount) / 24_000.0, error: nil, cancelled: true)
             } catch {
+                activity.finish(audioSeconds: Double(sampleCount) / 24_000.0, error: error.localizedDescription)
                 self?.handleRemoteStreamError(error, for: messageId)
             }
         }

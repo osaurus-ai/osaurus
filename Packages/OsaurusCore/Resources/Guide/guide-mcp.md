@@ -28,4 +28,4 @@ MCP connects Osaurus to external tool servers — issue trackers, docs, code hos
 
 - External MCP clients can launch Osaurus with `command: "osaurus"`, `args: ["mcp"]`.
 - Over HTTP: `GET /mcp/tools` and `POST /mcp/call` on `http://127.0.0.1:1337`. If server network exposure is on, authenticate with an access key from Settings → Server.
-- Debug connections and tool calls in the Insights tab.
+- Debug connections and tool calls in the Insights tab: each call is an **MCP tool** row with the server, tool, arguments, result preview and transport (stdio servers are Local; HTTP servers are Cloud).

@@ -163,7 +163,8 @@ public actor CoreModelService {
         fallbackModel: String? = nil,
         intent: CoreModelIntent = .interactive,
         modelOverride: String? = nil,
-        fallBackOnResidencyRefusal: Bool = false
+        fallBackOnResidencyRefusal: Bool = false,
+        purpose: String? = nil
     ) async throws -> String {
         try await generate(
             prompt: prompt,
@@ -175,7 +176,8 @@ public actor CoreModelService {
             intent: intent,
             modelOverride: modelOverride,
             fallBackOnResidencyRefusal: fallBackOnResidencyRefusal,
-            modelOptions: [:]
+            modelOptions: [:],
+            purpose: purpose
         )
     }
 
@@ -193,6 +195,10 @@ public actor CoreModelService {
     ///   (titles, memory) keep their "never touch the resident" guarantee;
     ///   follow-ups opt in so they generate for users chatting on a remote
     ///   provider while a local model happens to be resident.
+    /// - Parameter purpose: Short machine label for the activity log
+    ///   (`chat_title`, `follow_up_suggestions`, `memory_distillation`, …).
+    ///   Every one-shot is recorded in Insights — these calls carry
+    ///   conversation text and go to the cloud when the core model is remote.
     func generate(
         prompt: String,
         systemPrompt: String? = nil,
@@ -203,7 +209,8 @@ public actor CoreModelService {
         intent: CoreModelIntent = .interactive,
         modelOverride: String? = nil,
         fallBackOnResidencyRefusal: Bool = false,
-        modelOptions: [String: ModelOptionValue]
+        modelOptions: [String: ModelOptionValue],
+        purpose: String? = nil
     ) async throws -> String {
         // A per-call override wins over the shared Core Model setting; empty
         // strings are treated as "no override" so callers can pass raw config.
@@ -219,6 +226,12 @@ public actor CoreModelService {
         }
         let fallback = Self.normaliseFallback(fallbackModel)
         let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
+        // Who is driving this (chat session / agent) — read on the caller's
+        // task so the activity row can be attributed even after actor hops.
+        let activity = ActivityContext(
+            purpose: purpose ?? "core_model",
+            attribution: InsightsService.ActivityAttribution.current()
+        )
         let params = GenerationParameters(
             temperature: temperature.map { Float($0) },
             maxTokens: maxTokens,
@@ -254,7 +267,7 @@ public actor CoreModelService {
                     "Core model '\(primary)' breaker open; serving from chat model '\(fb)' during cooldown")
                 return try await runWithRetries(
                     model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
-                    role: .fallback)
+                    role: .fallback, activity: activity)
             }
             throw CoreModelError.circuitBreakerOpen
         }
@@ -266,7 +279,8 @@ public actor CoreModelService {
             params: params,
             timeout: timeout,
             intent: intent,
-            fallBackOnResidencyRefusal: fallBackOnResidencyRefusal
+            fallBackOnResidencyRefusal: fallBackOnResidencyRefusal,
+            activity: activity
         )
     }
 
@@ -296,7 +310,8 @@ public actor CoreModelService {
         params: GenerationParameters,
         timeout: TimeInterval,
         intent: CoreModelIntent,
-        fallBackOnResidencyRefusal: Bool
+        fallBackOnResidencyRefusal: Bool,
+        activity: ActivityContext
     ) async throws -> String {
         guard let primary else {
             guard let fb = fallback else { throw CoreModelError.modelUnavailable("none") }
@@ -304,7 +319,7 @@ public actor CoreModelService {
             do {
                 return try await runWithRetries(
                     model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
-                    role: .solo)
+                    role: .solo, activity: activity)
             } catch {
                 recordPrimaryFailure(error)
                 throw error
@@ -315,7 +330,7 @@ public actor CoreModelService {
             do {
                 return try await runWithRetries(
                     model: primary, messages: messages, params: params, timeout: timeout, intent: intent,
-                    role: .solo)
+                    role: .solo, activity: activity)
             } catch {
                 recordPrimaryFailure(error)
                 throw error
@@ -327,7 +342,7 @@ public actor CoreModelService {
         do {
             return try await runWithRetries(
                 model: primary, messages: messages, params: params, timeout: timeout, intent: intent,
-                role: .primaryWithFallback)
+                role: .primaryWithFallback, activity: activity)
         } catch {
             primaryError = error
         }
@@ -364,7 +379,7 @@ public actor CoreModelService {
         )
         return try await runWithRetries(
             model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
-            role: .fallback)
+            role: .fallback, activity: activity)
     }
 
     /// Whether a failed primary attempt should retry on the chat model.
@@ -590,7 +605,8 @@ public actor CoreModelService {
         params: GenerationParameters,
         timeout: TimeInterval,
         intent: CoreModelIntent,
-        role: ModelRole
+        role: ModelRole,
+        activity: ActivityContext
     ) async throws -> String {
         // With a healthy fallback waiting, a second or third attempt on a
         // failing primary only delays the answer the user is waiting on.
@@ -602,7 +618,7 @@ public actor CoreModelService {
                 let result = try await withTimeout(seconds: timeout) {
                     try await self.executeModelCall(
                         model: model, messages: messages, params: params, intent: intent,
-                        applyFirstTokenDeadline: applyFirstTokenDeadline)
+                        applyFirstTokenDeadline: applyFirstTokenDeadline, activity: activity)
                 }
                 if role != .fallback { clearBreakerState() }
                 return result
@@ -653,12 +669,21 @@ public actor CoreModelService {
         return [ChatMessage(role: "user", content: prompt)]
     }
 
+    /// Activity-log attribution for one `generate` call. Captured once on
+    /// the caller's task; every attempt (primary, retry, fallback) logs a
+    /// row with the same purpose and driver.
+    struct ActivityContext: Sendable {
+        let purpose: String
+        let attribution: InsightsService.ActivityAttribution
+    }
+
     private func executeModelCall(
         model: String,
         messages: [ChatMessage],
         params: GenerationParameters,
         intent: CoreModelIntent,
-        applyFirstTokenDeadline: Bool
+        applyFirstTokenDeadline: Bool,
+        activity: ActivityContext
     ) async throws -> String {
         let remoteServices: [ModelService] = await MainActor.run {
             RemoteProviderManager.shared.connectedServices()
@@ -676,32 +701,106 @@ public actor CoreModelService {
             logger.debug(
                 "Routing to \(service.id) (model: \(effectiveModel), prompt: \(promptLen) chars)"
             )
+            // Every one-shot is an interaction: local or cloud, it carries
+            // conversation text. Remote calls get a wire probe so the row
+            // shows the exact payload and privacy-filter outcome.
+            let connection = ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)?.info
+            let probe: WireTransportProbe? = connection != nil ? WireTransportProbe() : nil
+            let startedAt = Date()
             do {
-                if applyFirstTokenDeadline, let deadline = service.firstTokenDeadline {
-                    let stream = try await service.streamDeltas(
+                let text: String = try await WireTransportProbe.$current.withValue(probe) {
+                    if applyFirstTokenDeadline, let deadline = service.firstTokenDeadline {
+                        let stream = try await service.streamDeltas(
+                            messages: messages,
+                            parameters: params,
+                            requestedModel: model,
+                            stopSequences: []
+                        )
+                        return try await Self.collect(
+                            stream, firstTokenDeadline: deadline, model: effectiveModel)
+                    }
+                    return try await service.generateOneShot(
                         messages: messages,
                         parameters: params,
-                        requestedModel: model,
-                        stopSequences: []
+                        requestedModel: model
                     )
-                    return try await Self.collect(
-                        stream, firstTokenDeadline: deadline, model: effectiveModel)
                 }
-                return try await service.generateOneShot(
-                    messages: messages,
-                    parameters: params,
-                    requestedModel: model
-                )
+                Self.logToInsights(
+                    model: effectiveModel, messages: messages, params: params, response: text,
+                    startedAt: startedAt, error: nil, connection: connection, probe: probe,
+                    activity: activity)
+                return text
             } catch let refusal as ModelRuntime.ResidencyRefusedError {
                 // `params.loadIntent == .background` and the load would have
                 // disturbed the user's model. Not a backend fault — surface it as
-                // the existing skip error so the breaker stays out of it.
+                // the existing skip error so the breaker stays out of it. Nothing
+                // ran, so nothing is logged.
                 logger.info("\(refusal.errorDescription ?? "background load refused")")
                 throw CoreModelError.backgroundWouldEvictUserModel(effectiveModel)
+            } catch {
+                if !(error is CancellationError) {
+                    Self.logToInsights(
+                        model: effectiveModel, messages: messages, params: params, response: nil,
+                        startedAt: startedAt, error: error.localizedDescription, connection: connection,
+                        probe: probe, activity: activity)
+                }
+                throw error
             }
         case .none:
             throw CoreModelError.modelUnavailable(model)
         }
+    }
+
+    /// One Insights row per executed one-shot. Prompt/response are stored as
+    /// a JSON request body (subject to Privacy › Activity Log); remote rows
+    /// carry the post-scrub wire payload captured by the probe.
+    private static func logToInsights(
+        model: String,
+        messages: [ChatMessage],
+        params: GenerationParameters,
+        response: String?,
+        startedAt: Date,
+        error: String?,
+        connection: RequestConnectionInfo?,
+        probe: WireTransportProbe?,
+        activity: ActivityContext
+    ) {
+        let requestBody: String? = {
+            let payload: [String: Any] = [
+                "model": model,
+                "purpose": activity.purpose,
+                "messages": messages.map { ["role": $0.role, "content": $0.content ?? ""] },
+            ]
+            guard
+                let data = try? JSONSerialization.data(
+                    withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }()
+        let inputTokens = messages.reduce(0) { $0 + TokenEstimator.estimate($1.content) }
+        let wire = probe?.snapshot()
+        let attribution = activity.attribution
+        InsightsService.logInference(
+            source: .system,
+            model: model,
+            inputTokens: inputTokens,
+            outputTokens: response.map { TokenEstimator.estimate($0) } ?? 0,
+            durationMs: Date().timeIntervalSince(startedAt) * 1000,
+            temperature: params.temperature,
+            maxTokens: params.maxTokens,
+            finishReason: error == nil ? .stop : .error,
+            errorMessage: error,
+            requestBody: requestBody,
+            responseBody: response,
+            wireRequestBody: wire?.request,
+            wireResponseBody: (wire?.response.isEmpty ?? true) ? nil : wire?.response,
+            connection: connection,
+            path: "/internal/\(activity.purpose)",
+            privacy: probe?.privacyOutcome,
+            agentId: attribution.agentId,
+            agentName: attribution.agentName,
+            sessionId: attribution.sessionId
+        )
     }
 
     /// Drain a delta stream into a single string, giving up with

@@ -2,8 +2,17 @@
 //  InsightsService.swift
 //  osaurus
 //
-//  In-memory request/response logging service for debugging and analytics.
-//  Uses a ring buffer to limit memory usage.
+//  Facade over the persisted activity / audit log (`ActivityLogStore`).
+//  Every emitter in the app (`ChatEngine`, `HTTPHandler`, search, MCP,
+//  channels, Router, plugins) calls the nonisolated `logRequest` /
+//  `logInference` / `logAsync` helpers below. The service:
+//
+//    - scrubs credentials and clips bodies,
+//    - applies the user's content policy (`ActivityLogSettings`),
+//    - keeps a small hot cache so synchronous callers (`hasLog`, `focus`,
+//      Remote Connections activity) answer instantly for recent rows,
+//    - writes through to the store off the main thread, and
+//    - publishes paged, filtered rows + a summary for the Insights tab.
 //
 
 import Combine
@@ -15,326 +24,232 @@ final class InsightsService: ObservableObject {
 
     // MARK: - Configuration
 
-    /// Maximum number of logs to retain in memory
+    /// Hot-cache size. Recent rows are kept in memory so the per-message
+    /// "Insights" button and Remote Connections usage can answer
+    /// synchronously; everything older is served from the store.
     private let maxLogCount: Int = 500
 
-    // MARK: - Published State
+    /// Page size for the dashboard list.
+    static let pageSize = 100
 
-    /// All logged requests (most recent first).
-    ///
-    /// Intentionally NOT `@Published`: it's appended synchronously on every
-    /// request, but publishing per insert fired `objectWillChange` per request
-    /// and stalled the main actor under sustained traffic. The observable
-    /// surface the UI binds to (`filteredLogs`, `stats`, `totalRequestCount`,
-    /// `hasLogs`) is refreshed off this buffer by the debounced pipeline below.
-    /// Direct reads stay correct because the buffer is the synchronous source
-    /// of truth.
+    // MARK: - Hot cache
+
+    /// Most recent rows (most recent first). Entries are replaced with
+    /// their chained copy (`seq`/`hash` set) once the store confirms the
+    /// append.
     private(set) var logs: [RequestLog] = []
 
-    /// Cumulative request count (may exceed `logs.count` due to the ring
-    /// buffer). Incremented synchronously; the published mirror trails it.
+    /// Cumulative rows logged this process lifetime (not the store count).
     private var totalRequestCountRaw: Int = 0
 
-    /// Debounced, published mirror of `totalRequestCountRaw` for the UI.
+    // MARK: - Published state
+
+    /// Store row count after the current filter. Trails writes by the
+    /// debounce window.
     @Published private(set) var totalRequestCount: Int = 0
 
-    /// Published flag mirroring `!logs.isEmpty` so the Clear button stays
-    /// reactive without `logs` itself being published. `clear()` resets it
-    /// synchronously; otherwise the pipeline updates it.
+    /// Whether any row exists (store or hot cache). Drives Clear/Export.
     @Published private(set) var hasLogs: Bool = false
 
-    /// Active filter for path/model search
-    @Published var searchFilter: String = ""
+    /// Current narrowing criteria. Changing it reloads the first page.
+    @Published var filter: ActivityFilter = .empty
 
-    /// Active filter for source
-    @Published var sourceFilter: SourceFilter = .all
+    /// Rows for the current filter, first `pageSize * pagesLoaded`.
+    @Published private(set) var pagedLogs: [RequestLog] = []
 
-    /// Active filter for HTTP method
-    @Published var methodFilter: MethodFilter = .all
+    /// Aggregates for the current filter (egress card + stats bar).
+    @Published private(set) var summary: ActivitySummary = .empty
 
-    // MARK: - Derived Snapshots
+    @Published private(set) var isLoading = false
+    @Published private(set) var canLoadMore = false
 
-    /// Filtered logs based on current filter settings.
-    ///
-    /// Previously this was a computed property that re-ran a filter over
-    /// the (up to 500-entry) ring buffer on every body evaluation of
-    /// `InsightsView` — including the body recomputation triggered by
-    /// each new logged request. With heavy traffic, the cost of fuzzy
-    /// search across `path / model / shortModelName / pluginId` for
-    /// every entry, every time, was visible. The pipeline below
-    /// recomputes the filter + stats off the synchronous body path,
-    /// debounced ~200 ms.
-    @Published public private(set) var filteredLogs: [RequestLog] = []
+    /// Distinct values for filter menus.
+    @Published private(set) var knownDestinations: [String] = []
+    @Published private(set) var knownModels: [String] = []
+    @Published private(set) var knownAgents: [String] = []
 
-    /// Summary statistics. Recomputed alongside `filteredLogs`.
-    @Published public private(set) var stats: InsightsStats = .empty
+    /// Last integrity check result, if the user ran one this session.
+    @Published private(set) var lastVerification: ActivityLogVerification?
+    @Published private(set) var isVerifying = false
 
-    /// Log entry that another part of the app asked the Insights tab to
-    /// reveal (e.g. the per-message "Insights" button in chat). `InsightsView`
-    /// observes this, pushes the matching log into its detail pane, then
-    /// clears it back to nil. Nil means no pending request.
+    /// Non-nil when the store could not be opened; the hot cache still works.
+    @Published private(set) var storeError: String?
+
+    /// Row that another part of the app asked the Insights tab to reveal.
     @Published var pendingFocusLogId: UUID?
 
-    private var pipelineCancellable: AnyCancellable?
+    /// Current retention / content policy.
+    @Published private(set) var settings: ActivityLogSettings = ActivityLogSettingsStore.snapshot()
 
-    /// Carries (snapshot, cumulative count) on each `logs` mutation so the
-    /// debounced pipeline can refresh derived state without `logs` being
-    /// `@Published`. Passing values (not `self`) keeps the Combine closures off
-    /// the main-actor isolation boundary.
-    private let logsChanged = PassthroughSubject<([RequestLog], Int), Never>()
+    // MARK: - Private
 
-    /// Tags inputs before they leave the main actor. A completed background
-    /// snapshot must not undo a newer Clear, filter edit, or log insertion.
-    private(set) var snapshotRevision: UInt64 = 0
-
-    struct SnapshotInput: Sendable {
-        let logs: [RequestLog]
-        let totalCount: Int
-        let search: String
-        let source: SourceFilter
-        let method: MethodFilter
-        let revision: UInt64
-    }
-
-    struct SnapshotResult: Sendable {
-        let filtered: [RequestLog]
-        let stats: InsightsStats
-        let totalCount: Int
-        let hasLogs: Bool
-        let revision: UInt64
-    }
-
-    nonisolated private static let computeQueue = DispatchQueue(
-        label: "ai.osaurus.insights.compute",
-        qos: .userInitiated
-    )
+    private let store: ActivityLogStore
+    private var storeAvailable = false
+    private var pagesLoaded = 1
+    private var cancellables = Set<AnyCancellable>()
+    /// Fired on every append / clear so the dashboard refreshes (debounced).
+    private let changed = PassthroughSubject<Void, Never>()
+    private var retentionTimer: Timer?
 
     // MARK: - Initialization
 
-    init(computeQueue: DispatchQueue? = nil) {
-        // Seed the snapshots with current (empty) state so the first
-        // render of InsightsView has something to show before the
-        // pipeline's debounced emission lands.
-        stats = Self.computeStats(logs: logs)
-        filteredLogs = Self.computeFilteredLogs(
-            logs: logs,
-            search: searchFilter,
-            source: sourceFilter,
-            method: methodFilter
-        )
-
-        pipelineCancellable = Publishers.CombineLatest4(
-            logsChanged.prepend(([RequestLog](), 0)),
-            $searchFilter,
-            $sourceFilter,
-            $methodFilter
-        )
-        // Drop the synthetic initial emission — we already seeded
-        // snapshots above. Without this, `removeDuplicates` would
-        // miss the very first user keystroke when it lands inside
-        // the debounce window.
-        .dropFirst()
-        // All upstream mutations are main-actor isolated. Increment here,
-        // rather than after debounce, to invalidate an already running job.
-        .map { [weak self] logsAndCount, search, source, method in
-            let revision = (self?.snapshotRevision ?? 0) &+ 1
-            self?.snapshotRevision = revision
-            let (snapshot, totalCount) = logsAndCount
-            return SnapshotInput(
-                logs: snapshot,
-                totalCount: totalCount,
-                search: search,
-                source: source,
-                method: method,
-                revision: revision
-            )
-        }
-        .debounce(for: .milliseconds(200), scheduler: computeQueue ?? Self.computeQueue)
-        // A nonisolated function reference avoids forming a main-actor
-        // closure that would assert when Combine invokes it on this queue.
-        .map(Self.computeSnapshot)
-        .receive(on: DispatchQueue.main)
-        .sink { [weak self] result in
-            self?.applySnapshot(result)
-        }
+    private convenience init() {
+        self.init(store: .shared, openStore: true)
     }
 
-    nonisolated static func computeSnapshot(_ input: SnapshotInput) -> SnapshotResult {
-        SnapshotResult(
-            filtered: computeFilteredLogs(
-                logs: input.logs,
-                search: input.search,
-                source: input.source,
-                method: input.method
-            ),
-            stats: computeStats(logs: input.logs),
-            totalCount: input.totalCount,
-            hasLogs: !input.logs.isEmpty,
-            revision: input.revision
-        )
-    }
-
-    func applySnapshot(_ result: SnapshotResult) {
-        guard result.revision == snapshotRevision else { return }
-        filteredLogs = result.filtered
-        stats = result.stats
-        totalRequestCount = result.totalCount
-        hasLogs = result.hasLogs
-    }
-
-    nonisolated private static func computeFilteredLogs(
-        logs: [RequestLog],
-        search: String,
-        source: SourceFilter,
-        method: MethodFilter
-    ) -> [RequestLog] {
-        logs.filter { log in
-            if !search.isEmpty {
-                let matchesPath = SearchService.matches(query: search, in: log.path)
-                let matchesModel = log.model.map { SearchService.matches(query: search, in: $0) } ?? false
-                let matchesShortModel = SearchService.matches(query: search, in: log.shortModelName)
-                let matchesPlugin = log.pluginId.map { SearchService.matches(query: search, in: $0) } ?? false
-                if !matchesPath && !matchesModel && !matchesShortModel && !matchesPlugin {
-                    return false
-                }
+    /// Designated initializer. Tests pass an in-memory store with
+    /// `openStore: false` after opening it themselves.
+    init(store: ActivityLogStore, openStore: Bool) {
+        self.store = store
+        if openStore {
+            do {
+                try store.open()
+                storeAvailable = true
+            } catch {
+                storeAvailable = false
+                storeError = error.localizedDescription
+                NSLog("[Osaurus][Insights] activity log unavailable: %@", "\(error)")
             }
-
-            switch source {
-            case .all:
-                break
-            case .chatUI:
-                if log.source != .chatUI { return false }
-            case .httpAPI:
-                if log.source != .httpAPI { return false }
-            case .plugin:
-                if log.source != .plugin { return false }
-            case .p2p:
-                if log.source != .p2p { return false }
-            }
-
-            switch method {
-            case .all:
-                break
-            case .get:
-                if log.method != "GET" { return false }
-            case .post:
-                if log.method != "POST" { return false }
-            }
-
-            return true
-        }
-    }
-
-    nonisolated private static func computeStats(logs: [RequestLog]) -> InsightsStats {
-        let total = logs.count
-        var successCount = 0
-        var errors = 0
-        var durationSum: Double = 0
-        var inferenceCount = 0
-        var totalInputTokens = 0
-        var totalOutputTokens = 0
-        var speedSum: Double = 0
-        var speedCount = 0
-        for log in logs {
-            if log.isSuccess { successCount += 1 }
-            if log.isError { errors += 1 }
-            durationSum += log.durationMs
-            if log.isInference {
-                inferenceCount += 1
-                totalInputTokens += log.inputTokens ?? 0
-                totalOutputTokens += log.outputTokens ?? 0
-                if let speed = log.tokensPerSecond {
-                    speedSum += speed
-                    speedCount += 1
-                }
-            }
+        } else {
+            storeAvailable = store.isOpen
         }
 
-        return InsightsStats(
-            totalRequests: total,
-            successRate: total > 0 ? Double(successCount) / Double(total) * 100 : 0,
-            errorCount: errors,
-            averageDurationMs: total > 0 ? durationSum / Double(total) : 0,
-            inferenceCount: inferenceCount,
-            totalInputTokens: totalInputTokens,
-            totalOutputTokens: totalOutputTokens,
-            averageSpeed: speedCount > 0 ? speedSum / Double(speedCount) : 0
-        )
+        // Filter edits and new rows both funnel into one debounced reload.
+        $filter
+            .dropFirst()
+            .removeDuplicates()
+            .debounce(for: .milliseconds(150), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.pagesLoaded = 1
+                self?.reload()
+            }
+            .store(in: &cancellables)
+
+        changed
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] in self?.reload() }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .activityLogSettingsChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.settings = ActivityLogSettingsStore.snapshot()
+                self.pruneForRetention()
+            }
+            .store(in: &cancellables)
+
+        if openStore {
+            pruneForRetention()
+            retentionTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.pruneForRetention() }
+            }
+        }
+        reload()
     }
 
-    // MARK: - Logging Methods
+    // MARK: - Logging
 
-    /// Log a completed request
+    /// Record a completed interaction. Synchronous into the hot cache,
+    /// asynchronous into the store.
     func log(_ request: RequestLog) {
-        // Insert at beginning (most recent first). `logs` is the synchronous
-        // source of truth; the published UI mirrors refresh via the debounced
-        // pipeline so a burst doesn't fire `objectWillChange` per request.
-        logs.insert(request, at: 0)
-        totalRequestCountRaw += 1
+        let record = settings.storeContent ? request : request.withoutContent()
 
-        // Enforce ring buffer limit
+        logs.insert(record, at: 0)
+        totalRequestCountRaw += 1
         if logs.count > maxLogCount {
             logs.removeLast(logs.count - maxLogCount)
         }
+        hasLogs = true
 
-        logsChanged.send((logs, totalRequestCountRaw))
+        guard storeAvailable else {
+            changed.send()
+            return
+        }
+        let store = self.store
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                let chained = try store.append(record)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    if let index = self.logs.firstIndex(where: { $0.id == chained.id }) {
+                        self.logs[index] = chained
+                    }
+                    self.changed.send()
+                }
+            } catch {
+                NSLog("[Osaurus][Insights] append failed: %@", "\(error)")
+                await MainActor.run { [weak self] in self?.storeError = error.localizedDescription }
+            }
+        }
     }
 
-    /// Clear all logs
+    /// Remove every row (store + hot cache). The store records a tombstone.
     func clear() {
         logs.removeAll()
         totalRequestCountRaw = 0
         pendingFocusLogId = nil
-
-        // Reflect the cleared state immediately — the Clear button expects an
-        // instant empty list — then let the pipeline settle the rest.
+        pagedLogs = []
+        summary = .empty
         totalRequestCount = 0
         hasLogs = false
-        filteredLogs = []
-        stats = .empty
-        logsChanged.send((logs, totalRequestCountRaw))
+        guard storeAvailable else { return }
+        let store = self.store
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                try store.clear()
+            } catch {
+                NSLog("[Osaurus][Insights] clear failed: %@", "\(error)")
+            }
+            await MainActor.run { [weak self] in self?.changed.send() }
+        }
     }
 
-    /// Ask the Insights tab to reveal the most recent log produced by the
-    /// given chat assistant turn. Returns false when no matching log exists
-    /// (e.g. it was evicted from the ring buffer or cleared), in which case
-    /// the caller may still open the tab to show the full list.
+    // MARK: - Lookup / focus
+
+    /// Row by id: hot cache first, then the store.
+    func log(id: UUID) -> RequestLog? {
+        if let hit = logs.first(where: { $0.id == id }) { return hit }
+        guard storeAvailable else { return nil }
+        return try? store.find(id: id)
+    }
+
     @discardableResult
     func focus(turnId: UUID) -> Bool {
-        guard let match = logs.first(where: { $0.turnId == turnId }) else {
-            return false
+        if let match = logs.first(where: { $0.turnId == turnId }) {
+            focus(log: match)
+            return true
         }
+        guard storeAvailable, let match = try? store.find(turnId: turnId) else { return false }
         focus(log: match)
         return true
     }
 
-    /// Ask the Insights tab to reveal the most recent log for a request-level
-    /// router id. Prefer this over turn focus for Credits rows because agent
-    /// loops can produce multiple request logs for the same assistant turn.
     @discardableResult
     func focus(requestId: String) -> Bool {
         let normalized = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty,
-            let match = logs.first(where: { $0.requestId == normalized })
-        else {
-            return false
+        guard !normalized.isEmpty else { return false }
+        if let match = logs.first(where: { $0.requestId == normalized }) {
+            focus(log: match)
+            return true
         }
+        guard storeAvailable, let match = try? store.find(requestId: normalized) else { return false }
         focus(log: match)
         return true
     }
 
-    /// True when an in-memory request log still exists for this assistant turn.
-    /// Logs are intentionally ephemeral, so callers use this to decide whether
-    /// to surface an Insights affordance without mutating focus state.
     func hasLog(turnId: UUID) -> Bool {
-        logs.contains { $0.turnId == turnId }
+        if logs.contains(where: { $0.turnId == turnId }) { return true }
+        guard storeAvailable else { return false }
+        return (try? store.exists(turnId: turnId)) ?? false
     }
 
-    /// True when an in-memory request log still exists for this request id.
     func hasLog(requestId: String) -> Bool {
         let normalized = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return false }
-        return logs.contains { $0.requestId == normalized }
+        if logs.contains(where: { $0.requestId == normalized }) { return true }
+        guard storeAvailable else { return false }
+        return ((try? store.find(requestId: normalized)) ?? nil) != nil
     }
 
     private func focus(log: RequestLog) {
@@ -344,35 +259,154 @@ final class InsightsService: ObservableObject {
         pendingFocusLogId = log.id
     }
 
-    /// Clear filters
+    // MARK: - Filters / paging
+
     func clearFilters() {
-        searchFilter = ""
-        sourceFilter = .all
-        methodFilter = .all
+        filter = .empty
     }
+
+    /// Re-query the store for the current filter.
+    func reload() {
+        guard storeAvailable else {
+            // Hot-cache fallback keeps the tab useful if the store is down.
+            let filtered = Self.filterInMemory(logs, filter)
+            pagedLogs = filtered
+            totalRequestCount = filtered.count
+            hasLogs = !logs.isEmpty
+            canLoadMore = false
+            summary = Self.summarizeInMemory(filtered)
+            return
+        }
+        let store = self.store
+        let filter = self.filter
+        let limit = Self.pageSize * pagesLoaded
+        isLoading = true
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let rows = (try? store.fetch(filter: filter, limit: limit)) ?? []
+            let count = (try? store.count(filter: filter)) ?? rows.count
+            let summary = (try? store.summary(filter: filter)) ?? .empty
+            let anyRows = filter.isEmpty ? count > 0 : ((try? store.count()) ?? 0) > 0
+            let hosts = (try? store.distinctValues(column: .destinationHost)) ?? []
+            let models = (try? store.distinctValues(column: .model)) ?? []
+            let agents = (try? store.distinctValues(column: .agentName)) ?? []
+            await MainActor.run { [weak self] in
+                guard let self, self.filter == filter else { return }
+                self.pagedLogs = rows
+                self.totalRequestCount = count
+                self.summary = summary
+                self.canLoadMore = rows.count < count
+                self.hasLogs = anyRows || !self.logs.isEmpty
+                self.knownDestinations = hosts
+                self.knownModels = models
+                self.knownAgents = agents
+                self.isLoading = false
+            }
+        }
+    }
+
+    func loadMore() {
+        guard canLoadMore, !isLoading else { return }
+        pagesLoaded += 1
+        reload()
+    }
+
+    // MARK: - Integrity / retention
+
+    func verify() {
+        guard storeAvailable, !isVerifying else { return }
+        isVerifying = true
+        let store = self.store
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = try? store.verify()
+            // The check is on the record too: who verified, when, what the
+            // head was, and whether anything was wrong at the time.
+            if let result { _ = try? store.recordVerification(result) }
+            await MainActor.run { [weak self] in
+                self?.lastVerification = result
+                self?.isVerifying = false
+                self?.changed.send()
+            }
+        }
+    }
+
+    /// Another component appended to the store directly (export row); refresh.
+    func noteExternalStoreChange() {
+        changed.send()
+    }
+
+    /// Drop rows older than the configured retention. Safe to call often.
+    func pruneForRetention() {
+        guard storeAvailable, let cutoff = settings.retentionCutoff() else { return }
+        let store = self.store
+        Task.detached(priority: .utility) { [weak self] in
+            let removed = (try? store.prune(olderThan: cutoff)) ?? 0
+            if removed > 0 {
+                await MainActor.run { [weak self] in self?.changed.send() }
+            }
+        }
+    }
+
+    /// Update and persist the policy (Privacy › Activity Log). A real change
+    /// is itself recorded on the chain — a reviewer must be able to see when
+    /// retention was shortened or content capture turned off.
+    func updateSettings(_ newValue: ActivityLogSettings) {
+        let previous = settings
+        settings = newValue
+        ActivityLogSettingsStore.save(newValue)
+        guard previous != newValue, storeAvailable else { return }
+        let store = self.store
+        let details: [String: String] = [
+            "retention_days": newValue.retentionDays.map(String.init) ?? "forever",
+            "store_content": newValue.storeContent ? "true" : "false",
+            "previous_retention_days": previous.retentionDays.map(String.init) ?? "forever",
+            "previous_store_content": previous.storeContent ? "true" : "false",
+        ]
+        Task.detached(priority: .utility) { [weak self] in
+            _ = try? store.appendSystemEvent("settings_changed", details: details)
+            await MainActor.run { [weak self] in self?.changed.send() }
+        }
+    }
+
+    /// Direct store access for export.
+    var activityStore: ActivityLogStore? { storeAvailable ? store : nil }
 
     // MARK: - Connection Activity
 
     /// Outbound activity for a paired remote agent, keyed by its provider id.
-    /// Drives the Activity section of `RemoteAgentDetailView`.
     func activity(forProviderId providerId: UUID) -> ConnectionActivitySummary {
-        summarize(logs.filter { $0.connection?.providerId == providerId })
+        richer(
+            store: storeAvailable ? try? store.connectionActivity(column: "provider_id", value: providerId.uuidString) : nil,
+            hot: summarize(logs.filter { $0.connection?.providerId == providerId })
+        )
     }
 
     /// Inbound activity attributed to a specific paired access key (host side).
-    /// Drives per-connection usage in the Remote Connections view.
     func activity(forAccessKeyId keyId: String) -> ConnectionActivitySummary {
         let trimmed = keyId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return ConnectionActivitySummary() }
-        return summarize(logs.filter { $0.connection?.accessKeyId == trimmed })
+        return richer(
+            store: storeAvailable ? try? store.connectionActivity(column: "access_key_id", value: trimmed) : nil,
+            hot: summarize(logs.filter { $0.connection?.accessKeyId == trimmed })
+        )
     }
 
-    /// Inbound activity for an agent-address audience (host-side fallback for
-    /// rows whose individual key id hasn't been attributed yet).
+    /// Inbound activity for an agent-address audience.
     func activity(forAudience audience: String) -> ConnectionActivitySummary {
         let trimmed = audience.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return ConnectionActivitySummary() }
-        return summarize(logs.filter { $0.connection?.audience == trimmed })
+        return richer(
+            store: storeAvailable ? try? store.connectionActivity(column: "audience", value: trimmed) : nil,
+            hot: summarize(logs.filter { $0.connection?.audience == trimmed })
+        )
+    }
+
+    /// The persisted store is the long-term source of truth, but rows reach it
+    /// asynchronously. Prefer whichever view has seen more rows so a summary
+    /// read right after `log(_:)` never under-counts; ties go to the hot cache
+    /// (exact timestamps, no millisecond rounding).
+    private func richer(store: ConnectionActivitySummary?, hot: ConnectionActivitySummary) -> ConnectionActivitySummary {
+        guard let store, store.requestCount > hot.requestCount else { return hot }
+        return store
     }
 
     private func summarize(_ matched: [RequestLog]) -> ConnectionActivitySummary {
@@ -387,30 +421,104 @@ final class InsightsService: ObservableObject {
         )
     }
 
-    /// Focus the Insights tab on the most recent outbound request for a provider.
     @discardableResult
     func focus(providerId: UUID) -> Bool {
-        guard let match = logs.first(where: { $0.connection?.providerId == providerId })
-        else { return false }
+        if let match = logs.first(where: { $0.connection?.providerId == providerId }) {
+            focus(log: match)
+            return true
+        }
+        guard storeAvailable, let match = try? store.find(providerId: providerId) else { return false }
         focus(log: match)
         return true
     }
 
-    /// Focus the Insights tab on the most recent inbound request for an access key.
     @discardableResult
     func focus(accessKeyId: String) -> Bool {
         let trimmed = accessKeyId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-            let match = logs.first(where: { $0.connection?.accessKeyId == trimmed })
-        else { return false }
+        guard !trimmed.isEmpty else { return false }
+        if let match = logs.first(where: { $0.connection?.accessKeyId == trimmed }) {
+            focus(log: match)
+            return true
+        }
+        guard storeAvailable, let match = try? store.find(accessKeyId: trimmed) else { return false }
         focus(log: match)
         return true
     }
+
+    // MARK: - In-memory fallbacks
+
+    nonisolated static func filterInMemory(_ logs: [RequestLog], _ f: ActivityFilter) -> [RequestLog] {
+        let text = f.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let bounds = f.dateRange.bounds()
+        return logs.filter { log in
+            if !text.isEmpty {
+                let hay = [log.title, log.path, log.model ?? "", log.destinationDisplay, log.pluginId ?? "", log.agentName ?? ""]
+                    .joined(separator: " ").lowercased()
+                if !hay.contains(text) { return false }
+            }
+            if let bounds, log.timestamp < bounds.start || log.timestamp >= bounds.end { return false }
+            if let locality = f.locality, log.locality != locality { return false }
+            if !f.categories.isEmpty, !f.categories.contains(log.category) { return false }
+            if !f.sources.isEmpty, !f.sources.contains(log.source) { return false }
+            if let host = f.destinationHost, (log.egress?.destinationHost ?? EgressInfo.host(from: log.connection?.remoteEndpoint)) != host { return false }
+            if let model = f.model, log.model != model { return false }
+            if let agentId = f.agentId, log.agentId != agentId { return false }
+            switch f.status {
+            case .all: break
+            case .success: if log.isError { return false }
+            case .error: if !log.isError { return false }
+            }
+            if let pf = f.privacyFilterApplied, (log.egress?.privacyFilterApplied ?? false) != pf { return false }
+            if !f.includePluginLogs, log.category == .pluginLog { return false }
+            return true
+        }
+    }
+
+    nonisolated static func summarizeInMemory(_ logs: [RequestLog]) -> ActivitySummary {
+        var s = ActivitySummary()
+        s.totalCount = logs.count
+        s.localCount = logs.filter { $0.locality == .local }.count
+        s.remoteCount = logs.filter { $0.locality == .remote }.count
+        s.errorCount = logs.filter { $0.isError }.count
+        s.averageDurationMs = logs.isEmpty ? 0 : logs.map(\.durationMs).reduce(0, +) / Double(logs.count)
+        s.inferenceCount = logs.filter { $0.category == .inference }.count
+        s.searchCount = logs.filter { $0.category == .webSearch }.count
+        s.extractCount = logs.filter { $0.category == .urlExtract }.count
+        s.mcpCount = logs.filter { $0.category == .mcpToolCall }.count
+        s.totalInputTokens = logs.reduce(0) { $0 + ($1.inputTokens ?? 0) }
+        s.totalOutputTokens = logs.reduce(0) { $0 + ($1.outputTokens ?? 0) }
+        let speeds = logs.compactMap(\.tokensPerSecond).filter { $0 > 0 }
+        s.averageSpeed = speeds.isEmpty ? 0 : speeds.reduce(0, +) / Double(speeds.count)
+        s.bytesSent = logs.reduce(0) { $0 + ($1.egress?.bytesSent ?? 0) }
+        s.bytesReceived = logs.reduce(0) { $0 + ($1.egress?.bytesReceived ?? 0) }
+        s.privacyFilteredCount = logs.filter { $0.egress?.privacyFilterApplied == true }.count
+        s.redactedSpanTotal = logs.reduce(0) { $0 + ($1.egress?.redactedSpanCount ?? 0) }
+        s.earliest = logs.map(\.timestamp).min()
+        s.latest = logs.map(\.timestamp).max()
+        var byDest: [String: ActivityDestinationSummary] = [:]
+        for log in logs where log.locality == .remote {
+            let host = log.egress?.destinationHost ?? EgressInfo.host(from: log.connection?.remoteEndpoint) ?? ""
+            let label = log.egress?.destinationLabel ?? (host.isEmpty ? L("Unknown") : host)
+            let key = host.isEmpty ? label : host
+            let prev = byDest[key]
+            byDest[key] = ActivityDestinationSummary(
+                label: label,
+                host: host,
+                count: (prev?.count ?? 0) + 1,
+                bytesSent: (prev?.bytesSent ?? 0) + (log.egress?.bytesSent ?? 0),
+                bytesReceived: (prev?.bytesReceived ?? 0) + (log.egress?.bytesReceived ?? 0),
+                errorCount: (prev?.errorCount ?? 0) + (log.isError ? 1 : 0),
+                lastSeen: max(prev?.lastSeen ?? .distantPast, log.timestamp)
+            )
+        }
+        s.destinations = byDest.values.sorted { $0.count > $1.count }
+        return s
+    }
 }
 
-/// Aggregate usage for a remote connection, derived from the in-memory ring
-/// buffer. Used by `RemoteAgentDetailView` (outbound, by providerId) and the
-/// host-side Remote Connections view (inbound, by accessKeyId / audience).
+/// Aggregate usage for a remote connection. Used by `RemoteAgentDetailView`
+/// (outbound, by providerId) and the host-side Remote Connections view
+/// (inbound, by accessKeyId / audience).
 struct ConnectionActivitySummary: Equatable {
     var requestCount: Int = 0
     var lastUsed: Date?
@@ -422,83 +530,6 @@ struct ConnectionActivitySummary: Equatable {
 
     var formattedAvgSpeed: String {
         averageSpeed > 0 ? String(format: "%.1f tok/s", averageSpeed) : "-"
-    }
-}
-
-// MARK: - Supporting Types
-
-enum SourceFilter: String, CaseIterable, Sendable {
-    case all = "All"
-    case chatUI = "Chat"
-    case httpAPI = "HTTP"
-    case plugin = "Plugin"
-    case p2p = "P2P"
-
-    var displayName: String {
-        switch self {
-        case .all: return L("All")
-        case .chatUI: return L("Chat")
-        case .httpAPI: return "HTTP"
-        case .plugin: return L("Plugin")
-        case .p2p: return L("P2P")
-        }
-    }
-}
-
-enum MethodFilter: String, CaseIterable, Sendable {
-    case all = "All"
-    case get = "GET"
-    case post = "POST"
-
-    var displayName: String {
-        switch self {
-        case .all: return L("All")
-        case .get: return "GET"
-        case .post: return "POST"
-        }
-    }
-}
-
-struct InsightsStats: Equatable, Sendable {
-    let totalRequests: Int
-    let successRate: Double
-    let errorCount: Int
-    let averageDurationMs: Double
-
-    // Inference-specific stats
-    let inferenceCount: Int
-    let totalInputTokens: Int
-    let totalOutputTokens: Int
-    let averageSpeed: Double
-
-    static let empty = InsightsStats(
-        totalRequests: 0,
-        successRate: 0,
-        errorCount: 0,
-        averageDurationMs: 0,
-        inferenceCount: 0,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        averageSpeed: 0
-    )
-
-    var formattedSuccessRate: String {
-        String(format: "%.0f%%", successRate)
-    }
-
-    var formattedAvgSpeed: String {
-        if averageSpeed > 0 {
-            return String(format: "%.1f tok/s", averageSpeed)
-        }
-        return "-"
-    }
-
-    var formattedAvgDuration: String {
-        if averageDurationMs < 1000 {
-            return String(format: "%.0fms", averageDurationMs)
-        } else {
-            return String(format: "%.1fs", averageDurationMs / 1000)
-        }
     }
 }
 
@@ -645,10 +676,29 @@ extension InsightsService {
         errorMessage: String? = nil,
         wireRequestBody: Data? = nil,
         wireResponseBody: Data? = nil,
-        connection: RequestConnectionInfo? = nil
+        connection: RequestConnectionInfo? = nil,
+        category: ActivityCategory? = nil,
+        locality: DataLocality? = nil,
+        egress: EgressInfo? = nil,
+        agentId: UUID? = nil,
+        agentName: String? = nil,
+        sessionId: UUID? = nil,
+        clientIP: String? = nil
     ) {
         let trimmedRequest = truncateBody(requestBody)
         let trimmedResponse = truncateBody(responseBody)
+        // Byte counts default to the wire body sizes when the caller didn't
+        // measure them; the egress card sums these per destination.
+        var resolvedEgress = egress
+        if resolvedEgress != nil || wireRequestBody != nil {
+            var e = resolvedEgress ?? EgressInfo()
+            if e.bytesSent == nil, let wireRequestBody { e.bytesSent = wireRequestBody.count }
+            if e.bytesReceived == nil, let wireResponseBody { e.bytesReceived = wireResponseBody.count }
+            if !e.details.isEmpty {
+                e.details = e.details.mapValues { redactCredentials($0) }
+            }
+            resolvedEgress = e
+        }
         // Wire bodies are passed as `Data` so the probe doesn't have
         // to pay an utf8 -> String cost on the stream hot path. We
         // do the decode + truncate here, on the main-actor Task
@@ -684,9 +734,81 @@ extension InsightsService {
                 errorMessage: errorMessage,
                 wireRequestBody: trimmedWireRequest,
                 wireResponseBody: trimmedWireResponse,
-                connection: connection
+                connection: connection,
+                category: category,
+                locality: locality,
+                egress: resolvedEgress,
+                agentId: agentId,
+                agentName: agentName,
+                sessionId: sessionId,
+                clientIP: clientIP
             )
             shared.log(log)
+        }
+    }
+
+    /// Record an outbound, non-inference egress event (web search, URL
+    /// fetch, MCP call, channel delivery, Router control call). Always
+    /// `.remote`; `source` defaults to `.tool`.
+    nonisolated static func logEgress(
+        category: ActivityCategory,
+        source: RequestSource = .tool,
+        method: String,
+        path: String,
+        statusCode: Int,
+        durationMs: Double,
+        egress: EgressInfo,
+        locality: DataLocality = .remote,
+        requestBody: String? = nil,
+        responseBody: String? = nil,
+        errorMessage: String? = nil,
+        toolCalls: [ToolCallLog]? = nil,
+        attribution: ActivityAttribution = .none,
+        turnId: UUID? = nil
+    ) {
+        logRequest(
+            source: source,
+            turnId: turnId,
+            method: method,
+            path: path,
+            statusCode: statusCode,
+            durationMs: durationMs,
+            requestBody: requestBody,
+            responseBody: responseBody,
+            toolCalls: toolCalls,
+            finishReason: errorMessage == nil ? nil : .error,
+            errorMessage: errorMessage,
+            category: category,
+            locality: locality,
+            egress: egress,
+            agentId: attribution.agentId,
+            agentName: attribution.agentName,
+            sessionId: attribution.sessionId
+        )
+    }
+
+    /// Who is driving the current unit of work, for activity-log attribution.
+    /// Read from `ChatExecutionContext` task-locals on the caller's task —
+    /// they are not visible inside `Task.detached` producers, so emitters
+    /// capture this up-front and pass it along.
+    struct ActivityAttribution: Sendable, Equatable {
+        var agentId: UUID?
+        var agentName: String?
+        var sessionId: UUID?
+
+        static let none = ActivityAttribution()
+
+        init(agentId: UUID? = nil, agentName: String? = nil, sessionId: UUID? = nil) {
+            self.agentId = agentId
+            self.agentName = agentName ?? agentId.flatMap { AgentManager.agentDisplayName(for: $0) }
+            self.sessionId = sessionId
+        }
+
+        nonisolated static func current() -> ActivityAttribution {
+            ActivityAttribution(
+                agentId: ChatExecutionContext.currentAgentId,
+                sessionId: ChatExecutionContext.currentSessionId.flatMap(UUID.init(uuidString:))
+            )
         }
     }
 
@@ -698,6 +820,7 @@ extension InsightsService {
     nonisolated static func logInference(
         source: RequestSource,
         turnId: UUID? = nil,
+        parentTurnId: UUID? = nil,
         requestId: String? = nil,
         model: String,
         inputTokens: Int,
@@ -713,8 +836,29 @@ extension InsightsService {
         wireRequestBody: Data? = nil,
         wireResponseBody: Data? = nil,
         connection: RequestConnectionInfo? = nil,
-        path: String = "/chat/completions"
+        path: String = "/chat/completions",
+        egress: EgressInfo? = nil,
+        privacy: WireTransportProbe.PrivacyOutcome? = nil,
+        agentId: UUID? = nil,
+        agentName: String? = nil,
+        sessionId: UUID? = nil
     ) {
+        var resolvedEgress = egress ?? Self.inferenceEgress(connection: connection, requestBody: requestBody)
+        if let privacy, resolvedEgress != nil {
+            resolvedEgress?.privacyFilterApplied = privacy.applied
+            resolvedEgress?.redactedSpanCount = privacy.applied ? privacy.redactedCount : nil
+        }
+        // A delegated helper session (`spawn_agent`) runs inside the parent's
+        // tool call; the engine captured the dispatching assistant turn at
+        // request time (task-locals are not reliable on the stream's
+        // termination path). Record it so a reviewer can walk orchestrator
+        // turn → helper steps.
+        if let parentTurn = parentTurnId, parentTurn != turnId {
+            var details = resolvedEgress?.details ?? [:]
+            details["parent_turn_id"] = parentTurn.uuidString
+            if resolvedEgress == nil { resolvedEgress = EgressInfo(dataClasses: []) }
+            resolvedEgress?.details = details
+        }
         logRequest(
             source: source,
             turnId: turnId,
@@ -735,9 +879,85 @@ extension InsightsService {
             errorMessage: errorMessage,
             wireRequestBody: wireRequestBody,
             wireResponseBody: wireResponseBody,
-            connection: connection
+            connection: connection,
+            category: path.contains("compaction") ? .compaction : .inference,
+            egress: resolvedEgress,
+            agentId: agentId,
+            agentName: agentName,
+            sessionId: sessionId
         )
     }
+
+    /// Build egress facts for a remote inference from its connection info:
+    /// destination host/label from the endpoint + provider, and the data
+    /// classes carried by a chat request body.
+    nonisolated static func inferenceEgress(
+        connection: RequestConnectionInfo?,
+        requestBody: String?
+    ) -> EgressInfo? {
+        guard let connection else { return nil }
+        let isRemote: Bool = {
+            switch connection.mode {
+            case .remoteInference, .remoteAgentRun: return true
+            case .local: return false
+            case nil: return connection.transport == .direct || connection.transport == .secureChannel
+            }
+        }()
+        guard isRemote else { return nil }
+        var classes = ["prompt"]
+        if let body = requestBody {
+            if body.contains("\"tools\"") { classes.append("tools") }
+            if body.contains("\"image_url\"") || body.contains("\"input_audio\"") || body.contains("\"file\"") {
+                classes.append("attachments")
+            }
+        }
+        let host = EgressInfo.host(from: connection.remoteEndpoint)
+        return EgressInfo(
+            destinationLabel: Self.providerLabel(providerId: connection.providerId, host: host),
+            destinationHost: host,
+            dataClasses: classes
+        )
+    }
+
+    /// Human-readable destination for a provider id. Looked up through the
+    /// main-actor provider manager when available; falls back to the host.
+    nonisolated static func providerLabel(providerId: UUID?, host: String?) -> String? {
+        if let providerId, let name = RemoteProviderManager.providerDisplayName(for: providerId) {
+            return name
+        }
+        guard let host else { return nil }
+        return Self.knownHostLabels.first { host.hasSuffix($0.key) }?.value ?? host
+    }
+
+    /// Well-known API hosts so the egress card reads "OpenAI", not "api.openai.com".
+    nonisolated static let knownHostLabels: [String: String] = [
+        "openai.com": "OpenAI",
+        "anthropic.com": "Anthropic",
+        "googleapis.com": "Google",
+        "x.ai": "xAI",
+        "deepseek.com": "DeepSeek",
+        "fireworks.ai": "Fireworks",
+        "mistral.ai": "Mistral",
+        "minimax.io": "MiniMax",
+        "venice.ai": "Venice",
+        "openrouter.ai": "OpenRouter",
+        "atlascloud.ai": "AtlasCloud",
+        "azure.com": "Azure OpenAI",
+        "osaurus.ai": "Osaurus Router",
+        "tavily.com": "Tavily",
+        "exa.ai": "Exa",
+        "brave.com": "Brave Search",
+        "search.brave.com": "Brave Search",
+        "serper.dev": "Serper",
+        "parallel.ai": "Parallel",
+        "kagi.com": "Kagi",
+        "you.com": "You.com",
+        "bing.com": "Bing",
+        "duckduckgo.com": "DuckDuckGo",
+        "slack.com": "Slack",
+        "discord.com": "Discord",
+        "huggingface.co": "Hugging Face",
+    ]
 
     /// Resolve the Insights source category for an HTTP-logged request.
     /// In-app chat (`method == "CHAT"`) stays `.chatUI`. Anything that arrived
@@ -770,9 +990,30 @@ extension InsightsService {
         toolCalls: [ToolCallLog]? = nil,
         finishReason: RequestLog.FinishReason? = nil,
         errorMessage: String? = nil,
-        connection: RequestConnectionInfo? = nil
+        connection: RequestConnectionInfo? = nil,
+        agentId: UUID? = nil,
+        agentName: String? = nil,
+        sessionId: UUID? = nil,
+        details: [String: String]? = nil
     ) {
         let source = Self.inboundSource(method: method, transport: connection?.transport)
+        // Inbound rows from another peer are egress too: the response goes
+        // back over the Secure Channel to the caller.
+        var egress: EgressInfo?
+        if connection?.transport == .secureChannel {
+            egress = EgressInfo(
+                destinationLabel: L("Paired peer"),
+                destinationHost: EgressInfo.host(from: connection?.remoteEndpoint) ?? connection?.audience,
+                dataClasses: ["response"]
+            )
+        }
+        // Handler-supplied facts (media size, audio seconds, text counts…).
+        // A details-only `EgressInfo` keeps the row's locality local.
+        if let details, !details.isEmpty {
+            var merged = egress ?? EgressInfo(dataClasses: [])
+            merged.details.merge(details) { current, _ in current }
+            egress = merged
+        }
 
         logRequest(
             source: source,
@@ -791,7 +1032,12 @@ extension InsightsService {
             toolCalls: toolCalls,
             finishReason: finishReason,
             errorMessage: errorMessage,
-            connection: connection
+            connection: connection,
+            egress: egress,
+            agentId: agentId,
+            agentName: agentName,
+            sessionId: sessionId,
+            clientIP: clientIP
         )
     }
 }

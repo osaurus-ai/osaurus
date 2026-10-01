@@ -22,7 +22,8 @@ enum AgentDescriptionGenerator {
             maxTokens: 2048,
             timeout: 45,
             fallbackModel: fallbackModel,
-            intent: .background
+            intent: .background,
+            purpose: "agent_description"
         )
         guard let summary = sanitize(raw) else {
             throw CoreModelError.unresponsive("empty description summary")

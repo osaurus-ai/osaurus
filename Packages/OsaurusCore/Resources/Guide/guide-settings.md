@@ -38,7 +38,8 @@ When the description is blank and the agent has a system prompt, Osaurus generat
 - Tools & MCP: **Services** (connected MCP services, **Add Service**, and the **Directory** of services you can add), **All Tools** (every tool with its permission policy), **Plugins** (native plugin registry).
 - Images: **Defaults** (default generation and edit models, image/video job permissions, cloud video defaults; the **Image model load policy** is under Advanced) and **Image Models**.
 - Mobile: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
-- Privacy: **Filter** (the redaction filter, AI detection, per-provider overrides, background-request review, and Send Crash Reports), **Rules**, and **Models** (the detection model).
+- Privacy: **Filter** (the redaction filter, AI detection, per-provider overrides, background-request review, and Send Crash Reports), **Activity Log** (**Keep Activity History** retention, **Store Prompts and Responses**, **Review Activity in Insights**), **Rules**, and **Models** (the detection model).
+- Insights: the activity log / audit dashboard — every local or cloud interaction with Local/Cloud badges, filters, **Verify** and **Export**. Read-only; its retention and content policy are the Privacy → Activity Log controls above.
 - Identity, General → Advanced → **Data & Storage** (encryption/backup, and **File History**: **Keep File History** — until the chat is deleted (default), 90 days, or 30 days — and **File History Size Limit**, which clears the oldest changes first but always keeps the most recent one; history that is cleared can no longer be reverted, and deleting a chat always deletes its file history), Channels credentials.
 - Secrets of any kind (API keys, tokens) are always entered in native secure fields, never chat.
 
@@ -63,6 +64,7 @@ separate from updating the Osaurus application.
 | Ask before delegating | Permission / Permission for shared (workspace) agents | Settings… (⌘,) → Orchestrator → Subagents → Permission |
 | Max tokens (API defaults) | Generation Defaults → Max Tokens | Settings… (⌘,) → Server → Settings → Sampling Defaults |
 | KV / cache window | KV Retention Override | Same Cache panel as the context cap |
+| Audit log / activity history / "what was sent to the cloud" | Insights (dashboard) and Keep Activity History / Store Prompts and Responses (policy) | Settings… (⌘,) → Insights; Settings… (⌘,) → Privacy → Activity Log |
 | Tool permissions | Could be Tools catalog, Chat folder tools, or macOS Permissions — ask `find` |
 | Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
 | Calendar / Contacts / Automation grant for the whole app | macOS permission | Settings… (⌘,) → Permissions (or the **Permission needed** badge on the app's group under Agents → Abilities → Tools) |

@@ -644,6 +644,8 @@ public final class SpeechService: ObservableObject {
     private var activeInputDeviceId: String?
     private var activeInputSource: AudioInputSource?
     private var activeTapFormat: AVAudioFormat?
+    /// One Insights row per live dictation session (opened at start, closed at stop).
+    private var liveTranscriptionJob: MediaActivityLogger.TranscriptionJob?
     private var engineConfigObserver: NSObjectProtocol?
     private var engineHealthTask: Task<Void, Never>?
     private var lastRecoveryTime: Date?
@@ -824,17 +826,28 @@ public final class SpeechService: ObservableObject {
         isTranscribing = true
         defer { isTranscribing = false }
 
+        let fileBytes = (try? FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? Int) ?? nil
+        let activity = MediaActivityLogger.beginTranscription(
+            model: loadedModelId ?? "unknown",
+            audioSeconds: nil,
+            audioBytes: fileBytes,
+            audioFormat: audioURL.pathExtension.isEmpty ? nil : audioURL.pathExtension.lowercased(),
+            mode: "file"
+        )
+
         do {
             let result = try await Task.detached {
                 var decoderState = await SpeechDecoderStateFactory.make(for: wrappedManager.manager)
                 return try await wrappedManager.manager.transcribe(audioURL, decoderState: &decoderState)
             }.value
 
+            activity?.finish(transcript: result.text, language: nil, error: nil, audioSeconds: result.duration)
             return TranscriptionResult(
                 text: result.text,
                 durationSeconds: result.duration
             )
         } catch {
+            activity?.finish(transcript: nil, language: nil, error: error.localizedDescription)
             throw SpeechError.transcriptionFailed(error.localizedDescription)
         }
     }
@@ -917,6 +930,13 @@ public final class SpeechService: ObservableObject {
         audioBuffer.setActive(true)
         currentTranscription = ""
         confirmedTranscription = ""
+        liveTranscriptionJob = MediaActivityLogger.beginTranscription(
+            model: loadedModelId ?? "unknown",
+            audioSeconds: nil,
+            audioBytes: nil,
+            audioFormat: inputSource == .systemAudio ? "system_audio" : "microphone",
+            mode: "live"
+        )
         audioLevel = 0.0
         isSpeechDetected = false
         isUsingSystemAudio = (inputSource == .systemAudio)
@@ -1042,6 +1062,10 @@ public final class SpeechService: ObservableObject {
         isRecording = false
 
         let finalBuffer = audioBuffer.getAndClear()
+        let activity = liveTranscriptionJob
+        liveTranscriptionJob = nil
+        // Live capture runs in real time, so session wall-clock ≈ audio duration.
+        let sessionSeconds = activity.map { Date().timeIntervalSince($0.started) }
 
         if finalBuffer.count > 16000, let wrappedManager = sendableAsrManager {
             do {
@@ -1059,12 +1083,21 @@ public final class SpeechService: ObservableObject {
                     }
                     self.currentTranscription = ""
                 }
+                activity?.finish(
+                    transcript: confirmedTranscription, language: nil, error: nil, audioSeconds: sessionSeconds)
                 return finalText
             } catch {
                 print("[SpeechService] Final transcription error: \(error)")
+                activity?.finish(
+                    transcript: confirmedTranscription, language: nil, error: error.localizedDescription,
+                    audioSeconds: sessionSeconds)
+                return currentTranscription
             }
         }
 
+        let fullTranscript = [confirmedTranscription, currentTranscription]
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        activity?.finish(transcript: fullTranscript, language: nil, error: nil, audioSeconds: sessionSeconds)
         return currentTranscription
     }
 

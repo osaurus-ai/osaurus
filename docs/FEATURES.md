@@ -33,7 +33,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
 | Agent Loop & Folder Context      | Stable    | "Agent Loop"       | AGENT_LOOP.md                 | Services/Chat/AgentToolLoop.swift, Services/Chat/AgentTaskState.swift, Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
 | Agent Channels (Slack / Discord / Telegram) | Beta | -           | AGENT_CHANNELS.md             | Services/AgentChannel/, Models/AgentChannel/, Tools/AgentChannelTools.swift, Storage/AgentChannelMessageStore.swift, Views/Settings/AgentChannelConnectionCenterView.swift, Views/Settings/AgentChannelDestinationViews.swift |
-| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Insights/InsightsView.swift, Managers/InsightsService.swift                              |
+| Insights / Activity Log          | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md, ACTIVITY_LOG.md | Views/Insights/, Managers/InsightsService.swift, Storage/ActivityLogStore.swift, Services/Insights/, Models/Chat/RequestLog.swift, Models/Insights/ |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
 | Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/Inference/FoundationModelService.swift                                                 |
 | Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/Chat/ChatView.swift, Views/ChatOverlayView.swift                                     |
@@ -371,19 +371,24 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 **Purpose:** Built-in debugging and development utilities.
 
-#### Insights
+#### Insights / Activity Log
 
 **Components:**
 
-- `Managers/InsightsService.swift` — Request/response logging
-- `Views/Insights/InsightsView.swift` — Insights UI
+- `Managers/InsightsService.swift` — Hot cache, emitter entry points (`logRequest` / `logEgress` / `logInference`), credential redaction, write-behind persistence, Verify / prune / Clear / settings actions
+- `Storage/ActivityLogStore.swift` — SHA-256 hash-chained SQLite store (`~/.osaurus/activity/activity.sqlite` + `activity.head`), anchor-based retention, chain-of-custody `system` rows
+- `Models/Chat/RequestLog.swift` — Record model, `ActivityCategory`, `DataLocality`, `EgressInfo`, titles and plain-language summaries
+- `Models/Insights/ActivityFilter.swift`, `ActivityLogSettings.swift` — Filters, verification result, retention / content policy
+- `Services/Insights/` — Category emitters (`MediaActivityLogger`, `ChannelActivityLogger`, `SearchActivityLogger`, `MCPActivityLogger`) and export (`ActivityExportService`, `ActivityExportCoordinator`)
+- `Views/Insights/InsightsView.swift`, `InsightsDetailPane.swift` — Dashboard and detail pane
 
 **Features:**
 
-- Real-time request logging
-- Filter by method (GET/POST) and source (Chat UI/HTTP API)
-- Aggregate stats: requests, success rate, avg latency, errors
-- Inference metrics: tokens, speed, model, finish reason
+- One row per interaction, marked **Local** or **Cloud**: inference (incl. hidden `/internal/*` one-shots), compaction, web search, URL fetch, MCP tool, channel delivery (publish + auto-reply), Router, inbound API, plugin call / log, embedding, transcription, speech synthesis, media generation
+- Tamper-evident chain (Verify), anchor-based retention and audited Clear; prune / verify / export / settings-change / head-recovery events are themselves chained `system` rows
+- Export as JSONL (+ manifest with hash recipe, offline re-verifiable), CSV, Markdown; with or without message content
+- Privacy → Activity Log: *Keep Activity History*, *Store Prompts and Responses*
+- Spec: [ACTIVITY_LOG.md](ACTIVITY_LOG.md)
 
 #### Server Explorer
 
@@ -1394,7 +1399,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 - `~/.osaurus/config/privacy-filter.json` — User configuration (plaintext, atomic write)
 - `~/.osaurus/aux-models/openai-privacy-filter-bf16-v1/` — Model bundle + locally-generated `osaurus-manifest.json` for SHA-256 re-verify
 
-**Verification surface:** Open **Insights** (`⌘ Shift I`) → pick a request → **Request** / **Response** tabs. The **Server Request** / **Server Response** sub-sections show the exact bytes captured by `WireTransportProbe` (post-scrub on the way out, pre-unscrub on the way in) so users can confirm at a glance that placeholders actually made it onto the wire.
+**Verification surface:** Open Settings… (`⌘ ,`) → **Insights** → pick a request → **Request** / **Response** tabs. The **Server Request** / **Server Response** sub-sections show the exact bytes captured by `WireTransportProbe` (post-scrub on the way out, pre-unscrub on the way in) so users can confirm at a glance that placeholders actually made it onto the wire.
 
 ---
 
@@ -1458,6 +1463,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
+| [ACTIVITY_LOG.md](ACTIVITY_LOG.md)                             | Activity log reviewer spec: schema, hash chain, limits, threat model |
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, FluidAudio, and VAD mode guide       |
 | [SKILLS.md](SKILLS.md)                                         | Skills, methods, and context management guide    |
 | [CLAUDE_PLUGINS.md](CLAUDE_PLUGINS.md)                         | Importing Claude plugins from GitHub             |

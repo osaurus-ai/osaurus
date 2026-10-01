@@ -140,7 +140,9 @@ public actor SkillSearchService {
         do {
             let id = deterministicUUID(for: skill.id)
             let text = buildIndexText(for: skill)
-            _ = try await db.addDocument(text: text, id: id)
+            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("skill_index") {
+                try await db.addDocument(text: text, id: id)
+            }
         } catch {
             SkillSearchLogger.search.error("Failed to index skill \(skill.name): \(error)")
         }
@@ -183,11 +185,13 @@ public actor SkillSearchService {
         }
         do {
             let fetchCount = topK * 3
-            let results = try await db.search(
-                query: .text(query),
-                numResults: fetchCount,
-                threshold: effectiveThreshold
-            )
+            let results = try await MediaActivityLogger.$embeddingPurpose.withValue("skill_search") {
+                try await db.search(
+                    query: .text(query),
+                    numResults: fetchCount,
+                    threshold: effectiveThreshold
+                )
+            }
 
             let scoreMap = Dictionary(
                 results.map { ($0.id.uuidString, Float($0.score)) },
@@ -258,7 +262,9 @@ public actor SkillSearchService {
                 ids.append(id)
             }
             if !texts.isEmpty {
-                _ = try await db.addDocuments(texts: texts, ids: ids)
+                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("skill_index") {
+                    try await db.addDocuments(texts: texts, ids: ids)
+                }
             }
             SkillSearchLogger.search.info("Skill index rebuilt with \(allSkills.count) skills")
         } catch {

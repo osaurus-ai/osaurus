@@ -53,12 +53,28 @@ struct ChatEngineTests {
                 warmupPrefill: true
             )
         )
+        // HTTP API and inbound P2P rows are written by HTTPHandler with
+        // request-level attribution; the engine must not double-log them.
         #expect(
             !ChatEngine.shouldLogInferenceToInsights(
                 source: .httpAPI,
                 warmupPrefill: false
             )
         )
+        #expect(
+            !ChatEngine.shouldLogInferenceToInsights(
+                source: .p2p,
+                warmupPrefill: false
+            )
+        )
+        // Every other in-process caller is part of the device activity log.
+        for source in [RequestSource.agent, .scheduled, .channel, .schedule, .watcher, .selfSchedule, .plugin] {
+            #expect(
+                ChatEngine.shouldLogInferenceToInsights(source: source, warmupPrefill: false),
+                "\(source)"
+            )
+            #expect(!ChatEngine.shouldLogInferenceToInsights(source: source, warmupPrefill: true))
+        }
     }
 
     @Test func streamChat_excludesWarmupPrefillButLogsRealBackgroundLoad() async throws {
@@ -95,6 +111,74 @@ struct ChatEngineTests {
         await settleInsights()
 
         #expect(await hasInsightsLog(turnId: realTurnId))
+    }
+
+    /// Delegated subagents / helper loops build their engine with
+    /// `activitySource: .agent`. The Insights row must say Agent (the
+    /// display attribution) and inherit the dispatching assistant turn so a
+    /// reviewer can walk parent turn → helper step.
+    @Test func activitySource_isLoggedAndSubagentRowsInheritParentTurn() async throws {
+        let model = "insights-agent-\(UUID().uuidString)"
+        let service = FakeModelService(supportedModel: model, deltas: ["ok"])
+        let engine = ChatEngine(
+            services: [service],
+            installedModelsProvider: { [] },
+            source: .chatUI,
+            activitySource: .agent
+        )
+        let parentTurn = UUID()
+        // No request.turnId — exactly what AgentSubagentRunner sends.
+        let request = inferenceRequest(model: model, stream: true)
+        let stream = try await ChatExecutionContext.$currentAssistantTurnId.withValue(parentTurn) {
+            try await engine.streamChat(request: request)
+        }
+        for try await _ in stream {}
+        await settleInsights()
+
+        let row = try #require(await MainActor.run { InsightsService.shared.logs.first { $0.model == model } })
+        #expect(row.source == .agent)
+        #expect(row.turnId == parentTurn)
+        #expect(await hasInsightsLog(turnId: parentTurn))
+    }
+
+    @Test func explicitTurnIdWinsOverInheritedParentTurn() async throws {
+        let model = "insights-turn-\(UUID().uuidString)"
+        let service = FakeModelService(supportedModel: model)
+        let engine = ChatEngine(services: [service], installedModelsProvider: { [] }, source: .chatUI)
+        let ownTurn = UUID()
+        var request = inferenceRequest(model: model, stream: false)
+        request.turnId = ownTurn
+        _ = try await ChatExecutionContext.$currentAssistantTurnId.withValue(UUID()) {
+            try await engine.completeChat(request: request)
+        }
+        await settleInsights()
+        let row = try #require(await MainActor.run { InsightsService.shared.logs.first { $0.model == model } })
+        #expect(row.turnId == ownTurn)
+        #expect(row.source == .chatUI)
+    }
+
+    /// `spawn_agent` runs the helper as a `ChatSession(source: .delegation)`
+    /// whose engine is built with plain `source: .chatUI` (residency intent).
+    /// The row must still read Agent and point back at the dispatching turn.
+    @Test func delegatedSessionRowsAreAgentWithParentTurnDetail() async throws {
+        let model = "insights-delegation-\(UUID().uuidString)"
+        let service = FakeModelService(supportedModel: model)
+        let engine = ChatEngine(services: [service], installedModelsProvider: { [] }, source: .chatUI)
+        let parentTurn = UUID()
+        let helperTurn = UUID()
+        var request = inferenceRequest(model: model, stream: false)
+        request.turnId = helperTurn
+        _ = try await ChatExecutionContext.$currentSessionSource.withValue(.delegation) {
+            try await ChatExecutionContext.$currentAssistantTurnId.withValue(parentTurn) {
+                try await engine.completeChat(request: request)
+            }
+        }
+        await settleInsights()
+        let row = try #require(await MainActor.run { InsightsService.shared.logs.first { $0.model == model } })
+        #expect(row.source == .agent)
+        #expect(row.turnId == helperTurn)
+        #expect(row.egress?.details["parent_turn_id"] == parentTurn.uuidString)
+        #expect(row.locality == .local)
     }
 
     @Test func completeChat_excludesWarmupPrefillFromInsights() async throws {

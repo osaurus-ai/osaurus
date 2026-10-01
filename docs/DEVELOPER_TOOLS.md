@@ -1,96 +1,120 @@
 # Developer Tools
 
-Osaurus includes built-in developer tools for debugging, monitoring, and testing your integration. Access them via the Management window (`⌘ Shift M`).
+Osaurus includes built-in developer tools for debugging, monitoring, and testing your integration. Access them via Settings… (`⌘ ,`).
 
 ---
 
 ## Insights
 
-The **Insights** tab provides real-time monitoring of all API requests flowing through Osaurus.
+**Insights** is the activity log: one row for every interaction Osaurus
+performs — local model requests, cloud provider calls, web searches, URL
+fetches, MCP tool calls, channel deliveries, Router calls, inbound API
+requests, plugin host calls, embeddings, transcriptions, speech synthesis,
+media generation — plus chain-of-custody events about the log itself. Each
+row is marked **Local** (data stayed on this Mac) or **Cloud** (data left
+this Mac), persisted to `~/.osaurus/activity/activity.sqlite`, and chained
+with SHA-256 so edits and deletions are detectable.
+
+The reviewer-grade specification (schema, hash recipe, limits, redaction,
+threat model, what is *not* captured, offline verification script) is
+[ACTIVITY_LOG.md](ACTIVITY_LOG.md). This section covers the developer
+workflow.
 
 ### Accessing Insights
 
-1. Open the Management window (`⌘ Shift M`)
-2. Click **Insights** in the sidebar
+1. Open Settings… (`⌘ ,`) → **Insights** (also reachable from Privacy →
+   Activity Log → *Review Activity in Insights*, and from the per-message
+   Insights button in Chat, which focuses that turn's row).
+2. Or deep-link: `open "osaurus://settings?tab=insights"`.
 
-### Features
+### The list
 
-#### Request Logging
+| Column          | Meaning                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| **Time**        | When the interaction finished. Rows are grouped by day.                                     |
+| **Category**    | Inference, Compaction, Web search, URL fetch, MCP tool, Channel, Router, API, Plugin call, Plugin log, Embedding, Transcription, Speech, Media, System. |
+| **Title**       | Plain-language one-liner (model + tokens, query, destination, media size…).                |
+| **Locality**    | **Local** / **Cloud** badge.                                                                 |
+| **Destination** | Provider or host for Cloud rows; "This Mac" otherwise.                                      |
+| **Source**      | Chat UI, Agent, HTTP API, Plugin, P2P, Channel, Schedule, Watcher, Self-scheduled, Tool, System. |
+| **Status / Duration** | HTTP-style status, wall time; errors are tinted.                                      |
 
-Every API request is logged with:
+The summary card totals Cloud rows and bytes sent for the current filter and
+lists the destinations involved.
 
-| Field        | Description                 |
-| ------------ | --------------------------- |
-| **Time**     | Request timestamp           |
-| **Source**   | Origin: Chat UI or HTTP API |
-| **Method**   | HTTP method (GET/POST)      |
-| **Path**     | Request endpoint            |
-| **Status**   | HTTP status code            |
-| **Duration** | Total response time         |
+### Filtering
 
-Click any row to expand and see full request/response details.
+| Filter              | Where                   | Notes                                                                                          |
+| ------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
+| Text                | Search field            | Path, model, title, destination, agent.                                                        |
+| Category chips      | Chip row                | Multi-select. **System** is not a chip; enable it under **More → Category: System**.          |
+| Local / Cloud       | Segmented control       |                                                                                                |
+| Source, Destination, Agent, Model | **More** menu |                                                                                               |
+| Errors only, Privacy-filtered only | **More** menu |                                                                                              |
+| Time range          | **More** menu           | Today, 7 days, 30 days, all.                                                                   |
+| Plugin console logs | **More** menu           | Hidden by default.                                                                             |
 
-#### Filtering
+Filters apply to the list, the summary card and **Export**.
 
-Filter requests to find what you need:
+### Detail pane
 
-| Filter     | Options                      |
-| ---------- | ---------------------------- |
-| **Search** | Filter by path or model name |
-| **Method** | All, GET only, POST only     |
-| **Source** | All, Chat UI, HTTP API       |
+Click a row:
 
-#### Aggregate Stats
+- **Overview** — what / where / who / outcome, data classes, privacy-filter
+  result, bytes, chain position (`seq`, hash), and a category section:
+  inference facts (model, tokens, tok/s, finish reason, tool calls), search
+  providers and result count, MCP transport, channel outcome, embedding
+  counts, audio seconds, voice and trigger, media size / steps / job, or the
+  chain-of-custody facts for System rows.
+- **Prompt / Request / Response / Params** — bodies (formatted JSON when
+  possible) with copy buttons. For remote inference the **Server Request /
+  Server Response** sub-sections show the exact bytes captured by
+  `WireTransportProbe` (post-Privacy-Filter on the way out, pre-unscrub on
+  the way in).
+- Rows written while *Store Prompts and Responses* was off show
+  `[content withheld — metadata only]` instead of bodies.
 
-The stats bar shows real-time metrics:
+### Verify and Export
 
-| Stat           | Description                           |
-| -------------- | ------------------------------------- |
-| **Requests**   | Total request count                   |
-| **Success**    | Success rate percentage               |
-| **Avg Time**   | Average response duration             |
-| **Errors**     | Total error count                     |
-| **Inferences** | Chat completion requests (if any)     |
-| **Avg Speed**  | Average tokens/second (for inference) |
+- **Verify** walks the whole chain and reports record count, head hash and
+  any broken link / gap / edit / head mismatch. The check is itself recorded
+  as a System row.
+- **Export** writes the current filter (or everything) as JSONL (manifest
+  line + one canonical record per line — re-verifiable offline, see
+  [ACTIVITY_LOG.md §7](ACTIVITY_LOG.md#7-export-format-and-offline-verification)),
+  CSV, or Markdown; with or without message content. The export is recorded
+  as a System row (format, record count, file name, head hash).
+- **Clear** removes every row, moves the chain anchor and writes a
+  `cleared` System row, so the log still verifies and the clearing is
+  visible.
 
-#### Request Details
+### Settings
 
-Expand a request row to see:
+Privacy → **Activity Log**: *Keep Activity History* (7 / 30 / 90 days,
+1 year, forever; default 30 days) and *Store Prompts and Responses*
+(default on). Changing either writes a `settings_changed` System row.
 
-**Request Panel:**
+### Use cases
 
-- Full request body (formatted JSON)
-- Copy to clipboard
+- **"Did this leave my Mac?"** — filter **Cloud**; the summary card lists
+  every destination and the bytes sent.
+- **Debugging an API integration** — filter source **HTTP API**, open the
+  row, compare Request / Response.
+- **Verifying the Privacy Filter** — open a Cloud inference row → Request →
+  **Server Request**; placeholders should appear where PII was.
+- **Tracing a delegated run** — the parent turn and every subagent / helper
+  step share one `turnId`; search by the agent name.
+- **Hidden model work** — rows with `/internal/...` paths are one-shots
+  (chat titles, follow-ups, memory distillation, compaction, transcription
+  cleanup, embeddings).
 
-**Response Panel:**
+### Not captured
 
-- Full response body (formatted JSON)
-- Status indicator (green for success, red for error)
-- Response duration
-- Copy to clipboard
-
-**Inference Details** (for chat completions):
-
-- Model used
-- Token counts (input → output)
-- Generation speed (tok/s)
-- Temperature
-- Max tokens
-- Finish reason
-
-**Tool Calls** (if applicable):
-
-- Tool name
-- Arguments
-- Duration
-- Success/error status
-
-### Use Cases
-
-- **Debugging API integration** — See exactly what's being sent and received
-- **Performance monitoring** — Track latency and throughput
-- **Tool call inspection** — Debug tool calling behavior
-- **Error investigation** — Understand why requests fail
+Provider `/models` and test-connection probes, OAuth flows, MCP capability
+probes, Browser Use page traffic, channel polling / inbound receipt,
+workspace handshake and keep-alives, theme fetches, skill / plugin / sandbox
+downloads, telemetry, crash reports, updates and model downloads do not
+produce rows. The full list and rationale: [ACTIVITY_LOG.md §9](ACTIVITY_LOG.md#9-what-is-not-captured).
 
 ---
 
@@ -100,7 +124,7 @@ The **Server** tab provides an interactive API reference and testing interface.
 
 ### Accessing Server Explorer
 
-1. Open the Management window (`⌘ Shift M`)
+1. Open Settings… (`⌘ ,`)
 2. Click **Server** in the sidebar
 
 ### Features
@@ -234,16 +258,22 @@ This verifies Osaurus's local MCP server surface, including tools discovered fro
 
 ## Tips
 
-### Clear Logs Regularly
+### Let retention do the clearing
 
-The Insights log grows over time. Use the **Clear** button to reset when debugging a specific issue.
+The Insights log is pruned automatically by the Privacy → Activity Log
+retention setting (30 days by default). **Clear** is an audited action — it
+writes a chain-of-custody row — so prefer a filter (time range, source) when
+you just want a quieter view while debugging.
 
 ### Use Source Filters
 
 Filter by source to distinguish between:
 
-- **Chat** — Requests from the built-in chat UI
-- **HTTP** — Requests from external applications
+- **Chat UI** — Requests from the built-in chat UI
+- **Agent** — Delegated subagents and helper loops (Computer Use, AppleScript)
+- **HTTP API** — Requests from external applications
+- **Schedule / Watcher / Self-scheduled / Channel** — Headless runs
+- **Tool** — Egress performed by a tool (search, URL fetch, MCP, channel delivery)
 
 ### Copy Responses
 
@@ -348,6 +378,7 @@ Yet **64 of 70 test files use `@testable import OsaurusCore`**, so even tiny tes
 
 ## Related Documentation
 
+- [Activity Log specification](ACTIVITY_LOG.md) — Schema, hash chain, limits, threat model, offline verification
 - [Inference Runtime](INFERENCE_RUNTIME.md) — Single MLX path through vmlx-swift's BatchEngine, model leases, and the one max-batch-size knob
 - [OpenAI API Guide](OpenAI_API_GUIDE.md) — API usage and examples
 - [FEATURES.md](FEATURES.md) — Feature inventory

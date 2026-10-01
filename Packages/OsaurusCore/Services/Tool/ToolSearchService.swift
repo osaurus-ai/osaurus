@@ -254,7 +254,9 @@ public actor ToolSearchService {
                     description: pending.entry.description,
                     parameters: pending.parameters
                 )
-                _ = try await db.addDocument(text: text, id: id)
+                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("tool_index") {
+                    try await db.addDocument(text: text, id: id)
+                }
 
                 if pendingIndexEntries[pending.entry.id]?.generation == pending.generation {
                     pendingIndexEntries.removeValue(forKey: pending.entry.id)
@@ -304,11 +306,13 @@ public actor ToolSearchService {
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3
-            let results = try await db.search(
-                query: .text(query),
-                numResults: fetchCount,
-                threshold: threshold ?? Self.defaultSearchThreshold
-            )
+            let results = try await MediaActivityLogger.$embeddingPurpose.withValue("tool_search") {
+                try await db.search(
+                    query: .text(query),
+                    numResults: fetchCount,
+                    threshold: threshold ?? Self.defaultSearchThreshold
+                )
+            }
 
             let scoreMap = Dictionary(
                 results.map { ($0.id.uuidString, Float($0.score)) },
@@ -799,7 +803,9 @@ public actor ToolSearchService {
                 ids.append(id)
             }
             if !texts.isEmpty {
-                _ = try await db.addDocuments(texts: texts, ids: ids)
+                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("tool_index") {
+                    try await db.addDocuments(texts: texts, ids: ids)
+                }
             }
             ToolIndexLogger.search.info("Tool index rebuilt with \(entries.count) entries")
         } catch {

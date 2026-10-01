@@ -87,13 +87,72 @@ actor MediaGenerationCoordinator {
                 RemoteProviderManager.shared.configuredProvider(id: providerID)
             }
             guard let provider else { throw MediaGenerationError.providerUnavailable }
-            return try await VeniceMediaClient(provider: provider).generateImage(request)
+            // Activity log: the prompt leaves this Mac for the provider.
+            let activity = Self.remoteMediaActivity(
+                provider: provider, kind: .image, operation: .generate, request: request)
+            do {
+                let generated = try await VeniceMediaClient(provider: provider).generateImage(request)
+                activity?.finish(producedCount: generated.count, error: nil)
+                return generated
+            } catch {
+                activity?.finish(producedCount: 0, error: error.localizedDescription)
+                throw error
+            }
         case .osaurusCloud:
             guard cloudSupported else {
                 throw MediaGenerationError.unsupported("Osaurus Cloud media is not available.")
             }
+            // Router cloud media is logged by `OsaurusRouterAPIClient` as a
+            // Router row; no second row here.
             return try await cloud.generateImage(request)
         }
+    }
+
+    /// Open a `mediaGeneration` activity row for a direct remote-provider
+    /// (Venice) call. nil when the local HTTP API owns the request.
+    private static func remoteMediaActivity(
+        provider: RemoteProvider,
+        kind: MediaActivityLogger.MediaKind,
+        operation: MediaActivityLogger.MediaOperation,
+        request: MediaImageGenerationRequest
+    ) -> MediaActivityLogger.MediaJob? {
+        MediaActivityLogger.beginMedia(
+            kind: kind,
+            operation: operation,
+            model: request.target.modelID,
+            prompt: request.prompt,
+            provider: provider.name,
+            endpoint: provider.baseURL?.absoluteString ?? provider.host,
+            requestedCount: request.count,
+            size: Self.sizeLabel(width: request.width, height: request.height, aspect: request.aspectRatio, resolution: request.resolution),
+            steps: request.steps,
+            trigger: ChatExecutionContext.currentToolCallId != nil ? .chatTool : .imagePanel
+        )
+    }
+
+    private static func remoteMediaActivity(
+        provider: RemoteProvider,
+        operation: MediaActivityLogger.MediaOperation,
+        request: MediaVideoGenerationRequest
+    ) -> MediaActivityLogger.MediaJob? {
+        MediaActivityLogger.beginMedia(
+            kind: .video,
+            operation: operation,
+            model: request.target.modelID,
+            prompt: request.prompt,
+            provider: provider.name,
+            endpoint: provider.baseURL?.absoluteString ?? provider.host,
+            requestedCount: 1,
+            size: Self.sizeLabel(width: nil, height: nil, aspect: request.aspectRatio, resolution: request.resolution),
+            durationSeconds: Double(request.duration),
+            trigger: ChatExecutionContext.currentToolCallId != nil ? .chatTool : .imagePanel
+        )
+    }
+
+    private static func sizeLabel(width: Int?, height: Int?, aspect: String?, resolution: String?) -> String? {
+        if let width, let height { return "\(width)×\(height)" }
+        let parts = [resolution, aspect].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     func quoteVideo(_ request: MediaVideoGenerationRequest) async throws -> MediaVideoQuote {
@@ -106,7 +165,15 @@ actor MediaGenerationCoordinator {
                 RemoteProviderManager.shared.configuredProvider(id: providerID)
             }
             guard let provider else { throw MediaGenerationError.providerUnavailable }
-            return try await VeniceMediaClient(provider: provider).quoteVideo(request)
+            let activity = Self.remoteMediaActivity(provider: provider, operation: .quote, request: request)
+            do {
+                let quote = try await VeniceMediaClient(provider: provider).quoteVideo(request)
+                activity?.finish(producedCount: 0, error: nil)
+                return quote
+            } catch {
+                activity?.finish(producedCount: 0, error: error.localizedDescription)
+                throw error
+            }
         case .osaurusCloud:
             guard cloudSupported else {
                 throw MediaGenerationError.unsupported("Osaurus Cloud media is not available.")
@@ -215,10 +282,19 @@ actor MediaGenerationCoordinator {
             }
             guard let provider else { throw MediaGenerationError.providerUnavailable }
             let client = try VeniceMediaClient(provider: provider)
-            let currentQuote = try await client.quoteVideo(request)
-            try Self.requireApprovedQuote(approvedQuote, current: currentQuote)
-            try Task.checkCancellation()
-            let queued = try await client.queueVideo(request)
+            let activity = Self.remoteMediaActivity(provider: provider, operation: .generate, request: request)
+            let queued: VeniceQueuedVideo
+            let currentQuote: MediaVideoQuote
+            do {
+                currentQuote = try await client.quoteVideo(request)
+                try Self.requireApprovedQuote(approvedQuote, current: currentQuote)
+                try Task.checkCancellation()
+                queued = try await client.queueVideo(request)
+                activity?.finish(producedCount: 1, jobId: queued.queueID, error: nil)
+            } catch {
+                activity?.finish(producedCount: 0, error: error.localizedDescription)
+                throw error
+            }
             let job = DurableMediaJob(
                 id: UUID(),
                 backend: request.target.backend,

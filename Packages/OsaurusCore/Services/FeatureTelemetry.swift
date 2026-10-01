@@ -774,6 +774,8 @@ enum FeatureTelemetry {
         case .schedule: return "schedule"
         case .watcher: return "watcher"
         case .selfSchedule: return "self_schedule"
+        case .tool: return "tool"
+        case .system: return "system"
         }
     }
 

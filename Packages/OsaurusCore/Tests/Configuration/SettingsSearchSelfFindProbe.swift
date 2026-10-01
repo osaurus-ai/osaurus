@@ -175,6 +175,14 @@ struct SettingsSearchSelfFindProbe {
             ("Forget Redactions in Every Conversation", "privacy.filter.forget"),
             ("Require Review for Background Requests", "privacy.filter.nonInteractive"),
             ("Detection Models", "privacy.models"),
+            // Privacy → Activity Log (retention + content policy for Insights).
+            ("Keep Activity History", "privacy.activityLog.retention"),
+            ("activity log retention", "privacy.activityLog.retention"),
+            ("Store Prompts and Responses", "privacy.activityLog.storeContent"),
+            ("metadata only", "privacy.activityLog.storeContent"),
+            ("Review Activity in Insights", "privacy.activityLog.openInsights"),
+            ("audit log", "insights.overview"),
+            ("export activity", "insights.overview"),
             // Images: Defaults / Image Models.
             ("Default Models", "imageGeneration.models"),
             ("Image jobs", "imageGeneration.permission"),

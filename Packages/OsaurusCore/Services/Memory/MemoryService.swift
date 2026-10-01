@@ -895,7 +895,8 @@ public actor MemoryService {
                 // Distillation is housekeeping — it runs on ingest and at launch,
                 // unprompted. It must never evict the model the user is chatting
                 // with (or cancel the one they're waiting on) to summarise history.
-                intent: .background
+                intent: .background,
+                purpose: "memory_distillation"
             )
             let parsed = parseDistillResponse(response)
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)

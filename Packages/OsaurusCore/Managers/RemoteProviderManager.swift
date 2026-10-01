@@ -54,7 +54,30 @@ public final class RemoteProviderManager: ObservableObject {
     static let firstRunOsaurusModelSlug = "deepseek-v4-1-flash"
 
     /// Current configuration
-    @Published public private(set) var configuration: RemoteProviderConfiguration
+    @Published public private(set) var configuration: RemoteProviderConfiguration {
+        didSet { Self.refreshProviderNameCache(configuration.providers) }
+    }
+
+    /// Lock-protected id → display-name mirror so nonisolated loggers
+    /// (Insights egress attribution) can label a provider without hopping
+    /// to the main actor.
+    private nonisolated(unsafe) static var providerNameCache: [UUID: String] = [:]
+    private nonisolated static let providerNameLock = NSLock()
+
+    private nonisolated static func refreshProviderNameCache(_ providers: [RemoteProvider]) {
+        var cache: [UUID: String] = [:]
+        for provider in providers { cache[provider.id] = provider.name }
+        providerNameLock.lock()
+        providerNameCache = cache
+        providerNameLock.unlock()
+    }
+
+    /// Display name of a configured remote provider, from any actor.
+    public nonisolated static func providerDisplayName(for id: UUID) -> String? {
+        providerNameLock.lock()
+        defer { providerNameLock.unlock() }
+        return providerNameCache[id]
+    }
 
     /// SwiftUI mirror of `OsaurusRouter.isEnabled` (UserDefaults). The default
     /// expression runs before `init`'s body, so the first
@@ -100,6 +123,7 @@ public final class RemoteProviderManager: ObservableObject {
 
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
+        Self.refreshProviderNameCache(configuration.providers)
         ensureManagedOsaurusRouterProviderIfNeeded()
 
         // Initialize states for all providers

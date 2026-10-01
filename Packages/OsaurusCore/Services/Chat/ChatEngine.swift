@@ -21,6 +21,38 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     /// Display-only producer attribution. Residency continues to use
     /// `inferenceSource`; delegated helpers are chat-owned but shown as Agent.
     private let activitySource: InferenceSource?
+    /// Source written to the Insights row: the display attribution when the
+    /// owner set one (delegated subagents → Agent), else the real source.
+    ///
+    /// `spawn_agent` / `spawn_batch` run the helper as a persisted
+    /// `ChatSession(source: .delegation)`, whose `inferenceSource` is
+    /// deliberately `.chatUI` for residency (the parent chat turn owns the
+    /// model). That session binds `currentSessionSource` around its run, so
+    /// the row is attributed to Agent here without touching residency.
+    private var loggedSource: InferenceSource {
+        if let activitySource { return activitySource }
+        if ChatExecutionContext.currentSessionSource == .delegation { return .agent }
+        return inferenceSource
+    }
+    /// Turn to correlate the Insights row with. Delegated subagent requests
+    /// carry no turn of their own; they run inside the parent's tool call, so
+    /// they inherit the dispatching assistant turn (the same task-local the
+    /// tool-call row uses), letting a reviewer walk parent turn → helper steps.
+    private static func loggedTurnId(_ request: ChatCompletionRequest) -> UUID? {
+        request.turnId ?? ChatExecutionContext.currentAssistantTurnId
+    }
+    /// The orchestrator turn that dispatched a `spawn_agent` helper session.
+    /// Only meaningful under `.delegation`, where the helper's own turn is on
+    /// the request and the parent's tool-call turn is the inherited task-local.
+    /// Captured here, at request time, because task-locals are not reliable
+    /// on the stream's termination path where the row is finally written.
+    private static func loggedParentTurnId(_ request: ChatCompletionRequest) -> UUID? {
+        guard ChatExecutionContext.currentSessionSource == .delegation,
+            let parent = ChatExecutionContext.currentAssistantTurnId,
+            parent != request.turnId
+        else { return nil }
+        return parent
+    }
     /// Privacy Filter review policy for every request this engine sends.
     private let privacyReviewMode: PrivacyReviewMode
 
@@ -642,11 +674,22 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     /// Insights describes user-visible/API work, not the hidden KV prefill
     /// generations used to warm a chat session.
+    ///
+    /// Every in-process caller is logged here — chat UI, agents and
+    /// subagents, scheduled/watcher/self-scheduled runs, channels, plugins —
+    /// so the activity log is a complete record of model work on this Mac.
+    /// The two exceptions are sources that already produce their own row
+    /// with request-level attribution (client IP, access key, audience) in
+    /// `HTTPHandler.logRequest`: inbound HTTP API traffic and inbound P2P.
     static func shouldLogInferenceToInsights(
         source: InferenceSource,
         warmupPrefill: Bool
     ) -> Bool {
-        source == .chatUI && !warmupPrefill
+        guard !warmupPrefill else { return false }
+        switch source {
+        case .httpAPI, .p2p: return false
+        default: return true
+        }
     }
 
     /// Build a non-stream OpenAI-style response from one or more tool
@@ -669,12 +712,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         content: String? = nil,
         reasoningContent: String? = nil,
         turnId: UUID? = nil,
+        parentTurnId: UUID? = nil,
         requestId: String? = nil,
         requestBodyJSON: String? = nil,
         tools: [Tool]? = nil,
         connection: RequestConnectionInfo? = nil,
         logPath: String? = nil,
-        warmupPrefill: Bool = false
+        warmupPrefill: Bool = false,
+        attribution: InsightsService.ActivityAttribution = .none
     ) -> ChatCompletionResponse {
         let schemasByName = Dictionary(
             uniqueKeysWithValues: (tools ?? []).map { ($0.function.name, $0.function.parameters) }
@@ -740,6 +785,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             InsightsService.logInference(
                 source: inferenceSource,
                 turnId: turnId,
+                parentTurnId: parentTurnId,
                 requestId: requestId,
                 model: effectiveModel,
                 inputTokens: inputTokens,
@@ -760,7 +806,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 requestBody: requestBodyJSON,
                 responseBody: serializeResponseForLog(response),
                 connection: connection,
-                path: logPath ?? "/chat/completions"
+                path: logPath ?? "/chat/completions",
+                agentId: attribution.agentId,
+                agentName: attribution.agentName,
+                sessionId: attribution.sessionId
             )
         }
 
@@ -804,13 +853,22 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 stream: true
             )
 
-            let source = self.inferenceSource
+            let source = self.loggedSource
+            let warmupPrefill = request.warmupPrefill
+            let shouldLogToInsights = Self.shouldLogInferenceToInsights(
+                source: source,
+                warmupPrefill: warmupPrefill
+            )
+            // Who is driving this request (agent / session), read on the
+            // caller's task — task-locals are invisible inside the detached
+            // producer that eventually writes the row.
+            let attribution = InsightsService.ActivityAttribution.current()
             // Connection metadata for a remote send (relay/host, endpoint,
-            // transport, mode). nil for local routes. Only built for chatUI —
-            // HTTP API rows are logged with their own attribution by
-            // HTTPHandler.
+            // transport, mode). nil for local routes. Only built when this
+            // engine owns the Insights row — HTTP API / P2P rows are logged
+            // with their own attribution by HTTPHandler.
             let remoteConn =
-                source == .chatUI
+                shouldLogToInsights
                 ? Self.remoteConnectionInfo(for: service, runAsRemoteAgent: params.runAsRemoteAgent)
                 : nil
             // Wire-verification probe: capture the real post-scrub request +
@@ -849,11 +907,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             )
             let temp = temperature
             let maxTok = maxTokens
-            let warmupPrefill = request.warmupPrefill
-            let shouldLogToInsights = Self.shouldLogInferenceToInsights(
-                source: source,
-                warmupPrefill: warmupPrefill
-            )
             // Capture the request body up-front so the producer task does not
             // need to retain `request` (a non-Sendable in Swift 6 strict mode).
             let requestBodyJSON =
@@ -865,13 +918,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // `turnId` is a Sendable UUID, so capturing it (unlike `request`)
             // is safe for the detached producer — correlates the log back to
             // the chat assistant turn for the per-message Insights button.
-            let turnId = request.turnId
+            let turnId = Self.loggedTurnId(request)
+            let parentTurnId = Self.loggedParentTurnId(request)
             let requestId = request.idempotencyKey
 
             return wrapStreamWithLogging(
                 innerStream,
                 source: source,
                 turnId: turnId,
+                parentTurnId: parentTurnId,
                 requestId: requestId,
                 model: model,
                 inputTokens: inputTokens,
@@ -882,7 +937,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 logPath: remoteConn?.path,
                 wireProbe: wireProbe,
                 secretToolWasExposed: secretToolWasExposed,
-                warmupPrefill: warmupPrefill
+                warmupPrefill: warmupPrefill,
+                attribution: attribution
             )
 
         case .none:
@@ -1007,6 +1063,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         _ inner: AsyncThrowingStream<String, Error>,
         source: InferenceSource,
         turnId: UUID? = nil,
+        parentTurnId: UUID? = nil,
         requestId: String? = nil,
         model: String,
         inputTokens: Int,
@@ -1017,7 +1074,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         logPath: String? = nil,
         wireProbe: WireTransportProbe? = nil,
         secretToolWasExposed: Bool = false,
-        warmupPrefill: Bool = false
+        warmupPrefill: Bool = false,
+        attribution: InsightsService.ActivityAttribution = .none
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let shouldLogToInsights = Self.shouldLogInferenceToInsights(
@@ -1331,6 +1389,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 InsightsService.logInference(
                     source: source,
                     turnId: turnId,
+                    parentTurnId: parentTurnId,
                     requestId: requestId,
                     model: model,
                     inputTokens: resolvedInputTokens,
@@ -1353,7 +1412,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         secretToolWasExposed: secretToolWasExposed
                     ),
                     connection: connection,
-                    path: logPath ?? "/chat/completions"
+                    path: logPath ?? "/chat/completions",
+                    privacy: wireProbe?.privacyOutcome,
+                    agentId: attribution.agentId,
+                    agentName: attribution.agentName,
+                    sessionId: attribution.sessionId
                 )
             }
         }
@@ -1404,7 +1467,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let temperature = request.temperature
         let maxTokens = request.resolvedMaxTokens ?? 16384
         let shouldLogToInsights = Self.shouldLogInferenceToInsights(
-            source: inferenceSource,
+            source: loggedSource,
             warmupPrefill: request.warmupPrefill
         )
         // Capture the request body once so all four downstream log paths
@@ -1413,6 +1476,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let requestBodyJSON =
             shouldLogToInsights ? Self.serializeRequestForLog(request) : nil
         let requestId = request.idempotencyKey
+        let attribution = InsightsService.ActivityAttribution.current()
         // Carry the caller's `ttftTrace` through to non-streaming requests
         // for parity with `streamChat` — useful when an HTTP route runs the
         // same `request.ttftTrace` across both code paths.
@@ -1439,7 +1503,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // about relay/host/mode. (Wire-body capture stays on the streaming
             // path, which is what the chat surface actually drives.)
             let remoteConn =
-                inferenceSource == .chatUI
+                shouldLogToInsights
                 ? Self.remoteConnectionInfo(for: service, runAsRemoteAgent: params.runAsRemoteAgent)
                 : nil
             let loggedModel = Self.loggedModel(
@@ -1564,8 +1628,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     if shouldLogToInsights {
                         let durationMs = Date().timeIntervalSince(startTime) * 1000
                         InsightsService.logInference(
-                            source: inferenceSource,
-                            turnId: request.turnId,
+                            source: loggedSource,
+                            turnId: Self.loggedTurnId(request),
+                            parentTurnId: Self.loggedParentTurnId(request),
                             requestId: requestId,
                             model: loggedModel,
                             inputTokens: resolvedInputTokens,
@@ -1577,7 +1642,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             requestBody: requestBodyJSON,
                             responseBody: Self.serializeResponseForLog(response),
                             connection: remoteConn?.info,
-                            path: loggedPath
+                            path: loggedPath,
+                            agentId: attribution.agentId,
+                            agentName: attribution.agentName,
+                            sessionId: attribution.sessionId
                         )
                     }
 
@@ -1590,20 +1658,22 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         effectiveModel: effectiveModel,
                         inputTokens: resolvedInputTokens,
                         startTime: startTime,
-                        inferenceSource: inferenceSource,
+                        inferenceSource: loggedSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
                         tokensPerSecond: toolStepTokensPerSecond,
                         completionTokens: toolStepTokenCount,
                         content: params.collectCompleteToolResponse && !text.isEmpty ? text : nil,
                         reasoningContent: params.collectCompleteToolResponse && !reasoning.isEmpty ? reasoning : nil,
-                        turnId: request.turnId,
+                        turnId: Self.loggedTurnId(request),
+                        parentTurnId: Self.loggedParentTurnId(request),
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
                         tools: tools,
                         connection: remoteConn?.info,
                         logPath: loggedPath,
-                        warmupPrefill: request.warmupPrefill
+                        warmupPrefill: request.warmupPrefill,
+                        attribution: attribution
                     )
                 } catch let inv as ServiceToolInvocation {
                     return Self.makeToolCallResponse(
@@ -1613,20 +1683,22 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         effectiveModel: effectiveModel,
                         inputTokens: resolvedInputTokens,
                         startTime: startTime,
-                        inferenceSource: inferenceSource,
+                        inferenceSource: loggedSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
                         tokensPerSecond: toolStepTokensPerSecond,
                         completionTokens: toolStepTokenCount,
                         content: params.collectCompleteToolResponse && !text.isEmpty ? text : nil,
                         reasoningContent: params.collectCompleteToolResponse && !reasoning.isEmpty ? reasoning : nil,
-                        turnId: request.turnId,
+                        turnId: Self.loggedTurnId(request),
+                        parentTurnId: Self.loggedParentTurnId(request),
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
                         tools: tools,
                         connection: remoteConn?.info,
                         logPath: loggedPath,
-                        warmupPrefill: request.warmupPrefill
+                        warmupPrefill: request.warmupPrefill,
+                        attribution: attribution
                     )
                 }
             }
@@ -1706,8 +1778,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             if shouldLogToInsights {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 InsightsService.logInference(
-                    source: inferenceSource,
-                    turnId: request.turnId,
+                    source: loggedSource,
+                    turnId: Self.loggedTurnId(request),
+                    parentTurnId: Self.loggedParentTurnId(request),
                     requestId: requestId,
                     model: loggedModel,
                     inputTokens: resolvedInputTokens,
@@ -1719,7 +1792,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     requestBody: requestBodyJSON,
                     responseBody: Self.serializeResponseForLog(response),
                     connection: remoteConn?.info,
-                    path: loggedPath
+                    path: loggedPath,
+                    agentId: attribution.agentId,
+                    agentName: attribution.agentName,
+                    sessionId: attribution.sessionId
                 )
             }
 

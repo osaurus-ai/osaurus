@@ -346,6 +346,18 @@ final class ContextCompactionService {
 
         onPhase(.summarizing)
         let startedAt = Date()
+        // Activity-log attribution: where the transcript went (local model or
+        // which cloud provider), the real post-scrub wire bytes, and the
+        // Privacy Filter outcome. The probe is only attached for remote sends.
+        let remoteConn = ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)
+        let wireProbe: WireTransportProbe? = remoteConn != nil ? WireTransportProbe() : nil
+        let logContext = InsightsLogContext(
+            source: invocation.source?.inferenceSource ?? .chatUI,
+            sessionId: sessionId,
+            agentId: agentId,
+            connection: remoteConn?.info,
+            probe: wireProbe
+        )
         let responseText: String
         do {
             responseText = try await valueWithDeadline(
@@ -359,7 +371,16 @@ final class ContextCompactionService {
                     agentID: agentId,
                     operationName: "context_compaction"
                 ) {
-                    try await service.generateOneShot(
+                    if let wireProbe {
+                        return try await WireTransportProbe.$current.withValue(wireProbe) {
+                            try await service.generateOneShot(
+                                messages: messages,
+                                parameters: params,
+                                requestedModel: modelId
+                            )
+                        }
+                    }
+                    return try await service.generateOneShot(
                         messages: messages,
                         parameters: params,
                         requestedModel: modelId
@@ -369,18 +390,18 @@ final class ContextCompactionService {
         } catch is DeadlineExceededError {
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
-                startedAt: startedAt, error: "timed out")
+                startedAt: startedAt, error: "timed out", context: logContext)
             throw ContextCompactionError.timedOut
         } catch {
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
-                startedAt: startedAt, error: error.localizedDescription)
+                startedAt: startedAt, error: error.localizedDescription, context: logContext)
             throw error
         }
 
         Self.logToInsights(
             model: modelId, messages: messages, response: responseText,
-            startedAt: startedAt, error: nil)
+            startedAt: startedAt, error: nil, context: logContext)
 
         let summaryText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summaryText.isEmpty else { throw ContextCompactionError.emptySummary }
@@ -513,12 +534,23 @@ final class ContextCompactionService {
     /// Record the compaction inference in Insights under a dedicated path
     /// so it is traceable alongside normal chat/API traffic. Token counts
     /// are UI-estimated (same convention as remote chat turns).
+    /// Attribution captured before the compaction send so every outcome
+    /// (success, timeout, error) logs the same facts.
+    private struct InsightsLogContext {
+        let source: RequestSource
+        let sessionId: UUID?
+        let agentId: UUID?
+        let connection: RequestConnectionInfo?
+        let probe: WireTransportProbe?
+    }
+
     private static func logToInsights(
         model: String,
         messages: [ChatMessage],
         response: String?,
         startedAt: Date,
-        error: String?
+        error: String?,
+        context: InsightsLogContext
     ) {
         let requestBody: String? = {
             let payload: [String: Any] = [
@@ -534,8 +566,9 @@ final class ContextCompactionService {
         }()
 
         let inputTokens = messages.reduce(0) { $0 + TokenEstimator.estimate($1.content) }
+        let wire = context.probe?.snapshot()
         InsightsService.logInference(
-            source: .chatUI,
+            source: context.source,
             model: model,
             inputTokens: inputTokens,
             outputTokens: response.map { TokenEstimator.estimate($0) } ?? 0,
@@ -545,7 +578,14 @@ final class ContextCompactionService {
             errorMessage: error,
             requestBody: requestBody,
             responseBody: response,
-            path: "/internal/compaction"
+            wireRequestBody: wire?.request,
+            wireResponseBody: (wire?.response.isEmpty ?? true) ? nil : wire?.response,
+            connection: context.connection,
+            path: "/internal/compaction",
+            privacy: context.probe?.privacyOutcome,
+            agentId: context.agentId,
+            agentName: context.agentId.flatMap { AgentManager.agentDisplayName(for: $0) },
+            sessionId: context.sessionId
         )
     }
 }

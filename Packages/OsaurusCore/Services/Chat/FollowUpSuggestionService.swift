@@ -143,7 +143,8 @@ public actor FollowUpSuggestionService {
                 // model happens to be resident — without this the follow-up
                 // only worked when its model equalled the active remote one.
                 fallBackOnResidencyRefusal: true,
-                modelOptions: modelOptions
+                modelOptions: modelOptions,
+                purpose: "follow_up_suggestions"
             )
             return Self.parse(raw)
         } catch {

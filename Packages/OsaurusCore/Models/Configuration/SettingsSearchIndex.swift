@@ -1456,6 +1456,41 @@ public enum SettingsSearchIndex {
             subTab: "overview"
         ),
         .init(
+            id: "privacy.activityLog.retention",
+            tab: .privacy,
+            section: "Activity Log",
+            title: "Keep Activity History",
+            keywords: [
+                "activity log", "activity log retention", "audit log retention", "retention", "keep history",
+                "how long", "insights retention", "delete old activity", "7 days", "30 days", "keep forever",
+                "prune",
+            ],
+            subTab: "overview",
+            disambiguation:
+                "Privacy → Activity Log. How many days of Insights activity (model requests, web searches, URL fetches, MCP calls, channel deliveries, Router calls) stay on disk before automatic pruning. Not Memory retention (Memory → Settings) and not File History (General → Advanced)."
+        ),
+        .init(
+            id: "privacy.activityLog.storeContent",
+            tab: .privacy,
+            section: "Activity Log",
+            title: "Store Prompts and Responses",
+            keywords: [
+                "activity log", "audit log", "store content", "store prompts", "log bodies", "metadata only",
+                "prompt logging", "response logging", "wire payload", "insights content",
+            ],
+            subTab: "overview",
+            disambiguation:
+                "Privacy → Activity Log. When off, new Insights records keep metadata (destination, bytes, tokens, timing) but replace prompt/response/tool bodies with a withheld marker. Not the Privacy Filter redaction switch."
+        ),
+        .init(
+            id: "privacy.activityLog.openInsights",
+            tab: .privacy,
+            section: "Activity Log",
+            title: "Review Activity in Insights",
+            keywords: ["open insights", "review activity", "audit", "export log", "verify chain"],
+            subTab: "overview"
+        ),
+        .init(
             id: "privacy.models",
             tab: .privacy,
             section: "Models",
@@ -1907,7 +1942,14 @@ public enum SettingsSearchIndex {
             id: "insights.overview",
             tab: .insights,
             title: "Insights",
-            keywords: ["analytics", "usage", "charts", "metrics"]
+            keywords: [
+                "analytics", "usage", "charts", "metrics", "activity log", "audit log", "audit trail",
+                "activity history", "what was sent to the cloud", "cloud egress", "local vs cloud",
+                "web search log", "mcp call log", "export activity", "verify log", "tamper evident",
+                "request history", "review activity",
+            ],
+            disambiguation:
+                "The Insights tab is the activity log / audit dashboard: every model request (local or cloud), web search, URL fetch, MCP tool call, channel delivery, Router call and inbound API request, with Local/Cloud badges, filters, Verify and Export. Retention and content policy live under Privacy → Activity Log."
         ),
     ] + appleAppEntries
 

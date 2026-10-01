@@ -2581,7 +2581,9 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             do {
-                let vectors = try await EmbeddingService.shared.embed(texts: texts)
+                let vectors = try await MediaActivityLogger.$embeddingPurpose.withValue("plugin_embed") {
+                    try await EmbeddingService.shared.embed(texts: texts)
+                }
                 var embeddings: [[String: Any]] = []
                 for (i, vec) in vectors.enumerated() {
                     embeddings.append([

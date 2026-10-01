@@ -532,6 +532,19 @@ public actor RemoteProviderService: ToolCapableService {
             // captures → relay/provider 413, mislabeled containers → 400).
             // The local model path never enters this service and keeps
             // full-resolution input.
+            //
+            // Tell the Insights wire probe (when one is attached) whether
+            // the filter ran and how many distinct items it redacted, so
+            // the activity row can say "privacy filter: N redacted" next
+            // to the bytes that left the Mac.
+            if let probe = WireTransportProbe.current {
+                if let map = scrubbed.map {
+                    let redacted = await map.snapshot().count
+                    probe.recordPrivacyFilter(applied: true, redactedCount: redacted)
+                } else {
+                    probe.recordPrivacyFilter(applied: false, redactedCount: 0)
+                }
+            }
             return (RemoteImagePayloadPolicy.prepared(scrubbed.messages), scrubbed.map)
         } catch PrivacyFilterPipelineError.reviewCanceled {
             throw CancellationError()

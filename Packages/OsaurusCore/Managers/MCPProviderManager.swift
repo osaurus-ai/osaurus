@@ -715,46 +715,37 @@ public final class MCPProviderManager: ObservableObject {
         let arguments = try MCPProviderTool.convertArgumentsToMCPValues(argumentsJSON)
         let timeout = provider.toolCallTimeout
 
+        // Activity log: every MCP tool call is an interaction with a server
+        // outside this process (a remote HTTP server, or a local stdio
+        // subprocess). Capture attribution on the caller's task and log one
+        // row per call with the outcome, whichever way it ends.
+        let activity = MCPActivityLogger.Call(
+            provider: provider,
+            toolName: toolName,
+            exposedToolName: exposedToolName,
+            argumentsJSON: argumentsJSON,
+            attribution: InsightsService.ActivityAttribution.current()
+        )
+
         // Run the network call off MainActor so it doesn't block the UI thread.
-        let (content, isError): ([MCP.Tool.Content], Bool?)
+        var content: [MCP.Tool.Content] = []
+        var isError: Bool? = nil
         do {
-            (content, isError) = try await Self.callMCPTool(
-                client: client,
-                toolName: toolName,
-                arguments: arguments,
-                timeout: timeout
-            )
-        } catch let error where Self.isRecoverableSessionError(error) {
-            if var reconnectState = providerStates[providerId] {
-                reconnectState.isAutoReconnecting = true
-                providerStates[providerId] = reconnectState
-                notifyStatusChanged()
+            do {
+                (content, isError) = try await Self.callMCPTool(
+                    client: client,
+                    toolName: toolName,
+                    arguments: arguments,
+                    timeout: timeout
+                )
+            } catch let error where Self.isRecoverableSessionError(error) {
+                try await reconnectAndRetry(
+                    provider: provider, providerId: providerId, toolName: toolName,
+                    arguments: arguments, timeout: timeout, into: &content, isError: &isError)
             }
-            defer {
-                if var finished = providerStates[providerId] {
-                    finished.isAutoReconnecting = false
-                    providerStates[providerId] = finished
-                }
-            }
-            // One reconnect + one retry; the rebuilt transport carries fresh
-            // OAuth/bearer credentials and negotiates a new session. If the
-            // reconnect fails we surface the reconnect error (it is the more
-            // actionable one: auth required, server down, ...).
-            try await performConnect(provider: provider, allowOAuthRetry: true)
-            guard let freshClient = clients[providerId] else {
-                throw MCPProviderError.notConnected
-            }
-            if var reconnected = providerStates[providerId] {
-                reconnected.lastAutoReconnectAt = Date()
-                providerStates[providerId] = reconnected
-                notifyStatusChanged()
-            }
-            (content, isError) = try await Self.callMCPTool(
-                client: freshClient,
-                toolName: toolName,
-                arguments: arguments,
-                timeout: timeout
-            )
+        } catch {
+            activity.finish(.failure(error))
+            throw error
         }
 
         // Check for error
@@ -763,10 +754,58 @@ public final class MCPProviderManager: ObservableObject {
                 if case .text(let text, _, _) = item { return text }
                 return nil
             }.joined(separator: "\n")
-            throw MCPProviderError.toolExecutionFailed(errorText.isEmpty ? "Tool returned error" : errorText)
+            let error = MCPProviderError.toolExecutionFailed(errorText.isEmpty ? "Tool returned error" : errorText)
+            activity.finish(.failure(error))
+            throw error
         }
 
-        return try await MCPProviderTool.prepareMCPContent(content, toolName: exposedToolName ?? toolName)
+        let prepared = try await MCPProviderTool.prepareMCPContent(content, toolName: exposedToolName ?? toolName)
+        activity.finish(.success(prepared))
+        return prepared
+    }
+
+    /// One reconnect + one retry for a stale session (see
+    /// `isRecoverableSessionError`). Split out of `executeTool` so the
+    /// activity-log wrapper sees a single success/failure.
+    private func reconnectAndRetry(
+        provider: MCPProvider,
+        providerId: UUID,
+        toolName: String,
+        arguments: [String: MCP.Value],
+        timeout: TimeInterval,
+        into content: inout [MCP.Tool.Content],
+        isError: inout Bool?
+    ) async throws {
+        if var reconnectState = providerStates[providerId] {
+            reconnectState.isAutoReconnecting = true
+            providerStates[providerId] = reconnectState
+            notifyStatusChanged()
+        }
+        defer {
+            if var finished = providerStates[providerId] {
+                finished.isAutoReconnecting = false
+                providerStates[providerId] = finished
+            }
+        }
+        // One reconnect + one retry; the rebuilt transport carries fresh
+        // OAuth/bearer credentials and negotiates a new session. If the
+        // reconnect fails we surface the reconnect error (it is the more
+        // actionable one: auth required, server down, ...).
+        try await performConnect(provider: provider, allowOAuthRetry: true)
+        guard let freshClient = clients[providerId] else {
+            throw MCPProviderError.notConnected
+        }
+        if var reconnected = providerStates[providerId] {
+            reconnected.lastAutoReconnectAt = Date()
+            providerStates[providerId] = reconnected
+            notifyStatusChanged()
+        }
+        (content, isError) = try await Self.callMCPTool(
+            client: freshClient,
+            toolName: toolName,
+            arguments: arguments,
+            timeout: timeout
+        )
     }
 
     /// True when a tool-call failure indicates the connection/session is

@@ -63,7 +63,30 @@ public final class AgentManager: ObservableObject {
             // the moment the cached existence probes can become wrong.
             AvatarExistenceCache.shared.invalidateAll()
             syncIdentityRegistry()
+            Self.refreshAgentNameCache(agents)
         }
+    }
+
+    // MARK: - Nonisolated name lookup (activity log attribution)
+
+    /// `id -> name` mirror readable off the main actor. The Insights
+    /// emitters run on detached producer tasks and need a display name for
+    /// the agent that drove a request without hopping to main.
+    private nonisolated(unsafe) static var agentNameCache: [UUID: String] = [:]
+    private nonisolated static let agentNameLock = NSLock()
+
+    private nonisolated static func refreshAgentNameCache(_ agents: [Agent]) {
+        let snapshot = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        agentNameLock.lock()
+        agentNameCache = snapshot
+        agentNameLock.unlock()
+    }
+
+    /// Display name for an agent id, or nil when unknown. Safe from any thread.
+    public nonisolated static func agentDisplayName(for id: UUID) -> String? {
+        agentNameLock.lock()
+        defer { agentNameLock.unlock() }
+        return agentNameCache[id]
     }
 
     /// `id -> agents` offset, so `agent(for:)` is a dictionary hit.

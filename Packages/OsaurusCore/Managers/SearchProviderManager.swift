@@ -346,6 +346,23 @@ public final class SearchProviderManager: ObservableObject {
 
     /// Full cascade for a request (used by the tools and the Try-it playground).
     public func runSearch(_ request: SearchRequest) async -> SearchEngineOutcome {
+        let attribution = InsightsService.ActivityAttribution.current()
+        let outcome = await runCascade(request)
+        SearchActivityLogger.logSearch(
+            request: request,
+            outcome: outcome,
+            hostedSource: nil,
+            hostedFallbackReason: nil,
+            pinned: false,
+            attribution: attribution,
+            hostFor: { self.destinationHost(forProviderId: $0, category: request.category) }
+        )
+        return outcome
+    }
+
+    /// The provider cascade without the activity-log row; callers that wrap
+    /// it (hosted-first) log once for the whole operation.
+    private func runCascade(_ request: SearchRequest) async -> SearchEngineOutcome {
         let providers = snapshots(for: request.category)
         let outcome = await engine.run(request: request, providers: providers)
         lastOutcome = LastSearchOutcome(
@@ -357,6 +374,15 @@ public final class SearchProviderManager: ObservableObject {
         return outcome
     }
 
+    /// Where a search for `providerId` is sent, for the activity log.
+    func destinationHost(forProviderId providerId: String, category: String) -> String? {
+        if providerId == OsaurusRouterSearchBackend.providerId {
+            return SearchActivityLogger.hostedHost
+        }
+        guard let definition = definition(id: providerId) else { return nil }
+        return SearchActivityLogger.host(for: definition, category: category)
+    }
+
     /// Premium-first search for the tools: try the hosted Router backend when
     /// gated on, then fall through to the unchanged provider cascade for any
     /// failure, empty result, or replay. Billing metadata reaches the Credits
@@ -365,6 +391,29 @@ public final class SearchProviderManager: ObservableObject {
         _ request: SearchRequest,
         idempotencyKey: String,
         extractTextMaxCharacters: Int? = nil
+    ) async -> HostedFirstSearchResult {
+        let attribution = InsightsService.ActivityAttribution.current()
+        let result = await runHostedFirstSearchUnlogged(
+            request,
+            idempotencyKey: idempotencyKey,
+            extractTextMaxCharacters: extractTextMaxCharacters
+        )
+        SearchActivityLogger.logSearch(
+            request: request,
+            outcome: result.outcome,
+            hostedSource: result.source,
+            hostedFallbackReason: result.hostedFallbackReason,
+            pinned: false,
+            attribution: attribution,
+            hostFor: { self.destinationHost(forProviderId: $0, category: request.category) }
+        )
+        return result
+    }
+
+    private func runHostedFirstSearchUnlogged(
+        _ request: SearchRequest,
+        idempotencyKey: String,
+        extractTextMaxCharacters: Int?
     ) async -> HostedFirstSearchResult {
         var hostedAttempt: SearchAttempt?
         var billing: RouterWebBillingSummary?
@@ -427,7 +476,7 @@ public final class SearchProviderManager: ObservableObject {
             }
         }
 
-        var outcome = await runSearch(request)
+        var outcome = await runCascade(request)
         if let hostedAttempt {
             outcome.attempts.insert(hostedAttempt, at: 0)
         }
@@ -449,15 +498,24 @@ public final class SearchProviderManager: ObservableObject {
         idempotencyKey: String
     ) async -> HostedContentsOutcome? {
         guard shouldTryHostedSearch(category: SearchCategory.web) else { return nil }
+        let attribution = InsightsService.ActivityAttribution.current()
+        let started = Date()
         let result = await hostedBackend.contents(urls: urls, idempotencyKey: idempotencyKey)
+        let durationMs = Date().timeIntervalSince(started) * 1000
         switch result {
         case .success(let outcome):
             if let summary = outcome.billing {
                 OsaurusRouterAccountService.shared.noteWebBilling(summary)
             }
+            SearchActivityLogger.logHostedExtract(
+                urls: urls, outcome: outcome, failureReason: nil,
+                durationMs: durationMs, attribution: attribution)
             return outcome
         case .failure(let failure):
             noteHostedFailure(failure)
+            SearchActivityLogger.logHostedExtract(
+                urls: urls, outcome: nil, failureReason: failure.reason,
+                durationMs: durationMs, attribution: attribution)
             return nil
         }
     }
@@ -513,6 +571,15 @@ public final class SearchProviderManager: ObservableObject {
         testStatus[definitionId] = .testing
         let request = SearchRequest(query: query, category: preferredTestCategory(for: snap.definition))
         let outcome = await engine.runPinned(request: request, provider: snap)
+        SearchActivityLogger.logSearch(
+            request: request,
+            outcome: outcome,
+            hostedSource: nil,
+            hostedFallbackReason: nil,
+            pinned: true,
+            attribution: .none,
+            hostFor: { self.destinationHost(forProviderId: $0, category: request.category) }
+        )
         if let error = outcome.attempts.first(where: { !$0.ok })?.error {
             testStatus[definitionId] = .failed(error)
         } else if outcome.hits.isEmpty {

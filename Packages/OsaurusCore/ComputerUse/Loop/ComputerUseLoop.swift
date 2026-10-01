@@ -250,8 +250,15 @@ public enum ComputerUseLoop {
         // Auto-scrub: the user is watching the app being driven, not the
         // chat window, so a Privacy Filter review sheet per step would go
         // unanswered until the step timeout failed the run.
+        // Residency follows the run that invoked the tool (chat / HTTP /
+        // channel / schedule…); Insights shows every helper step as Agent.
         let engine: ChatEngine? =
-            nextAction == nil ? ChatEngine(source: .chatUI, privacyReviewMode: .autoScrub) : nil
+            nextAction == nil
+            ? ChatEngine(
+                source: ChatExecutionContext.currentSessionSource?.inferenceSource ?? .chatUI,
+                activitySource: .agent,
+                privacyReviewMode: .autoScrub
+            ) : nil
 
         // Capture availability once: it gates the escalation ladder (som/vision
         // need Screen Recording) for the whole run.

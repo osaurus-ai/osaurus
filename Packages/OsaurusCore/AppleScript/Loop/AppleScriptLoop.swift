@@ -338,8 +338,15 @@ public enum AppleScriptLoop {
         let deadline = runStarted.addingTimeInterval(limits.wallClockSeconds)
         // Auto-scrub: see `ComputerUseLoop`. A per-step review sheet in
         // the chat window would stall the loop while it drives other apps.
+        // Residency follows the run that invoked the tool; Insights shows
+        // every helper step as Agent (see `ComputerUseLoop`).
         let engine: ChatEngine? =
-            nextScript == nil ? ChatEngine(source: .chatUI, privacyReviewMode: .autoScrub) : nil
+            nextScript == nil
+            ? ChatEngine(
+                source: ChatExecutionContext.currentSessionSource?.inferenceSource ?? .chatUI,
+                activitySource: .agent,
+                privacyReviewMode: .autoScrub
+            ) : nil
         // Default to the real in-process executor; tests inject their own. Kept
         // out of the (public) default argument because `AppleScriptExecutor` is
         // internal and a public default value can't reference an internal symbol.

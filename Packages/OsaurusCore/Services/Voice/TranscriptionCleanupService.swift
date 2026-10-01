@@ -71,7 +71,8 @@ public final class TranscriptionCleanupService {
                 timeout: Self.cleanupTimeout,
                 // Tidying a voice transcript is never worth evicting the model
                 // the user is chatting with. Declined → we keep the raw text.
-                intent: .background
+                intent: .background,
+                purpose: "transcription_cleanup"
             )
             return postProcess(response: response, rawText: rawText, trimmed: trimmed, start: start, source: "core")
         } catch CoreModelError.modelUnavailable(let requested) {
@@ -142,6 +143,29 @@ public final class TranscriptionCleanupService {
         )
 
         let start = Date()
+        // Activity log: this path bypasses `CoreModelService` (which logs its
+        // own `/internal/<purpose>` row), so it writes the same row shape here.
+        let attribution = InsightsService.ActivityAttribution.current()
+        func logFallback(response: String?, error: String?) {
+            InsightsService.logInference(
+                source: .system,
+                model: fallbackModel,
+                inputTokens: messages.reduce(0) { $0 + TokenEstimator.estimate($1.content) },
+                outputTokens: response.map { TokenEstimator.estimate($0) } ?? 0,
+                durationMs: Date().timeIntervalSince(start) * 1000,
+                temperature: params.temperature,
+                maxTokens: params.maxTokens,
+                finishReason: error == nil ? .stop : .error,
+                errorMessage: error,
+                requestBody: Self.requestBodyJSON(messages: messages, model: fallbackModel, params: params),
+                responseBody: response,
+                path: "/internal/transcription_cleanup",
+                egress: EgressInfo(details: ["fallback": "mlx", "reason": "core_model_unavailable"]),
+                agentId: attribution.agentId,
+                agentName: attribution.agentName,
+                sessionId: attribution.sessionId
+            )
+        }
         do {
             let response = try await withThrowingTaskGroup(of: String.self) { group in
                 group.addTask {
@@ -159,14 +183,29 @@ public final class TranscriptionCleanupService {
                 group.cancelAll()
                 return first
             }
+            logFallback(response: response, error: nil)
             return postProcess(response: response, rawText: rawText, trimmed: trimmed, start: start, source: "mlx")
         } catch {
             let elapsed = Date().timeIntervalSince(start)
             debugLog(
                 "[cleanup] FALLBACK ERROR after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription) — using raw"
             )
+            logFallback(response: nil, error: error.localizedDescription)
             return rawText
         }
+    }
+
+    /// Compact chat-completion-shaped body so the Prompt tab renders it.
+    private static func requestBodyJSON(messages: [ChatMessage], model: String, params: GenerationParameters) -> String? {
+        var payload: [String: Any] = [
+            "model": model,
+            "messages": messages.map { ["role": $0.role, "content": $0.content ?? ""] },
+            "max_tokens": params.maxTokens,
+        ]
+        if let temperature = params.temperature { payload["temperature"] = temperature }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 
     // MARK: - Shared post-processing

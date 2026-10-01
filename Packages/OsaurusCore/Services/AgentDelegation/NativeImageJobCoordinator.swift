@@ -14,6 +14,12 @@ struct NativeImageJobContext: Sendable, Equatable {
     var assistantTurnID: UUID?
     var toolCallID: String?
     var invocation = ModelJobInvocation(parentModelName: nil, source: nil)
+    /// Insights attribution captured on the caller's task (the job itself
+    /// runs on a detached producer where task-locals are invisible).
+    var agentID: UUID?
+    /// `.httpAPI` when the local HTTP server owns the request — the handler
+    /// writes the inbound row, so the coordinator must not add a second.
+    var requestSource: RequestSource?
 
     static let empty = NativeImageJobContext()
 
@@ -22,7 +28,9 @@ struct NativeImageJobContext: Sendable, Equatable {
             sessionID: ChatExecutionContext.currentSessionId,
             assistantTurnID: ChatExecutionContext.currentAssistantTurnId,
             toolCallID: ChatExecutionContext.currentToolCallId,
-            invocation: .current()
+            invocation: .current(),
+            agentID: ChatExecutionContext.currentAgentId,
+            requestSource: ChatExecutionContext.currentRequestSource
         )
     }
 }
@@ -348,6 +356,12 @@ actor NativeImageJobCoordinator {
                         context: request.context,
                         kind: .imageGeneration,
                         isEdit: false,
+                        activity: .init(
+                            prompt: request.prompt,
+                            count: request.numImages,
+                            size: Self.sizeLabel(width: request.width, height: request.height),
+                            steps: request.steps
+                        ),
                         requestedModel: request.model,
                         configuredModel: { $0.defaultImageGenerationModelId },
                         makeStream: { model, jobID in
@@ -381,6 +395,12 @@ actor NativeImageJobCoordinator {
                         context: request.context,
                         kind: .imageEdit,
                         isEdit: true,
+                        activity: .init(
+                            prompt: request.prompt,
+                            count: 1,
+                            size: Self.sizeLabel(width: request.width, height: request.height),
+                            steps: request.steps
+                        ),
                         requestedModel: request.model,
                         configuredModel: { $0.defaultImageEditModelId },
                         makeStream: { model, jobID in
@@ -418,10 +438,24 @@ actor NativeImageJobCoordinator {
     /// unload itself can trigger must not cascade into the engine drain and lose
     /// the image (see `ImageSubagentKind`, whose `makeHandoff()` stays the
     /// passthrough default so the coordinator remains the residency authority).
+    /// Facts the activity-log row needs that only the request knows.
+    struct ActivityFacts: Sendable {
+        var prompt: String
+        var count: Int
+        var size: String?
+        var steps: Int?
+    }
+
+    private static func sizeLabel(width: Int?, height: Int?) -> String? {
+        guard let width, let height else { return nil }
+        return "\(width)×\(height)"
+    }
+
     private func runJob(
         context: NativeImageJobContext,
         kind: SubagentModelKind,
         isEdit: Bool,
+        activity: ActivityFacts,
         requestedModel: String?,
         configuredModel: @Sendable (SubagentConfiguration) -> String?,
         makeStream:
@@ -443,6 +477,29 @@ actor NativeImageJobCoordinator {
         var chatLease = ChatResidencyLease.empty
         var retention: ParentResidencyRetention?
         var startedImageModel: String?
+        // Activity log: one `mediaGeneration` row per job, written when the
+        // job settles. Skipped when the local HTTP API owns the request (its
+        // handler logs the inbound row).
+        var activityRow: MediaActivityLogger.MediaJob?
+        if context.requestSource != .httpAPI {
+            activityRow = MediaActivityLogger.MediaJob(
+                kind: .image,
+                operation: isEdit ? .edit : .generate,
+                model: requestedModel ?? "",
+                prompt: activity.prompt,
+                provider: "Local (MLX)",
+                endpoint: nil,
+                requestedCount: activity.count,
+                size: activity.size,
+                steps: activity.steps,
+                durationSeconds: nil,
+                trigger: context.toolCallID != nil ? .chatTool : .imagePanel,
+                attribution: InsightsService.ActivityAttribution(
+                    agentId: context.agentID,
+                    sessionId: context.sessionID.flatMap(UUID.init(uuidString:))
+                )
+            )
+        }
         do {
             record(NativeImageJobProgress(jobID: jobID, phase: .queued))
             // Resolve the image model BEFORE any unload so the RAM-safety
@@ -497,6 +554,7 @@ actor NativeImageJobCoordinator {
             var produced: [GeneratedImage] = []
             try Task.checkCancellation()
             startedImageModel = model
+            activityRow = activityRow?.withModel(model)
             let stream = await makeStream(model, jobID)
             for try await event in stream {
                 switch event {
@@ -541,6 +599,7 @@ actor NativeImageJobCoordinator {
                 context: context
             )
             record(NativeImageJobProgress(jobID: jobID, phase: .completed, model: model))
+            activityRow?.finish(producedCount: produced.count, jobId: jobID, error: nil)
             continuation.yield(
                 NativeImageJobResult(
                     jobID: jobID,
@@ -554,6 +613,7 @@ actor NativeImageJobCoordinator {
             )
             continuation.finish()
         } catch {
+            activityRow?.finish(producedCount: 0, jobId: jobID, error: error.localizedDescription)
             _ = await self.finishResidency(
                 lease: chatLease,
                 retention: retention,

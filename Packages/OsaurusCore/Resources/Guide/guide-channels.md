@@ -46,3 +46,5 @@ Channels (Beta) connect agents to your messaging platforms: Discord, Slack, Tele
 ## Diagnostics
 
 Each connection has a diagnostics view (connection state, recent events). Combine channels with Schedules for recurring digests posted as drafts.
+
+Every outbound delivery — proactive posts (`PUBLISH`) and automatic replies to incoming messages (`REPLY`) — is recorded in Settings… (⌘,) → Insights under the **Channel** chip: destination, room, size, outcome, and whether attachments were sent. The message text itself is never copied into the log.

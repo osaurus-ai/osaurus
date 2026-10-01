@@ -36,6 +36,7 @@ public actor StorageRecoveryService {
         case tool = "tool-index"
         case scheduler
         case routerBilling = "router-billing"
+        case activityLog = "activity-log"
 
         public var path: String {
             switch self {
@@ -46,6 +47,7 @@ public actor StorageRecoveryService {
             case .tool: return OsaurusPaths.toolIndexDatabaseFile().path
             case .scheduler: return OsaurusPaths.schedulerDatabaseFile().path
             case .routerBilling: return OsaurusPaths.billingLedgerDatabaseFile().path
+            case .activityLog: return OsaurusPaths.activityLogDatabaseFile().path
             }
         }
 
@@ -59,6 +61,7 @@ public actor StorageRecoveryService {
             case .tool: return "Tool index"
             case .scheduler: return "Scheduler"
             case .routerBilling: return "Router billing"
+            case .activityLog: return "Activity log"
             }
         }
 
@@ -94,6 +97,8 @@ public actor StorageRecoveryService {
                 try SchedulerDatabase.shared.open()
             case .routerBilling:
                 try RouterBillingDatabase.shared.open()
+            case .activityLog:
+                try ActivityLogStore.shared.open()
             }
             PersistenceHealth.shared.clearStoreIssue(store: store.rawValue)
             log.info("recovery: \(store.rawValue, privacy: .public) reopened")

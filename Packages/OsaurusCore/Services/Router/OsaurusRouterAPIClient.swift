@@ -720,11 +720,88 @@ actor OsaurusRouterAPIClient {
         _ request: URLRequest,
         session overrideSession: URLSession? = nil
     ) async throws -> (Data, URLResponse) {
+        // Activity log: every signed control-plane call (account, credits,
+        // workspaces, media, pairing) is cloud egress. Hosted search and
+        // contents are excluded here because `SearchActivityLogger` records
+        // them as web-search / URL-extract rows with the query and URLs.
+        let logged = Self.shouldLogControlPlaneCall(path: request.url?.path)
+        let attribution = logged ? InsightsService.ActivityAttribution.current() : .none
+        let started = Date()
         do {
-            return try await (overrideSession ?? session).data(for: request)
+            let result = try await (overrideSession ?? session).data(for: request)
+            if logged {
+                Self.logControlPlaneCall(
+                    request: request, response: result.1 as? HTTPURLResponse,
+                    responseBytes: result.0.count, error: nil,
+                    durationMs: Date().timeIntervalSince(started) * 1000, attribution: attribution)
+            }
+            return result
         } catch {
+            if logged {
+                Self.logControlPlaneCall(
+                    request: request, response: nil, responseBytes: nil, error: error.localizedDescription,
+                    durationMs: Date().timeIntervalSince(started) * 1000, attribution: attribution)
+            }
             throw OsaurusRouterAPIError.transport(error.localizedDescription)
         }
+    }
+
+    /// Hosted search/contents are logged by the search layer with richer
+    /// facts; everything else on the Router is a control-plane call.
+    nonisolated static func shouldLogControlPlaneCall(path: String?) -> Bool {
+        guard let path else { return true }
+        return path != "/v1/search" && path != "/v1/contents"
+    }
+
+    /// Plain-language purpose for a Router path, so the activity row reads
+    /// "Credits balance" rather than a bare URL.
+    nonisolated static func controlPlanePurpose(path: String) -> String {
+        let p = path.lowercased()
+        if p.contains("/workspace") { return L("Workspaces") }
+        if p.contains("/credit") || p.contains("/balance") || p.contains("/billing") { return L("Credits") }
+        if p.contains("/media") { return L("Media generation") }
+        if p.contains("/pair") || p.contains("/relay") { return L("Secure channel pairing") }
+        if p.contains("/account") || p.contains("/identity") || p.contains("/me") { return L("Account") }
+        if p.contains("/models") { return L("Model catalog") }
+        return L("Router control plane")
+    }
+
+    nonisolated static func logControlPlaneCall(
+        request: URLRequest,
+        response: HTTPURLResponse?,
+        responseBytes: Int?,
+        error: String?,
+        durationMs: Double,
+        attribution: InsightsService.ActivityAttribution
+    ) {
+        let path = request.url?.path ?? "/"
+        let host = request.url?.host
+        let status = response?.statusCode ?? (error == nil ? 200 : 0)
+        let isError = error != nil || !(200 ..< 300).contains(status)
+        var details: [String: String] = [
+            "purpose": controlPlanePurpose(path: path),
+            "method": request.httpMethod ?? "GET",
+        ]
+        if let query = request.url?.query, !query.isEmpty { details["query_string"] = query }
+        if let error { details["error"] = error }
+        InsightsService.logEgress(
+            category: .routerControl,
+            source: .system,
+            method: request.httpMethod ?? "GET",
+            path: path,
+            statusCode: status,
+            durationMs: durationMs,
+            egress: EgressInfo(
+                destinationLabel: L("Osaurus Router"),
+                destinationHost: host,
+                bytesSent: request.httpBody?.count ?? 0,
+                bytesReceived: responseBytes,
+                dataClasses: ["account"],
+                details: details
+            ),
+            errorMessage: isError ? (error ?? "HTTP \(status)") : nil,
+            attribution: attribution
+        )
     }
 
     private func sign(request: inout URLRequest, body: Data?) async throws {

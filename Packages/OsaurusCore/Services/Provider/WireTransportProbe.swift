@@ -64,6 +64,17 @@ public final class WireTransportProbe: @unchecked Sendable {
         var req: Data?
         var resp: Data
         var truncated: Bool
+        var privacy: PrivacyOutcome?
+    }
+
+    /// What the Privacy Filter did to this request before it left the
+    /// Mac. Recorded by `RemoteProviderService.applyPrivacyOutbound` and
+    /// surfaced in the Insights activity row as `EgressInfo`.
+    public struct PrivacyOutcome: Equatable, Sendable {
+        /// The filter ran (enabled globally and for this provider).
+        public let applied: Bool
+        /// Distinct redacted items (placeholders minted) in the outbound body.
+        public let redactedCount: Int
     }
 
     /// Hard cap on captured response bytes. Streamed assistant
@@ -73,8 +84,22 @@ public final class WireTransportProbe: @unchecked Sendable {
     public static let maxResponseBytes: Int = 1_048_576  // 1 MiB
 
     private let bodies = OSAllocatedUnfairLock<Bodies>(
-        initialState: Bodies(req: nil, resp: Data(), truncated: false)
+        initialState: Bodies(req: nil, resp: Data(), truncated: false, privacy: nil)
     )
+
+    /// Record the Privacy Filter outcome for this request. Last write wins
+    /// (a retry re-runs the scrub with the same session map, so the counts
+    /// are identical in practice).
+    public func recordPrivacyFilter(applied: Bool, redactedCount: Int) {
+        bodies.withLock { state in
+            state.privacy = PrivacyOutcome(applied: applied, redactedCount: redactedCount)
+        }
+    }
+
+    /// Privacy Filter outcome, if the scrub preflight ran under this probe.
+    public var privacyOutcome: PrivacyOutcome? {
+        bodies.withLock { $0.privacy }
+    }
 
     public init() {}
 

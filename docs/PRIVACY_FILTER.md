@@ -225,7 +225,7 @@ The hover tooltip's `Direction` enum is the single signal that lets the same com
 
 ## Insights Verification
 
-Open **Insights** (`⌘ Shift I`) → pick a request → **Request** / **Response** tabs. Each tab has a sub-section labelled **Server Request** / **Server Response** showing the bytes captured by `WireTransportProbe` — i.e. the exact JSON sent to OpenAI / Anthropic / etc., and the exact stream that came back BEFORE the unscrubber ran.
+Open Settings… (`⌘ ,`) → **Insights** → pick a Cloud inference request → **Request** / **Response** tabs. Each tab has a sub-section labelled **Server Request** / **Server Response** showing the bytes captured by `WireTransportProbe` — i.e. the exact JSON sent to OpenAI / Anthropic / etc., and the exact stream that came back BEFORE the unscrubber ran.
 
 This is the verification surface for "did the redaction actually take?" — if you see `[EMAIL_3]` in the Server Request body and `alice@example.com` in your local message, the filter worked. The pre-scrub local copy lives in **Request → Local** for comparison.
 
@@ -457,5 +457,6 @@ the limitation stays documented above and in the master-toggle copy.
 - [Memory](MEMORY.md) — what Osaurus *keeps* about your conversations (orthogonal to what gets scrubbed on send)
 - [Remote Providers](REMOTE_PROVIDERS.md) — provider configuration; per-provider overrides in Privacy live alongside provider records
 - [Developer Tools](DEVELOPER_TOOLS.md) — Insights surface used to verify wire-level redaction
+- [Activity Log](ACTIVITY_LOG.md) — What the Insights log records, how it is chained, and how bodies are clipped and credential-redacted before storage
 - [Localization](LOCALIZATION.md) — adding new languages for the Privacy settings and review sheet
 - [Security](SECURITY.md) — how to report a privacy bug responsibly

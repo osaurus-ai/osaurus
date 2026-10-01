@@ -911,8 +911,32 @@ actor AgentChannelPublishService {
         request: AgentChannelPublishRequest,
         context: AgentChannelPublishContext
     ) async -> AgentChannelPublishOutcome {
+        // Activity log: a message is about to leave this Mac for a chat
+        // provider. Metadata only (provider kind, room/thread, size); the
+        // content itself is in the channel audit ledger, not Insights.
+        let connection = loadConfiguration().connection(id: binding.connectionId)
+        let activityStarted = Date()
+        let attribution = InsightsService.ActivityAttribution(
+            agentId: binding.agentId,
+            sessionId: context.sessionId.flatMap(UUID.init(uuidString:))
+        )
+        func logDelivery(outcome: String, providerMessageId: String?, error: String?) {
+            Self.logChannelDelivery(
+                connection: connection,
+                binding: binding,
+                contentLength: content.utf8.count,
+                intentId: intentId,
+                runSource: context.source?.rawValue,
+                outcome: outcome,
+                providerMessageId: providerMessageId,
+                error: error,
+                durationMs: Date().timeIntervalSince(activityStarted) * 1000,
+                attribution: attribution
+            )
+        }
         do {
             let providerMessageId = try await sender(binding, content)
+            logDelivery(outcome: "sent", providerMessageId: providerMessageId, error: nil)
             let recorded = (try? store.transitionOutboundIntent(
                 id: intentId,
                 from: .sending,
@@ -932,7 +956,13 @@ actor AgentChannelPublishService {
             notifyOutboxChanged()
             return .sent(intentId: intentId, providerMessageId: providerMessageId)
         } catch {
-            switch Self.classifyProviderFailure(error) {
+            let failureKind = Self.classifyProviderFailure(error)
+            logDelivery(
+                outcome: failureKind == .ambiguous ? "delivery_unknown" : "failed",
+                providerMessageId: nil,
+                error: error.localizedDescription
+            )
+            switch failureKind {
             case .deterministic:
                 _ = try? store.transitionOutboundIntent(
                     id: intentId,
@@ -996,6 +1026,74 @@ actor AgentChannelPublishService {
                 )
             }
         }
+    }
+
+    // MARK: - Activity log
+
+    /// Metadata-only activity row for one outbound channel delivery attempt.
+    /// Pure over its inputs so it can be exercised without a live provider.
+    /// Shape shared with inbound auto-replies via `ChannelActivityLogger`.
+    static func channelDeliveryEgress(
+        connection: AgentChannelConnection?,
+        binding: AgentChannelBinding,
+        contentLength: Int,
+        intentId: String,
+        runSource: String?,
+        outcome: String,
+        providerMessageId: String?,
+        error: String?
+    ) -> EgressInfo {
+        var extra: [String: String] = [
+            "binding": binding.id,
+            "intent_id": intentId,
+        ]
+        if let runSource { extra["run_source"] = runSource }
+        if let providerMessageId { extra["provider_message_id"] = providerMessageId }
+        if let error { extra["error"] = error }
+        return ChannelActivityLogger.egress(
+            connection: connection,
+            connectionId: binding.connectionId,
+            roomId: binding.roomId,
+            threadId: binding.threadId,
+            contentLength: contentLength,
+            outcome: outcome,
+            trigger: .publish,
+            extraDetails: extra
+        )
+    }
+
+    private static func logChannelDelivery(
+        connection: AgentChannelConnection?,
+        binding: AgentChannelBinding,
+        contentLength: Int,
+        intentId: String,
+        runSource: String?,
+        outcome: String,
+        providerMessageId: String?,
+        error: String?,
+        durationMs: Double,
+        attribution: InsightsService.ActivityAttribution
+    ) {
+        var extra: [String: String] = [
+            "binding": binding.id,
+            "intent_id": intentId,
+        ]
+        if let runSource { extra["run_source"] = runSource }
+        if let providerMessageId { extra["provider_message_id"] = providerMessageId }
+        ChannelActivityLogger.logDelivery(
+            connection: connection,
+            connectionId: binding.connectionId,
+            roomId: binding.roomId,
+            threadId: binding.threadId,
+            contentLength: contentLength,
+            outcome: outcome,
+            trigger: .publish,
+            error: error,
+            durationMs: durationMs,
+            attribution: attribution,
+            source: .agent,
+            extraDetails: extra
+        )
     }
 
     private func markFailed(

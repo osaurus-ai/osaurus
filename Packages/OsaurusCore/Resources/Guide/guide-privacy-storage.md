@@ -13,10 +13,11 @@ Osaurus is local-first: chats, memory, agents, and config all live under `~/.osa
 - Nothing conversation-related, unless you connect a cloud provider (then your prompts go to that provider) or enable server network exposure.
 - Anonymous usage analytics (Aptabase — no chats, prompts, or keys) and crash reports (Sentry) are consent-gated: Settings → Privacy → Filter → Send Crash Reports.
 - The Privacy tab also offers an experimental Privacy Filter that scrubs sensitive text before cloud sends.
+- To see exactly what did leave, open Settings → Insights: every model request, web search, URL fetch, MCP call, channel delivery and Router call is logged with a Local/Cloud badge, destination, bytes, and (for model requests) whether the Privacy Filter redacted anything. Retention and whether prompt/response bodies are stored: Settings → Privacy → Activity Log. See the Insights topic.
 
 ## Storage layout
 
-- `~/.osaurus/chat-history/history.sqlite` (chats), `memory/memory.sqlite`, `agents/<uuid>/db.sqlite`, `skills/`, `themes/`, `config/*.json`, attachments as content-addressed blobs.
+- `~/.osaurus/chat-history/history.sqlite` (chats), `memory/memory.sqlite`, `agents/<uuid>/db.sqlite`, `activity/activity.sqlite` (the Insights activity log), `skills/`, `themes/`, `config/*.json`, attachments as content-addressed blobs.
 - Local models are separate, in `~/MLXModels/`.
 
 ## Encryption
