@@ -1066,8 +1066,13 @@ final class NativeCodeBlockView: NSView {
         copyButton.image = SymbolImageCache.image("checkmark", accessibilityDescription: nil)
         copyButton.contentTintColor = .systemGreen
         copyResetTask?.cancel()
-        copyResetTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        copyResetTask = Task { @MainActor [weak self] in
+            // A repeat tap cancels this task. `try?` alone would swallow the
+            // CancellationError and run the reset at once, wiping the new
+            // checkmark, so bail on cancellation instead.
+            guard (try? await Task.sleep(nanoseconds: 2_000_000_000)) != nil,
+                let self
+            else { return }
             self.copyButton.image = SymbolImageCache.image("doc.on.doc", accessibilityDescription: nil)
             self.copyButton.contentTintColor = nil
         }
