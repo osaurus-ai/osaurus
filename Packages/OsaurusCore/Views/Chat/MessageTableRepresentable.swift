@@ -66,13 +66,18 @@ final class CenteredMessageScrollView: NSScrollView {
         let contentWidth = contentSize.width
         if contentWidth != lastFittedContentWidth {
             lastFittedContentWidth = contentWidth
-            (documentView as? NSTableView)?.sizeLastColumnToFit()
-            onContentWidthChanged?(contentWidth)
+            let tableView = documentView as? NSTableView
+            tableView?.sizeLastColumnToFit()
+            // Report the fitted column width, not `contentSize`: the latter
+            // ignores the centering insets and would overshoot the column.
+            if let columnWidth = tableView?.tableColumns.first?.width {
+                onContentWidthChanged?(columnWidth)
+            }
         }
     }
 
-    /// Fired from `tile()` when the laid-out content width changes. This is
-    /// the width the column actually gets, which is narrower than SwiftUI's
+    /// Fired from `tile()` with the column width after it is refitted. This
+    /// is the width cells actually get, which is narrower than SwiftUI's
     /// width whenever a legacy (always-visible) scroller takes up room.
     var onContentWidthChanged: ((CGFloat) -> Void)?
 
