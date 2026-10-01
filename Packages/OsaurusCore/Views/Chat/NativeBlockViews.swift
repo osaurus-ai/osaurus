@@ -1063,6 +1063,7 @@ final class NativeCodeBlockView: NSView {
     @objc private func copyCode() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lastCode, forType: .string)
+        ToastManager.shared.success(L("Code copied to clipboard"))
         copyButton.image = SymbolImageCache.image("checkmark", accessibilityDescription: nil)
         copyButton.contentTintColor = .systemGreen
         copyResetTask?.cancel()
