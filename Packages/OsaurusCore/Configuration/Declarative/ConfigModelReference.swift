@@ -88,6 +88,17 @@ enum ConfigModelReference {
 
         if trimmed.lowercased() == "foundation" { return .resolved("foundation") }
 
+        // Claude Code bridge ids. `ClaudeCodeService.handles(requestedModel:)`
+        // claims these before the model catalog is consulted, so they never
+        // appear in `catalog` and every branch below would reject them. That
+        // made the document unable to create an agent on a model the app
+        // itself offers, while `config export` emits exactly these ids — so a
+        // document exported from a configured machine failed to apply on a
+        // fresh one.
+        if let bridged = ClaudeCodeModel.fromPickerId(trimmed) {
+            return .resolved(bridged.pickerId)
+        }
+
         if let local = catalog.localModelIds.first(where: {
             $0.caseInsensitiveCompare(trimmed) == .orderedSame
         }) {
