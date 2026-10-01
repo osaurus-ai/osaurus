@@ -2,7 +2,7 @@
 //  OsaurusConnectView.swift
 //  osaurus
 //
-//  Settings → Osaurus Connect: pair the Osaurus iPhone app with a 6-digit
+//  Settings → Mobile: pair the Osaurus iPhone app with a 6-digit
 //  code, see / revoke the paired phone, and keep the Mac awake for it.
 //  All state lives in `MobilePairingService`; this view only renders it.
 //
@@ -18,6 +18,7 @@ struct OsaurusConnectView: View {
 
     @AppStorage(MobilePairingService.keepAwakeDefaultsKey) private var keepMacAwake: Bool = true
     @AppStorage(MobilePairingService.reachAnywhereDefaultsKey) private var reachFromAnywhere: Bool = true
+    @AppStorage(PhoneChatHandoff.defaultsKey) private var continuePhoneChats: Bool = true
     @State private var hasAppeared = false
     @State private var isEnablingNetwork = false
     @State private var showRevokeConfirm = false
@@ -27,7 +28,7 @@ struct OsaurusConnectView: View {
     var body: some View {
         VStack(spacing: 0) {
             ManagerHeader(
-                title: L("Osaurus Connect"),
+                title: L("Mobile"),
                 subtitle: L("Use your agents from your iPhone")
             )
             .managerHeaderEntrance(hasAppeared: hasAppeared)
@@ -38,6 +39,7 @@ struct OsaurusConnectView: View {
                         pairingSection
                         pairedDeviceSection
                         powerSection
+                        handoffSection
                     }
                     .padding(24)
                     .frame(maxWidth: .infinity)
@@ -228,6 +230,22 @@ struct OsaurusConnectView: View {
                 )
                 .settingsLandingAnchor("settings.connect.keepAwake")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: Handoff
+
+    @ViewBuilder private var handoffSection: some View {
+        SettingsSection(title: L("On This Mac"), icon: "macbook.and.iphone") {
+            SettingsToggle(
+                title: L("Continue Phone Chats on This Mac"),
+                description: L(
+                    "When you come back to this Mac after using a chat on your iPhone, that chat opens in front, ready to pick up where you left off."
+                ),
+                isOn: $continuePhoneChats
+            )
+            .settingsLandingAnchor("settings.connect.continuePhoneChats")
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

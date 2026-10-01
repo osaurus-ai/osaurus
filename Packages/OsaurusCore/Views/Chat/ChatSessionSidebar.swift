@@ -2846,7 +2846,7 @@ private struct SessionRow: View {
             return Text("Orchestrator", bundle: .module)
         case .workspace:
             if isFromPairedPhone {
-                return Text("Osaurus Connect", bundle: .module)
+                return Text("Mobile", bundle: .module)
             }
             if let caller = session.workspace?.callerLabel {
                 return Text(verbatim: "Workspace · \(caller)")

@@ -493,6 +493,21 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
+    /// A client only knows the chat defaults, so the Orchestrator's own
+    /// configure-oriented ones go over the wire; other agents keep nil.
+    @Test func clientQuickActions_sendsTheOrchestratorsDefaults() {
+        let orchestrator = HTTPHandler.clientQuickActions(for: .default)
+        #expect(orchestrator == AgentQuickAction.defaultConfigurationQuickActions)
+        #expect(orchestrator?.isEmpty == false)
+
+        let plain = Agent(id: UUID(), name: "Plain", description: "", isBuiltIn: false)
+        #expect(HTTPHandler.clientQuickActions(for: plain) == nil)
+
+        var hidden = Agent.default
+        hidden.chatQuickActions = []
+        #expect(HTTPHandler.clientQuickActions(for: hidden)?.isEmpty == true)
+    }
+
     // MARK: - Test Server Bootstrap
 
     private struct TestServer {

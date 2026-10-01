@@ -341,10 +341,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         context.fireUserInboundEventTriggered(event)
     }
 
+    /// `outlivesConnection`: a phone run (§6.4) that the channel closing
+    /// must not cancel. It is not tracked with the connection's tasks and is
+    /// stopped through its `DetachedPhoneRun` instead.
+    @discardableResult
     private func runRequestTask(
         priority: TaskPriority? = nil,
+        outlivesConnection: Bool = false,
         operation: @escaping () async -> Void
-    ) {
+    ) -> Task<Void, Never> {
         let id = UUID()
         let requestTasks = requestTasks
         let operationBox = RequestTaskOperation(operation)
@@ -362,10 +367,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 await operationBox.run()
             }
         }
+        guard !outlivesConnection else { return task }
         channelCloseFuture.snapshot()?.whenComplete { _ in
             task.cancel()
         }
         requestTasks.insert(id: id, task: task)
+        return task
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -993,6 +1000,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .POST, path.hasPrefix("/sessions/"), path.hasSuffix("/truncate") {
                 handleSessionTruncateEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/runs/"), path.hasSuffix("/events") {
+                handleRunEventsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/runs/"), path.hasSuffix("/stop") {
+                handleRunStopEndpoint(
                     head: head,
                     context: context,
                     path: path,
@@ -4515,8 +4538,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let avatar: String?
         /// The agent's custom Action Bar (chat quick actions) so a connected
         /// peer can surface the agent's own prompt shortcuts in the empty
-        /// state. Omitted (nil) when the agent uses the built-in defaults, so
-        /// the client falls back to its neutral chat defaults.
+        /// state. Omitted (nil) when the agent uses the built-in chat
+        /// defaults, so the client falls back to its own copy of them. The
+        /// Orchestrator's configure-oriented defaults are sent in full
+        /// (`clientQuickActions(for:)`).
         let chat_quick_actions: [AgentQuickAction]?
         let default_model: String?
         /// Server-resolved model id, known before the first streamed chunk.
@@ -4545,6 +4570,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private struct AgentListResponse: Codable {
         let agents: [AgentListItem]
+    }
+
+    /// The Action Bar a client shows for `agent`: its own, else for the
+    /// Orchestrator the configure-oriented defaults its Mac chat shows (a
+    /// client only knows the chat defaults). nil = the chat defaults.
+    static func clientQuickActions(for agent: Agent) -> [AgentQuickAction]? {
+        if let own = agent.chatQuickActions { return own }
+        return agent.id == Agent.defaultId ? AgentQuickAction.defaultConfigurationQuickActions : nil
     }
 
     // MARK: - Pair Endpoint
@@ -4788,7 +4821,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// POST /pair/unpair — the paired phone unpairs itself (revokes its own
-    /// key and clears Settings → Osaurus Connect). Authenticated by the auth
+    /// key and clears Settings → Mobile). Authenticated by the auth
     /// gate; only the key minted for the current paired device is accepted.
     private func handlePairUnpairEndpoint(
         head: HTTPRequestHead,
@@ -6681,6 +6714,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let images: [ImageDTO]?
         let created_at: String?
         let completed_at: String?
+        /// The footer's "Worked for" span, to the millisecond: the keypress
+        /// that opened the run (a run's first assistant turn only) and the
+        /// moment the run ended (`completedAt ?? lastOutputAt`).
+        let requested_at: String?
+        let ended_at: String?
         let token_count: Int?
     }
 
@@ -6711,6 +6749,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// documented as thread-safe for formatting, and this one is never
     /// reconfigured after creation.
     nonisolated(unsafe) private static let sessionDateFormatter = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let sessionPreciseDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     /// GET /sessions[?agent_id=&limit=&archived=] — the Mac's chat history
     /// (docs/MOBILE_PROTOCOL.md §14). Owner-only: these are the user's chats.
@@ -7158,6 +7201,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             images: images.isEmpty ? nil : images,
             created_at: turn.createdAt.map(sessionDateFormatter.string(from:)),
             completed_at: turn.completedAt.map(sessionDateFormatter.string(from:)),
+            requested_at: turn.requestedAt.map(sessionPreciseDateFormatter.string(from:)),
+            ended_at: (turn.completedAt ?? turn.lastOutputAt).map(sessionPreciseDateFormatter.string(from:)),
             token_count: turn.generationTokenCount
         )
     }
@@ -8538,7 +8583,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     description: agent.description,
                     generated_description: agent.generatedDescription,
                     avatar: agent.avatar,
-                    chat_quick_actions: agent.chatQuickActions,
+                    chat_quick_actions: Self.clientQuickActions(for: agent),
                     default_model: agent.defaultModel,
                     effective_model: modelId,
                     supports_thinking: supportsThinking,
@@ -8698,7 +8743,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 description: agent.description,
                 generated_description: agent.generatedDescription,
                 avatar: agent.avatar,
-                chat_quick_actions: agent.chatQuickActions,
+                chat_quick_actions: Self.clientQuickActions(for: agent),
                 default_model: agent.defaultModel,
                 effective_model: effectiveModelId,
                 supports_thinking: supportsThinking,
@@ -8938,6 +8983,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // The owner's phone names its run so the reply outlives the connection
+        // (docs/MOBILE_PROTOCOL.md §6.4). The same id while that run is live is
+        // the phone sending the request again on its other route, having heard
+        // nothing back: it follows the running one rather than start a second.
+        let detachedRun: DetachedPhoneRun?
+        if remoteReviewer, let runId = req.osaurus_run_id, DetachedPhoneRuns.isValidId(runId) {
+            let (run, isNew) = DetachedPhoneRuns.shared.begin(id: runId)
+            guard isNew else {
+                MobileConnectLog.hostedRun("run \(runId) sent again while live; following it")
+                streamDetachedRun(
+                    run,
+                    after: 0,
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+                return
+            }
+            detachedRun = run
+        } else {
+            detachedRun = nil
+        }
+
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
                 context: context,
@@ -8949,14 +9019,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: requestBodyString,
                 startTime: startTime
             )
-        else { return }
+        else {
+            detachedRun?.finish()
+            return
+        }
 
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let writer = SSEResponseWriter()
+        writer.recorder = detachedRun
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // A detached run keeps writing once the phone is gone: its frames go
+        // to the recorder, and the writes themselves no-op on the dead channel.
+        let hop: (@escaping @Sendable () -> Void) -> Void =
+            detachedRun == nil
+            ? Self.makeHop(channel: context.channel, loop: loop)
+            : { block in loop.inEventLoop ? block() : loop.execute { block() } }
         let runChannel = context.channel
         let logSelf = self
         let logStartTime = startTime
@@ -8980,6 +9059,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // key such as the paired phone. Agent-scoped and workspace-minted
         // callers keep the sanitized trace above.
         let includeToolDetail = isLoopbackConnection(context) || stateRef.value.authedScopeIsMaster
+        // Read now: the connection's attribution is reset for its next request.
+        let callerKeyNonce = inboundConnectionInfo()?.accessKeyId
         let toolTimer = AgentToolTraceTimer()
         @Sendable func startedDetail(_ invocation: ServiceToolInvocation, callId: String) -> AgentToolTraceDetail? {
             guard includeToolDetail else { return nil }
@@ -9038,9 +9119,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // stream termination handler then cancels its exact ModelRuntime
         // wrapper. Never cancel by model name here: concurrent chat/API work
         // may legitimately share the same resident model.
+        // A detached run is only stopped on request (`onStop` below).
         let disconnected = SendableBool(false)
-        context.channel.closeFuture.whenComplete { _ in
-            disconnected.value = true
+        if detachedRun == nil {
+            context.channel.closeFuture.whenComplete { _ in
+                disconnected.value = true
+            }
         }
         // Billing dedupe base for Router-bound loop steps: header-supplied or
         // synthesized. Each loop iteration derives a per-step key from it.
@@ -9056,9 +9140,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             channel: context.channel,
             loop: loop,
             ctx: ctx,
-            disconnected: disconnected
+            disconnected: detachedRun == nil ? disconnected : nil
         )
-        runRequestTask(priority: .userInitiated) {
+        let runTask = runRequestTask(priority: .userInitiated, outlivesConnection: detachedRun != nil) {
+            // However the run ends, a phone following it hears the end.
+            defer { detachedRun?.finish() }
             defer { keepaliveTask.cancel() }
             defer { admissionToken.release() }
             // HTTP inference bypasses the in-app "generating" dot; drive it for
@@ -9279,6 +9365,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let systemCount = messages.prefix(while: { $0.role == "system" }).count
                 messages.insert(contentsOf: history, at: systemCount)
                 persistFrom.value = systemCount + history.count
+                // The chat to bring forward when the user is back at the Mac.
+                await MainActor.run {
+                    PhoneChatHandoff.shared.notePhoneRun(sessionId: continuedSessionId, keyNonce: callerKeyNonce)
+                }
             }
             // Append this run's turns to the continued chat when the request
             // ends, however it ends (finished, errored, client gone).
@@ -9293,6 +9383,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 appended,
                                 to: continuedSessionId,
                                 model: runModel
+                            )
+                            PhoneChatHandoff.shared.notePhoneRun(
+                                sessionId: continuedSessionId,
+                                keyNonce: callerKeyNonce
                             )
                         }
                     }
@@ -10317,6 +10411,181 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls
             )
         }
+        // Stopped from the phone (§6.4): as if the client had hung up.
+        detachedRun?.onStop {
+            disconnected.value = true
+            runTask.cancel()
+        }
+    }
+
+    // MARK: - Phone runs that outlive their connection (§6.4)
+
+    /// GET /runs/{id}/events?after=N — rejoin a phone run: the frames after
+    /// the first N, then the rest live. Owner-only.
+    private func handleRunEventsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[2] == "events",
+            let run = DetachedPhoneRuns.shared.run(id: String(components[1]))
+        else {
+            sendRunJSON(
+                .notFound,
+                #"{"error":"run_not_found"}"#,
+                head: head,
+                context: context,
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let after = Self.queryItems(from: head.uri)["after"].flatMap { Int($0) } ?? 0
+        streamDetachedRun(
+            run,
+            after: after,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
+    }
+
+    /// POST /runs/{id}/stop — the phone's Stop, now that its connection
+    /// closing no longer stops the run. Owner-only.
+    private func handleRunStopEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[2] == "stop",
+            let run = DetachedPhoneRuns.shared.run(id: String(components[1]))
+        else {
+            sendRunJSON(
+                .notFound,
+                #"{"error":"run_not_found"}"#,
+                head: head,
+                context: context,
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let wasRunning = run.stop()
+        MobileConnectLog.hostedRun("run \(run.id) stop from the phone (was running=\(wasRunning))")
+        sendRunJSON(
+            .ok,
+            wasRunning ? #"{"ok":true}"# : #"{"ok":true,"finished":true}"#,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
+    }
+
+    /// Streams a phone run's frames after the first `after`, then follows it
+    /// live to its end. The run carries on if this connection drops too.
+    private func streamDetachedRun(
+        _ run: DetachedPhoneRun,
+        after: Int,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let channel = context.channel
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let writer = SSEResponseWriter()
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        // Deliveries can arrive on the run's own loop; each hops here, in order.
+        let follower = DetachedPhoneRun.Follower(
+            frames: { frames in
+                loop.execute {
+                    guard channel.isActive else { return }
+                    var buffer = channel.allocator.buffer(capacity: frames.reduce(0) { $0 + $1.utf8.count })
+                    for frame in frames { buffer.writeString(frame) }
+                    SSEResponseWriter.writeBackpressureAware(.body(.byteBuffer(buffer)), context: ctx.value)
+                }
+            },
+            end: {
+                loop.execute {
+                    guard channel.isActive else { return }
+                    writerBound.value.writeEnd(ctx.value)
+                }
+            }
+        )
+        // Nothing is delivered for `.gone`, and anything delivered now is
+        // queued behind this call, so the head below still goes out first.
+        guard case .following(let token) = run.follow(after: after, follower) else {
+            sendRunJSON(
+                .gone,
+                #"{"error":"run_gone","message":"This run can no longer be replayed."}"#,
+                head: head,
+                context: context,
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        MobileConnectLog.hostedRun("run \(run.id) followed from frame \(after) of \(run.frameCount)")
+        writer.writeHeaders(context, extraHeaders: stateRef.value.corsHeaders)
+        let keepalive = Self.startSSEKeepalive(writer: writerBound, channel: channel, loop: loop, ctx: ctx)
+        channel.closeFuture.whenComplete { _ in
+            keepalive.cancel()
+            run.unfollow(token)
+        }
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseStatus: 200,
+            startTime: startTime
+        )
+    }
+
+    private func sendRunJSON(
+        _ status: HTTPResponseStatus,
+        _ body: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
     }
 
     // MARK: - Dispatch & Task Endpoints

@@ -10,20 +10,42 @@ import SwiftUI
 
 // MARK: - Voice Tab Enum
 
+/// Voice sub-tabs. Raw values are stable deep-link ids (`voiceSubTabRequest`,
+/// settings-search `subTab`) and are deliberately not renamed when the
+/// visible title changes; use `resolved(from:)` to accept older spellings.
 enum VoiceTab: String, CaseIterable, AnimatedTabItem {
     case setup = "Setup"
+    /// Microphone button inside the chat composer. Raw value predates the
+    /// "Chat Voice" title.
     case speechToText = "Speech To Text"
+    /// System-wide Transcription Mode plus the shared stop/cleanup behaviour.
+    case transcription = "Transcription"
     case textToSpeech = "Text To Speech"
+    /// Wake-word agent activation. Raw value predates the "Wake Word" title.
     case vadMode = "VAD Mode"
     case models = "Models"
 
     var title: String {
         switch self {
         case .setup: return L("Setup")
-        case .speechToText: return L("Speech To Text")
+        case .speechToText: return L("Chat Voice")
+        case .transcription: return L("Transcription")
         case .textToSpeech: return L("Text To Speech")
-        case .vadMode: return L("VAD Mode")
+        case .vadMode: return L("Wake Word")
         case .models: return L("Models")
+        }
+    }
+
+    /// Resolves a deep-link raw value, accepting the visible titles and the
+    /// legacy names so older settings links and guide paths keep working.
+    static func resolved(from rawValue: String) -> VoiceTab? {
+        if let tab = VoiceTab(rawValue: rawValue) { return tab }
+        switch rawValue.lowercased() {
+        case "chat voice", "chat", "speech to text", "stt": return .speechToText
+        case "transcription mode", "dictation": return .transcription
+        case "wake word", "vad", "vad mode": return .vadMode
+        case "tts", "text to speech": return .textToSpeech
+        default: return nil
         }
     }
 }
@@ -69,7 +91,9 @@ struct VoiceView: View {
                 case .setup:
                     VoiceSetupTab(onComplete: { selectedTab = .speechToText })
                 case .speechToText:
-                    TranscriptionModeSettingsTab()
+                    ChatVoiceSettingsTab()
+                case .transcription:
+                    TranscriptionSettingsTab()
                 case .vadMode:
                     VADModeSettingsTab()
                 case .textToSpeech:
@@ -86,7 +110,7 @@ struct VoiceView: View {
         .onAppear {
             // Honour an explicit cross-view request (e.g. from the chat speaker button).
             if let requested = managementState.voiceSubTabRequest,
-                let tab = VoiceTab(rawValue: requested)
+                let tab = VoiceTab.resolved(from: requested)
             {
                 selectedTab = tab
                 managementState.voiceSubTabRequest = nil
@@ -100,7 +124,7 @@ struct VoiceView: View {
             }
         }
         .onChange(of: managementState.voiceSubTabRequest) { _, newValue in
-            guard let requested = newValue, let tab = VoiceTab(rawValue: requested) else { return }
+            guard let requested = newValue, let tab = VoiceTab.resolved(from: requested) else { return }
             selectedTab = tab
             managementState.voiceSubTabRequest = nil
         }
@@ -246,6 +270,7 @@ private struct VoiceModelsTab: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity, alignment: .top)
+            .settingsLandingAnchor("voice.models")
         }
         .onAppear { refreshModels() }
         .onReceive(modelManager.objectWillChange) { _ in

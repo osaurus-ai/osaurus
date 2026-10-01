@@ -59,6 +59,16 @@ struct SettingsSearchSelfFindProbe {
     @Test("controls are findable by the label they display")
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
+            ("Border Color", "themes.borders.color"),
+            ("Border Width", "themes.borders.width"),
+            ("Border Opacity", "themes.borders.opacity"),
+            ("model picker border", "themes.borders.color"),
+            ("Credits border", "themes.borders.color"),
+            ("menu border width", "themes.borders.width"),
+            ("dropdown border opacity", "themes.borders.opacity"),
+            ("Small body", "themes.typography.smallBody"),
+            ("compact controls", "themes.typography.smallBody"),
+            ("model picker", "themes.typography.smallBody"),
             ("Concurrent Sessions", "settings.server.concurrentSessions"),
             ("Prompt Prefill Chunk Size", "settings.server.prefillChunkSize"),
             ("Automatically Check Model Updates", "models.automaticUpdates"),
@@ -101,10 +111,11 @@ struct SettingsSearchSelfFindProbe {
             // The control that makes every tool always allowed. It had no
             // entry at all, and "tool calls" matched Max Tool Attempts —
             // a wrong-destination hit, which is worse than no hit.
-            ("auto allow", "settings.chat.autoAllowAllTools"),
-            ("allow all tools", "settings.chat.autoAllowAllTools"),
-            ("always allow", "settings.chat.autoAllowAllTools"),
-            ("approve tools", "settings.chat.autoAllowAllTools"),
+            ("auto allow", "tools.autoAllowAll"),
+            ("allow all tools", "tools.autoAllowAll"),
+            ("always allow", "tools.autoAllowAll"),
+            ("approve tools", "tools.autoAllowAll"),
+            ("Auto-Allow All Tool Calls", "tools.autoAllowAll"),
             ("smooth streaming", "settings.chat.smoothStreaming"),
             ("clipboard monitoring", "settings.chat.clipboard"),
             ("keep mac awake", "settings.chat.keepAwakeForAgentRuns"),
@@ -115,8 +126,62 @@ struct SettingsSearchSelfFindProbe {
             ("reach from anywhere", "settings.connect.reachAnywhere"),
             ("group thinking", "settings.chat.activityRollup"),
             ("hide dock icon", "settings.general.dock"),
-            ("max visible toasts", "settings.notifications.maxVisible"),
+            ("Show Notifications", "settings.notifications.toasts"),
+            ("Max Concurrent Background Tasks", "settings.notifications.maxConcurrent"),
             ("max concurrent tasks", "settings.notifications.maxConcurrent"),
+            // General: the one external-models switch + Advanced subsections.
+            ("Use models already on this Mac", "storage.externalModels"),
+            ("lm studio", "storage.externalModels"),
+            ("Models Directory", "storage.location"),
+            ("Encrypt Local Data at Rest", "storage.encryption"),
+            ("Factory Reset", "settings.general.reset"),
+            // Command Line Tool moved to Server → Overview.
+            ("Command Line Tool", "server.cli"),
+            ("install cli", "server.cli"),
+            // Conversation (formerly Chat).
+            ("Automatically Name Chats", "settings.chat.autoGenerateTitles"),
+            ("Suggest Follow-Up Questions", "settings.chat.generateFollowUps"),
+            ("Check Spelling While Typing", "settings.chat.spellCheck"),
+            ("Expand Thinking While Streaming", "settings.chat.thinkingDisplay"),
+            ("Compaction Model", "settings.chat.compactionModel"),
+            ("Top P Override", "settings.chat.topP"),
+            ("Max Tool Attempts", "settings.chat.toolAttempts"),
+            // Voice: Setup / Chat Voice / Transcription / Text To Speech / Wake Word.
+            ("Speech Model", "voice.stt.model"),
+            ("Voice Sensitivity", "voice.setup.sensitivity"),
+            ("Enable Voice Input", "voice.chat.enable"),
+            ("Enable Transcription Mode", "voice.transcription.enable"),
+            ("Activation Hotkey", "voice.stt.hotkey"),
+            ("Clean Up Transcription", "voice.stt.cleanup"),
+            ("Stop Mode", "voice.stt.stopMode"),
+            ("Pause Detection", "voice.stt.pause"),
+            ("Confirmation Delay", "voice.stt.confirmation"),
+            ("Silence Timeout", "voice.stt.silence"),
+            ("Wake Word", "voice.stt.vad"),
+            ("Engine", "voice.tts.engine"),
+            // Tools & MCP: Services (default) / All Tools / Plugins.
+            ("Services", "tools.services"),
+            ("Add Service", "tools.addService"),
+            ("Add Connection", "tools.addService"),
+            ("Directory", "tools.directory"),
+            ("All Tools", "tools.allTools"),
+            ("folder permissions", "tools.allTools"),
+            // Privacy: Filter / Rules / Models.
+            ("Scrub PII before sending to cloud providers", "privacy.filter.enabled"),
+            ("AI detection (on-device model)", "privacy.filter.aiDetection"),
+            ("Skip Code Blocks", "privacy.filter.skipCode"),
+            ("Always Approve by Default", "privacy.filter.alwaysApprove"),
+            ("Per-Provider", "privacy.filter.providers"),
+            ("Forget Redactions in Every Conversation", "privacy.filter.forget"),
+            ("Require Review for Background Requests", "privacy.filter.nonInteractive"),
+            ("Detection Models", "privacy.models"),
+            // Images: Defaults / Image Models.
+            ("Default Models", "imageGeneration.models"),
+            ("Image jobs", "imageGeneration.permission"),
+            ("Video jobs (cloud)", "imageGeneration.videoPermission"),
+            ("Video (cloud)", "imageGeneration.video"),
+            ("Load policy", "imageGeneration.loadPolicy"),
+            ("Image model load policy", "imageGeneration.loadPolicy"),
             ("enable memory", "memory.settings.enabled"),
             ("consolidation interval", "memory.settings.consolidation"),
             ("share my models", "server.peerInference"),
@@ -158,6 +223,8 @@ struct SettingsSearchSelfFindProbe {
             ("allowed agents", "settings.orchestrator.delegation.mainChat"),
             ("shared workspace agents", "settings.orchestrator.delegation.mainChat"),
             ("create starter agents", "settings.orchestrator.delegation.starterAgents"),
+            ("Add all agents", "settings.orchestrator.delegation.addAllAgents"),
+            ("spawn pool empty", "settings.orchestrator.delegation.addAllAgents"),
             ("permission for shared", "settings.orchestrator.delegation.permission"),
             ("max output tokens per subagent", "settings.orchestrator.delegation.limits"),
             ("max turns per subagent", "settings.orchestrator.delegation.limits"),
@@ -201,6 +268,35 @@ struct SettingsSearchSelfFindProbe {
         .map { "\"\($0.query)\" -> \($0.entryID)" }
 
         #expect(missed.isEmpty, "control labels that find nothing: \(missed)")
+    }
+
+    @Test("small body search targets theme typography")
+    func smallBodySearchTargetsTypographyControl() throws {
+        let entry = try #require(SettingsSearchIndex.search("Small body").first)
+        #expect(entry.id == "themes.typography.smallBody")
+        #expect(entry.tab == .themes)
+        #expect(entry.section == "Text & Fonts")
+        #expect(entry.title == "Small body")
+        #expect(entry.isSettingsUIOnly)
+        #expect(!SettingsSearchIndex.tabLevelEntryIDs.contains(entry.id))
+    }
+
+    @Test("menu border searches land on the default border controls")
+    func menuBorderSearchesTargetDefaultControls() throws {
+        let controls = [
+            (query: "model picker border", id: "themes.borders.color", title: "Border Color"),
+            (query: "Credits border", id: "themes.borders.color", title: "Border Color"),
+            (query: "model picker border width", id: "themes.borders.width", title: "Border Width"),
+            (query: "Credits border opacity", id: "themes.borders.opacity", title: "Border Opacity"),
+        ]
+        for control in controls {
+            let entry = try #require(SettingsSearchIndex.search(control.query).first)
+            #expect(entry.id == control.id)
+            #expect(entry.title == control.title)
+            #expect(entry.tab == .themes)
+            #expect(entry.section == "Borders & Effects")
+            #expect(!SettingsSearchIndex.tabLevelEntryIDs.contains(entry.id))
+        }
     }
 
     /// Guards the probe itself: an index that shrank to nothing, or a matcher

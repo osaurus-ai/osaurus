@@ -297,7 +297,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     - One idea per slide; start with a title slide; keep bullets short
 
                     ## Missing tools
-                    These tools come from plugins. If they are unavailable, use `capabilities_discover` to check, and tell the user to install osaurus.xlsx or osaurus.pptx from Settings… (⌘,) → Tools → Native Plugins.
+                    These tools come from plugins. If they are unavailable, use `capabilities_discover` to check, and tell the user to install osaurus.xlsx or osaurus.pptx from Settings… (⌘,) → Tools & MCP → Plugins.
 
                     ## Delivering files
                     Always surface the finished file with `share_artifact` — it is the only way a file appears in chat as a downloadable card. A file written to disk without `share_artifact` is invisible to the user.

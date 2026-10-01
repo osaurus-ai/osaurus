@@ -5174,7 +5174,8 @@ public actor ModelRuntime {
             weightsFingerprint: weightsFingerprint,
             cacheTopology: cacheTopology,
             deepseekV4ActivationQAT:
-                resolvedSettings.effectivePerformance.deepseekV4ActivationQAT
+                resolvedSettings.effectivePerformance.deepseekV4ActivationQAT,
+            tiedHeadCodec: resolvedSettings.effectivePerformance.tiedHeadCodec
         )
 
         // Delegate the full coordinator config to vmlx's spec'd builder
@@ -5404,12 +5405,31 @@ public actor ModelRuntime {
         return String(format: "%016llx", hash)
     }
 
+    /// Match the loader's optional tied-head policy, including explicit bench
+    /// overrides. Conservatively separate codecs even for bundles whose shipped
+    /// head is already quantized and therefore ignores the optional conversion.
+    nonisolated static func tiedHeadCacheIdentity(
+        codec: VMLXTiedHeadCodec,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        let quantization = codec.quantization
+        let bits = environment["VMLX_QUANT_TIED_HEAD_BITS"].flatMap(Int.init)
+            ?? quantization?.bits
+        guard let bits, bits > 0 else {
+            return "tied-head=as-shipped;activation=source-dtype-v1"
+        }
+        let groupSize = environment["VMLX_QUANT_TIED_HEAD_GS"].flatMap(Int.init)
+            ?? quantization?.groupSize ?? 64
+        return "tied-head=q\(bits)-gs\(groupSize);activation=source-dtype-v1"
+    }
+
     nonisolated static func cacheCoordinatorModelKey(
         modelName: String,
         kvModeTag: String,
         weightsFingerprint: String,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
-        deepseekV4ActivationQAT: Bool = false
+        deepseekV4ActivationQAT: Bool = false,
+        tiedHeadCodec: VMLXTiedHeadCodec = .fp16Passthrough
     ) -> String {
         var tags = [
             modelName,
@@ -5431,6 +5451,10 @@ public actor ModelRuntime {
             // can replay a prior tool turn after reasoning-mode changes, so
             // keep every previous record outside this cache namespace.
             "warmup=recurrent-safe-seed-v2",
+            // Optional tied embedding quantization changes both input embeddings
+            // and stored attention state. The source-dtype contract also excludes
+            // entries produced before the loader stopped forcing BF16 outputs.
+            tiedHeadCacheIdentity(codec: tiedHeadCodec),
         ]
 
         if let cacheTopology {

@@ -59,7 +59,7 @@ struct ManagerHeader: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
                         Text(LocalizedStringKey(title), bundle: .module)
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .font(.system(size: 22, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
                         if let count = count {
@@ -77,7 +77,7 @@ struct ManagerHeader: View {
 
                     if let subtitle = subtitle, !subtitle.isEmpty {
                         Text(LocalizedStringKey(subtitle), bundle: .module)
-                            .font(.system(size: 14))
+                            .font(.system(size: 13))
                             .foregroundColor(theme.secondaryText)
                     }
                 }
@@ -88,7 +88,8 @@ struct ManagerHeader: View {
         .padding(.horizontal, 24)
         .padding(.top, 24)
         .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
+        // Same surface as the content below: no header band.
+        .background(theme.primaryBackground)
     }
 }
 
@@ -121,7 +122,7 @@ struct ManagerHeaderWithActions<Actions: View>: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
                         Text(LocalizedStringKey(title), bundle: .module)
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .font(.system(size: 22, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
                         if let count = count {
@@ -139,7 +140,7 @@ struct ManagerHeaderWithActions<Actions: View>: View {
 
                     if let subtitle = subtitle, !subtitle.isEmpty {
                         Text(LocalizedStringKey(subtitle), bundle: .module)
-                            .font(.system(size: 14))
+                            .font(.system(size: 13))
                             .foregroundColor(theme.secondaryText)
                     }
                 }
@@ -154,7 +155,8 @@ struct ManagerHeaderWithActions<Actions: View>: View {
         .padding(.horizontal, 24)
         .padding(.top, 24)
         .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
+        // Same surface as the content below: no header band.
+        .background(theme.primaryBackground)
     }
 }
 
@@ -190,7 +192,7 @@ struct ManagerHeaderWithTabs<Actions: View, TabsRow: View>: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
                         Text(LocalizedStringKey(title), bundle: .module)
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .font(.system(size: 22, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
                         if let count = count {
@@ -208,7 +210,7 @@ struct ManagerHeaderWithTabs<Actions: View, TabsRow: View>: View {
 
                     if let subtitle = subtitle, !subtitle.isEmpty {
                         Text(LocalizedStringKey(subtitle), bundle: .module)
-                            .font(.system(size: 14))
+                            .font(.system(size: 13))
                             .foregroundColor(theme.secondaryText)
                     }
                 }
@@ -225,7 +227,8 @@ struct ManagerHeaderWithTabs<Actions: View, TabsRow: View>: View {
         .padding(.horizontal, 24)
         .padding(.top, 24)
         .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
+        // Same surface as the content below: no header band.
+        .background(theme.primaryBackground)
     }
 }
 

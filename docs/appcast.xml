@@ -3,6 +3,80 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.16</title>
+            <pubDate>Thu, 01 Oct 2026 06:00:58 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.16</sparkle:version>
+            <sparkle:shortVersionString>0.25.16</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.16/Osaurus-0.25.16.dmg" length="80538135" type="application/octet-stream" sparkle:edSignature="T8cgj5FhWtcLutuQGXn4fNllksiaUuotl4DM7l4Ud4ADou7aMYiITh1HCHbhpWIwBWbngC1BS6LVSzjGzyf1BQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Pin MLX 0.32.3 for the crash-fix release (#2956) by @jjang-ai
+- Redesign chat model picker, Cloud browser and Credits menu (#2947) by @losingmyego
+- Settings UX/IA cleanup: grouped-form kit, renamed tabs, Tools \& MCP Services rework (#2950) by @tpae
+
+## 🐛 Bug Fixes
+
+- Pin runtime crash containment and allocator synchronization fixes (#2953) by @jjang-ai
+- Reject invalid process strings before Foundation launch (#2954) by @jjang-ai
+- only show the model switch advisory when leaving a local model (#2952) by @RaajeevChandran
+- fix: reject chunk transfers after lane invalidation (#2949) by @jjang-ai
+- Surface preparation errors and pin validated logits runtime (#2938) by @jjang-ai
+
+## 🧰 Maintenance
+
+- improved model banner ux (#2955) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.15...0.25.16
+]]></description>
+        </item>
+        <item>
+            <title>0.25.15</title>
+            <pubDate>Tue, 29 Sep 2026 21:46:17 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.15</sparkle:version>
+            <sparkle:shortVersionString>0.25.15</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.15/Osaurus-0.25.15.dmg" length="80122255" type="application/octet-stream" sparkle:edSignature="xUnOwemIErfhw+3SHxOL8lL4YpgQy+rMzMBgLZ+4z6/xcDcQhYlTHhBMozv7NPYsF/rRCEbi8LQdoHqT8vp3Cw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Orchestrator audit remediation: truthful addendum, apply-first config, pool guard, default new-chat agent, compact spawn envelope (#2936) by @tpae
+- keep the phone's runs going when its connection drops and let it rejoin or stop them by run id (#2935) by @RaajeevChandran
+- Pin the synchronized ErrorBox runtime (#2934) by @jjang-ai
+- bring phone chats to the front on return to the mac and send the orchestrator's quick actions to the phone (#2930) by @RaajeevChandran
+- send the worked-for span on session turns for the phone (#2931) by @RaajeevChandran
+- Update gathered matmul runtime and fix tied-head cache identity (#2917) by @jjang-ai
+- Add prompt\_working\_folder: let the agent open the folder picker when a chat has no working folder (#2918) by @tpae
+- Bill the workspace pool by default for own shared agents; show pool chip on local tabs (#2915) by @tpae
+- Harden file-edit tools for document drafting (Raptor + grok-4.3 proof) (#2914) by @tpae
+- File change history, in-place document edits, and chat window IA (#2907) by @tpae
+
+## 🚀 Features
+
+- show total response time in the assistant stats footer (#2916) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Respect automatic update policy on model notifications (#2940) by @jjang-ai
+- Keep decimal settings editable until commit (#2939) by @jjang-ai
+- Drain Claude subprocess output after in-flight delivery (#2937) by @jjang-ai
+- Recognize weights in symlinked model bundle diagnostics (#2933) by @jjang-ai
+- Pin GLM and Naive JANGH runtime support (#2932) by @jjang-ai
+- align model updates and osaurus connect cards with the settings card style (#2913) by @RaajeevChandran
+- remember chat scroll position per tab (#2911) by @RaajeevChandran
+- cap chat minimap height and make the expanded list scrollable (#2912) by @RaajeevChandran
+- Keep the chat tab strip clear of the inspector rail (#2910) by @tpae
+- fix chat jumping up when a run finishes while scrolled up (#2909) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.14...0.25.15
+]]></description>
+        </item>
+        <item>
             <title>0.25.14</title>
             <pubDate>Sun, 27 Sep 2026 07:10:28 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

@@ -54,7 +54,7 @@ delegation:
 ```
 
 - `spawnable_workspace_agents` entries are resolved against the live workspace rosters: `Name@Workspace` (workspace display name or id, case-insensitive), a bare name when it is unique, a `0x…` address, or the durable `<workspace_id>:<address>` key. A name that matches more than one agent fails validation and lists the exact forms that disambiguate. Both `spawnable_*` lists replace the pool; `workspace_auto_join` and `permission_defaults` merge.
-- Removed keys — `spawnable_models`, `spawn_tool_access`, `budget_max_tool_calls`, `image_enabled`, `applescript_enabled` — are still decoded from old documents (with a hint) and never exported. Image and AppleScript are custom-agent capabilities; turns and time bound a worker.
+- Removed keys — `spawnable_models`, `spawn_tool_access`, `budget_max_tool_calls`, `image_enabled`, `video_enabled`, `applescript_enabled` — are still decoded from old documents (with a hint) and never exported. Image, Video, and AppleScript are custom-agent capabilities; turns and time bound a worker.
 
 ## Semantics
 

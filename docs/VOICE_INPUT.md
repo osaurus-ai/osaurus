@@ -9,8 +9,8 @@ Osaurus includes powerful voice input capabilities powered by [FluidAudio](https
 Voice features in Osaurus include:
 
 - **Voice Input in Chat** — Speak instead of type in the chat overlay
-- **VAD Mode** — Always-on listening with wake-word agent activation
-- **Transcription Mode** — Global hotkey to dictate into any focused text field
+- **Wake Word** (VAD mode) — Always-on listening with wake-word agent activation
+- **Transcription** — Global hotkey to dictate into any focused text field
 - **Parakeet TDT Models** — Multilingual (v3) and English-only (v2), each ~600 MB
 - **Microphone & System Audio** — Transcribe your voice or computer audio
 
@@ -26,8 +26,8 @@ For the reverse direction — having Osaurus read replies aloud — see the [Tex
 
 Voice setup is streamlined into a single screen:
 
-1. Open Management window (`⌘ Shift M`)
-2. Navigate to **Voice** tab
+1. Open Settings… (⌘,)
+2. Navigate to the **Voice** tab (it opens on **Setup**)
 3. Complete the requirements shown at the top:
    - **Microphone** — Click "Grant" to enable microphone access
    - **Parakeet Model** — Click "Download" to get the recommended model
@@ -88,6 +88,8 @@ Models are stored at: `~/Library/Application Support/FluidAudio/Models/`
 4. Click send or wait for auto-send (if enabled)
 
 ### Settings
+
+These live under Settings… (⌘,) → Voice → **Chat Voice**.
 
 | Setting                 | Description                                 | Default |
 | ----------------------- | ------------------------------------------- | ------- |
@@ -164,11 +166,11 @@ Transcribe audio from your computer (browser, apps, etc.):
 
 VAD Mode enables hands-free agent activation. Say a agent's name (or a custom wake phrase) to open chat with that agent.
 
-### Enabling VAD Mode
+### Enabling Wake Word
 
-1. Open Management window (`⌘ Shift M`) → **Voice**
-2. Scroll to "VAD Mode" section
-3. Toggle "Enable VAD Mode" on
+1. Open Settings… (⌘,) → **Voice**
+2. Open the **Wake Word** tab
+3. Toggle **Enable Wake Word** on
 4. Select which agents should respond to wake-words
 
 ### How It Works
@@ -209,7 +211,7 @@ VAD Mode enables hands-free agent activation. Say a agent's name (or a custom wa
 
 | Setting                    | Description                           | Default      |
 | -------------------------- | ------------------------------------- | ------------ |
-| **VAD Mode Enabled**       | Master toggle                         | Off          |
+| **Enable Wake Word**       | Master toggle (VAD mode)              | Off          |
 | **Enabled Agents**       | Which agents respond to wake-words  | None         |
 | **Custom Wake Phrase**     | Optional activation phrase            | Empty        |
 | **Wake-Word Sensitivity**  | Detection threshold                   | Medium       |
@@ -239,8 +241,8 @@ Transcription Mode allows you to dictate text directly into any application usin
 
 ### Enabling Transcription Mode
 
-1. Open Management window (`⌘ Shift M`) → **Voice**
-2. Navigate to the **Transcription** tab
+1. Open Settings… (⌘,) → **Voice**
+2. Open the **Transcription** tab
 3. Grant **Accessibility permission** (required for keyboard simulation)
 4. Toggle "Enable Transcription Mode" on
 5. Configure your preferred hotkey
@@ -411,8 +413,8 @@ Parakeet TDT v2 is optimized exclusively for English.
 
 1. **Check VAD is enabled**
 
-   - Open Voice settings → VAD Mode section
-   - Verify toggle is on
+   - Open Settings… (⌘,) → Voice → **Wake Word**
+   - Verify **Enable Wake Word** is on
 
 2. **Verify agents are enabled for VAD**
 

@@ -49,6 +49,50 @@ public enum DefaultAgentSystemPromptBuilder {
         orchestratorRequiredToolNames.subtracting(exposed)
     }
 
+    /// The conditional part of the Orchestrator's tool surface. The addendum
+    /// is rendered FROM this so it never names a tool the request schema does
+    /// not carry: `spawn_agent` exists only while the spawn pool has a
+    /// runnable target, and `file_read` / `file_search` only while a working
+    /// folder (or sandbox workspace) is bound. Naming an absent tool is the
+    /// live `tool_not_found` loop on small local models, and the static
+    /// "read it with `file_read`" line was exactly that for every
+    /// folder-less Orchestrator chat. Both flags are session-constant between
+    /// pool/folder edits, so each variant is still a stable KV prefix.
+    public struct Exposure: Hashable, Sendable {
+        /// `spawn_agent` is in the request schema (pool non-empty and runnable).
+        public var spawnAvailable: Bool
+        /// `file_read` / `file_search` are in the request schema.
+        public var folderReadable: Bool
+
+        public init(spawnAvailable: Bool, folderReadable: Bool) {
+            self.spawnAvailable = spawnAvailable
+            self.folderReadable = folderReadable
+        }
+
+        /// Every conditional tool present — the historical (pre-variant)
+        /// addendum text. Default for callers that have not resolved a schema.
+        public static let full = Exposure(spawnAvailable: true, folderReadable: true)
+
+        /// Derive the exposure from a resolved request schema's tool names.
+        public static func from(toolNames: Set<String>) -> Exposure {
+            Exposure(
+                spawnAvailable: toolNames.contains("spawn_agent"),
+                folderReadable: toolNames.contains("file_read")
+            )
+        }
+
+        /// Tools this variant names although the request schema lacks them,
+        /// because the addendum teaches the same-turn path that STAGES them:
+        /// with an empty pool, an `osaurus_config` apply that creates an
+        /// agent adds `spawn_agent` to the schema before the model's next
+        /// step, and the text says "NOT in your tools until …" in the same
+        /// sentence. Every other name the addendum advertises must be in the
+        /// schema outright (`advertisedToolNames` ⊆ schema ∪ this set).
+        public var stagedToolNames: Set<String> {
+            spawnAvailable ? [] : ["spawn_agent"]
+        }
+    }
+
     /// Render (or return the cached) addendum. Memoized against
     /// `ConfigurationDomainRegistry.shared.generation` so the prompt
     /// is byte-stable across turns when nothing has changed and
@@ -56,9 +100,14 @@ public enum DefaultAgentSystemPromptBuilder {
     ///
     /// `compact` renders the leaner variant for small local models
     /// (`prefersCompactPrompt`) — same tool surface, trimmed prose.
-    /// Each compact variant memoizes on its own cache slot so
-    /// switching model size mid-app doesn't thrash the other.
-    public static func render(compact: Bool = false, toolsAvailable: Bool = true) -> String {
+    /// Each (compact, exposure) variant memoizes on its own cache slot so
+    /// switching model size or pool/folder state mid-app doesn't thrash
+    /// the others.
+    public static func render(
+        compact: Bool = false,
+        toolsAvailable: Bool = true,
+        exposure: Exposure = .full
+    ) -> String {
         // A disabled tool surface cannot satisfy the orchestrator's mandatory
         // help/configuration/delegation workflow. Keep its identity truthful
         // instead of instructing the model to call unavailable functions.
@@ -70,13 +119,14 @@ public enum DefaultAgentSystemPromptBuilder {
                 """
         }
         let generation = ConfigurationDomainRegistry.shared.generation
-        let key = "\(compact)"
+        let key = "\(compact)|\(exposure.spawnAvailable)|\(exposure.folderReadable)"
         if let slot = cache[key], slot.generation == generation {
             return slot.addendum
         }
         let rendered = build(
             from: ConfigurationDomainRegistry.shared.domains,
-            compact: compact
+            compact: compact,
+            exposure: exposure
         )
         cache[key] = CacheSlot(generation: generation, addendum: rendered)
         return rendered
@@ -88,9 +138,10 @@ public enum DefaultAgentSystemPromptBuilder {
     /// tests reach this through `@testable import OsaurusCore`.
     static func _renderForTests(
         domains: [ConfigurationDomain],
-        compact: Bool = false
+        compact: Bool = false,
+        exposure: Exposure = .full
     ) -> String {
-        build(from: domains, compact: compact)
+        build(from: domains, compact: compact, exposure: exposure)
     }
 
     /// Test-only: forget the memoized value so the next `render()`
@@ -101,7 +152,8 @@ public enum DefaultAgentSystemPromptBuilder {
 
     private static func build(
         from domains: [ConfigurationDomain],
-        compact: Bool
+        compact: Bool,
+        exposure: Exposure
     ) -> String {
         // Write tools are listed straight from the registry (sorted for a
         // byte-stable, KV-cacheable prefix). Each tool's own schema carries its
@@ -138,8 +190,11 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "you can get anything done. Osaurus questions and configuration you "
                     + "handle directly; quick knowledge questions you answer directly in a "
                     + "few sentences; all real work (coding, web tasks, files, writing, "
-                    + "research) you run through a specialist agent with `spawn_agent` and "
-                    + "report the result — never call a request out of scope or beyond you. "
+                    + "research) you run through a specialist agent "
+                    + (exposure.spawnAvailable
+                        ? "with `spawn_agent` "
+                        : "(see Delegation below) ")
+                    + "and report the result — never call a request out of scope or beyond you. "
                     + "Look things up any time, directly (no loading "
                     + "step): `osaurus_inspect` ({action: 'status' | 'list' | 'describe'}) "
                     + "for the current configuration; `osaurus_help` ({action: 'topics' | "
@@ -149,7 +204,7 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "read the matching topic, `find` a setting by name, or list `topics` "
                     + "when no single topic fits (a broad \"what can Osaurus do?\" tour). "
                     + "Where a setting lives is `find` — quote the breadcrumb; never "
-                    + "`spawn_agent` or Computer Use to hunt Osaurus Settings. Web tools "
+                    + "delegate or use Computer Use to hunt Osaurus Settings. Web tools "
                     + "(`web_search`, `search_and_extract`) are for the outside world only "
                     + "— never for Osaurus features, configuration, models, or plugins."
             )
@@ -231,19 +286,18 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "documents, research) runs under a specialist agent — never produce "
                     + "that work in chat yourself, even when you know how, and never append "
                     + "it as an example, snippet, or courtesy (a delegated reply contains NO "
-                    + "code block of your own: writing the code IS doing the work). A fitting "
-                    + "agent exists → call `spawn_agent` with the complete task. None exists → "
-                    + "create one (apply an `agents:` entry with `osaurus_config`; it inherits "
-                    + "your model unless you set one), then call `spawn_agent` in the SAME "
-                    + "turn — a newly created agent is spawnable right away, and creating one "
-                    + "adds `spawn_agent` to your tools in the same turn. Several independent "
+                    + "code block of your own: writing the code IS doing the work). "
+                    + Self.compactSpawnPathLine(exposure: exposure)
+                    + "Several independent "
                     + "tasks → several `spawn_agent` calls in ONE message (one approval, they "
                     + "run together); dependent steps → one at a time. To follow up with the "
                     + "same worker, call `spawn_agent` with `continue` = its `session_id`; a "
                     + "result starting `NEEDS INPUT:` is a question for you — answer it that "
-                    + "way (ask the user only if you truly cannot). Workers write deliverables "
-                    + "into the working folder and name the paths; read them with `file_read` "
-                    + "when you need the content. Teammates' shared agents: `osaurus_inspect` "
+                    + "way (ask the user only if you truly cannot). `background: true` returns "
+                    + "at once with the worker's `session_id`; its summary arrives later as a "
+                    + "follow-up message — use it only when the user asked not to wait. "
+                    + Self.compactDeliverablesLine(exposure: exposure)
+                    + "Teammates' shared agents: `osaurus_inspect` "
                     + "scope `shared_agents` lists who you can delegate to and whether they are "
                     + "online; spawn them as `Name@Workspace`; they run on the teammate's Mac "
                     + "and cannot see your folder, so put everything in `input`. Report the "
@@ -259,7 +313,7 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "A question about Osaurus or its features starts with an `osaurus_help` "
                     + "read or find — never answer one from memory, and never spawn a "
                     + "specialist or Computer Use agent to click through Settings. "
-                    + Self.appleAppsDelegationLine
+                    + Self.appleAppsDelegationLine(exposure: exposure)
             )
             lines.append("")
             return lines.joined(separator: "\n")
@@ -354,14 +408,7 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "your own chat output — not even as an example or courtesy (a delegated "
                 + "reply contains no code block of your own)."
         )
-        lines.append(
-            "- When a fitting agent exists, call `spawn_agent` with the complete, standalone "
-                + "task. When none exists, create one (apply an `agents:` entry with "
-                + "`osaurus_config`; it inherits your model unless you set one) and call "
-                + "`spawn_agent` in the SAME turn — a newly created agent is spawnable "
-                + "immediately, and creating one adds `spawn_agent` to your tools in the same "
-                + "turn."
-        )
+        lines.append("- " + Self.fullSpawnPathLine(exposure: exposure))
         lines.append(
             "- Several independent tasks → several `spawn_agent` calls in ONE message; they "
                 + "run together under one approval and shared limits. Dependent steps run one "
@@ -374,10 +421,11 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "truly cannot answer)."
         )
         lines.append(
-            "- Deliverables live in the working folder: workers write files there and name "
-                + "the paths in their summary. Read them with `file_read` / `file_search` when "
-                + "you need the content; never ask a worker to paste a whole file back."
+            "- `background: true` returns immediately with the worker's `session_id`; its "
+                + "summary arrives later as a follow-up message in this chat, and it does not "
+                + "count toward the wave. Use it only when the user asked not to wait."
         )
+        lines.append("- " + Self.fullDeliverablesLine(exposure: exposure))
         lines.append(
             "- Teammates' shared agents (workspaces): `osaurus_inspect` {list, scope: "
                 + "'shared_agents'} shows who you can delegate to — owner, workspace, presence "
@@ -399,9 +447,89 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "`osaurus_help` (read or find). Never spawn an agent or Computer Use to click "
                 + "through Settings."
         )
-        lines.append("- " + Self.appleAppsDelegationLine)
+        lines.append("- " + Self.appleAppsDelegationLine(exposure: exposure))
         lines.append("")
         return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Exposure-dependent lines
+
+    /// How the model reaches a worker, compact variant. With a runnable pool
+    /// the tool is already in the schema; with an empty pool it is NOT, and
+    /// the only path is create → (apply result stages `spawn_agent`) → spawn
+    /// in the same turn. Spelling out "not in your tools yet" stops a small
+    /// model from calling a tool the request refuses.
+    static func compactSpawnPathLine(exposure: Exposure) -> String {
+        if exposure.spawnAvailable {
+            return
+                "A fitting agent exists → call `spawn_agent` with the complete task. None fits → "
+                + "create one (apply an `agents:` entry with `osaurus_config`; it inherits "
+                + "your model unless you set one), then call `spawn_agent` in the SAME "
+                + "turn — a newly created agent is spawnable right away. "
+        }
+        return
+            "You have no agents yet, so `spawn_agent` is NOT in your tools until you create "
+            + "one: apply an `agents:` entry with `osaurus_config` (it inherits your model "
+            + "unless you set one); the apply result confirms the agent is spawnable and adds "
+            + "`spawn_agent` to your tools in the same turn — then call `spawn_agent` with the "
+            + "complete task in that SAME turn. Never call `spawn_agent` before that apply. "
+    }
+
+    /// Full-variant counterpart of `compactSpawnPathLine`.
+    static func fullSpawnPathLine(exposure: Exposure) -> String {
+        if exposure.spawnAvailable {
+            return
+                "When a fitting agent exists, call `spawn_agent` with the complete, standalone "
+                + "task. When none fits, create one (apply an `agents:` entry with "
+                + "`osaurus_config`; it inherits your model unless you set one) and call "
+                + "`spawn_agent` in the SAME turn — a newly created agent is spawnable "
+                + "immediately."
+        }
+        return
+            "You have no agents yet, so `spawn_agent` is not in your tools until you create "
+            + "one: apply an `agents:` entry with `osaurus_config` (it inherits your model "
+            + "unless you set one). The apply result confirms the agent is spawnable and adds "
+            + "`spawn_agent` to your tools in the same turn; then call `spawn_agent` with the "
+            + "complete, standalone task in that SAME turn. Never call `spawn_agent` before "
+            + "that apply."
+    }
+
+    /// Where deliverables go and how the Orchestrator reads them. `file_read`
+    /// / `file_search` exist only while a working folder is bound; without
+    /// one neither the Orchestrator nor a freshly created worker (which
+    /// inherits the missing folder) can read the user's files, so a file ask
+    /// is answered honestly with the Folder chip path instead of a futile
+    /// create-and-spawn, and non-file work returns in the worker's summary.
+    static func compactDeliverablesLine(exposure: Exposure) -> String {
+        if exposure.folderReadable {
+            return
+                "Workers write deliverables into the working folder; the result's "
+                + "`artifact_paths` lists them — read one with `file_read` / `file_search` when "
+                + "you need the content. "
+        }
+        return
+            "No working folder is set on this chat: neither you nor a worker you create can "
+            + "read the user's files. If the ask is about files on disk, say so and tell them "
+            + "to pick a folder with the Folder chip (Settings → Orchestrator → Working Folder) "
+            + "first instead of delegating; otherwise workers return results in their summary. "
+    }
+
+    /// Full-variant counterpart of `compactDeliverablesLine`.
+    static func fullDeliverablesLine(exposure: Exposure) -> String {
+        if exposure.folderReadable {
+            return
+                "Deliverables live in the working folder: workers write files there and the "
+                + "result's `artifact_paths` lists what they wrote. Read one with `file_read` / "
+                + "`file_search` when you need the content; never ask a worker to paste a whole "
+                + "file back."
+        }
+        return
+            "No working folder is set on this chat: neither you nor a worker you create can "
+            + "read or keep the user's files (workers without a folder of their own inherit "
+            + "this one). If the ask is about files on disk, say so and tell the user to pick "
+            + "a folder with the Folder chip (Settings → Orchestrator → Working Folder) first "
+            + "— do not create or spawn a worker to read it. Otherwise workers return results "
+            + "in their summary."
     }
 
     /// Apple app access (Calendar, Mail, Messages, …) is a custom-agent
@@ -411,15 +539,42 @@ public enum DefaultAgentSystemPromptBuilder {
     /// both the routing (spawn an agent that has the app) and the enable
     /// path (`capabilities.apple_apps`, including at creation). Shared by
     /// the compact and full variants so they cannot drift.
-    static let appleAppsDelegationLine: String =
-        "Apple apps (Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps, "
-        + "Music, Shortcuts) are built-in tools that run on a CUSTOM agent, never on you: "
-        + "to enable or disable them apply `agents: [{name: X, capabilities: {apple_apps: "
-        + "[calendar, reminders, …]}}]` (the list replaces the set; `[]` turns all off; you "
-        + "can create the agent with them in the same apply). For calendar/mail/messages/"
-        + "notes/reminders/contacts/maps/music/shortcut work, `spawn_agent` an agent "
-        + "that has that app enabled (`osaurus_inspect` list agents shows each agent's "
-        + "`apple_apps`; describe → `capabilities.apple_apps` has the same); if "
-        + "none does, enable it on a fitting agent (or create one) and spawn it in the same "
-        + "turn. macOS asks the user for the app's permission the first time a tool runs."
+    static func appleAppsDelegationLine(exposure: Exposure) -> String {
+        let routing =
+            exposure.spawnAvailable
+            ? "`spawn_agent` an agent that has that app enabled (`osaurus_inspect` list agents "
+                + "shows each agent's `apple_apps`; describe → `capabilities.apple_apps` has the "
+                + "same); if none does, enable it on a fitting agent (or create one) and spawn "
+                + "it in the same turn."
+            : "create an agent with that app enabled (or enable it on one you create) in one "
+                + "apply and spawn it in the same turn."
+        return
+            "Apple apps (Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps, "
+            + "Music, Shortcuts) are built-in tools that run on a CUSTOM agent, never on you: "
+            + "to enable or disable them apply `agents: [{name: X, capabilities: {apple_apps: "
+            + "[calendar, reminders, …]}}]` (the list replaces the set; `[]` turns all off; you "
+            + "can create the agent with them in the same apply). For calendar/mail/messages/"
+            + "notes/reminders/contacts/maps/music/shortcut work, " + routing
+            + " macOS asks the user for the app's permission the first time a tool runs."
+    }
+
+    /// Backticked tool names the rendered addendum tells the model to call,
+    /// restricted to `known` (the registered tool universe) so YAML keys and
+    /// argument names in backticks (`agents`, `continue`, `input`, …) do not
+    /// count. The truthfulness contract: this set ⊆ the request schema.
+    nonisolated public static func advertisedToolNames(
+        in rendered: String,
+        known: Set<String>
+    ) -> Set<String> {
+        var found = Set<String>()
+        var rest = rendered[...]
+        while let open = rest.firstIndex(of: "`") {
+            let afterOpen = rest.index(after: open)
+            guard let close = rest[afterOpen...].firstIndex(of: "`") else { break }
+            let token = String(rest[afterOpen..<close])
+            if known.contains(token) { found.insert(token) }
+            rest = rest[rest.index(after: close)...]
+        }
+        return found
+    }
 }

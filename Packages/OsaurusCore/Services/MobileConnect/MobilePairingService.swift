@@ -2,8 +2,8 @@
 //  MobilePairingService.swift
 //  osaurus
 //
-//  Osaurus Connect pairing: lets exactly one phone (the Osaurus iPhone app) pair
-//  with this Mac by typing a 6-digit code shown in Settings → Osaurus Connect.
+//  Mobile pairing: lets exactly one phone (the Osaurus iPhone app) pair
+//  with this Mac by typing a 6-digit code shown in Settings → Mobile.
 //
 //  Flow:
 //    1. The user clicks "Generate Pairing Code". We mint a master-scoped
@@ -83,8 +83,15 @@ final class MobilePairingService: ObservableObject {
     private static let relayManagedAgentsKey = "mobileConnectRelayManagedAgents"
     static let wireVersion = 1
     private static let pairedDeviceDefaultsKey = "mobileConnectPairedDevice"
-    /// Label of every pairing key; phone chats keep it as their caller name.
-    nonisolated static let keyLabel = "Osaurus Connect"
+    /// Label of every pairing key minted from now on; phone chats keep it as
+    /// their caller name and it is the row label under Identity → Access Keys.
+    nonisolated static let keyLabel = "Mobile"
+    /// Label pairing keys carried before the tab was renamed from
+    /// "Osaurus Connect" to "Mobile". Still recognised so existing pairings
+    /// and their chats keep working, and so their old titles can be fixed.
+    nonisolated static let legacyKeyLabel = "Osaurus Connect"
+    /// Every label a pairing key has ever been minted with.
+    nonisolated static let allKeyLabels: Set<String> = [keyLabel, legacyKeyLabel]
 
     enum RedeemOutcome: Equatable, Sendable {
         case paired(MobilePairResponse, deviceName: String)
@@ -278,6 +285,14 @@ final class MobilePairingService: ObservableObject {
 
     /// `POST /pair/unpair`: the paired phone unpairs itself. Only the key
     /// minted for the current paired device may do this.
+    /// Whether `nonce` is the paired phone's access key.
+    func isPairedKey(nonce: String) -> Bool {
+        guard let device = pairedDevice,
+            let info = APIKeyManager.shared.listKeys().first(where: { $0.id == device.keyId })
+        else { return false }
+        return PairingCode.constantTimeEquals(info.nonce, nonce)
+    }
+
     func unpairIfCaller(keyNonce: String) -> Bool {
         guard let device = pairedDevice,
             let info = APIKeyManager.shared.listKeys().first(where: { $0.id == device.keyId }),
@@ -340,7 +355,7 @@ final class MobilePairingService: ObservableObject {
         if shouldHold, keepAwakeToken == nil {
             keepAwakeToken = ProcessInfo.processInfo.beginActivity(
                 options: [.idleSystemSleepDisabled],
-                reason: "Osaurus Connect: keep this Mac reachable from the paired phone"
+                reason: "Osaurus Mobile: keep this Mac reachable from the paired phone"
             )
         } else if !shouldHold, let token = keepAwakeToken {
             ProcessInfo.processInfo.endActivity(token)

@@ -383,6 +383,14 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// Tool-call ids of `background: true` spawns the CURRENT run launched.
+    /// Their workers run in unstructured tasks outside this run's task tree,
+    /// so cancelling `currentTask` cannot reach them; `stop()` trips their
+    /// interrupt tokens (the same path as the Activity row's Stop) so a user
+    /// Stop on the launching turn does not leave orphaned workers. Cleared
+    /// when the run ends normally — workers then outlive the turn by design
+    /// and report back later.
+    private var backgroundSpawnCallIdsThisRun: [String] = []
     /// True when this session's folder was restored from a bookmark that a
     /// background DISPATCH supplied (a Watcher's watched folder, a scheduled
     /// task's folder, or a plugin's `folder_bookmark`), as opposed to a
@@ -1125,7 +1133,12 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
-                let previousModel = self.selectedModel
+                // Sending dismisses the advisory, so while one is up no turn
+                // has run on a newer model and the conversation still belongs
+                // to the model it was raised for.
+                // Compare against that one, so further hops keep naming it and
+                // switching back to it clears the advisory.
+                let previousModel = self.modelSwitchContinuityWarning?.previousModelId ?? self.selectedModel
                 // A shared-agent tab is remote for the whole switch, not only
                 // once the provider is bound: `adoptAgent` clears the provider
                 // id and applies the local default model before the rebind
@@ -1138,14 +1151,18 @@ final class ChatSession: ObservableObject {
                     previousModel: previousModel,
                     newModel: model,
                     hasConversation: self.hasVisibleThreadMessages,
-                    isRemoteAgentTarget: isRemoteAgentTarget
+                    isRemoteAgentTarget: isRemoteAgentTarget,
+                    previousModelIsLocal: previousModel.map(self.isLocalChatModel) ?? false,
+                    newModelIsMedia: self.isMediaModel(model)
                 ), let previousModel
                 {
                     self.modelSwitchContinuityWarning = ModelSwitchContinuityWarning(
                         previousModelId: previousModel,
                         newModelId: model
                     )
-                } else if isRemoteAgentTarget || previousModel == nil || !self.hasVisibleThreadMessages {
+                } else {
+                    // Any non-warning switch leaves an earlier advisory naming
+                    // models that are no longer both in play.
                     self.modelSwitchContinuityWarning = nil
                 }
                 self.lastManualModelSelection = model
@@ -1278,14 +1295,33 @@ final class ChatSession: ObservableObject {
     /// as its effective model, the user didn't pick anything, and inference
     /// (and any cache) lives on the remote host — so a pin refresh, or the
     /// host owner changing their agent's model, is not a local model switch.
+    /// Only a switch away from an on-device MLX model drops an Osaurus-held
+    /// prefix/KV cache, so remote, Foundation, Claude Code and media models
+    /// never warn, and neither does a switch into a media model (it never
+    /// reads the transcript).
     nonisolated static func shouldWarnAboutModelSwitch(
         previousModel: String?,
         newModel: String,
         hasConversation: Bool,
-        isRemoteAgentTarget: Bool = false
+        isRemoteAgentTarget: Bool = false,
+        previousModelIsLocal: Bool,
+        newModelIsMedia: Bool
     ) -> Bool {
         guard !isRemoteAgentTarget, hasConversation, let previousModel else { return false }
+        guard previousModelIsLocal, !newModelIsMedia else { return false }
         return previousModel.caseInsensitiveCompare(newModel) != .orderedSame
+    }
+
+    /// True when `modelId` is an on-device MLX chat model in the picker.
+    /// Unknown ids (uninstalled, provider gone) count as not local.
+    private func isLocalChatModel(_ modelId: String) -> Bool {
+        guard let item = pickerItems.first(where: { $0.id == modelId }) else { return false }
+        if case .local = item.source, item.mediaModel == nil { return true }
+        return false
+    }
+
+    private func isMediaModel(_ modelId: String) -> Bool {
+        pickerItems.first(where: { $0.id == modelId })?.isMediaGeneration == true
     }
 
     deinit {
@@ -1492,7 +1528,7 @@ final class ChatSession: ObservableObject {
     }
 
     /// The temporary first-run Cloud model used while a pinned local model is
-    /// downloading. DeepSeek V4 Flash is the product-selected experience;
+    /// downloading. DeepSeek V4.1 Flash is the product-selected experience;
     /// Foundation, local, and BYOK models never qualify.
     ///
     /// "Lower-cost but capable" is catalog-driven rather than a hardcoded model
@@ -1815,11 +1851,11 @@ final class ChatSession: ObservableObject {
 
     /// Friendly name for the temporary first-run Cloud status shown alongside
     /// local download progress. Router ids are slug-like; preserve the product
-    /// spelling for DeepSeek V4 Flash.
+    /// spelling for DeepSeek V4.1 Flash.
     var temporaryCloudModelDisplayName: String? {
         guard isOsaurusRouterSession, let item = selectedPickerItem else { return nil }
         if RemoteProviderManager.isFirstRunOsaurusModelId(item.id) {
-            return "DeepSeek V4 Flash"
+            return "DeepSeek V4.1 Flash"
         }
         return item.displayName
     }
@@ -2598,6 +2634,9 @@ final class ChatSession: ObservableObject {
         // mounted, and the input bar hit-test disabled.
         promptQueue.drainAll()
         stopRequested = true
+        // Background workers this run launched sit outside the task tree:
+        // stop them explicitly before the run's own cancellation.
+        interruptBackgroundSpawnsOfCurrentRun()
         let task = currentTask
         task?.cancel()
         if let runId = activeRunId {
@@ -2621,6 +2660,17 @@ final class ChatSession: ObservableObject {
             turns.append(cancelledTurn)
             isDirty = true
             rebuildVisibleBlocks()
+        }
+    }
+
+    /// Trip the interrupt token of every `background: true` worker the
+    /// current run launched (`SubagentSession.dispatchInBackground` registers
+    /// one per tool call id). Idempotent; the list is cleared either way.
+    private func interruptBackgroundSpawnsOfCurrentRun() {
+        let callIds = backgroundSpawnCallIdsThisRun
+        backgroundSpawnCallIdsThisRun.removeAll()
+        for callId in callIds {
+            _ = SubagentInterruptCenter.shared.interrupt(callId)
         }
     }
 
@@ -4343,6 +4393,9 @@ final class ChatSession: ObservableObject {
     private func completeRunCleanup() {
         currentTask = nil
         isStreaming = false
+        // The run ended; background workers it launched now outlive it on
+        // purpose (they report back later) and stop only from Activity.
+        backgroundSpawnCallIdsThisRun.removeAll()
         // Successful run finished — drop the saved draft so a later
         // unrelated cancel doesn't accidentally repopulate the input
         // with a turn the user already sent.
@@ -7244,6 +7297,27 @@ final class ChatSession: ObservableObject {
                             // a second artifact-sharing step.
                             toolCardOverrides[callId] = resultText
                             resultText = compactResult
+                        } else if inv.toolName == SubagentCapabilityRegistry.spawnAgentToolName,
+                            SubagentSession.isBackgroundAck(resultText)
+                        {
+                            // A background worker outlives this tool call in
+                            // an unstructured task; remember it so a Stop on
+                            // THIS run can reach it (`stop()`).
+                            self.backgroundSpawnCallIdsThisRun.append(callId)
+                        } else if inv.toolName == SubagentCapabilityRegistry.spawnAgentToolName,
+                            SpawnResultCompaction.applies(to: resultText)
+                        {
+                            // The card and telemetry keep the full envelope
+                            // (structured usage/context/residency); the model
+                            // reads the digest, continuation handles and
+                            // deliverable paths with one accounting line —
+                            // and a shorter digest on a compact launcher.
+                            toolCardOverrides[callId] = resultText
+                            resultText = SpawnResultCompaction.modelVisible(
+                                resultText,
+                                prefersCompactPrompt: ContextSizeResolver.resolve(modelId: turnModelId)
+                                    .prefersCompactPrompt
+                            )
                         } else if inv.toolName == "share_artifact" {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,

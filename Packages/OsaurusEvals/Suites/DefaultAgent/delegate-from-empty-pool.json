@@ -1,0 +1,28 @@
+{
+  "id": "default_agent.delegate-from-empty-pool",
+  "domain": "default_agent",
+  "label": "default agent • empty spawn pool: create the agent, then delegate in the same turn",
+  "query": "I have no agents yet. Create a custom agent named \"Summarizer\" (one-sentence summaries only), then use it right away to summarize this in one sentence: \"Osaurus runs local models on Apple silicon and exposes an OpenAI-compatible API so existing clients work unchanged.\" Reply with the Summarizer's sentence.",
+  "notes": "Empty-pool honesty + same-turn staging (PR1/PR2): with no spawnable agents the Orchestrator's first-turn schema has NO spawn_agent and the addendum says so, so the only truthful path is `osaurus_config` apply (agents: Summarizer). Creating the agent grows the Default pool; the post-apply hook stages spawn_agent into THIS conversation, so the second step is a real spawn_agent call targeting Summarizer — not a claim that it cannot delegate, not a `plan`, and not a made-up summary. The rubric requires the worker's result to be relayed.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_config", "spawn_agent"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load", "clarify"],
+      "argsMustContain": [
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "agents" } },
+        { "tool": "osaurus_config", "args": { "yaml": "Summarizer" } },
+        { "tool": "spawn_agent", "args": { "agent": "Summarizer" } }
+      ],
+      "argsMustNotContain": [
+        { "tool": "osaurus_config", "args": { "action": "plan" } }
+      ],
+      "rubric": [
+        "The reply contains a one-sentence summary that mentions local models on Apple silicon and/or an OpenAI-compatible API.",
+        "The reply does NOT say that delegation is unavailable, that no agents exist, or that the user must add agents in Settings — the agent was created and used in this turn.",
+        "The reply does NOT ask a follow-up question or offer an option menu."
+      ],
+      "maxIterations": 10
+    }
+  }
+}

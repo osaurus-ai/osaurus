@@ -104,12 +104,13 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
 
     /// Resolves a sidebar tab id, including legacy raw values whose destination
     /// has moved (`"dashboard"` → Credits, `"channels"` → Agent Channels,
-    /// `"storage"` → Privacy, which now hosts the storage-encryption panel).
+    /// `"storage"` → General, whose Advanced → Data & Storage subsection now
+    /// hosts the encryption and file-history controls).
     public static func resolved(from rawValue: String) -> ManagementTab? {
         switch rawValue {
         case "dashboard": .credits
         case "channels", "integrations", "agent-channels": .agentChannels
-        case "storage": .privacy
+        case "storage": .settings
         // Pre-rename tab id (Teams → Workspaces); keep old settings links working.
         case "teams": .workspaces
         default: ManagementTab(rawValue: rawValue)
@@ -141,7 +142,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .permissions: "lock.shield.fill"
         case .computerUse: "cursorarrow.rays"
         case .browser: "globe"
-        case .imageGeneration: "photo.artframe"
+        case .imageGeneration: "photo.on.rectangle.angled"
         case .privacy: "hand.raised.fill"
         case .identity: "person.badge.key.fill"
         case .chat: "text.bubble.fill"
@@ -154,13 +155,13 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .credits: L("Credits")
         case .workspaces: L("Workspaces")
-        case .connect: L("Osaurus Connect")
+        case .connect: L("Mobile")
         case .models: L("Local Models")
         case .providers: L("Providers")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
         case .sandbox: L("Sandbox")
-        case .tools: L("Tools")
+        case .tools: L("Tools & MCP")
         case .search: L("Web Search")
         case .skills: L("Skills")
         case .commands: L("Commands")
@@ -175,10 +176,10 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .permissions: L("Permissions")
         case .computerUse: L("Computer Use")
         case .browser: L("Browser Use")
-        case .imageGeneration: L("Media")
+        case .imageGeneration: L("Images")
         case .privacy: L("Privacy")
         case .identity: L("Identity")
-        case .chat: L("Chat")
+        case .chat: L("Conversation")
         case .settings: L("General")
         case .orchestrator: L("Orchestrator")
         }

@@ -37,7 +37,7 @@ struct ConcurrencySection: View {
             SettingsStepperField(
                 label: "Concurrent Sessions",
                 help:
-                    "Shared with the Orchestrator's and every agent's Max local subagents at once. This is the BatchEngine ceiling for same-model local waves; memory checks and current occupancy may run a smaller wave. 1 keeps the compile fast-path engaged; >1 allows concurrent decode when Continuous Batching is on.",
+                    "Shared with the Orchestrator's and every agent's Max local subagents at once. This is the BatchEngine ceiling for same-model local waves; memory checks and current occupancy may run a smaller wave. 1 uses the single-request path; compilation also requires Compiled Decode to be enabled and the loaded model to support it. Values above 1 allow concurrent decode when Continuous Batching is on.",
                 text: $maxConcurrentText,
                 range: SpawnBatchConcurrencyContract.bounds,
                 step: 1,

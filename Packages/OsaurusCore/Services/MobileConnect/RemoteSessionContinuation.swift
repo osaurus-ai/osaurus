@@ -140,13 +140,13 @@ enum RemoteSessionContinuation {
 
     /// A hosted row created by this Mac's phone: no workspace, and the caller
     /// is a pairing key — the current one, or an earlier one, which keeps its
-    /// "Osaurus Connect" label on the row. Pairing again mints a new key, and
+    /// "Mobile" (or pre-rename "Osaurus Connect") label on the row. Pairing again mints a new key, and
     /// matching only the current one turned every older phone chat into a
     /// teammate's read-only one (tagged "via workspace", titled "caller →
     /// agent"). One phone per Mac, so an earlier key was the owner's too.
     static func isFromPairedPhone(_ workspace: WorkspaceSessionContext) -> Bool {
         guard workspace.workspaceId.isEmpty, let caller = workspace.callerWallet?.lowercased() else { return false }
-        if workspace.callerName == MobilePairingService.keyLabel { return true }
+        if let name = workspace.callerName, MobilePairingService.allKeyLabels.contains(name) { return true }
         guard let nonce = MobilePairingService.shared.pairedKeyNonce?.lowercased() else { return false }
         return caller == nonce
     }

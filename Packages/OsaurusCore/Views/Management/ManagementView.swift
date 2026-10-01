@@ -242,7 +242,7 @@ private extension ManagementView {
         case .orchestrator:
             OrchestratorSettingsView()
         case .settings:
-            ConfigurationView(searchText: $searchText)
+            ConfigurationView()
         case .none:
             Text("Unknown tab", bundle: .module)
         }
@@ -338,6 +338,7 @@ private extension ManagementView {
             case .imageGeneration: stateManager.imageGenerationSubTabRequest = subTab
             case .memory: stateManager.memorySubTabRequest = subTab
             case .privacy: stateManager.privacySubTabRequest = subTab
+            case .tools: stateManager.pendingToolsSubTab = subTab
             case .agents:
                 // Agent detail tabs (`capabilities` for the Apple app groups)
                 // are routed by `AgentsView.routeSettingsLanding` from the

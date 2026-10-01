@@ -93,6 +93,11 @@ extension ResponseWriter {
 }
 
 final class SSEResponseWriter: ResponseWriter {
+    /// Set on a phone run that outlives its connection: every data frame is
+    /// kept for the phone to replay when it comes back (docs/MOBILE_PROTOCOL.md
+    /// §6.4), and the end of the stream ends the run.
+    var recorder: DetachedPhoneRun?
+
     private struct AgentToolTraceChunk: Encodable {
         struct Trace: Encodable {
             var phase: String
@@ -403,6 +408,7 @@ final class SSEResponseWriter: ResponseWriter {
         do {
             try encoder.encodeAndWrite(chunk, into: &buffer)
             buffer.writeString("\n\n")
+            recorder?.record(String(buffer: buffer))
             Self.writeBackpressureAware(
                 HTTPServerResponsePart.body(.byteBuffer(buffer)),
                 context: context
@@ -469,6 +475,7 @@ final class SSEResponseWriter: ResponseWriter {
             )
             try encoder.encodeAndWrite(err, into: &buffer)
             buffer.writeString("\n\n")
+            recorder?.record(String(buffer: buffer))
             context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
             context.flush()
         } catch {
@@ -479,6 +486,7 @@ final class SSEResponseWriter: ResponseWriter {
             buffer.writeString("\",\"type\":\"")
             buffer.writeString(type)
             buffer.writeString("\"}}\n\n")
+            recorder?.record(String(buffer: buffer))
             context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
             context.flush()
         }
@@ -493,11 +501,13 @@ final class SSEResponseWriter: ResponseWriter {
         buffer.writeString("data: ")
         buffer.writeString(json)
         buffer.writeString("\n\n")
+        recorder?.record(String(buffer: buffer))
         context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
         context.flush()
     }
 
     func writeEnd(_ context: ChannelHandlerContext) {
+        recorder?.finish()
         var tail = context.channel.allocator.buffer(capacity: 16)
         tail.writeString("data: [DONE]\n\n")
         context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(tail))), promise: nil)

@@ -1,0 +1,70 @@
+{
+  "id": "agent_loop.spawn-wave-serialized-local-limit-one",
+  "domain": "agent_loop",
+  "label": "agent loop • a two-call wave under a local limit of 1 still completes (serialized)",
+  "query": "Delegate two independent jobs: call spawn_agent twice in the SAME message (two tool calls, one message). First call: agent `A11CE003-0000-4000-8000-000000000001` (Osaurus Eval Serial Math), input: return exactly SERIAL_ALPHA_7. Second call: agent `A11CE003-0000-4000-8000-000000000002` (Osaurus Eval Serial Writing), input: return exactly SERIAL_BETA_GREEN. If a call is refused because of the parallel limit, send that call again in your next message. Once both tokens are back, answer once with both tokens and stop.",
+  "notes": "Fan-out limit contract for a small launcher: Server Concurrent Sessions = 1 (mirrored into the launcher's Max local subagents at once) admits ONE local sibling per wave; the extra sibling gets a retryable `unavailable` verdict naming the limit and the model re-sends it in the next message. Both children must still settle with exact digests and the parent finalizes once. A model that serializes on its own (two one-call messages) also passes — what is pinned is that a limit of 1 never loses a job. Bundle generation defaults stay authoritative.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE003-0000-4000-8000-000000000001",
+          "name": "Osaurus Eval Serial Math",
+          "description": "Returns the exact requested validation token.",
+          "systemPrompt": "Complete the bounded delegated task. Return only the exact token requested, with no preamble or explanation."
+        },
+        {
+          "id": "A11CE003-0000-4000-8000-000000000002",
+          "name": "Osaurus Eval Serial Writing",
+          "description": "Returns the exact requested validation token.",
+          "systemPrompt": "Complete the bounded delegated task. Return only the exact token requested, with no preamble or explanation."
+        }
+      ],
+      "maxParallelSpawns": 1
+    },
+    "runtimeConcurrency": {
+      "continuousBatching": true,
+      "maxConcurrentSequences": 1
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "maxModelSteps": 6,
+      "mustCallTools": [
+        "spawn_agent"
+      ],
+      "maxToolCalls": 3,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "SERIAL_ALPHA_7",
+        "SERIAL_BETA_GREEN"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "spawn_agent",
+          "minCalls": 2,
+          "maxCalls": 3,
+          "maxErrors": 1
+        },
+        {
+          "tool": "spawn_agent",
+          "minCalls": 2,
+          "maxCalls": 3,
+          "argsMustContain": "A11CE003-0000-4000-8000-000000000001"
+        },
+        {
+          "tool": "spawn_agent",
+          "minCalls": 2,
+          "maxCalls": 3,
+          "argsMustContain": "A11CE003-0000-4000-8000-000000000002"
+        }
+      ],
+      "spawnWave": {
+        "expectedSucceeded": 2
+      }
+    }
+  }
+}

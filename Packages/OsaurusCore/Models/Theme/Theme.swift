@@ -135,6 +135,7 @@ protocol ThemeProtocol {
     var titleSize: Double { get }
     var headingSize: Double { get }
     var bodySize: Double { get }
+    var smallBodySize: Double { get }
     var captionSize: Double { get }
     var codeSize: Double { get }
 
@@ -186,6 +187,7 @@ extension ThemeProtocol {
     var titleSize: Double { 28 }
     var headingSize: Double { 18 }
     var bodySize: Double { 14 }
+    var smallBodySize: Double { 14 }
     var captionSize: Double { 12 }
     var codeSize: Double { 13 }
 
@@ -548,6 +550,7 @@ struct CustomizableTheme: ThemeProtocol {
     var titleSize: Double { config.typography.titleSize * fontScale }
     var headingSize: Double { config.typography.headingSize * fontScale }
     var bodySize: Double { config.typography.bodySize * fontScale }
+    var smallBodySize: Double { config.typography.smallBodySize * fontScale }
     var captionSize: Double { config.typography.captionSize * fontScale }
     var codeSize: Double { config.typography.codeSize * fontScale }
 

@@ -27,7 +27,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 8. [Crypto inventory for iOS](#8-crypto-inventory-for-ios)
 9. [Compatibility contract](#9-compatibility-contract)
 10. [Sequence diagrams](#10-sequence-diagrams)
-11. [Osaurus Connect pairing (6-digit code)](#11-osaurus-connect-pairing-6-digit-code)
+11. [Mobile pairing (6-digit code)](#11-mobile-pairing-6-digit-code)
 12. [Choosing a model](#12-choosing-a-model)
 13. [Agent avatars](#13-agent-avatars)
 14. [Reading the Mac's chats](#14-reading-the-macs-chats)
@@ -539,6 +539,37 @@ AAD(resp)       = utf8("osaurus-sc1:resp:<sid>:<reqSeq>:<seq>:<fin ? 1 : 0>")
 `GET /agents/<address>` (inside the channel, same bearer) returns agent
 metadata for the roster.
 
+### 6.4 Runs that outlive the connection
+
+iOS suspends an app moments after it leaves the screen, which drops the
+run's connection. The owner's paired phone (a master-scoped key over the
+Secure Channel) **SHOULD** name each run with a fresh
+`"osaurus_run_id": "<uuid>"` in the §6.3 body. A named run is not cancelled
+when its connection closes: it runs to the end, a continued chat (§14.5)
+still gets its turns, and the Mac records every `data:` frame it writes.
+Other callers' ids are ignored, and their runs still end with their
+connection.
+
+- `GET /runs/{id}/events?after=N` — the run's frames after the first `N`
+  (a client counts the `data:` lines it has read, `[DONE]` excluded), then
+  the rest live, then `data: [DONE]`. Same SSE as §6.3, `: ping` keepalives
+  included. A finished run replays and ends at once.
+  `404 run_not_found`: the Mac never had it, restarted, or has forgotten it
+  (finished runs are kept 30 minutes, 32 at most). `410 run_gone`: `N` is
+  past the end, or the run wrote more than 16 MB and keeps no replay.
+  Either way the client falls back to the chat itself (§14.2).
+- `POST /runs/{id}/stop` — Stop, now that closing the connection no longer
+  is one. `{"ok":true}`, or `{"ok":true,"finished":true}` when it had
+  already ended; `404 run_not_found`. A stopped run ends its stream as a
+  hang-up did before.
+- A second `POST /agents/{id}/run` with the id of a run still going (the
+  phone retrying on its other route after hearing nothing) starts nothing:
+  it follows that run from its first frame.
+
+Both endpoints are owner-only (`403 owner_only`). A Mac too old for this
+ignores `osaurus_run_id` and answers `/runs` with 404, so the client
+behaves as before.
+
 ---
 
 ## 7. Presence, errors, and key lifecycle
@@ -717,10 +748,10 @@ sequenceDiagram
 
 ---
 
-## 11. Osaurus Connect pairing (6-digit code)
+## 11. Mobile pairing (6-digit code)
 
 The Osaurus iPhone app pairs with **one** Mac by typing a 6-digit code shown in
-Settings → Osaurus Connect. It needs no master key on the phone and yields a
+Settings → Mobile. It needs no master key on the phone and yields a
 master-scoped `osk-v1` key covering every agent on that Mac, plus each agent's
 crypto address for the Secure Channel (§6.2). One phone per Mac: a new
 pairing revokes the previous phone's key.
@@ -770,7 +801,7 @@ plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
 | `429` | — | Per-IP rate limit (shared with `/pair`) |
 
 `isSimulator` (optional) only drives a "Simulator" badge next to the paired
-device in Settings → Osaurus Connect.
+device in Settings → Mobile.
 
 The phone pins every returned `address` against its agent `id` and uses the
 key as the Bearer inside the Secure Channel. `GET /agents` and
@@ -803,7 +834,7 @@ it.
 
 ### 11.6 Reaching the Mac away from the LAN
 
-"Reach From Anywhere" (Settings → Osaurus Connect, default on) turns on the
+"Reach From Anywhere" (Settings → Mobile, default on) turns on the
 relay tunnel (§6.1) for every remote agent while a phone is paired, and off
 again — only for tunnels it turned on — when disabled or unpaired. Agents
 created later are added automatically.
@@ -962,7 +993,8 @@ The same fields plus `turns`, in the Mac's block shape:
            "attachment_count":1,
            "attachments":[{"filename":"budget.md","file_size":664,"content":"…"}],
            "images":[{"index":0,"byte_count":284113}],
-           "created_at":"…","completed_at":"…","token_count":42}]}
+           "created_at":"…","completed_at":"…",
+           "requested_at":"2026-09-28T15:06:12.345Z","ended_at":"…","token_count":42}]}
 ```
 
 Tool-result turns are folded into the assistant turn that called them, so a
@@ -973,6 +1005,16 @@ Absent when the turn has no documents. `images` lists the turn's images
 without their bytes (§14.9 serves them); absent when there are none. Audio
 and video are counted only.
 `404 session_not_found` for an unknown id.
+
+`requested_at` and `ended_at` carry the Mac footer's "Worked for" time,
+with fractional seconds. `requested_at` is when the user sent the run (before
+any model load) and is set only on a run's first assistant turn. It is absent
+on later steps and on chats older than the field. `ended_at` is when the run
+ended. A client times one response, meaning the consecutive assistant turns
+after a user turn, from its first turn's `requested_at ?? created_at`. If a
+later turn in that response has its own `requested_at`, as a Regenerate on a
+tool-calling step does, the time restarts from there. The response ends at
+its last turn's `ended_at`.
 
 Images a client sends in a §14.5 run (`image_url` data URLs) are stored on
 the user turn they came with, as a Mac chat stores its own, so they come

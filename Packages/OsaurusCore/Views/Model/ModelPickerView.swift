@@ -286,14 +286,14 @@ struct ModelPickerView: View {
         )
     }
 
-    private static func mediaPrivacyLabel(_ value: String) -> String {
+    static func mediaPrivacyLabel(_ value: String) -> String {
         value
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: "-", with: " ")
             .capitalized
     }
 
-    private static func mediaDetails(_ model: MediaModelInfo) -> String? {
+    static func mediaDetails(_ model: MediaModelInfo) -> String? {
         let constraints = model.constraints
         var details: [String] = []
         if !constraints.aspectRatios.isEmpty {

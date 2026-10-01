@@ -4,6 +4,33 @@ import Testing
 @testable import OsaurusCore
 
 struct ModelUpdatePollingTests {
+    @Test func legacyMissingSidecarIsRecheckedWhenRemoteRevisionChanges() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let local = ModelManifest.read(at: directory)
+        #expect(local == .absent)
+        let requests = LegacyManifestRequestFixture()
+        let service = HuggingFaceService(metadataRequest: { request in
+            try await requests.respond(to: request)
+        })
+        let first = try await service.fetchModelManifest(repoId: "OsaurusAI/legacy")
+        #expect(first.manifest == nil)
+        #expect(await requests.requestCount == 2) // revision plus absent sidecar
+        #expect(ModelManifestCheck(local: local, remote: first, error: nil, checkedAt: Date()).status == .unversionedPublisher)
+
+        let same = try await service.fetchModelManifest(repoId: "OsaurusAI/legacy", previous: first)
+        #expect(same.manifest == nil)
+        #expect(await requests.requestCount == 3) // immutable missing sidecar is reused
+
+        await requests.publishManifest()
+        let updated = try await service.fetchModelManifest(repoId: "OsaurusAI/legacy", previous: same)
+        #expect(await requests.requestCount == 5) // changed revision fetches new sidecar
+        #expect(updated.manifest?.modelVersion == "2")
+        #expect(ModelManifestCheck(local: local, remote: updated, error: nil, checkedAt: Date()).status == .verificationRequired)
+        #expect(ModelManifest.read(at: directory) == .absent) // metadata check never installs files
+    }
+
     @Test func cancellationNeverBecomesAnUnavailableOrCurrentSnapshot() async throws {
         let service = HuggingFaceService(metadataRequest: { _ in throw CancellationError() })
         await #expect(throws: CancellationError.self) {
@@ -176,5 +203,29 @@ struct ModelUpdatePollingTests {
         schedule.record("OsaurusAI/first", at: now, succeeded: true)
         #expect(schedule.isDue("OsaurusAI/second", at: now))
         #expect(!schedule.isDue("OsaurusAI/first", at: now))
+    }
+}
+
+/// Counts real service requests using the existing metadata transport seam.
+/// It does not emulate the manager's automatic/manual scheduling policy.
+private actor LegacyManifestRequestFixture {
+    private var published = false
+    private(set) var requestCount = 0
+    func publishManifest() { published = true }
+    func respond(to request: URLRequest) throws -> (Data, URLResponse) {
+        let url = try #require(request.url)
+        requestCount += 1
+        let revision = String(repeating: published ? "b" : "a", count: 40)
+        let status: Int
+        let body: String
+        if url.path == "/api/models/OsaurusAI/legacy/revision/main" {
+            status = 200
+            body = "{\"sha\":\"\(revision)\"}"
+        } else {
+            #expect(url.path == "/OsaurusAI/legacy/resolve/\(revision)/osaurus.json")
+            status = published ? 200 : 404
+            body = published ? #"{"required_osaurus_version":"0.25.0","model_version":"2"}"# : ""
+        }
+        return (Data(body.utf8), HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!)
     }
 }

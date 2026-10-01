@@ -124,17 +124,12 @@ public enum SettingsSearchIndex {
         "agents.description",
         "agents.database",
         "imageGeneration.tab",
-        "imageGeneration.models",
-        "imageGeneration.permission",
-        "imageGeneration.loadPolicy",
         "imageGeneration.download",
         "search.providers",
         "search.premium",
         "credits.webSearch",
-        "voice.stt.model",
-        "voice.stt.vad",
-        "voice.models",
         "privacy.tab",
+        "tools.services",
         "server.connection",
         "server.cors",
         "server.auth",
@@ -198,18 +193,18 @@ public enum SettingsSearchIndex {
             keywords: ["default model", "core model"]
         ),
         .init(
-            id: "settings.general.cli",
-            tab: .settings,
-            section: "General",
+            id: "server.cli",
+            tab: .server,
+            section: "Overview",
             title: "Command Line Tool",
-            keywords: ["cli", "terminal", "symlink", "install"]
+            keywords: ["cli", "install cli", "terminal", "symlink", "install", "command line", "osaurus cli"]
         ),
         .init(
             id: "settings.general.reset",
             tab: .settings,
-            section: "General",
+            section: "Reset",
             title: "Factory Reset",
-            keywords: ["reset", "wipe", "erase", "maintenance"]
+            keywords: ["reset", "wipe", "erase", "maintenance", "danger zone"]
         ),
         .init(
             id: "settings.general.dock",
@@ -219,7 +214,7 @@ public enum SettingsSearchIndex {
             keywords: ["dock", "menu bar", "menubar", "hide dock"]
         ),
 
-        // MARK: Chat (generation knobs now live in the dedicated Chat tab)
+        // MARK: Conversation (sidebar "Conversation"; ManagementTab.chat)
         .init(
             id: "settings.orchestrator.systemPrompt",
             tab: .orchestrator,
@@ -239,35 +234,35 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.chat.autoGenerateTitles",
             tab: .chat,
-            section: "Chat",
+            section: "Behavior",
             title: "Automatically Name Chats",
             keywords: ["title", "auto title", "rename", "chat name", "summary"]
         ),
         .init(
             id: "settings.chat.generateFollowUps",
             tab: .chat,
-            section: "Chat",
+            section: "Behavior",
             title: "Suggest Follow-Up Questions",
             keywords: ["follow up", "followup", "suggestions", "next question", "prompts", "suggested"]
         ),
         .init(
             id: "settings.chat.cmdNNewChat",
             tab: .chat,
-            section: "Chat",
+            section: "Behavior",
             title: "⌘+N Starts a New Chat in the Current Window",
             keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
         ),
         .init(
             id: "settings.chat.smoothStreaming",
             tab: .chat,
-            section: "Chat",
+            section: "Appearance",
             title: "Smooth Streaming",
             keywords: ["typewriter", "streaming pace", "token reveal", "smooth tokens"]
         ),
         .init(
             id: "settings.chat.thinkingDisplay",
             tab: .chat,
-            section: "Chat",
+            section: "Advanced",
             title: "Expand Thinking While Streaming",
             keywords: [
                 "thinking", "reasoning", "expand thinking", "show thinking",
@@ -277,7 +272,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.chat.activityRollup",
             tab: .chat,
-            section: "Chat",
+            section: "Appearance",
             title: "Group Thinking & Tool Activity",
             keywords: [
                 "group thinking", "tool activity", "rollup", "worked for",
@@ -287,7 +282,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.chat.clipboard",
             tab: .chat,
-            section: "Chat",
+            section: "Behavior",
             title: "Clipboard Monitoring",
             keywords: ["clipboard", "copied text", "grab selection", "paste context"]
         ),
@@ -305,7 +300,7 @@ public enum SettingsSearchIndex {
             title: "Generate Pairing Code",
             keywords: [
                 "iphone", "ios", "ipad", "mobile", "phone", "pair", "pairing code", "6 digit",
-                "iosaurus", "remote", "osaurus connect",
+                "iosaurus", "remote", "osaurus connect", "mobile",
             ]
         ),
         .init(
@@ -330,9 +325,19 @@ public enum SettingsSearchIndex {
             keywords: ["sleep", "awake", "reachable", "phone", "remote", "idle sleep"]
         ),
         .init(
+            id: "settings.connect.continuePhoneChats",
+            tab: .connect,
+            section: "On This Mac",
+            title: "Continue Phone Chats on This Mac",
+            keywords: [
+                "handoff", "continue", "resume", "iphone", "phone", "bring to front", "focus", "come back",
+                "return", "unlock",
+            ]
+        ),
+        .init(
             id: "settings.chat.compactionModel",
             tab: .chat,
-            section: "Chat",
+            section: "Advanced",
             title: "Compaction Model",
             keywords: [
                 "compaction", "compact", "summarize", "context", "summary model",
@@ -401,39 +406,38 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.chat.topP",
             tab: .chat,
-            section: "Generation",
-            title: "Top P",
-            keywords: ["nucleus sampling", "top-p"]
+            section: "Advanced",
+            title: "Top P Override",
+            keywords: ["nucleus sampling", "top-p", "top p"]
         ),
         .init(
             id: "settings.chat.toolAttempts",
             tab: .chat,
-            section: "Generation",
+            section: "Advanced",
             title: "Max Tool Attempts",
             keywords: ["tool calls", "agent loop", "attempts"]
         ),
-        // Had NO index entry at all. Worse than merely missing: searching
-        // "tool calls" matched `Max Tool Attempts` above, so the one query
-        // that did return something routed the user to a different setting.
-        // This is the control that answers "make every tool always allowed" —
-        // 83 tools ship `enabled: true` with an EMPTY policy map, and
+        // The control that answers "make every tool always allowed" — 83 tools
+        // ship `enabled: true` with an EMPTY policy map, and
         // `ToolConfiguration.policy(for:)` defaults to `.ask`, so without this
-        // toggle every one of them prompts.
+        // toggle every one of them prompts. Lives at the top of Tools & MCP →
+        // All Tools, beside the per-tool policies it overrides.
         .init(
-            id: "settings.chat.autoAllowAllTools",
-            tab: .chat,
-            section: "Chat",
+            id: "tools.autoAllowAll",
+            tab: .tools,
+            section: "All Tools",
             title: "Auto-Allow All Tool Calls",
             keywords: [
                 "auto allow", "auto-allow", "allow all tools", "allow tools",
                 "tool permission", "tool permissions", "approve tools",
                 "approval", "always allow", "never ask", "tool prompt",
-            ]
+            ],
+            subTab: "All"
         ),
         .init(
             id: "settings.chat.spellCheck",
             tab: .chat,
-            section: "Chat",
+            section: "Appearance",
             title: "Check Spelling While Typing",
             keywords: [
                 "spell", "spelling", "spellcheck", "spell check", "spell checker",
@@ -463,45 +467,15 @@ public enum SettingsSearchIndex {
             id: "settings.notifications.toasts",
             tab: .settings,
             section: "Notifications",
-            title: "Toast Notifications",
-            keywords: ["toast", "position", "timeout", "alerts"]
-        ),
-        .init(
-            id: "settings.notifications.position",
-            tab: .settings,
-            section: "Notifications",
-            title: "Toast Position",
-            keywords: ["position", "corner", "top", "bottom", "placement"]
-        ),
-        .init(
-            id: "settings.notifications.timeout",
-            tab: .settings,
-            section: "Notifications",
-            title: "Toast Timeout",
-            keywords: ["timeout", "duration", "auto dismiss", "seconds"]
-        ),
-        .init(
-            id: "settings.notifications.maxVisible",
-            tab: .settings,
-            section: "Notifications",
-            title: "Max Visible Toasts",
-            keywords: ["max toasts", "toast stack", "visible toasts"]
+            title: "Show Notifications",
+            keywords: ["toast", "toasts", "notifications", "alerts", "banners", "popups"]
         ),
         .init(
             id: "settings.notifications.maxConcurrent",
             tab: .settings,
-            section: "Notifications",
-            title: "Max Concurrent Tasks",
-            keywords: ["concurrent tasks", "background tasks", "task limit"]
-        ),
-        .init(
-            id: "settings.toolPermissions",
-            tab: .chat,
-            section: "Tool Permissions",
-            title: "Folder Tool Permissions",
-            keywords: ["folder permissions", "write files", "edit files", "working folder"],
-            disambiguation:
-                "Chat folder-tool policies (write/edit/shell/git). Not the Tools catalog and not macOS TCC."
+            section: "Advanced",
+            title: "Max Concurrent Background Tasks",
+            keywords: ["concurrent tasks", "background tasks", "task limit", "max concurrent"]
         ),
         .init(
             id: "settings.legal",
@@ -515,53 +489,94 @@ public enum SettingsSearchIndex {
         .init(
             id: "voice.stt.model",
             tab: .voice,
-            section: "Speech to Text",
-            title: "Transcription Model",
-            keywords: ["transcription", "parakeet", "whisper", "speech recognition", "dictation"],
+            section: "Setup",
+            title: "Speech Model",
+            keywords: ["transcription model", "parakeet", "whisper", "speech recognition", "dictation"],
+            subTab: "Setup"
+        ),
+        .init(
+            id: "voice.setup.sensitivity",
+            tab: .voice,
+            section: "Setup",
+            title: "Voice Sensitivity",
+            keywords: ["sensitivity", "microphone sensitivity", "detection level", "voice detection"],
+            subTab: "Setup",
+            disambiguation: "Shared by chat voice, Transcription Mode, and Wake Word."
+        ),
+        .init(
+            id: "voice.chat.enable",
+            tab: .voice,
+            section: "Chat Voice",
+            title: "Enable Voice Input",
+            keywords: ["voice input", "microphone button", "mic button", "chat voice", "speech to text"],
             subTab: "Speech To Text"
+        ),
+        .init(
+            id: "voice.transcription.enable",
+            tab: .voice,
+            section: "Transcription",
+            title: "Enable Transcription Mode",
+            keywords: ["transcription mode", "dictation", "type with voice", "voice typing", "any app"],
+            subTab: "Transcription"
         ),
         .init(
             id: "voice.stt.hotkey",
             tab: .voice,
-            section: "Speech to Text",
+            section: "Transcription",
             title: "Activation Hotkey",
             keywords: [
                 "dictation hotkey", "push to talk", "voice hotkey", "shortcut",
                 "global hotkey", "activation hotkey",
             ],
-            subTab: "Speech To Text"
+            subTab: "Transcription"
         ),
         .init(
-            id: "voice.stt.vad",
+            id: "voice.stt.cleanup",
             tab: .voice,
-            section: "VAD Mode",
-            title: "Voice Activity Detection",
-            keywords: ["vad", "silence", "auto stop", "endpointing"],
-            subTab: "VAD Mode"
+            section: "Transcription",
+            title: "Clean Up Transcription",
+            keywords: ["filler words", "clean up", "post process", "um uh", "polish transcript"],
+            subTab: "Transcription"
+        ),
+        .init(
+            id: "voice.stt.stopMode",
+            tab: .voice,
+            section: "Transcription",
+            title: "Stop Mode",
+            keywords: ["stop mode", "automatic", "manual", "finished speaking", "endpointing"],
+            subTab: "Transcription"
         ),
         .init(
             id: "voice.stt.pause",
             tab: .voice,
-            section: "Speech to Text",
+            section: "Transcription",
             title: "Pause Detection",
             keywords: ["pause", "auto stop", "auto send", "stop after silence"],
-            subTab: "Speech To Text"
+            subTab: "Transcription"
         ),
         .init(
             id: "voice.stt.confirmation",
             tab: .voice,
-            section: "Speech to Text",
+            section: "Transcription",
             title: "Confirmation Delay",
             keywords: ["confirmation", "cancel window", "delay before send"],
-            subTab: "Speech To Text"
+            subTab: "Transcription"
         ),
         .init(
             id: "voice.stt.silence",
             tab: .voice,
-            section: "Speech to Text",
+            section: "Transcription",
             title: "Silence Timeout",
             keywords: ["silence", "timeout", "close voice input", "inactivity"],
-            subTab: "Speech To Text"
+            subTab: "Transcription"
+        ),
+        .init(
+            id: "voice.stt.vad",
+            tab: .voice,
+            section: "Wake Word",
+            title: "Wake Word",
+            keywords: ["vad", "wake word", "always listening", "agent name", "voice activation"],
+            subTab: "VAD Mode"
         ),
         .init(
             id: "voice.tts.voice",
@@ -569,6 +584,14 @@ public enum SettingsSearchIndex {
             section: "Text to Speech",
             title: "Spoken Voice",
             keywords: ["tts", "read aloud", "speech synthesis", "voice"],
+            subTab: "Text To Speech"
+        ),
+        .init(
+            id: "voice.tts.engine",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Engine",
+            keywords: ["tts engine", "pockettts", "on-device tts", "openai compatible tts"],
             subTab: "Text To Speech"
         ),
         .init(
@@ -1157,7 +1180,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "imageGeneration.models",
             tab: .imageGeneration,
-            section: "Settings",
+            section: "Defaults",
             title: "Default Models",
             keywords: ["generation model", "edit model", "default image model"],
             subTab: "Settings"
@@ -1165,23 +1188,41 @@ public enum SettingsSearchIndex {
         .init(
             id: "imageGeneration.permission",
             tab: .imageGeneration,
-            section: "Settings",
-            title: "Permission",
+            section: "Permissions",
+            title: "Image jobs",
             keywords: ["image permission", "ask", "deny", "always allow"],
+            subTab: "Settings"
+        ),
+        .init(
+            id: "imageGeneration.videoPermission",
+            tab: .imageGeneration,
+            section: "Permissions",
+            title: "Video jobs (cloud)",
+            keywords: ["video permission", "video jobs", "quoted video", "ask", "deny"],
+            subTab: "Settings"
+        ),
+        .init(
+            id: "imageGeneration.video",
+            tab: .imageGeneration,
+            section: "Defaults",
+            title: "Video (cloud)",
+            keywords: [
+                "video", "text to video", "image to video", "video model", "venice", "video jobs",
+            ],
             subTab: "Settings"
         ),
         .init(
             id: "imageGeneration.loadPolicy",
             tab: .imageGeneration,
-            section: "Settings",
-            title: "Load Policy",
+            section: "Advanced",
+            title: "Image model load policy",
             keywords: ["load policy", "image jobs", "unload", "residency", "gpu"],
             subTab: "Settings"
         ),
         .init(
             id: "imageGeneration.download",
             tab: .imageGeneration,
-            section: "Models",
+            section: "Image Models",
             title: "Download image models",
             keywords: ["download", "image model", "ideogram", "mflux", "catalog", "import"],
             subTab: "Models"
@@ -1248,6 +1289,20 @@ public enum SettingsSearchIndex {
                 "starter agents", "coder", "researcher", "writer", "create agents",
                 "no agents yet", "first agents", "quick start",
             ]
+        ),
+        .init(
+            id: "settings.orchestrator.delegation.addAllAgents",
+            tab: .orchestrator,
+            section: "Subagents",
+            title: "Add all agents",
+            keywords: [
+                "add all agents", "empty pool", "spawn pool empty", "no spawn_agent",
+                "cannot delegate", "orchestrator cannot delegate", "re-add agents",
+                "restore delegation", "agents not in list",
+            ],
+            disambiguation:
+                "Shown only while the Orchestrator's allowed list is empty but agents exist; puts every existing agent back in the list so spawn_agent returns.",
+            declarativeSection: "delegation"
         ),
         .init(
             id: "settings.orchestrator.delegation.permission",
@@ -1341,6 +1396,73 @@ public enum SettingsSearchIndex {
             title: "Privacy Filter",
             keywords: ["redaction", "filter", "scrub", "mask", "sensitive data", "custom rules", "pii"]
         ),
+        .init(
+            id: "privacy.filter.enabled",
+            tab: .privacy,
+            section: "Filter",
+            title: "Scrub PII before sending to cloud providers",
+            keywords: ["privacy filter", "scrub", "redact", "pii", "cloud", "enable filter"],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.aiDetection",
+            tab: .privacy,
+            section: "Filter",
+            title: "AI detection (on-device model)",
+            keywords: ["ai detection", "on-device model", "names", "addresses", "secrets"],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.skipCode",
+            tab: .privacy,
+            section: "Filter",
+            title: "Skip Code Blocks",
+            keywords: ["code blocks", "skip code", "fenced code", "inline code"],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.alwaysApprove",
+            tab: .privacy,
+            section: "Filter",
+            title: "Always Approve by Default",
+            keywords: ["always approve", "review sheet", "skip review", "auto approve redaction"],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.providers",
+            tab: .privacy,
+            section: "Per-Provider",
+            title: "Per-Provider",
+            keywords: ["per provider", "provider override", "filter per provider", "exempt provider"],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.forget",
+            tab: .privacy,
+            section: "Conversation Privacy",
+            title: "Forget Redactions in Every Conversation",
+            keywords: ["forget redactions", "clear placeholders", "reset redactions"],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.nonInteractive",
+            tab: .privacy,
+            section: "Advanced",
+            title: "Require Review for Background Requests",
+            keywords: [
+                "non-interactive", "background requests", "http api review", "schedules review",
+                "silent approve",
+            ],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.models",
+            tab: .privacy,
+            section: "Models",
+            title: "Detection Models",
+            keywords: ["privacy model", "pii model", "rampart", "install detection model", "on-device detector"],
+            subTab: "model"
+        ),
 
         // MARK: Identity / Storage / Themes / Memory
         .init(
@@ -1413,57 +1535,93 @@ public enum SettingsSearchIndex {
             disambiguation: "Per-workspace switch. The pool itself is Settings → Orchestrator → Allowed subagents.",
             declarativeSection: "delegation"
         ),
-        // The standalone Storage tab is gone: the models directory +
-        // external sources live on the General tab, and the encryption
-        // panel lives on the Privacy tab's Storage sub-tab.
+        // The standalone Storage tab is gone: everything storage-shaped now
+        // lives on the General tab — "Models on This Mac" in the open, and the
+        // Models Directory, Model Sources, and Data & Storage (encryption +
+        // file history) under General → Advanced.
+        .init(
+            id: "storage.externalModels",
+            tab: .settings,
+            section: "Models on This Mac",
+            title: "Use models already on this Mac",
+            keywords: [
+                "hugging face", "hf cache", "lm studio", "external", "import models", "external models",
+                "models on this mac", "other apps",
+            ]
+        ),
         .init(
             id: "storage.location",
             tab: .settings,
+            section: "Advanced",
             title: "Models Directory",
             keywords: ["disk", "data location", "models folder", "move models", "cleanup", "models size"]
         ),
         .init(
-            id: "storage.externalModels",
-            tab: .settings,
-            title: "External Model Sources",
-            keywords: ["hugging face", "hf cache", "lm studio", "external", "import models"]
-        ),
-        .init(
             id: "storage.encryption",
-            tab: .privacy,
+            tab: .settings,
+            section: "Advanced",
             title: "Encrypt Local Data at Rest",
-            keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup"],
-            subTab: "storage"
+            keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup", "data & storage"]
         ),
         .init(
             id: "storage.fileHistory.retention",
-            tab: .privacy,
-            section: "File History",
+            tab: .settings,
+            section: "Advanced",
             title: "Keep File History",
             keywords: [
                 "file history retention", "undo history", "revert history", "file changes", "change history",
                 "file snapshots", "keep changes", "delete old changes", "30 days", "90 days",
             ],
-            subTab: "storage",
             disambiguation:
                 "How long reverting agent file changes stays possible. Deleting a chat always deletes its file history."
         ),
         .init(
             id: "storage.fileHistory.sizeLimit",
-            tab: .privacy,
-            section: "File History",
+            tab: .settings,
+            section: "Advanced",
             title: "File History Size Limit",
             keywords: [
                 "file history size", "file history disk", "undo storage", "snapshot storage", "revert storage",
                 "file changes disk usage",
-            ],
-            subTab: "storage"
+            ]
         ),
         .init(
             id: "themes.appearance",
             tab: .themes,
             title: "Appearance & Themes",
             keywords: ["theme", "appearance", "dark mode", "color", "accent"]
+        ),
+        .init(
+            id: "themes.borders.color",
+            tab: .themes,
+            section: "Borders & Effects",
+            title: "Border Color",
+            keywords: ["default border color", "popover border", "model picker border", "credits border"]
+        ),
+        .init(
+            id: "themes.borders.width",
+            tab: .themes,
+            section: "Borders & Effects",
+            title: "Border Width",
+            keywords: ["default border width", "menu border width", "popover border width", "model picker border width", "credits border width"]
+        ),
+        .init(
+            id: "themes.borders.opacity",
+            tab: .themes,
+            section: "Borders & Effects",
+            title: "Border Opacity",
+            keywords: [
+                "default border opacity", "dropdown border opacity", "popover opacity", "popover border opacity",
+                "model picker border opacity", "credits border opacity",
+            ]
+        ),
+        .init(
+            id: "themes.typography.smallBody",
+            tab: .themes,
+            section: "Text & Fonts",
+            title: "Small body",
+            keywords: ["small body size", "small text", "font size", "compact controls", "model list", "model picker"],
+            disambiguation: "Compact controls and model lists"
         ),
         .init(
             id: "memory.settings",
@@ -1658,13 +1816,58 @@ public enum SettingsSearchIndex {
         .init(
             id: "tools.overview",
             tab: .tools,
-            title: "Tools",
+            title: "Tools & MCP",
             keywords: [
                 "tool catalog", "enable tools", "ask deny", "auto ask deny",
-                "mcp", "plugins", "tool policy",
+                "mcp", "plugins", "tool policy", "tools",
             ],
             disambiguation:
-                "Global tool enablement and Auto/Ask/Deny. Not macOS Permissions and not Chat folder-tool policies.",
+                "Global tool enablement and Auto/Ask/Deny. Not macOS Permissions.",
+            declarativeSection: "tools"
+        ),
+        .init(
+            id: "tools.services",
+            tab: .tools,
+            section: "Services",
+            title: "Services",
+            keywords: [
+                "mcp services", "mcp servers", "connections", "connected services", "remote tools",
+                "mcp",
+            ],
+            subTab: "Services",
+            declarativeSection: "mcp_servers"
+        ),
+        .init(
+            id: "tools.addService",
+            tab: .tools,
+            section: "Services",
+            title: "Add Service",
+            keywords: ["add mcp", "add connection", "add provider", "connect service", "new mcp server"],
+            subTab: "Services"
+        ),
+        .init(
+            id: "tools.directory",
+            tab: .tools,
+            section: "Services",
+            title: "Directory",
+            keywords: [
+                "browse services", "mcp directory", "discover mcp", "provider catalog", "linear",
+                "github", "notion", "custom server",
+            ],
+            subTab: "Services"
+        ),
+        .init(
+            id: "tools.allTools",
+            tab: .tools,
+            section: "All Tools",
+            title: "All Tools",
+            keywords: [
+                "tool list", "per tool permission", "folder permissions", "write files", "edit files",
+                "shell", "git commit", "working folder", "auto ask deny",
+            ],
+            subTab: "All",
+            disambiguation:
+                "Every tool with its own Auto/Ask/Deny policy, including the folder tools (write/edit/shell/git).",
             declarativeSection: "tools"
         ),
         .init(

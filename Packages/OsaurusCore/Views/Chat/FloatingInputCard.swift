@@ -449,6 +449,9 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
+    @State private var modelPickerCardSize = CGSize(width: 532, height: 280)
+    @State private var showCloudModelBrowser = false
+    @ObservedObject private var chatModelFavorites = FavoriteModelsStore.shared
     @State private var showImageSizePicker = false
     /// Width available to the toggle-chip region (the space between the model
     /// chip and the meta cluster). Measured cheaply via `onGeometryChange` and
@@ -1885,6 +1888,13 @@ extension FloatingInputCard {
 
     private func syncAndSend() {
         guard canSend else { return }
+        // Sending under a model-switch advisory accepts the new model, so the
+        // advisory has nothing left to ask.
+        if modelSwitchContinuityWarning != nil {
+            withAnimation(.easeOut(duration: 0.2)) {
+                onDismissModelSwitchContinuityWarning?()
+            }
+        }
         // The runtime owns admission and actual load failures. Host swap must
         // never add a second Send/acknowledgment gate.
         commitSend(localText)
@@ -2166,7 +2176,7 @@ extension FloatingInputCard {
                 )
                 break
             }
-            showModelPicker = true
+            openModelPicker()
         case "agent":
             NotificationCenter.default.post(
                 name: .chatToolbarOpenAgentPicker,
@@ -2655,12 +2665,10 @@ extension FloatingInputCard {
         )
     }
 
-    /// Effective thinking state for toggle-only reasoning models, shown as a
-    /// brain glyph on the model chip (accent while on, muted while off) so
-    /// the state stays visible at a glance beside the footer control and the
-    /// picker's Model Options row. Nil hides the glyph: models with a
-    /// segmented effort suffix, models without a thinking toggle, and Mode 2
-    /// remote-agent runs — the remote agent owns its generation config
+    /// Effective thinking state for toggle-only reasoning models, exposed in
+    /// the model chip's tooltip and accessibility value. Nil omits this detail
+    /// for models with a segmented effort suffix, models without a thinking
+    /// toggle, and Mode 2 remote-agent runs — the remote agent owns its generation config
     /// server-side, so a local state readout would mislead.
     private var inlineThinkingEnabled: Bool? {
         guard let model = selectedModel,
@@ -3000,17 +3008,17 @@ extension FloatingInputCard {
         /// load state is knowable.
         let isLocalModelRun: Bool
         let selectedModel: String?
+        let modelDetails: String
         @ObservedObject var warmupController: ChatWarmupController
 
         func body(content: Content) -> some View {
-            content.help(
-                isDeprecated
-                    ? String(
-                        localized: "This model is outdated. Click to switch to a newer version.",
-                        bundle: .module
-                    )
-                    : helpText
-            )
+            let status = isDeprecated
+                ? String(
+                    localized: "This model is outdated. Click to switch to a newer version.",
+                    bundle: .module
+                )
+                : helpText
+            content.help([status, modelDetails].filter { !$0.isEmpty }.joined(separator: "\n"))
         }
 
         private var helpText: String {
@@ -3058,9 +3066,41 @@ extension FloatingInputCard {
         )
     }
 
+    private func openModelPicker() {
+        guard !showModelPicker else { return }
+        cachedPickerItems = pickerItems
+        modelPickerCardSize = ChatModelPickerCard.initialSize(
+            providers: chatPickerProviders,
+            selectedModel: selectedModel,
+            optionsControl: modelPickerOptionsControl
+        )
+        showModelPicker = true
+    }
+
+    /// Keep the pill visually simple while retaining the removed badges'
+    /// thinking and input-capability information for hover and VoiceOver.
+    private var modelSelectorDetails: String {
+        var details: [String] = []
+        if let thinkingOn = inlineThinkingEnabled {
+            if inlineThinkingUsesNativeDefault {
+                details.append([L("Thinking"), L("Default")].joined(separator: ": "))
+            } else {
+                details.append(thinkingOn ? L("Thinking on") : L("Thinking off"))
+            }
+        }
+        if selectedPickerItem?.isVLM == true {
+            details.append(L("Vision"))
+        }
+        if mediaCapabilities.supportsAudio {
+            details.append(L("Audio Input"))
+        }
+        return details.joined(separator: "\n")
+    }
+
     private var interactiveModelSelectorChip: some View {
         SelectorChip(isActive: showModelPicker) {
-            showModelPicker.toggle()
+            if showModelPicker { dismissModelPicker() }
+            else { openModelPicker() }
         } content: {
             HStack(spacing: 6) {
                 if isSelectedModelDeprecated {
@@ -3076,7 +3116,7 @@ extension FloatingInputCard {
                         .frame(width: 6, height: 6)
                 }
 
-                // Model name with metadata badges
+                // Model name and reasoning text, without suffix icons.
                 if let option = selectedPickerItem {
                     HStack(spacing: 4) {
                         Text(option.displayName)
@@ -3097,53 +3137,6 @@ extension FloatingInputCard {
                                 .lineLimit(1)
                         }
 
-                        // Toggle-only thinking state as a glyph: accent while
-                        // on, muted while off. The interactive control remains
-                        // directly available in both the footer and picker.
-                        if let thinkingOn = inlineThinkingEnabled {
-                            Image(systemName: "brain")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
-                                .foregroundColor(
-                                    inlineThinkingUsesNativeDefault
-                                        ? theme.secondaryText
-                                        : thinkingOn ? theme.accentColor : theme.tertiaryText.opacity(0.55)
-                                )
-                                .localizedHelp(
-                                    inlineThinkingUsesNativeDefault
-                                        ? "Default" : (thinkingOn ? "Thinking on" : "Thinking off")
-                                )
-                                .accessibilityLabel(Text("Thinking", bundle: .module))
-                                .accessibilityValue(
-                                    inlineThinkingUsesNativeDefault
-                                        ? Text("Default", bundle: .module)
-                                        : thinkingOn
-                                            ? Text("On", bundle: .module)
-                                            : Text("Off", bundle: .module)
-                                )
-                        }
-
-                        // Show VLM indicator
-                        if option.isVLM {
-                            Image(systemName: "eye")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 3))
-                                .foregroundColor(theme.accentColor)
-                        }
-
-                        // Audio indicator. The eye was the only modality
-                        // glyph here, so a Nemotron Omni / Gemma-4 E2B-E4B /
-                        // Gemma-4 12B bundle described itself as vision-only
-                        // on the one surface the user reads before typing —
-                        // while the composer beneath it was already
-                        // accepting `.wav`. Same capability source as the
-                        // attach button, so the two cannot disagree.
-                        if mediaCapabilities.supportsAudio {
-                            Image(systemName: "waveform")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 3))
-                                .foregroundColor(theme.accentColor)
-                                .localizedHelp("Audio Input")
-                                .accessibilityLabel(Text("Audio Input", bundle: .module))
-                        }
-
                         if !isCompact, let params = option.parameterCount {
                             Text(params)
                                 .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
@@ -3161,29 +3154,46 @@ extension FloatingInputCard {
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                         .foregroundColor(theme.secondaryText)
                 }
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
             }
         }
+        .accessibilityValue(Text(verbatim: modelSelectorDetails))
         // Chip-wide hover target: the 6px dot alone is too small to hover.
         .modifier(
             ModelWarmupHelp(
                 isDeprecated: isSelectedModelDeprecated,
                 isLocalModelRun: isSelectedModelLocal && !isRemoteAgentRun,
                 selectedModel: selectedModel,
+                modelDetails: modelSelectorDetails,
                 warmupController: warmupController
             )
         )
-        .popover(isPresented: $showModelPicker, arrowEdge: .top) {
-            ModelPickerView(
-                options: cachedPickerItems,
+        .anchoredCard(isPresented: $showModelPicker, size: modelPickerCardSize, accessibilityLabel: L("Model picker")) {
+            ChatModelPickerCard(
+                providers: chatPickerProviders,
                 selectedModel: $selectedModel,
-                agentId: agentId,
                 optionsControl: modelPickerOptionsControl,
-                onDismiss: dismissModelPicker
+                onExploreLocal: {
+                    dismissModelPicker()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .models)
+                },
+                onExploreCloud: {
+                    dismissModelPicker()
+                    DispatchQueue.main.async { showCloudModelBrowser = true }
+                },
+                onSizeChange: { modelPickerCardSize = $0 }
             )
+        }
+        .sheet(isPresented: $showCloudModelBrowser) {
+            CloudModelBrowserDialog(
+                options: cloudPickerItems,
+                selectedModel: $selectedModel,
+                onDismiss: { showCloudModelBrowser = false },
+                onManageCloud: {
+                    showCloudModelBrowser = false
+                    AppDelegate.shared?.showManagementWindow(initialTab: .credits)
+                }
+            )
+            .environment(\.theme, theme)
         }
         .onChange(of: showModelPicker) { _, isShowing in
             if isShowing {
@@ -3193,6 +3203,13 @@ extension FloatingInputCard {
                 // view; a stale set would hide the depth row on a capable
                 // model, which reads as "this model has no MTP".
                 refreshNativeMTPState()
+                Task {
+                    await RemoteProviderManager.shared.refreshConnectedProviders()
+                    await ModelPickerItemCache.shared.buildModelPickerItems()
+                    _ = await Task.detached(priority: .utility) {
+                        ExternalModelLocator.pruneMissing()
+                    }.value
+                }
             }
         }
         .onChange(of: pickerItems) { _, newItems in
@@ -3201,6 +3218,22 @@ extension FloatingInputCard {
                 cachedPickerItems = newItems
             }
         }
+    }
+
+    private var cloudPickerItems: [ModelPickerItem] {
+        pickerItems.filter {
+            if case .remote(_, let providerID) = $0.source {
+                return providerID == RemoteProviderManager.osaurusRouterProviderId
+            }
+            return false
+        }
+    }
+
+    private var chatPickerProviders: [ChatModelPickerProvider] {
+        let shortlist = Set(cachedPickerItems.filter {
+            chatModelFavorites.isFavorite($0.favoriteKey) || $0.id == selectedModel
+        }.map(\.id))
+        return ChatModelPickerProvider.groups(from: cachedPickerItems, cloudModelIDs: shortlist)
     }
 
     /// Inline "Model Options" section for the model popover: the semantic
@@ -4185,7 +4218,12 @@ extension FloatingInputCard {
             let next =
                 pickerItems.first { $0.id == warning.newModelId }?.displayName
                 ?? warning.newModelId
-            modelSwitchContinuityBanner(previous: previous, next: next, pointerCenterX: 28)
+            modelSwitchContinuityBanner(
+                previousModelId: warning.previousModelId,
+                previous: previous,
+                next: next,
+                pointerCenterX: 28
+            )
                 .frame(width: Self.ramBannerWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 20)
@@ -4196,6 +4234,7 @@ extension FloatingInputCard {
     }
 
     private func modelSwitchContinuityBanner(
+        previousModelId: String,
         previous: String,
         next: String,
         pointerCenterX: CGFloat
@@ -4225,14 +4264,18 @@ extension FloatingInputCard {
             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
             .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 10) {
-                bannerPrimaryButton(String(localized: "Start New Chat", bundle: .module), tint: tint) {
-                    onDismissModelSwitchContinuityWarning?()
-                    onClearChat?()
-                }
-                bannerTextButton(String(localized: "Continue with This Model", bundle: .module)) {
+                // Switching back clears the advisory in the session's model
+                // sink. Dismiss explicitly too, since that sink skips changes
+                // made while a model is loading.
+                bannerPrimaryButton(String(localized: "Keep Using \(previous)", bundle: .module), tint: tint) {
                     withAnimation(.easeOut(duration: 0.2)) {
+                        selectedModel = previousModelId
                         onDismissModelSwitchContinuityWarning?()
                     }
+                }
+                bannerTextButton(String(localized: "Start New Chat", bundle: .module)) {
+                    onDismissModelSwitchContinuityWarning?()
+                    onClearChat?()
                 }
             }
             .frame(maxWidth: .infinity)
@@ -4546,7 +4589,7 @@ extension FloatingInputCard {
             .fixedSize(horizontal: false, vertical: true)
 
             Button {
-                showModelPicker = true
+                openModelPicker()
             } label: {
                 Text("Choose model", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
@@ -6343,7 +6386,10 @@ extension NSImage {
 /// larger values for its heavier look.
 private struct PopoverCardModifier: ViewModifier {
     var cornerRadius: CGFloat = 10
+    var backgroundColor: Color? = nil
     var accentOpacity: (dark: Double, light: Double) = (0.04, 0.03)
+    var borderColor: Color? = nil
+    var borderWidth: CGFloat = 1
     var borderOpacity: Double = 0.12
     var shadowOpacity: Double = 0.2
     var shadowRadius: CGFloat = 16
@@ -6355,38 +6401,46 @@ private struct PopoverCardModifier: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
             .background {
-                ZStack {
-                    if theme.glassEnabled {
-                        shape.fill(.ultraThinMaterial)
+                if let backgroundColor {
+                    shape.fill(backgroundColor)
+                } else {
+                    ZStack {
+                        if theme.glassEnabled {
+                            shape.fill(.ultraThinMaterial)
+                        }
+                        shape.fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(
+                                    theme.isDark ? accentOpacity.dark : accentOpacity.light
+                                ),
+                                .clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                        .clipShape(shape)
                     }
-                    shape.fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
-                    LinearGradient(
-                        colors: [
-                            theme.accentColor.opacity(
-                                theme.isDark ? accentOpacity.dark : accentOpacity.light
-                            ),
-                            .clear,
-                        ],
-                        startPoint: .top,
-                        endPoint: .center
-                    )
-                    .clipShape(shape)
                 }
             }
             .clipShape(shape)
-            .overlay(
-                shape.strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(0.2),
-                            theme.primaryBorder.opacity(borderOpacity),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-            )
+            .overlay {
+                if let borderColor {
+                    shape.strokeBorder(borderColor, lineWidth: borderWidth)
+                } else {
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(0.2),
+                                theme.primaryBorder.opacity(borderOpacity),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+                }
+            }
             .shadow(
                 color: theme.shadowColor.opacity(shadowOpacity),
                 radius: shadowRadius,
@@ -6401,7 +6455,10 @@ private extension View {
     /// border, soft shadow). Tunable for the heavier model-options panel.
     func popoverCard(
         cornerRadius: CGFloat = 10,
+        backgroundColor: Color? = nil,
         accentOpacity: (dark: Double, light: Double) = (0.04, 0.03),
+        borderColor: Color? = nil,
+        borderWidth: CGFloat = 1,
         borderOpacity: Double = 0.12,
         shadowOpacity: Double = 0.2,
         shadowRadius: CGFloat = 16,
@@ -6410,7 +6467,10 @@ private extension View {
         modifier(
             PopoverCardModifier(
                 cornerRadius: cornerRadius,
+                backgroundColor: backgroundColor,
                 accentOpacity: accentOpacity,
+                borderColor: borderColor,
+                borderWidth: borderWidth,
                 borderOpacity: borderOpacity,
                 shadowOpacity: shadowOpacity,
                 shadowRadius: shadowRadius,
@@ -6799,7 +6859,7 @@ private struct ContextBreakdownPopover: View {
         let configured = ContextCompactionService.configuredModelIdentifier()
         if ContextCompactionService.usesChatModelFallback(configured: configured) {
             return L(
-                "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Chat → Compaction Model."
+                "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Conversation → Advanced → Compaction Model."
             )
         }
         let name = configured.map(Self.shortModelName) ?? ""
@@ -7257,8 +7317,15 @@ private struct ContextBreakdownPopover: View {
 
 // MARK: - Wallet Popover
 
-/// The composer wallet panel, styled to match `ContextBreakdownPopover`
-/// (rounded glass card, 11pt headers, hairline dividers, monospaced values).
+private enum WalletCardStyle {
+    static let shadowRadius: CGFloat = 16
+    static let shadowOffsetY: CGFloat = 8
+    // Leave room for the blur to fade out before the native window edge.
+    static let shadowPadding = 3 * shadowRadius + abs(shadowOffsetY)
+}
+
+/// The composer wallet panel, presented in the same arrowless, themed card
+/// as the model picker, aligned to the trailing edge of its credits chip.
 /// Opens from the credits chip as a hover preview or a pinned click-through
 /// panel: balance hero, per-session router spend, recent account activity
 /// (model requests + ledger transactions), and Add credits / View all actions.
@@ -7276,9 +7343,13 @@ private struct WalletPopover: View {
     let isAttention: Bool
     let onAddCredits: () -> Void
     let onViewAll: () -> Void
+    let onHeightChange: (CGFloat) -> Void
 
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @Environment(\.theme) private var theme
+    @Environment(\.anchoredCardMetrics) private var cardMetrics
+
+    private var subduedTextColor: Color { theme.isDark ? theme.tertiaryText : theme.secondaryText }
 
     /// Shared so each row doesn't allocate a formatter; relative labels like
     /// "3h ago" only need minute resolution.
@@ -7297,6 +7368,35 @@ private struct WalletPopover: View {
     }
 
     var body: some View {
+        ScrollView {
+            walletContent
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                    ceil(geometry.size.height)
+                } action: { height in
+                    onHeightChange(height)
+                }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: cardMetrics?.visibleSize.width ?? 272, height: cardMetrics?.visibleSize.height)
+        .popoverCard(
+            cornerRadius: 16,
+            backgroundColor: theme.secondaryBackground,
+            borderColor: theme.primaryBorder.opacity(theme.borderOpacity),
+            borderWidth: theme.defaultBorderWidth,
+            shadowRadius: WalletCardStyle.shadowRadius,
+            shadowOffsetY: WalletCardStyle.shadowOffsetY
+        )
+        .task {
+            await accountService.refreshBalance()
+            await accountService.refreshUsage(reset: true)
+            await accountService.refreshTransactions(reset: true)
+            await accountService.refreshWebUsage(reset: true)
+            await accountService.refreshWebSettings()
+        }
+    }
+
+    private var walletContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let sessionSpend {
@@ -7318,20 +7418,11 @@ private struct WalletPopover: View {
             divider
             footerActions
         }
-        .frame(width: 272)
-        .popoverCard()
-        .task {
-            await accountService.refreshBalance()
-            await accountService.refreshUsage(reset: true)
-            await accountService.refreshTransactions(reset: true)
-            await accountService.refreshWebUsage(reset: true)
-            await accountService.refreshWebSettings()
-        }
     }
 
     // MARK: Sections
 
-    /// Hero balance over a soft accent wash — the "card face" of the wallet.
+    /// Hero balance at the top of the wallet.
     private var header: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
@@ -7384,25 +7475,18 @@ private struct WalletPopover: View {
             if accountService.isFrozen {
                 Text("Account paused - add credits to resume.", bundle: .module)
                     .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(subduedTextColor)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Available balance", bundle: .module)
                     .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(subduedTextColor)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 11)
-        .background(
-            LinearGradient(
-                colors: [theme.accentColor.opacity(0.10), theme.accentColor.opacity(0.02)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
     }
 
     private func sessionSpendRow(_ spend: String, cachedLabel: String?) -> some View {
@@ -7492,7 +7576,7 @@ private struct WalletPopover: View {
         VStack(alignment: .leading, spacing: 9) {
             Text("Recent activity", bundle: .module)
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(subduedTextColor)
                 .textCase(.uppercase)
                 .kerning(0.8)
 
@@ -7518,7 +7602,7 @@ private struct WalletPopover: View {
                 .foregroundColor(theme.tertiaryText.opacity(0.7))
             Text("No activity yet", bundle: .module)
                 .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(subduedTextColor)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.vertical, 6)
@@ -7555,7 +7639,7 @@ private struct WalletPopover: View {
                 if let timeLabel = timeLabel(for: row) {
                     Text(verbatim: timeLabel)
                         .font(.system(size: 9))
-                        .foregroundColor(theme.tertiaryText)
+                        .foregroundColor(subduedTextColor)
                 }
             }
 
@@ -8547,6 +8631,9 @@ private struct FloatingCreditsChip: View {
     /// True when the wallet panel was opened by click; hover exit no longer
     /// dismisses it, only outside-click / an action does.
     @State private var walletPanelPinned = false
+    @State private var walletHover = HoverPreviewPresence()
+    /// Measured before the first presentation, then updated as activity loads.
+    @State private var walletPanelHeight: CGFloat = 0
     @State private var balanceHoverTask: Task<Void, Never>?
     /// Delayed dismiss for the hover-opened wallet panel. Gives the cursor a
     /// grace period to travel from the chip into the panel (which lives in its
@@ -8707,6 +8794,7 @@ private struct FloatingCreditsChip: View {
         }
         .accessibilityLabel(creditsHelpText)
         .onHover { hovering in
+            walletHover.isOverTrigger = hovering
             balanceHoverTask?.cancel()
             // Empty state: the chip is a direct "Add credits" CTA (click opens
             // the top-up sheet), so no hover preview — surfacing the wallet
@@ -8726,7 +8814,15 @@ private struct FloatingCreditsChip: View {
                 scheduleWalletDismiss()
             }
         }
-        .popover(isPresented: $showWalletPanel, arrowEdge: .top) {
+        .anchoredCard(
+            isPresented: $showWalletPanel,
+            size: CGSize(width: 272, height: walletPanelHeight),
+            alignment: .trailing,
+            constrainToWindow: true,
+            takesFocus: walletPanelPinned,
+            shadowPadding: WalletCardStyle.shadowPadding,
+            accessibilityLabel: L("Credits")
+        ) {
             WalletPopover(
                 sessionSpend: isRouterBilledSession ? sessionSpendDisplay : nil,
                 sessionCachedInputLabel: isRouterBilledSession ? sessionCachedInputLabel : nil,
@@ -8738,22 +8834,39 @@ private struct FloatingCreditsChip: View {
                 onViewAll: {
                     closeWalletPanel()
                     AppDelegate.shared?.showManagementWindow(initialTab: .credits)
-                }
+                },
+                onHeightChange: { walletPanelHeight = $0 }
             )
-            // Keep the panel alive while the cursor is over it, so the user
-            // can travel from the chip and click Add credits / View all.
+            // The native drawing window includes the shadow, which overlaps
+            // the source pill. Include that transparent margin in hover only,
+            // or opening the preview can steal hover and immediately dismiss it.
+            // Undo the padding after tracking so card layout/measurement stay put.
+            .padding(WalletCardStyle.shadowPadding)
+            .contentShape(Rectangle())
             .onHover { hovering in
+                walletHover.isOverPanel = hovering
                 if hovering {
                     walletDismissTask?.cancel()
                 } else if !walletPanelPinned {
                     scheduleWalletDismiss()
                 }
             }
+            .padding(-WalletCardStyle.shadowPadding)
         }
         .onChange(of: showWalletPanel) { _, isShown in
             // Outside-click dismissal flips the binding directly; unpin so the
             // next hover preview behaves normally.
-            if !isShown { walletPanelPinned = false }
+            if !isShown {
+                walletHover.isOverPanel = false
+                walletPanelPinned = false
+                walletPanelHeight = 0
+                balanceHoverTask?.cancel()
+                walletDismissTask?.cancel()
+            }
+        }
+        .onDisappear {
+            balanceHoverTask?.cancel()
+            walletDismissTask?.cancel()
         }
     }
 
@@ -8826,9 +8939,12 @@ private struct FloatingCreditsChip: View {
     private func scheduleWalletDismiss() {
         balanceHoverTask?.cancel()
         walletDismissTask?.cancel()
+        guard walletHover.shouldDismiss(isPinned: walletPanelPinned) else { return }
         walletDismissTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                walletHover.shouldDismiss(isPinned: walletPanelPinned)
+            else { return }
             showWalletPanel = false
         }
     }

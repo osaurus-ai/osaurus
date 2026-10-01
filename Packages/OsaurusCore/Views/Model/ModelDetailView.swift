@@ -178,10 +178,11 @@ struct ModelDetailView: View, Identifiable {
         }
         .task(id: model.id) { await modelManager.checkModelManifest(model) }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
-            // The shared cache is invalidated on this notification; re-resolve
-            // off-main so the checkmark stays in sync after a download or delete.
+            // Re-resolve the local checkmark after a download or delete.
+            // ModelManager owns manifest refresh for this notification: it
+            // rereads local state and honors automatic-check opt-out/due times.
+            // A local change must not force a separate network request.
             Task { await loadDownloadState() }
-            Task { await modelManager.checkModelManifest(model, force: true) }
             diagnostics = nil
             Task { await loadDiagnostics() }
         }

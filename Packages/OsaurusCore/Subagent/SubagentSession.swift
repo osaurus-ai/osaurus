@@ -310,18 +310,36 @@ public enum SubagentSession {
             )
         }
 
-        return ToolEnvelope.success(
-            tool: tool,
-            result: [
-                "dispatched": true,
-                "background": true,
-                "helper": title,
-                "note":
-                    "The helper is running in the background. Its result will arrive as a "
-                    + "follow-up message in this conversation — do not wait, poll, or "
-                    + "re-dispatch the same task. Tell the user the helper will report back.",
-            ]
-        )
+        return backgroundAck(tool: tool, helper: title, sessionId: kind.plannedSessionId)
+    }
+
+    /// The acknowledgment a `background: true` spawn returns. Carries the
+    /// worker's `session_id` when the kind knows it ahead of the run (a
+    /// delegated agent or workspace worker), so the parent can `continue`
+    /// with it or name it before the report-back arrives.
+    public static func backgroundAck(tool: String, helper: String, sessionId: UUID?) -> String {
+        var result: [String: Any] = [
+            "dispatched": true,
+            "background": true,
+            "helper": helper,
+            "note":
+                "The helper is running in the background. Its result will arrive as a "
+                + "follow-up message in this conversation — do not wait, poll, or "
+                + "re-dispatch the same task. Tell the user the helper will report back.",
+        ]
+        if let sessionId {
+            result["session_id"] = sessionId.uuidString
+        }
+        return ToolEnvelope.success(tool: tool, result: result)
+    }
+
+    /// Whether `envelope` is a background acknowledgment (as opposed to a
+    /// settled `spawn_result` or a failure).
+    public static func isBackgroundAck(_ envelope: String) -> Bool {
+        guard ToolEnvelope.isSuccess(envelope),
+            let payload = ToolEnvelope.resultPayload(envelope) as? [String: Any]
+        else { return false }
+        return payload["dispatched"] as? Bool == true && payload["background"] as? Bool == true
     }
 
     /// Resolve and authorize a kind without admitting it or changing model

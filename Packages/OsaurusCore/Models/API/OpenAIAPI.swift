@@ -728,6 +728,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// turns become the model context and the new turns are appended back
     /// (docs/MOBILE_PROTOCOL.md §14.5). Owner callers only.
     var osaurus_session_id: String? = nil
+    /// Osaurus Connect: the phone's name for this run. The owner's phone run
+    /// keeps going when its connection drops, and the phone rejoins it by
+    /// this id (docs/MOBILE_PROTOCOL.md §6.4). Owner callers only.
+    var osaurus_run_id: String? = nil
     /// Deterministic-sampling seed (OpenAI v1.x). When set, identical
     /// requests should yield identical completions on the same backend.
     var seed: Int? = nil
@@ -853,6 +857,12 @@ struct ChatCompletionRequest: Codable, Sendable {
         case seed, response_format, stream_options
         case logprobs, top_logprobs
         case enable_thinking, reasoning_effort
+    }
+
+    /// Osaurus Connect fields, decoded only: they belong to this Mac and are
+    /// never encoded into a request forwarded to a provider.
+    private enum OsaurusCodingKeys: String, CodingKey {
+        case osaurus_session_id, osaurus_run_id
     }
 
     func withModel(_ newModel: String) -> ChatCompletionRequest {
@@ -994,6 +1004,9 @@ extension ChatCompletionRequest {
         top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
         enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
         reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
+        let osaurus = try decoder.container(keyedBy: OsaurusCodingKeys.self)
+        osaurus_session_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_session_id)
+        osaurus_run_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_run_id)
     }
 }
 

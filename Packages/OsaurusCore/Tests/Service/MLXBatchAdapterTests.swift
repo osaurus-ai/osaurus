@@ -18,6 +18,57 @@ import Testing
 @Suite(.serialized)
 struct MLXBatchAdapterTests {
 
+    @Test func tiedHeadCacheIdentitySeparatesCodecsAndVersionsActivationContract() {
+        let keys = VMLXTiedHeadCodec.allCases.map { codec in
+            ModelRuntime.tiedHeadCacheIdentity(codec: codec, environment: [:])
+        }
+        #expect(Set(keys).count == VMLXTiedHeadCodec.allCases.count)
+        #expect(keys.allSatisfy { $0.contains("activation=source-dtype-v1") })
+        let native = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "gemma-4-26b-a4b-it-qat",
+            kvModeTag: "none",
+            weightsFingerprint: "same-weights",
+            tiedHeadCodec: .fp16Passthrough
+        )
+        let q6 = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "gemma-4-26b-a4b-it-qat",
+            kvModeTag: "none",
+            weightsFingerprint: "same-weights",
+            tiedHeadCodec: .q6
+        )
+        #expect(native != q6)
+        #expect(q6.contains("tied-head=q6-gs64;activation=source-dtype-v1"))
+    }
+
+    @Test func tiedHeadCacheIdentityMatchesLoaderOverridePrecedence() {
+        let q6 = ModelRuntime.tiedHeadCacheIdentity(codec: .q6, environment: [:])
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q4,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "6"]
+            ) == q6
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_GS": "32"]
+            ) != q6
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "0"]
+            )
+                == ModelRuntime.tiedHeadCacheIdentity(codec: .fp16Passthrough, environment: [:])
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "invalid"]
+            ) == q6
+        )
+    }
+
     @Test func processLifetimeDiagnosticsKeepOccupancyLiveAndCountersMonotonic() {
         var retired = ProcessLifetimeBatchCounters(
             activeHighWatermark: 3,

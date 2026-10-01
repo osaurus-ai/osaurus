@@ -129,6 +129,9 @@ final class InboundSharedRunBridge {
         runsByTask[taskId, default: []].insert(runKey)
         if let sessionId = session.sessionId {
             monitor.reportSession(sessionId, status: .working)
+            if RemoteSessionContinuation.isFromPairedPhone(context) {
+                PhoneChatHandoff.shared.notePhoneActivity(sessionId: sessionId)
+            }
         }
         return handle
     }
@@ -197,7 +200,7 @@ final class InboundSharedRunBridge {
             let staleTitle =
                 stored.title == "New Chat"
                 || (RemoteSessionContinuation.isFromPairedPhone(context)
-                    && stored.title.hasPrefix("\(MobilePairingService.keyLabel) → "))
+                    && stored.title.hasPrefix("\(MobilePairingService.legacyKeyLabel) → "))
             data.title = staleTitle ? title : stored.title
         } else {
             data = ChatSessionData(
@@ -384,13 +387,17 @@ final class InboundSharedRunBridge {
     /// its last live run ends; a run stopped from the tab finishing later is
     /// a no-op on the (already cancelled) task.
     func finish(_ handle: Handle, success: Bool, summary: String) {
-        guard live.removeValue(forKey: handle.runKey) != nil else { return }
+        guard let ended = live.removeValue(forKey: handle.runKey) else { return }
         MobileConnectLog.hostedRun(
             "finished run \(handle.runKey) success=\(success) "
                 + "(session turns=\(manager.taskState(for: handle.taskId)?.chatSession?.turns.count ?? -1))"
         )
         let session = manager.taskState(for: handle.taskId)?.chatSession
         session?.save()
+        // A long phone run may end after the user left the Mac.
+        if let sessionId = session?.sessionId, RemoteSessionContinuation.isFromPairedPhone(ended.context) {
+            PhoneChatHandoff.shared.notePhoneActivity(sessionId: sessionId)
+        }
         // Whatever streamed since the last redraw, drawn before the run ends.
         session?.rebuildVisibleBlocks()
         streamingTurns.removeValue(forKey: handle.runKey)

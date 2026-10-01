@@ -3128,7 +3128,7 @@ struct AgentDetailView: View {
                 }
 
                 Text(
-                    "Generates this agent's follow-up questions on a separate, usually cheaper or faster model, so the chat model is never interrupted. Applies only while Suggest Follow-Up Questions is on in Chat settings.",
+                    "Generates this agent's follow-up questions on a separate, usually cheaper or faster model, so the chat model is never interrupted. Applies only while Suggest Follow-Up Questions is on in Conversation settings.",
                     bundle: .module
                 )
                 .font(.system(size: 11))

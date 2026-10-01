@@ -3,14 +3,18 @@
 //  osaurus / PrivacyFilter
 //
 //  Top-level "Privacy" management tab. Always renders
-//  `ManagerHeaderWithTabs` + four sub-tabs (Overview / Rules /
-//  Providers / Model) so the surface scans like Server and Voice
-//  instead of a long card scroll.
+//  `ManagerHeaderWithTabs` + three sub-tabs (Filter / Rules / Models) so
+//  the surface scans like Server and Voice instead of a long card scroll.
+//  Filter = what Osaurus collects + the redaction filter (including the
+//  per-provider overrides and the non-interactive review policy under
+//  Advanced); Rules = what the matcher looks for; Models = the optional
+//  on-device detector. At-rest encryption and file history live under
+//  General → Advanced → Data & Storage.
 //
 //  The on-device AI model is OPTIONAL: the regex / preset / custom-rule
 //  layer works with zero download, so the panel is never gated on the
-//  bundle. The install + status UI lives in the Model tab, and the
-//  AI-detection toggle in Overview is the only control that needs the
+//  bundle. The install + status UI lives in the Models tab, and the
+//  AI-detection toggle on Filter is the only control that needs the
 //  bundle (disabled with an Install link until the model verifies).
 //
 //  Persistence: `save()` is intentionally synchronous now. The previous
@@ -108,50 +112,22 @@ struct PrivacyView: View {
         }
     }
 
-    /// Tabs whose content is a centered full-screen state rather than a
-    /// scrollable card list: the Providers empty state and the
-    /// not-yet-installed Model hero. These fill the content area
-    /// (bypassing the scroll view + insets) so the shared
-    /// `SettingsEmptyState` centers like every other settings tab.
-    private var isFullBleedTab: Bool {
-        switch selectedTab {
-        case .providers:
-            return providerManager.configuration.providers.isEmpty
-        case .model:
-            return false
-        default:
-            return false
-        }
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             headerView
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
 
-            // The tabbed surface is ALWAYS shown now — the regex /
+            // The tabbed surface is ALWAYS shown — the regex /
             // custom-rule layer works without the on-device model, so
             // gating the whole panel on `isModelReady` would have
             // hidden the rules a no-download user can fully use. The
-            // model's install / status UI lives in the Model tab.
-            //
-            // Full-bleed tabs (the Providers empty state, the
-            // not-yet-installed Model hero) fill the content area so
-            // their centered `SettingsEmptyState` reads like the rest
-            // of the app; the card-list tabs scroll under 24pt insets.
-            Group {
-                if isFullBleedTab {
-                    selectedTabContent
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView {
-                        selectedTabContent
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 24)
-                            .frame(maxWidth: .infinity, alignment: .top)
-                            .settingsLandingAnchor("privacy.tab")
-                    }
-                }
+            // model's install / status UI lives in the Models tab.
+            ScrollView {
+                selectedTabContent
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .settingsLandingAnchor("privacy.tab")
             }
             .opacity(hasAppeared ? 1 : 0)
         }
@@ -201,20 +177,29 @@ struct PrivacyView: View {
     }
 
     private func applySubTabRequest(_ requested: String?) {
-        guard let requested, let tab = PrivacyTab(rawValue: requested) else { return }
-        selectedTab = tab
+        guard let requested else { return }
         managementState.privacySubTabRequest = nil
+        // Encryption / file history moved to General → Advanced → Data &
+        // Storage; forward the retired "storage" sub-tab there so older
+        // deep links and guide paths still land on the controls.
+        if requested == "storage" {
+            SettingsHighlightCoordinator.shared.request("storage.encryption")
+            managementState.selectedTab = .settings
+            return
+        }
+        guard let tab = PrivacyTab.resolved(from: requested) else { return }
+        selectedTab = tab
     }
 
     // MARK: - Header
 
-    /// Tabbed header so users can jump between
-    /// Overview/Rules/Providers/Model without scrolling. No header
-    /// actions today — install/verify/remove all live in the Model tab.
+    /// Tabbed header so users can jump between Filter / Rules / Models
+    /// without scrolling. No header actions — install/verify/remove all
+    /// live in the Models tab.
     private var headerView: some View {
         ManagerHeaderWithTabs(
             title: L("Privacy"),
-            subtitle: L("Redact sensitive content before it leaves your Mac, then restore it on responses.")
+            subtitle: L("What leaves your Mac and what Osaurus collects.")
         ) {
             EmptyView()
         } tabsRow: {
@@ -231,8 +216,11 @@ struct PrivacyView: View {
             PrivacyOverviewTab(
                 configuration: $configuration,
                 save: save,
+                saveDebounced: saveDebounced,
                 isModelReady: isModelReady,
-                onInstallModel: { selectedTab = .model },
+                providers: providerManager.configuration.providers,
+                onOpenModels: { selectedTab = .model },
+                onOpenProviders: { ManagementStateManager.shared.selectedTab = .providers },
                 forgetActionMessage: forgetActionMessage,
                 forgetAllRedactions: forgetAllRedactions
             )
@@ -247,15 +235,6 @@ struct PrivacyView: View {
                 onDeleteCustomRule: deleteCustomRule(id:),
                 onToggleCustomRule: setCustomRuleEnabled(id:enabled:)
             )
-        case .providers:
-            PrivacyProvidersTab(
-                providers: providerManager.configuration.providers,
-                configuration: $configuration,
-                save: save,
-                saveDebounced: saveDebounced,
-                hasAppeared: hasAppeared,
-                onOpenProviders: { ManagementStateManager.shared.selectedTab = .providers }
-            )
         case .model:
             VStack(alignment: .leading, spacing: 16) {
                 Text(
@@ -269,11 +248,7 @@ struct PrivacyView: View {
 
                 PrivacyModelSelector(configuration: $configuration, save: save, layout: .sections)
             }
-        case .storage:
-            // At-rest encryption / backup / key rotation, relocated from the
-            // removed Storage sidebar tab. Embedded mode renders just the
-            // section cards inside this tab's scroll region.
-            StorageSettingsView(embedded: true)
+            .settingsLandingAnchor("privacy.models")
         }
     }
 
@@ -351,29 +326,35 @@ struct PrivacyView: View {
 
 // MARK: - Privacy Tab
 
-/// The four sub-sections of the Privacy tab. Providers stays in the
-/// list even when zero remote providers are configured — the tab
-/// surfaces an empty state pointing the user at the Remote Providers
-/// manager rather than silently disappearing. Keeps the tab count
-/// stable so the layout doesn't shift the moment a provider is
-/// added/removed elsewhere.
+/// The three sub-sections of the Privacy tab. Raw values are stable
+/// deep-link ids (`privacySubTabRequest`, settings-search `subTab`); the
+/// visible titles differ, so use `resolved(from:)` for inbound requests.
 ///
 /// `Hashable` is synthesized from the `String` raw value, which is
 /// what `AnimatedTabItem`'s `ForEach(id: \.self)` needs.
 enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
+    /// Consent + the redaction filter (per-provider overrides folded in).
     case overview
     case rules
-    case providers
     case model
-    case storage
 
     var title: String {
         switch self {
-        case .overview: return L("Overview")
+        case .overview: return L("Filter")
         case .rules: return L("Rules")
-        case .providers: return L("Providers")
         case .model: return L("Models")
-        case .storage: return L("Storage")
+        }
+    }
+
+    /// Accepts the visible titles and the retired `providers` sub-tab (its
+    /// toggles now live on Filter). `"storage"` is handled by the caller,
+    /// which forwards to General.
+    static func resolved(from rawValue: String) -> PrivacyTab? {
+        if let tab = PrivacyTab(rawValue: rawValue) { return tab }
+        switch rawValue.lowercased() {
+        case "filter", "providers", "provider": return .overview
+        case "models": return .model
+        default: return nil
         }
     }
 }
@@ -643,26 +624,36 @@ private struct PrivacyModelSelector: View {
 
 // MARK: - Overview Tab
 
-/// The "what does the filter actually do" tab: master enable toggle,
-/// the AI-detection layer toggle, review behavior (always-approve /
-/// skip code), and the conversation-level Forget Redactions verb.
-/// These are the most-touched controls so they live one tap away
-/// from the header.
+/// The "Filter" tab: data-collection consent, the master scrub toggle,
+/// the AI-detection layer toggle (with one link to Models), review
+/// behaviour, per-provider overrides, the conversation-level Forget
+/// Redactions verb, and — under Advanced — the non-interactive review
+/// policy. These are the most-touched controls so they live one tap
+/// away from the header.
 private struct PrivacyOverviewTab: View {
     @Environment(\.theme) private var theme
     @Binding var configuration: PrivacyFilterConfiguration
     let save: () -> Void
+    /// Provider-toggle writes funnel through here so flipping a handful
+    /// of providers in a row doesn't issue a JSON write per toggle.
+    let saveDebounced: () -> Void
     /// Whether the on-device detection model is installed + verified.
     /// Gates the AI-detection toggle: AI can't be turned on without
     /// the bundle (an AI-on + no-model state would fail-close every
     /// cloud send), so when this is false we show an install prompt.
     let isModelReady: Bool
-    /// Jump to the Models tab so the user can install a bundle.
-    let onInstallModel: () -> Void
+    /// Configured remote providers, for the per-provider override rows.
+    let providers: [RemoteProvider]
+    /// Jump to the Models tab (install a bundle / pick a backend).
+    let onOpenModels: () -> Void
+    /// Jump to the Providers manager so the user can add one.
+    let onOpenProviders: () -> Void
     /// Read-only — the parent owns this `@State` and re-renders the
     /// tab when it changes; the tab never writes back to it.
     let forgetActionMessage: String?
     let forgetAllRedactions: () -> Void
+
+    private static let advancedAnchorIds: Set<String> = ["privacy.filter.nonInteractive"]
 
     /// Usage-analytics consent. Mirrors `TelemetryService.shared.isEnabled`
     /// (opt-in: true only once granted). Applied immediately on change.
@@ -676,82 +667,93 @@ private struct PrivacyOverviewTab: View {
             dataCollectionSection
 
             SettingsSection(title: L("Filter"), icon: "lock.shield.fill") {
-                SettingsSubsection(label: "Detection") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SettingsToggle(
-                            title: L("Scrub PII before sending to cloud providers"),
-                            description: L(
-                                "Detects PII in your messages and asks you to review before any cloud-bound request. Local models (MLX, Foundation) and on-device tools bypass the filter."
-                            ),
-                            isOn: Binding(
-                                get: { configuration.enabled },
-                                set: { newValue in
-                                    configuration.enabled = newValue
-                                    save()
-                                }
+                SettingsToggle(
+                    title: L("Scrub PII before sending to cloud providers"),
+                    description: L(
+                        "Detects PII in your messages and asks you to review before any cloud-bound request. Local models (MLX, Foundation) and on-device tools bypass the filter."
+                    ),
+                    anchorId: "privacy.filter.enabled",
+                    isOn: Binding(
+                        get: { configuration.enabled },
+                        set: { newValue in
+                            configuration.enabled = newValue
+                            save()
+                        }
+                    )
+                )
+
+                if configuration.enabled {
+                    // Installing a model turns this on by itself
+                    // (see `PrivacyFilterStore.enableAIDetectionAfterInstall`),
+                    // so the toggle is a deliberate off switch, not
+                    // a prerequisite. With nothing installed it is
+                    // disabled: AI-on + no-model would fail-close
+                    // every cloud send.
+                    SettingsToggle(
+                        title: L("AI detection (on-device model)"),
+                        description: isModelReady
+                            ? L(
+                                "Use the installed model to catch names, addresses, and secrets that pattern rules miss. Turns on automatically when you install a model."
                             )
+                            : L("Install a model in the Models tab to turn this on."),
+                        anchorId: "privacy.filter.aiDetection",
+                        isOn: Binding(
+                            get: { configuration.aiDetectionEnabled && isModelReady },
+                            set: { newValue in
+                                configuration.aiDetectionEnabled = newValue
+                                save()
+                            }
                         )
+                    )
+                    .disabled(!isModelReady)
+                    .opacity(isModelReady ? 1 : 0.6)
 
-                        if configuration.enabled {
-                            // Installing a model turns this on by itself
-                            // (see `PrivacyFilterStore.enableAIDetectionAfterInstall`),
-                            // so the toggle is a deliberate off switch, not
-                            // a prerequisite. With nothing installed it is
-                            // disabled: AI-on + no-model would fail-close
-                            // every cloud send.
-                            SettingsToggle(
-                                title: L("AI detection (on-device model)"),
-                                description: isModelReady
-                                    ? L(
-                                        "Use the installed model to catch names, addresses, and secrets that pattern rules miss. Turns on automatically when you install a model."
-                                    )
-                                    : L("Install a model below to turn this on."),
-                                isOn: Binding(
-                                    get: { configuration.aiDetectionEnabled && isModelReady },
-                                    set: { newValue in
-                                        configuration.aiDetectionEnabled = newValue
-                                        save()
-                                    }
-                                )
-                            )
-                            .disabled(!isModelReady)
-                            .opacity(isModelReady ? 1 : 0.6)
-
-                            PrivacyModelSelector(configuration: $configuration, save: save)
-                        }
-
-                        if configuration.enabled && !hasActiveDetector {
-                            noDetectorNote
-                        }
+                    SettingsLinkRow(
+                        title: "Detection Model",
+                        description: isModelReady
+                            ? "Choose or update the on-device model that powers AI detection."
+                            : "No model installed. Pattern rules still work without one.",
+                        icon: "arrow.right",
+                        actionTitle: isModelReady ? "Manage" : "Install"
+                    ) {
+                        onOpenModels()
                     }
                 }
 
-                SettingsSubsection(label: "Review") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SettingsToggle(
-                            title: L("Skip Code Blocks"),
-                            description: L("Don't scan fenced (```) or inline (`) code spans."),
-                            isOn: Binding(
-                                get: { configuration.skipCodeBlocks },
-                                set: { newValue in
-                                    configuration.skipCodeBlocks = newValue
-                                    save()
-                                }
-                            )
-                        )
+                if configuration.enabled && !hasActiveDetector {
+                    noDetectorNote
+                }
 
-                        SettingsToggle(
-                            title: L("Always Approve by Default"),
-                            description: L("Skip the review sheet — still redact, just don't ask each turn."),
-                            isOn: Binding(
-                                get: { configuration.alwaysApproveByDefault },
-                                set: { newValue in
-                                    configuration.alwaysApproveByDefault = newValue
-                                    save()
-                                }
-                            )
-                        )
-                    }
+                SettingsToggle(
+                    title: L("Skip Code Blocks"),
+                    description: L("Don't scan fenced (```) or inline (`) code spans."),
+                    anchorId: "privacy.filter.skipCode",
+                    isOn: Binding(
+                        get: { configuration.skipCodeBlocks },
+                        set: { newValue in
+                            configuration.skipCodeBlocks = newValue
+                            save()
+                        }
+                    )
+                )
+
+                SettingsToggle(
+                    title: L("Always Approve by Default"),
+                    description: L("Skip the review sheet — still redact, just don't ask each turn."),
+                    anchorId: "privacy.filter.alwaysApprove",
+                    isOn: Binding(
+                        get: { configuration.alwaysApproveByDefault },
+                        set: { newValue in
+                            configuration.alwaysApproveByDefault = newValue
+                            save()
+                        }
+                    )
+                )
+            }
+
+            if configuration.enabled {
+                SettingsSection(title: L("Per-Provider"), icon: "cloud", anchorId: "privacy.filter.providers") {
+                    providerOverrides
                 }
             }
 
@@ -760,6 +762,22 @@ private struct PrivacyOverviewTab: View {
                 icon: "person.crop.circle.fill.badge.minus"
             ) {
                 forgetCard
+            }
+
+            SettingsAdvancedDisclosure(anchorIds: Self.advancedAnchorIds) {
+                SettingsToggle(
+                    title: L("Require Review for Background Requests"),
+                    description:
+                        "Also hold cloud-bound requests from the HTTP API, schedules, and other non-interactive callers until you review them. Turn off to let those requests auto-approve silently after redaction.",
+                    anchorId: "privacy.filter.nonInteractive",
+                    isOn: Binding(
+                        get: { configuration.requireReviewForNonInteractive },
+                        set: { newValue in
+                            configuration.requireReviewForNonInteractive = newValue
+                            save()
+                        }
+                    )
+                )
             }
         }
         .onAppear {
@@ -775,35 +793,26 @@ private struct PrivacyOverviewTab: View {
     /// the rest of the privacy controls. Both apply immediately on change.
     private var dataCollectionSection: some View {
         SettingsSection(title: L("Data Collection"), icon: "hand.raised") {
-            VStack(alignment: .leading, spacing: 20) {
-                Text(
-                    "Control what anonymous data Osaurus collects.",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+            SettingsToggle(
+                title: L("Share Anonymous Usage Data"),
+                description:
+                    "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                anchorId: "settings.privacy.usage",
+                isOn: $telemetryEnabled
+            )
+            .onChange(of: telemetryEnabled) { _, newValue in
+                TelemetryService.shared.setEnabled(newValue)
+            }
 
-                SettingsToggle(
-                    title: L("Share Anonymous Usage Data"),
-                    description:
-                        "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
-                    anchorId: "settings.privacy.usage",
-                    isOn: $telemetryEnabled
-                )
-                .onChange(of: telemetryEnabled) { _, newValue in
-                    TelemetryService.shared.setEnabled(newValue)
-                }
-
-                SettingsToggle(
-                    title: L("Send Crash Reports"),
-                    description:
-                        "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
-                    anchorId: "settings.privacy.crash",
-                    isOn: $crashReportingEnabled
-                )
-                .onChange(of: crashReportingEnabled) { _, newValue in
-                    CrashReportingService.shared.setEnabled(newValue)
-                }
+            SettingsToggle(
+                title: L("Send Crash Reports"),
+                description:
+                    "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                anchorId: "settings.privacy.crash",
+                isOn: $crashReportingEnabled
+            )
+            .onChange(of: crashReportingEnabled) { _, newValue in
+                CrashReportingService.shared.setEnabled(newValue)
             }
         }
     }
@@ -839,41 +848,57 @@ private struct PrivacyOverviewTab: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.warningColor.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.warningColor.opacity(0.3), lineWidth: 1)
+    }
+
+    /// Per-provider override toggles. With no remote providers configured,
+    /// a single link row points at the Providers manager instead of an
+    /// empty list.
+    @ViewBuilder
+    private var providerOverrides: some View {
+        if providers.isEmpty {
+            SettingsLinkRow(
+                title: L("privacy.providers.empty.title"),
+                description: L("privacy.providers.empty.subtitle"),
+                icon: "cloud.fill",
+                actionTitle: "Open Providers"
+            ) {
+                onOpenProviders()
+            }
+        } else {
+            ForEach(providers) { provider in
+                SettingsToggle(
+                    title: provider.name,
+                    description: providerDescription(provider),
+                    isOn: Binding(
+                        get: { configuration.providerOverrides[provider.id.uuidString] ?? true },
+                        set: { newValue in
+                            configuration.setProviderEnabled(provider.id, enabled: newValue)
+                            saveDebounced()
+                        }
+                    )
                 )
-        )
+            }
+        }
+    }
+
+    private func providerDescription(_ provider: RemoteProvider) -> String {
+        let host = provider.host.isEmpty ? provider.providerType.rawValue : provider.host
+        return String(format: L("privacy.providers.row.subtitle %@"), host)
     }
 
     private var forgetCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(
-                "Clear every interned placeholder for every open conversation. Future sends mint fresh placeholders.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-
-            HStack {
-                Button(action: forgetAllRedactions) {
-                    Text("Forget Redactions in Every Conversation", bundle: .module)
-                }
-                .buttonStyle(SettingsButtonStyle())
-                Spacer()
-                if let message = forgetActionMessage {
-                    Text(LocalizedStringKey(message), bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.successColor)
-                }
+        SettingsRow(
+            title: L("Forget Redactions in Every Conversation"),
+            // `forgetActionMessage` is already localized by the parent.
+            description: forgetActionMessage
+                ?? L("Clear every interned placeholder for every open conversation. Future sends mint fresh placeholders."),
+            anchorId: "privacy.filter.forget"
+        ) {
+            Button(action: forgetAllRedactions) {
+                Text("Forget", bundle: .module)
             }
+            .buttonStyle(SettingsButtonStyle())
         }
-        .settingsRowCard()
     }
 }
 
@@ -1059,7 +1084,7 @@ private struct PrivacyRulesTab: View {
             .labelsHidden()
             .toggleStyle(.switch)
         }
-        .settingsRowCard()
+        .settingsRowChrome()
     }
 
     private func presetTitleKey(_ id: String) -> String { "privacy.presets.\(id).title" }
@@ -1086,7 +1111,7 @@ private struct PrivacyRulesTab: View {
                         Spacer()
                         addCustomRuleButton
                     }
-                    .settingsRowCard()
+                    .settingsRowChrome()
                 } else {
                     VStack(spacing: 8) {
                         ForEach(configuration.customRules) { rule in
@@ -1183,83 +1208,7 @@ private struct PrivacyRulesTab: View {
                 .localizedHelp("Delete this rule.")
             }
         }
-        .settingsRowCard()
-    }
-}
-
-// MARK: - Providers Tab
-
-/// Per-provider override toggles. When no remote providers exist,
-/// shows an empty state pointing the user at the Remote Providers
-/// manager. Keeping the tab visible (rather than hiding it from the
-/// tab bar) means the tab count stays stable and the user can
-/// discover the feature even before configuring a provider.
-private struct PrivacyProvidersTab: View {
-    @Environment(\.theme) private var theme
-    let providers: [RemoteProvider]
-    @Binding var configuration: PrivacyFilterConfiguration
-    let save: () -> Void
-    /// Provider-toggle writes funnel through here so flipping a
-    /// handful of providers in a row doesn't issue a JSON write
-    /// per toggle.
-    let saveDebounced: () -> Void
-    /// Drives the shared empty state's entrance animation in step with
-    /// the rest of the panel.
-    let hasAppeared: Bool
-    /// Jump to the Remote Providers manager so the user can add one.
-    let onOpenProviders: () -> Void
-
-    var body: some View {
-        if providers.isEmpty {
-            emptyState
-        } else {
-            VStack(alignment: .leading, spacing: 24) {
-                SettingsSection(title: L("Per-Provider"), icon: "cloud.fill") {
-                    VStack(spacing: 10) {
-                        ForEach(providers) { provider in
-                            providerToggleRow(provider)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var emptyState: some View {
-        SettingsEmptyState(
-            icon: "cloud.fill",
-            title: "privacy.providers.empty.title",
-            subtitle: "privacy.providers.empty.subtitle",
-            examples: [],
-            primaryAction: .init(
-                title: L("Open Remote Providers"),
-                icon: "cloud.fill",
-                handler: onOpenProviders
-            ),
-            hasAppeared: hasAppeared
-        )
-    }
-
-    private func providerToggleRow(_ provider: RemoteProvider) -> some View {
-        SettingsToggle(
-            title: provider.name,
-            description: providerDescription(provider),
-            isOn: Binding(
-                get: { configuration.providerOverrides[provider.id.uuidString] ?? true },
-                set: { newValue in
-                    configuration.setProviderEnabled(provider.id, enabled: newValue)
-                    saveDebounced()
-                }
-            )
-        )
-    }
-
-    private func providerDescription(_ provider: RemoteProvider) -> String {
-        let host = provider.host.isEmpty ? provider.providerType.rawValue : provider.host
-        return String(
-            format: L("privacy.providers.row.subtitle %@"),
-            host
-        )
+        .settingsRowChrome()
     }
 }
 
@@ -1376,7 +1325,7 @@ private struct PrivacyDryRunTester: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .settingsRowCard()
+        .settingsRowChrome()
     }
 
     /// De-duplicate by minted token: the same original appearing twice
@@ -1421,35 +1370,6 @@ private struct PrivacyDryRunTester: View {
             didRun = true
             isRunning = false
         }
-    }
-}
-
-// MARK: - Card Surface
-
-private extension View {
-    /// Canonical Privacy card chrome: the same 10pt rounded
-    /// `inputBackground` + 1pt `inputBorder` surface the shared
-    /// `SettingsToggle` uses, so every hand-rolled Privacy card matches
-    /// the toggles and each other. 12pt inner padding.
-    func settingsRowCard() -> some View {
-        modifier(PrivacySettingsRowCard())
-    }
-}
-
-private struct PrivacySettingsRowCard: ViewModifier {
-    @Environment(\.theme) private var theme
-
-    func body(content: Content) -> some View {
-        content
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
     }
 }
 

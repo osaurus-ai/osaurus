@@ -350,6 +350,7 @@ enum FolderToolHelpers {
     /// Run a process and wait for completion asynchronously without blocking the main thread.
     /// The termination handler is set before running to avoid race conditions.
     static func runProcessAsync(_ process: Process) async throws {
+        try ProcessInputValidation.validate(process)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { _ in
                 continuation.resume()
@@ -4906,6 +4907,10 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         process.executableURL = invocation.executableURL
         process.arguments = invocation.arguments
         process.currentDirectoryURL = rootPath
+
+        // Reject invalid strings before allocating streaming pipes or registering
+        // a live execution. The shared launch helper also validates other callers.
+        try ProcessInputValidation.validate(process)
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

@@ -128,9 +128,9 @@ struct RemoteProviderMCPDetectionTests {
         )
     }
 
-    @Test func guidanceMentionsConnections() {
+    @Test func guidanceMentionsServices() {
         let message = RemoteProviderMCPDetection.guidance()
         #expect(message.contains("MCP server"))
-        #expect(message.contains("Connections"))
+        #expect(message.contains("Services"))
     }
 }

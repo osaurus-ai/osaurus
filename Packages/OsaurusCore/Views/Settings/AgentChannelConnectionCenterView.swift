@@ -13,10 +13,18 @@ import SwiftUI
 
 /// Pages of the Channels pane: connection management is the primary surface;
 /// Activity is a secondary destination reached from the header.
-private enum AgentChannelsPage {
+private enum AgentChannelsPage: String, CaseIterable, AnimatedTabItem {
     case connections
     case activity
     case outbox
+
+    var title: String {
+        switch self {
+        case .connections: return L("Channels")
+        case .activity: return L("Activity")
+        case .outbox: return L("Outbox")
+        }
+    }
 }
 
 /// Which channel's configuration sheet is open.
@@ -209,36 +217,23 @@ struct AgentChannelConnectionCenterView: View {
     }
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
+        // Same header + tabs-row shell as every other multi-page tab
+        // (Tools, Voice, Privacy) instead of header buttons acting as pages.
+        ManagerHeaderWithTabs(
             title: L("Channels"),
             subtitle: headerSubtitle,
             count: connectedChannelCount > 0 ? connectedChannelCount : nil
         ) {
-            switch page {
-            case .connections:
-                HeaderSecondaryButton(
-                    pendingOutboxCount > 0 ? L("Outbox (\(pendingOutboxCount))") : L("Outbox"),
-                    icon: "paperplane"
-                ) {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        page = .outbox
-                    }
-                }
-                HeaderSecondaryButton(L("Activity"), icon: "clock.arrow.circlepath") {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        page = .activity
-                    }
-                }
+            if page == .connections {
                 HeaderPrimaryButton(L("Add Channel"), icon: "plus") {
                     activeSheet = .addChannel
                 }
-            case .activity, .outbox:
-                HeaderSecondaryButton(L("Back to Channels"), icon: "chevron.left") {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        page = .connections
-                    }
-                }
             }
+        } tabsRow: {
+            HeaderTabsRow(
+                selection: $page,
+                badges: pendingOutboxCount > 0 ? [.outbox: pendingOutboxCount] : nil
+            )
         }
     }
 

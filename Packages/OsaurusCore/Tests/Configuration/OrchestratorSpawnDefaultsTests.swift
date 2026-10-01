@@ -244,8 +244,8 @@ struct SameTurnSpawnStagingTests {
         }
     }
 
-    @Test("non-chat applies stage nothing")
-    func nonChatApply_stagesNothing() async throws {
+    @Test("an owner .http dispatch turn (phone / App Intent) stages spawn specs too")
+    func ownerHTTPApply_stagesSpawnSpecs_sameTurn() async throws {
         try await ChatHistoryTestStorage.run {
             // Canonical lock order: Storage → Sandbox (via
             // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
@@ -255,15 +255,16 @@ struct SameTurnSpawnStagingTests {
             defer { SubagentStoreTestLock.shared.release() }
 
             let buffer = CapabilityLoadBuffer()
-            let name = "Headless Spawn \(UUID().uuidString.prefix(6))"
+            let name = "Remote Spawn \(UUID().uuidString.prefix(6))"
             var document = OsaurusConfigDocument()
             var entry = AgentEntry(name: name)
             entry.description = "Handles independent tasks for this isolated delegation test."
             document.agents = [entry]
 
-            // HTTP-sourced session bound: still not a live interactive chat
-            // turn, so nothing is staged (CLI/HTTP/delegation surfaces
-            // compose fresh anyway).
+            // A dispatched "Ask Osaurus" run is a real `ChatSession.send`
+            // turn (`source == .http`): its loop drains the buffer after
+            // `osaurus_config` exactly like the in-app chat, so the addendum's
+            // "create, then spawn in this turn" must hold here as well.
             let session = ChatSession()
             session.agentId = Agent.defaultId
             session.source = .http
@@ -281,7 +282,37 @@ struct SameTurnSpawnStagingTests {
             }
 
             let staged = await buffer.drain()
-            #expect(staged.isEmpty, "non-chat applies must not stage spawn specs: \(staged)")
+            #expect(
+                staged.map { $0.function.name }.contains(SubagentCapabilityRegistry.spawnAgentToolName),
+                "owner .http applies must stage spawn_agent for the same turn: \(staged)")
+        }
+    }
+
+    @Test("an apply with no live session bound (CLI / bare completion) stages nothing")
+    func unboundApply_stagesNothing() async throws {
+        try await ChatHistoryTestStorage.run {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
+            let buffer = CapabilityLoadBuffer()
+            let name = "Headless Spawn \(UUID().uuidString.prefix(6))"
+            var document = OsaurusConfigDocument()
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
+
+            // No `currentChatSessionBox`: there is no loop to drain the
+            // buffer, so a staged spec could only leak into an unrelated run.
+            let results = await CapabilityLoadBuffer.$overrideForTests.withValue(buffer) {
+                await ConfigApplier.apply(document: document, prune: false)
+            }
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            if let created = AgentManager.shared.agents.first(where: { $0.name == name }) {
+                _ = await AgentManager.shared.delete(id: created.id)
+            }
+
+            let staged = await buffer.drain()
+            #expect(staged.isEmpty, "unbound applies must not stage spawn specs: \(staged)")
         }
     }
 
@@ -360,6 +391,32 @@ struct SpawnPoolSeedMigrationTests {
             !snapshot.spawnableAgentIDs.contains(custom1.id),
             "seeding must never re-add an agent the user removed")
         #expect(snapshot.spawnableAgentIDs == [custom2.id])
+    }
+
+    /// Load-time reconcile prunes ids whose agent is gone — but a load that
+    /// yields no custom agents at all while the pool has members is a failed
+    /// agent load, not N deletions. Pruning there empties a seeded pool for
+    /// good (seeding never re-runs); the guard keeps the ids until a load
+    /// with agents present can tell stale from live.
+    @Test("reconcile never empties a seeded pool on an agent load that returned nothing")
+    func reconcileKeepsThePoolWhenNoAgentsLoaded() async throws {
+        let lease = await acquireSubagentStoreSandbox("spawn-pool-reconcile-guard")
+        defer { lease.release() }
+        let live = Agent(name: "Reconcile Live")
+        let gone = Agent(name: "Reconcile Gone")
+        let builtIn = Agent(name: "Reconcile Built-in", isBuiltIn: true)
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(spawnableAgentIDs: [live.id, gone.id], spawnPoolSeeded: true))
+
+        // Nothing (or only the built-in) loaded: keep everything.
+        _ = SubagentConfigurationStore.reconcile(with: [])
+        #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs == [live.id, gone.id])
+        _ = SubagentConfigurationStore.reconcile(with: [builtIn])
+        #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs == [live.id, gone.id])
+
+        // A real load with agents present prunes only the missing one.
+        _ = SubagentConfigurationStore.reconcile(with: [live, builtIn])
+        #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs == [live.id])
     }
 
     @Test("the sentinel survives persistence, normalization, and delegation applies")

@@ -14,7 +14,7 @@ order: 180
 - New skill/plugin/MCP tools not appearing mid-chat: start a new chat so the session's capability manifest refreshes.
 - Port already in use: change the server port (Server tab or ask the assistant); ports below 1024 need elevated permissions — pick a higher one.
 - Permission prompts (Microphone, Accessibility, Screen Recording, Full Disk Access): grant in macOS System Settings → Privacy & Security, then retry.
-- Broken data store: Settings… (⌘,) → Privacy → Storage → "Stores needing attention" → Retry or Reset (Reset quarantines the file, never deletes it).
+- Broken data store: Settings… (⌘,) → General → Advanced → Data & Storage → "Stores needing attention" → Retry or Reset (Reset quarantines the file, never deletes it).
 
 ## Diagnostics
 

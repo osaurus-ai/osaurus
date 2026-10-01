@@ -249,3 +249,39 @@ struct OsaurusHelpToolTests {
         #expect(noContextDict["kind"] as? String == "unavailable")
     }
 }
+
+// MARK: - `find` relaxed lookup
+
+/// Raptor 0.6.1 live row (Orchestrator, "Where is the setting to turn off
+/// memory?"): `osaurus_help find "turn off memory"` returned no matches
+/// because the catalog matcher wants every token inside one title/keyword,
+/// so the model fell back to `topics` → `read`. The tool now retries with
+/// intent/state words stripped and reports the query that matched.
+struct OsaurusHelpFindRelaxedTests {
+
+    @Test
+    func naturalToggleAsk_fallsBackToTheCatalogRow() {
+        let strict = SettingsSearchIndex.search("turn off memory")
+        #expect(strict.isEmpty, "strict matcher unexpectedly matched; relaxed pass is untested")
+        let lookup = OsaurusHelpTool.findSettings("turn off memory")
+        #expect(lookup.relaxedQuery == "memory")
+        #expect(lookup.entries.contains { $0.id == "memory.settings.enabled" })
+        #expect(lookup.entries.contains { $0.id == "memory.settings" })
+    }
+
+    @Test
+    func strictHitIsReturnedUnchangedAndNotMarkedRelaxed() {
+        let lookup = OsaurusHelpTool.findSettings("disable memory")
+        #expect(lookup.relaxedQuery == nil)
+        #expect(lookup.entries.contains { $0.id == "memory.settings.enabled" })
+    }
+
+    @Test
+    func onlyIntentWords_orNoRelaxedHit_stayEmptyWithoutInventingAMatch() {
+        #expect(OsaurusHelpTool.findSettings("turn off the").entries.isEmpty)
+        #expect(OsaurusHelpTool.findSettings("turn off the").relaxedQuery == nil)
+        let nonsense = OsaurusHelpTool.findSettings("turn off flux capacitor")
+        #expect(nonsense.entries.isEmpty)
+        #expect(nonsense.relaxedQuery == nil)
+    }
+}

@@ -120,6 +120,7 @@ private struct OverviewTabContent: View {
             LazyVStack(alignment: .leading, spacing: 24) {
                 ServerStatusCard()
                 AccessKeysSection()
+                CommandLineToolSection()
                 CodexCLISetupSection()
                 PeerInferenceSharingSection()
                 RelaysSectionView()

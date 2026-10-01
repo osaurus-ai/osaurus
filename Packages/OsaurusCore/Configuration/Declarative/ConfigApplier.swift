@@ -136,13 +136,21 @@ enum ConfigApplier {
 
     // MARK: - Same-turn spawn activation
 
-    /// The launching chat conversation's effective `spawn_agent` target pool
+    /// The launching conversation's effective `spawn_agent` target pool
     /// (self excluded), or `nil` when this apply does not run inside a live
-    /// interactive chat turn (CLI, HTTP, delegation, schedules).
+    /// `ChatSession` turn (CLI / bare HTTP completion with no session bound).
+    ///
+    /// Every `ChatSession.send` turn binds `currentChatSessionBox` and its
+    /// loop drains `CapabilityLoadBuffer` after `osaurus_config`, whatever
+    /// the session's `source`. So an owner's phone / App Intent "Ask
+    /// Osaurus" dispatch (`.http`, loopback or paired-phone reviewer) gets
+    /// the same "create an agent, then `spawn_agent` it in this turn" the
+    /// in-app chat gets — the addendum promises it for both. Surfaces that
+    /// cannot get an apply approved never reach here (`OsaurusConfigTool`
+    /// denies before applying).
     @MainActor
     private static func liveChatSpawnPool() -> [UUID]? {
-        guard let session = ChatExecutionContext.currentChatSessionBox?.session,
-            session.source == .chat
+        guard let session = ChatExecutionContext.currentChatSessionBox?.session
         else { return nil }
         // A nil session agent binds to the Default agent (main chat).
         return effectiveSpawnableAgentIDs(for: session.agentId ?? Agent.defaultId)
@@ -175,8 +183,7 @@ enum ConfigApplier {
     private static func stageSpawnToolsIfPoolGrew(baseline: [UUID]?) async {
         guard let baseline else { return }
         let staged: [Tool] = await MainActor.run {
-            guard let session = ChatExecutionContext.currentChatSessionBox?.session,
-                session.source == .chat
+            guard let session = ChatExecutionContext.currentChatSessionBox?.session
             else { return [] }
             let launchingAgentId = session.agentId ?? Agent.defaultId
             let allowedAgentIDs = effectiveSpawnableAgentIDs(for: launchingAgentId)
@@ -308,8 +315,11 @@ enum ConfigApplier {
 
     @MainActor
     private static func applyActiveAgent(_ name: String) -> ConfigApplyResult {
+        // `new_chat_agent` sets which agent NEW chats open with — and only
+        // that. The foreground window's agent (`activeAgentId`) is the
+        // user's browsing position and is left alone.
         if name.lowercased() == "default" {
-            AgentManager.shared.setActiveAgent(Agent.defaultId)
+            AgentManager.shared.setNewChatAgent(Agent.defaultId)
             return ConfigApplyResult(section: ConfigSectionID.activeAgent.rawValue, target: "default", status: .done)
         }
         guard
@@ -321,7 +331,7 @@ enum ConfigApplier {
                 section: ConfigSectionID.activeAgent.rawValue, target: name, status: .failed,
                 message: "No agent named `\(name)` found.")
         }
-        AgentManager.shared.setActiveAgent(agent.id)
+        AgentManager.shared.setNewChatAgent(agent.id)
         return ConfigApplyResult(section: ConfigSectionID.activeAgent.rawValue, target: agent.name, status: .done)
     }
 
@@ -571,7 +581,6 @@ enum ConfigApplier {
         let hints = desired.removedKeyHints
         _ = SubagentConfigurationStore.mutate { config in
             if let v = desired.localTextEnabled { config.localTextDelegationEnabled = v }
-            if let v = desired.videoEnabled { config.videoDelegationEnabled = v }
             if let raw = desired.applescriptExecutionMode,
                 let mode = ConfigAppBehaviorEnums.applescriptMode(forKey: raw)
             {
@@ -1025,7 +1034,7 @@ enum ConfigApplier {
                     results.append(
                         ConfigApplyResult(
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
-                            message: "Finish sign-in / token entry in Settings → Tools → Remote."))
+                            message: "Finish sign-in / token entry in Settings → Tools & MCP → Services."))
                 } else {
                     results.append(
                         ConfigApplyResult(
@@ -1099,7 +1108,7 @@ enum ConfigApplier {
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
                             message: "Registered, but could not store secret env "
                                 + storeFailures.joined(separator: ", ")
-                                + " — Keychain unavailable; set them in Settings → Tools → Remote."))
+                                + " — Keychain unavailable; set them in Settings → Tools & MCP → Services."))
                 }
             } else {
                 guard let url = entry.url else {
@@ -1145,7 +1154,7 @@ enum ConfigApplier {
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
                             message: "Registered. Finish "
                                 + (auth == .oauth ? "sign-in" : "token entry")
-                                + " in Settings → Tools → Remote."))
+                                + " in Settings → Tools & MCP → Services."))
                 } else {
                     results.append(
                         ConfigApplyResult(section: "mcp_servers", target: entry.name, status: .done))
@@ -1201,7 +1210,7 @@ enum ConfigApplier {
                 results.append(
                     ConfigApplyResult(
                         section: "plugins", target: pluginId, status: .needsUserAction,
-                        message: "Installed. Needs secrets in Settings… (⌘,) → Tools → Native Plugins (Configure Secrets on the plugin card): "
+                        message: "Installed. Needs secrets in Settings… (⌘,) → Tools & MCP → Plugins (Configure Secrets on the plugin card): "
                             + missingSecretLabels.joined(separator: ", ")))
             }
         }

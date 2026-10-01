@@ -113,6 +113,15 @@ enum AgentDelegationDispatcher {
             .hasPrefix(needsInputMarker)
     }
 
+    /// Whether the marker appears somewhere other than the start — the
+    /// contract is prefix-only, so `needs_input` stays false, but the
+    /// mismatch between the recorded flag and the text must be observable
+    /// (payload hint + log) rather than silently lost.
+    static func hasOffPrefixNeedsInputMarker(_ finalText: String) -> Bool {
+        guard !isNeedsInput(finalText) else { return false }
+        return finalText.uppercased().contains(needsInputMarker)
+    }
+
     /// Title prefix for delegated child sessions in the target agent's
     /// chat history sidebar.
     static let titlePrefix = "Delegated: "
@@ -332,7 +341,8 @@ enum AgentDelegationDispatcher {
         interrupt: InterruptToken,
         parentSessionId: String? = nil,
         launcherWorkingFolder: DelegatedWorkingFolder? = nil,
-        continueSessionId: UUID? = nil
+        continueSessionId: UUID? = nil,
+        freshSessionId: UUID? = nil
     ) async throws -> AgentDelegationOutcome {
         try await run(
             target: .local(targetAgentId),
@@ -347,7 +357,8 @@ enum AgentDelegationDispatcher {
             interrupt: interrupt,
             parentSessionId: parentSessionId,
             launcherWorkingFolder: launcherWorkingFolder,
-            continueSessionId: continueSessionId
+            continueSessionId: continueSessionId,
+            freshSessionId: freshSessionId
         )
     }
 
@@ -391,27 +402,46 @@ enum AgentDelegationDispatcher {
                     + "Start a new task instead (omit `continue`)."
             )
         }
+        // A `continue` that names the wrong agent or a non-worker session is
+        // a correctable call-shape mistake, not a policy refusal: nothing ran
+        // and no state changed. `invalid_args` gives the parent one correction
+        // (pick the producing agent, or omit `continue`) instead of the
+        // chat loop's terminal `rejected` stop. Live Raptor 0.6.1 wave
+        // (2026-09-29): a `rejected` here ended the whole turn with the
+        // second worker never dispatched.
         guard session.source == .delegation else {
-            throw SubagentError.denied(
-                "Session \(sessionId.uuidString) is not a delegated worker session; only "
-                    + "`session_id` values returned by spawn_agent can be continued."
+            throw SubagentError.invalidArgs(
+                message:
+                    "Session \(sessionId.uuidString) is not a delegated worker session; only "
+                    + "`session_id` values returned by spawn_agent can be continued. "
+                    + "Omit `continue` to start a new task.",
+                field: "continue",
+                expected: "a session_id returned by an earlier spawn_agent result"
             )
         }
         switch target {
         case .local(let agentId):
             guard session.agentId == agentId else {
-                throw SubagentError.denied(
-                    "Session \(sessionId.uuidString) belongs to a different agent than "
-                        + "'\(targetAgentName)'. Continue it with the agent that produced it."
+                throw SubagentError.invalidArgs(
+                    message:
+                        "Session \(sessionId.uuidString) belongs to a different agent than "
+                        + "'\(targetAgentName)'. Continue it with the agent that produced it, "
+                        + "or omit `continue` to give '\(targetAgentName)' a new task.",
+                    field: "agent",
+                    expected: "the agent named in the spawn_result that returned this session_id"
                 )
             }
         case .workspace(let ref):
             guard let stamped = session.workspace,
                 stamped.agentAddress.caseInsensitiveCompare(ref.agentAddress) == .orderedSame
             else {
-                throw SubagentError.denied(
-                    "Session \(sessionId.uuidString) was not produced by workspace agent "
-                        + "'\(targetAgentName)'."
+                throw SubagentError.invalidArgs(
+                    message:
+                        "Session \(sessionId.uuidString) was not produced by workspace agent "
+                        + "'\(targetAgentName)'. Continue it with the agent that produced it, "
+                        + "or omit `continue` to give '\(targetAgentName)' a new task.",
+                    field: "agent",
+                    expected: "the agent named in the spawn_result that returned this session_id"
                 )
             }
         }
@@ -443,7 +473,8 @@ enum AgentDelegationDispatcher {
         interrupt: InterruptToken,
         parentSessionId: String? = nil,
         launcherWorkingFolder: DelegatedWorkingFolder? = nil,
-        continueSessionId: UUID? = nil
+        continueSessionId: UUID? = nil,
+        freshSessionId: UUID? = nil
     ) async throws -> AgentDelegationOutcome {
         let started = Date()
         // The folder the child will actually run in: the target agent's
@@ -467,7 +498,9 @@ enum AgentDelegationDispatcher {
                 )
             }
         }
-        let sessionId = continueSessionId ?? UUID()
+        // A caller that announced the session ahead of the run (background
+        // ack) passes the same `freshSessionId`, so ack and result agree.
+        let sessionId = continueSessionId ?? freshSessionId ?? UUID()
         let request = DispatchRequest(
             id: sessionId,
             prompt: delegatedPrompt(

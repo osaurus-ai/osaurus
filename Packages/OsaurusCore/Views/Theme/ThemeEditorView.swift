@@ -58,12 +58,16 @@ struct ThemeEditorView: View {
     /// Accent hex set by Apply JSON, so the accent-derivation hook can tell
     /// a JSON apply apart from a color-row edit.
     @State private var accentHexFromRawJSON: String?
+    @State private var landingAnchorIsRendered = false
+    @State private var hasCompletedInitialLanding = false
 
     let onDismiss: () -> Void
+    let initialLandingAnchor: String?
 
     private var isSaving: Bool { showSaveConfirmation }
 
-    init(theme: CustomTheme, onDismiss: @escaping () -> Void) {
+    init(theme: CustomTheme, initialLandingAnchor: String? = nil, onDismiss: @escaping () -> Void) {
+        self.initialLandingAnchor = initialLandingAnchor
         _editingTheme = State(initialValue: theme)
         _rawThemeJSON = State(initialValue: (try? ThemeJSONEditorCodec.encodeForEditor(theme)) ?? "{}")
         self.onDismiss = onDismiss
@@ -136,19 +140,46 @@ struct ThemeEditorView: View {
         VStack(spacing: 0) {
             editorHeader
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    appearanceSection
-                    glassSection
-                    codeSection
-                    colorsSection
-                    messagesSection
-                    textAndFontsSection
-                    bordersAndEffectsSection
-                    advancedSection
-                    rawJSONSection
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        appearanceSection
+                        glassSection
+                        codeSection
+                        colorsSection
+                        messagesSection
+                        textAndFontsSection
+                        bordersAndEffectsSection
+                        advancedSection
+                        rawJSONSection
+                    }
+                    .padding(20)
                 }
-                .padding(20)
+                .onPreferenceChange(SettingsLandingAnchorsKey.self) { anchors in
+                    guard let initialLandingAnchor else { return }
+                    landingAnchorIsRendered = anchors.contains(initialLandingAnchor)
+                }
+                .task(id: landingAnchorIsRendered) {
+                    guard landingAnchorIsRendered, !hasCompletedInitialLanding,
+                        let initialLandingAnchor
+                    else { return }
+                    // Anchors register during the sheet's first layout, before
+                    // its scroll viewport has reached its presented size.
+                    // Center once after presentation; later edits and section
+                    // expansion must not pull the user back to this control.
+                    do {
+                        try await Task.sleep(nanoseconds: 350_000_000)
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled else { return }
+                    hasCompletedInitialLanding = true
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(initialLandingAnchor, anchor: .center)
+                    }
+                }
             }
 
             editorFooter
@@ -479,12 +510,25 @@ struct ThemeEditorView: View {
                 Divider().opacity(0.3)
 
                 sliderRow("Body", value: $editingTheme.typography.bodySize, range: 10 ... 20)
+                sliderRow("Small body", value: $editingTheme.typography.smallBodySize, range: 10 ... 20)
+                    .settingsLandingAnchor("themes.typography.smallBody")
+                smallBodyPreview
                 sliderRow("Heading", value: $editingTheme.typography.headingSize, range: 14 ... 28)
                 sliderRow("Code", value: $editingTheme.typography.codeSize, range: 10 ... 18)
                 sliderRow("Title", value: $editingTheme.typography.titleSize, range: 20 ... 40)
                 sliderRow("Caption", value: $editingTheme.typography.captionSize, range: 8 ... 16)
             }
         }
+    }
+
+    private var smallBodyPreview: some View {
+        let sampleTheme = CustomizableTheme(config: previewTheme, fontScale: 1)
+        return Text("Compact controls and model lists", bundle: .module)
+            .font(sampleTheme.font(size: CGFloat(sampleTheme.smallBodySize)))
+            .foregroundStyle(sampleTheme.primaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(sampleTheme.cardBackground, in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Section 5: Borders & Effects
@@ -505,8 +549,11 @@ struct ThemeEditorView: View {
                 )
                 .textCase(.uppercase)
                 colorRow("Border Color", hex: $editingTheme.colors.primaryBorder)
+                    .settingsLandingAnchor("themes.borders.color")
                 sliderRow("Border Width", value: $editingTheme.borders.defaultWidth, range: 0 ... 4)
+                    .settingsLandingAnchor("themes.borders.width")
                 sliderRow("Border Opacity", value: $editingTheme.borders.borderOpacity, range: 0 ... 1)
+                    .settingsLandingAnchor("themes.borders.opacity")
 
                 Divider().opacity(0.3)
 
@@ -1116,6 +1163,7 @@ struct ThemeEditorView: View {
             }
 
             Slider(value: value, in: range)
+                .accessibilityLabel(Text(LocalizedStringKey(label), bundle: .module))
                 .tint(currentTheme.accentColor)
         }
     }

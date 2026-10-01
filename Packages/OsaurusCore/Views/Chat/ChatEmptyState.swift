@@ -59,7 +59,7 @@ struct ChatEmptyState: View {
     /// progress never disappears.
     var pendingLocalModelId: String? = nil
     /// Display name of the temporary Router model already selected while local
-    /// setup runs (DeepSeek V4 Flash for first-run). Nil means Cloud still
+    /// setup runs (DeepSeek V4.1 Flash for first-run). Nil means Cloud still
     /// needs to connect.
     var temporaryCloudModelName: String? = nil
     /// Automatic temporary Osaurus Cloud selection while the pinned local

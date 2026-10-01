@@ -1,0 +1,29 @@
+{
+  "id": "default_agent.general-question-no-help",
+  "domain": "default_agent",
+  "label": "default agent • Osaurus-flavoured vocabulary in a general question does not trigger osaurus_help",
+  "query": "In general terms — not about Osaurus specifically — what is a language model's context window, and why does a bigger one cost more memory? Keep it to three sentences.",
+  "notes": "Help-routing honesty: `osaurus_help` answers questions about Osaurus itself (features, settings, where a control lives). A general machine-learning question that merely uses words the guide also uses (context window, memory, model) must be answered from the Orchestrator's own knowledge — no `osaurus_help`, no `osaurus_inspect`, no `osaurus_config`, no delegation, no web tools. Complements quick-question-no-spawn (which uses vocabulary with no Osaurus overlap). Tool-free expectation keeps this runnable on tiny-window models.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustNotCallTools": [
+        "osaurus_help",
+        "osaurus_inspect",
+        "osaurus_config",
+        "spawn_agent",
+        "web_search",
+        "search_and_extract",
+        "capabilities_discover",
+        "capabilities_load",
+        "clarify"
+      ],
+      "rubric": [
+        "Explains the context window as the amount of text/tokens the model can attend to at once, and ties larger windows to more memory (for example the KV cache / attention state growing with sequence length).",
+        "Does NOT describe Osaurus settings, guide pages, or offer to open Settings — it answers the general question.",
+        "Stays brief — about three sentences, no option menus or follow-up questions."
+      ],
+      "maxIterations": 3
+    }
+  }
+}

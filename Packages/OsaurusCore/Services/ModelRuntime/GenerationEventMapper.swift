@@ -141,6 +141,12 @@ enum GenerationEventMapper {
                     terminalInfoAt = CFAbsoluteTimeGetCurrent()
                     finalTokenCount = info.generationTokenCount
                     logCompletionInfo(info)
+                    if let failure = info.generationFailure {
+                        // Preserve the engine's originating diagnostic. A
+                        // preparation error is not an empty user cancellation.
+                        continuation.finish(throwing: failure)
+                        continue
+                    }
                     let mtp = Self.mtpSummary(from: info)
                     if info.promptTokenCount >= 0, info.promptTokenCount != promptTokenCount {
                         continuation.yield(.inputTokenCount(info.promptTokenCount))

@@ -202,6 +202,7 @@ struct ServerSettingsTabContent: View {
     @State private var successMessage: String?
     @State private var activeSection: ServerSettingsSection = .connection
 
+    @StateObject private var decimalEdits = OptionalDoubleFieldCommitter()
     @ObservedObject private var managementState = ManagementStateManager.shared
     /// Section that just received a settings-search landing, briefly glowing.
     @State private var landedSection: ServerSettingsSection?
@@ -244,7 +245,7 @@ struct ServerSettingsTabContent: View {
     }
 
     private var hasUnsavedChanges: Bool {
-        draft != server.runtimeSettings
+        decimalEdits.hasPendingChanges || draft != server.runtimeSettings
             || draftMetadataFallbackTokens != savedMetadataFallbackTokens
             || draftContextLengthCap != savedContextLengthCap
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
@@ -300,7 +301,8 @@ struct ServerSettingsTabContent: View {
 
                 ServerSettingsActionBar(
                     hasUnsavedChanges: hasUnsavedChanges,
-                    hasBlockingIssues: hasBlockingIssues,
+                    hasBlockingIssues: decimalEdits.blocksSaveAttempt(
+                        hasBlockingIssues: hasBlockingIssues),
                     requiresRestart: requiresRestart,
                     requiresModelReload: requiresModelReload,
                     saving: saving,
@@ -317,6 +319,7 @@ struct ServerSettingsTabContent: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
+        .environment(\.optionalDoubleFieldCommitter, decimalEdits)
         .onAppear {
             // Defer a beat so the section scroll runs after first layout.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -478,6 +481,7 @@ struct ServerSettingsTabContent: View {
     // MARK: - Actions
 
     private func resetToDefaults() {
+        decimalEdits.discard()
         draft = ServerRuntimeSettingsStore.resetDefaults(
             serverConfiguration: .default
         )
@@ -495,6 +499,8 @@ struct ServerSettingsTabContent: View {
     }
 
     private func save() async {
+        decimalEdits.commit()
+        guard !hasBlockingIssues else { return }
         // A same-section external edit must be resolved explicitly. Sending
         // this stale draft would overwrite a newer API/store value.
         guard runtimeConflictSections.isEmpty else { return }

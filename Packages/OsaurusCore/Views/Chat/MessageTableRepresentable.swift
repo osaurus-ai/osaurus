@@ -510,6 +510,7 @@ extension MessageTableRepresentable {
 
         // MARK: Rendering Context
 
+        private var responseStatsByTurn: [UUID: String] = [:]
         private var ctx = CellRenderingContext(
             width: 400,
             agentName: "",
@@ -846,6 +847,26 @@ extension MessageTableRepresentable {
             lastAssistantTurnId: UUID?,
             autoScrollEnabled: Bool
         ) {
+            // Keep the measured values for Inspect response, including restored
+            // chats whose request log has expired. Refresh before the no-change
+            // path: final statistics can arrive without another text delta.
+            responseStatsByTurn.removeAll(keepingCapacity: true)
+            for block in blocks {
+                if case let .generationStats(ttft, rate, count, unclosed, load, cached, total) = block.kind {
+                    responseStatsByTurn[block.turnId] = NativeStatsView.statsText(
+                        ttft: ttft, tokensPerSecond: rate, tokenCount: count,
+                        unclosedReasoning: unclosed, modelLoad: load,
+                        cachedInputTokens: cached, totalDuration: total
+                    )
+                }
+            }
+            // Only an incomplete-response warning needs a visible footer row.
+            // The original blocks and persisted generation measurements remain
+            // unchanged; this filters the table's presentation only.
+            let blocks = blocks.filter { block in
+                if case let .generationStats(_, _, _, unclosed, _, _, _) = block.kind { return unclosed }
+                return true
+            }
             let widthChanged = abs(ctx.width - context.width) > 1.0
             let expandedIdsChanged = context.expandedIds != ctx.expandedIds
             let previousEditingTurnId = ctx.editingTurnId
@@ -1276,6 +1297,7 @@ extension MessageTableRepresentable {
                 var context = ctx
                 context.expandedIds = expandedIds
                 context.isTurnHovered = hoveredGroupId == groupId
+                context.responseStatsForTurn = { [weak self] in self?.responseStatsByTurn[$0] }
                 cell.configure(block: block, context: context)
             }
         }

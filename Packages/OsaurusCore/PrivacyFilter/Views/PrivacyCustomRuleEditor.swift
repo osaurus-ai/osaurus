@@ -346,7 +346,7 @@ struct PrivacyCustomRuleEditor: View {
             patternStatusRow
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .editorCardSurface()
+        .settingsRowChrome()
     }
 
     // MARK: - Status + test
@@ -397,7 +397,7 @@ struct PrivacyCustomRuleEditor: View {
 
             testResultRow
         }
-        .editorCardSurface()
+        .settingsRowChrome()
     }
 
     @ViewBuilder
@@ -543,33 +543,3 @@ struct PrivacyCustomRuleEditor: View {
     }
 }
 
-// MARK: - Card Surface
-
-private extension View {
-    /// Card chrome shared by the generated-pattern preview and the live
-    /// test panel: the same 10pt `inputBackground` + 1pt `inputBorder`
-    /// surface `StyledTextField` and the Privacy tab cards use, with
-    /// 12pt inner padding. Mirrors `PrivacyView`'s `settingsRowCard()`
-    /// (kept file-local rather than shared so neither view file depends
-    /// on the other).
-    func editorCardSurface() -> some View {
-        modifier(EditorCardSurface())
-    }
-}
-
-private struct EditorCardSurface: ViewModifier {
-    @Environment(\.theme) private var theme
-
-    func body(content: Content) -> some View {
-        content
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-    }
-}

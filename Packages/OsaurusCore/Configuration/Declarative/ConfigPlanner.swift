@@ -71,6 +71,20 @@ enum ConfigRisk {
     }
     static let applescriptAutoRun =
         "AppleScript automations auto-run with only a warning (no per-script confirmation)."
+    /// `spawnable_agents` REPLACES the pool. A document that lists none
+    /// while the pool has members (or custom agents exist) takes
+    /// `spawn_agent` away from the Orchestrator until an agent is added
+    /// back — the silent-empty-pool failure this card must name.
+    static func emptiesSpawnPool(removed: Int, customAgents: Int) -> String {
+        "Empties the Orchestrator's spawn pool (`spawnable_agents` replaces the whole list; "
+            + "\(removed) spawnable agent\(removed == 1 ? "" : "s") removed, \(customAgents) custom "
+            + "agent\(customAgents == 1 ? "" : "s") exist) — the Orchestrator loses `spawn_agent` "
+            + "and cannot delegate until an agent is listed again."
+    }
+    static func emptiesWorkspaceSpawnPool(removed: Int) -> String {
+        "Removes every teammate agent from the Orchestrator's pool (`spawnable_workspace_agents` "
+            + "replaces the whole list; \(removed) removed)."
+    }
     static let ramPreflightDisabled =
         "Turns off \"Check memory before delegating\" for subagent tasks."
     static func mcpEndpoint(_ name: String, _ url: String) -> String {
@@ -1344,7 +1358,6 @@ enum ConfigPlanner {
         diff(
             "local_text_enabled", desired: desired.localTextEnabled,
             current: current.localTextEnabled, into: &changes)
-        diff("video_enabled", desired: desired.videoEnabled, current: current.videoEnabled, into: &changes)
         diff(
             "applescript_execution_mode", desired: desired.applescriptExecutionMode?.lowercased(),
             current: current.applescriptExecutionMode, into: &changes)
@@ -1406,6 +1419,22 @@ enum ConfigPlanner {
         }
         if desired.ramSafetyPreflight == false && current.ramSafetyPreflight != false {
             risks.append(ConfigRisk.ramPreflightDisabled)
+        }
+        // Replace-list semantics: an empty `spawnable_agents` wipes the pool.
+        // Flag it whenever there is anything to lose — members today, or
+        // custom agents that could be in it — so the approval card says
+        // "the Orchestrator loses spawn_agent" instead of a bare list diff.
+        if let pool = desired.spawnableAgents, pool.isEmpty {
+            let removed = current.spawnableAgents?.count ?? 0
+            let customAgents = AgentManager.shared.agents.filter { !$0.isBuiltIn }.count
+            if removed > 0 || customAgents > 0 {
+                risks.append(ConfigRisk.emptiesSpawnPool(removed: removed, customAgents: customAgents))
+            }
+        }
+        if let pool = desired.spawnableWorkspaceAgents, pool.isEmpty,
+            let removed = current.spawnableWorkspaceAgents?.count, removed > 0
+        {
+            risks.append(ConfigRisk.emptiesWorkspaceSpawnPool(removed: removed))
         }
         actions.append(
             ConfigPlanAction(
@@ -1691,7 +1720,7 @@ enum ConfigPlanner {
                 } else if auth != .none {
                     changes.append(
                         "auth: \(ConfigMCPAuth.key(for: auth)) — finish sign-in in "
-                            + "Settings → Tools → Remote (secrets never travel through the document)")
+                            + "Settings → Tools & MCP → Services (secrets never travel through the document)")
                 }
                 actions.append(
                     ConfigPlanAction(

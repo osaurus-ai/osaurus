@@ -182,6 +182,39 @@ struct ConfigurationReadScopeFunctionalTests {
         #expect(result["yaml_shape"] == nil)
     }
 
+    /// The status read names the Orchestrator's spawn pool state so an empty
+    /// pool (agents exist, none allowed → no `spawn_agent`) is visible from
+    /// the first read instead of surfacing as a `tool_not_found` later.
+    @Test
+    func status_reportsTheSpawnPoolState() async throws {
+        let lease = await acquireSubagentStoreSandbox("gap-closure-status-pool")
+        defer { lease.release() }
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "status"}"#)
+        let result = try #require(dict["result"] as? [String: Any])
+        let pool = try #require(result["spawn_pool"] as? [String: Any])
+        let state = try #require(pool["state"] as? String)
+        #expect(["ready", "empty", "no_agents"].contains(state), Comment(rawValue: state))
+        #expect(pool["local_agents"] is Int)
+        #expect(pool["custom_agents_total"] is Int)
+        #expect((pool["max_parallel_local"] as? Int ?? 0) >= 1)
+        let suggestions = result["suggestions"] as? [String] ?? []
+        let namesEmptyPool = suggestions.contains { $0.contains("Spawn pool is EMPTY") }
+        #expect(namesEmptyPool == (state == "empty"), "\(suggestions)")
+    }
+
+    /// Settings document sections read through describe carry their
+    /// `yaml_shape`, so a `delegation` read teaches the replace-list rule.
+    @Test
+    func describe_delegationSection_embedsShapeWithReplaceSemantics() async throws {
+        let dict = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "describe", "scope": "delegation"}"#)
+        let result = try #require(dict["result"] as? [String: Any])
+        #expect(result["kind"] as? String == "document_section")
+        let shape = try #require(result["yaml_shape"] as? String)
+        #expect(shape.contains("delegation:"))
+        #expect(shape.contains("REPLACES the whole pool"))
+    }
+
     @Test
     func describe_declarativeScope_embedsTheSectionYamlShape() async throws {
         // Describe a built-in command by name: commands are declarative, so

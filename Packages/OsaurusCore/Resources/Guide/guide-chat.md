@@ -55,7 +55,7 @@ Inside the panel, the header row summarizes “N files changed · M changes” a
 - Files too large to keep in history are marked “can't be restored”; word documents, spreadsheets, slides and PDFs show changed paragraphs, cells, slides or pages instead of raw file contents.
 - While the chat is still running a command, the panel says so and reverts wait until it finishes, so a revert never races the tool that is writing.
 
-Settings → Privacy → Storage → **File History** controls how long snapshots are kept; deleting a chat always deletes its history. When retention has trimmed a file's oldest changes, its **Revert File** preview says “back to the oldest change still in history” instead of “back to before this chat”.
+Settings → General → Advanced → Data & Storage → **File History** controls how long snapshots are kept; deleting a chat always deletes its history. When retention has trimmed a file's oldest changes, its **Revert File** preview says “back to the oldest change still in history” instead of “back to before this chat”.
 
 ## Sandbox toggle
 
@@ -66,11 +66,26 @@ On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an
 - `/screenshot` captures your main display into the chat's artifacts (needs Screen Recording permission).
 - `/skill-name` force-loads a skill for one message.
 - Voice: the mic button dictates locally (see the Voice topic); the speaker button reads replies aloud when TTS is enabled.
-- Clipboard monitoring (Settings → Chat) offers recently copied text as context.
-- Context window cap (how much history fits) is Settings… (⌘,) → Server → Settings → Cache → Context Window Cap, not the Chat tab. The composer Context Budget popover is read-only.
+- Clipboard monitoring (Settings → Conversation → Behavior) offers recently copied text as context.
+- Context window cap (how much history fits) is Settings… (⌘,) → Server → Settings → Cache → Context Window Cap, not the Conversation tab (Conversation → Advanced has a link that jumps there). The composer Context Budget popover is read-only.
 
 ## Tips
 
 - Be specific; let the todo list show progress on long tasks.
 - On a custom agent, use a working folder for repo work, the sandbox for scripts and package installs, and neither for plain Q&A. On the Orchestrator, set a working folder when you want delegated work to land somewhere you can see; stay on it for setup, questions, and delegation.
 - Tool approvals are per-tool; you can grant "always allow" per agent in Permissions.
+
+
+## Choosing a model in chat
+
+Open the model pill to browse Provider and Model columns. Installed Local models come first, followed by active Osaurus Cloud models and connected providers. Inactive Local and Osaurus Cloud entries remain available with an Explore action. Local opens model downloads in Settings; Osaurus Cloud opens the Cloud model browser.
+
+The Cloud shortlist contains favorites plus the current Cloud model. Use the star to add or remove a favorite in either the shortlist or the full browser. More models opens the same Local or Cloud destination.
+
+In the Cloud browser, search by model name or provider and filter by Category or Context. Category tags identify each model’s task; models with available minimum pricing show From credits beneath their name. Selecting a model closes the browser, while starring a model keeps it open. Manage Credits opens your Cloud account controls.
+
+Selecting a model with options reveals a Model options column beside Provider and Model. Every option the model exposes lives there in the same row style: Thinking (Default, On, Off), the reasoning level, speculative depth, and any toggles, each with the saved choice or model default checked and a Reset to default link when you have overridden it. Selections keep the card open; click outside or press Escape to close it. There is no separate Model options page.
+
+## Credits in chat
+
+Hover over the Credits button to preview your wallet, or click to keep it open. The arrowless card aligns with the button's trailing edge and stays inside the chat window. If space is limited, scroll to reach the remaining activity and actions. Click outside or press Escape to dismiss it. Add credits opens the top-up dialog; View all opens Credits in Settings.

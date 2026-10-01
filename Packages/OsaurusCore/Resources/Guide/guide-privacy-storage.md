@@ -11,7 +11,7 @@ Osaurus is local-first: chats, memory, agents, and config all live under `~/.osa
 ## What leaves your Mac
 
 - Nothing conversation-related, unless you connect a cloud provider (then your prompts go to that provider) or enable server network exposure.
-- Anonymous usage analytics (Aptabase — no chats, prompts, or keys) and crash reports (Sentry) are consent-gated: Settings → Privacy → Send Crash Reports.
+- Anonymous usage analytics (Aptabase — no chats, prompts, or keys) and crash reports (Sentry) are consent-gated: Settings → Privacy → Filter → Send Crash Reports.
 - The Privacy tab also offers an experimental Privacy Filter that scrubs sensitive text before cloud sends.
 
 ## Storage layout
@@ -22,13 +22,13 @@ Osaurus is local-first: chats, memory, agents, and config all live under `~/.osa
 ## Encryption
 
 - Default: plaintext SQLite protected by macOS FileVault. If you don't use FileVault, backups of `~/.osaurus` are readable.
-- Opt-in at-rest encryption: Settings… (⌘,) → Privacy → Storage → "Encrypt local data at rest (SQLCipher)". Migration runs both ways.
+- Opt-in at-rest encryption: Settings… (⌘,) → General → Advanced → Data & Storage → "Encrypt local data at rest (SQLCipher)". Migration runs both ways.
 - The encryption key lives in this device's Keychain only (not iCloud-synced). Losing the key means losing the data — export a plaintext backup first.
 - Rotate storage key is available while encryption is on.
 
 ## Backup and recovery
 
-- Privacy → Storage → "Export plaintext backup…" copies databases, attachments, and config to a folder you choose (decrypting if needed). Do this before a macOS reinstall or Mac migration.
+- General → Advanced → Data & Storage → "Export plaintext backup…" copies databases, attachments, and config to a folder you choose (decrypting if needed). Do this before a macOS reinstall or Mac migration.
 - "Stores needing attention" lists degraded stores with Retry / Reset; Reset quarantines the file to `~/.osaurus/quarantine/` — nothing is deleted.
 
 ## Secrets

@@ -3272,8 +3272,16 @@ extension ToolRegistry {
         // The Orchestrator reads its working folder (`file_read` /
         // `file_search`) to brief workers and read their deliverables; the
         // workers do the writing and shell work in that folder.
-        "file_write", "file_edit", "shell_run", "redact_file",
+        "file_write", "file_edit", "shell_run",
     ])
+    // Every other host-folder tool (`file_copy`, `file_undo`,
+    // `file_operation_history`, `detect_pii`, `redact_file`) is folder WORK
+    // too — copying, reverting, and scanning files is what a worker does in
+    // that folder. Keeping the Orchestrator's folder surface at exactly
+    // `file_read` / `file_search` is also what its addendum promises.
+    // (Spelled out rather than `hostFolderExtraToolNames`: that accessor is
+    // main-actor isolated and this constant is nonisolated.)
+    .union(["file_copy", "file_undo", "file_operation_history", "detect_pii", "redact_file"])
     // The built-in Apple app tools (Calendar, Mail, Messages, …) are a
     // custom-agent capability: the Orchestrator enables them on other
     // agents through `osaurus_config` (`capabilities.apple_apps`) and

@@ -542,6 +542,7 @@ public struct ThemeTypography: Codable, Equatable, Sendable {
     public var titleSize: Double
     public var headingSize: Double
     public var bodySize: Double
+    public var smallBodySize: Double
     public var captionSize: Double
     public var codeSize: Double
 
@@ -551,6 +552,7 @@ public struct ThemeTypography: Codable, Equatable, Sendable {
         titleSize: Double = 28,
         headingSize: Double = 18,
         bodySize: Double = 14,
+        smallBodySize: Double = 14,
         captionSize: Double = 12,
         codeSize: Double = 13
     ) {
@@ -559,8 +561,21 @@ public struct ThemeTypography: Codable, Equatable, Sendable {
         self.titleSize = titleSize
         self.headingSize = headingSize
         self.bodySize = bodySize
+        self.smallBodySize = smallBodySize
         self.captionSize = captionSize
         self.codeSize = codeSize
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        primaryFont = try container.decode(String.self, forKey: .primaryFont)
+        monoFont = try container.decode(String.self, forKey: .monoFont)
+        titleSize = try container.decode(Double.self, forKey: .titleSize)
+        headingSize = try container.decode(Double.self, forKey: .headingSize)
+        bodySize = try container.decode(Double.self, forKey: .bodySize)
+        smallBodySize = try container.decodeIfPresent(Double.self, forKey: .smallBodySize) ?? 14
+        captionSize = try container.decode(Double.self, forKey: .captionSize)
+        codeSize = try container.decode(Double.self, forKey: .codeSize)
     }
 
     public static var `default`: ThemeTypography { ThemeTypography() }

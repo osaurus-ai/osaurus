@@ -1907,6 +1907,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 public let failureKind: String?
                 public let summaryContains: [String]?
                 public let summaryEquals: String?
+                /// The result envelope carries a worker `session_id` (a
+                /// settled delegated result, or a `background: true` ack).
+                public let hasSessionId: Bool?
+                /// This call passed `continue` = the `session_id` an EARLIER
+                /// row of the same run returned (a real follow-up to the same
+                /// worker, not a fresh spawn and not an invented handle).
+                public let continuesEarlierRow: Bool?
+                /// The `needs_input` flag the real envelope recorded for this row.
+                public let needsInput: Bool?
 
                 public init(
                     target: String? = nil,
@@ -1914,7 +1923,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                     model: String? = nil,
                     failureKind: String? = nil,
                     summaryContains: [String]? = nil,
-                    summaryEquals: String? = nil
+                    summaryEquals: String? = nil,
+                    hasSessionId: Bool? = nil,
+                    continuesEarlierRow: Bool? = nil,
+                    needsInput: Bool? = nil
                 ) {
                     self.target = target
                     self.ok = ok
@@ -1922,6 +1934,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                     self.failureKind = failureKind
                     self.summaryContains = summaryContains
                     self.summaryEquals = summaryEquals
+                    self.hasSessionId = hasSessionId
+                    self.continuesEarlierRow = continuesEarlierRow
+                    self.needsInput = needsInput
                 }
             }
         }
@@ -2164,6 +2179,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// the raw string. The canonical way to pin the chosen `action` and
         /// the salient fields of a consolidated configure write.
         public let argsMustContain: [ToolArgsMatcher]?
+        /// Per-call argument prohibitions: NO call to `tool` may satisfy every
+        /// key→substring pair of the matcher. Pins the apply-first contract
+        /// (`osaurus_config` with `action: plan` for a small routine change)
+        /// and similar "wrong mode" misses that `mustNotCallTools` cannot
+        /// express because the same tool is legitimately called another way.
+        public let argsMustNotContain: [ToolArgsMatcher]?
         /// Cap on model round-trips. nil → evaluator default.
         public let maxIterations: Int?
 
@@ -2172,12 +2193,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             mustCallTools: [String]? = nil,
             mustNotCallTools: [String]? = nil,
             argsMustContain: [ToolArgsMatcher]? = nil,
+            argsMustNotContain: [ToolArgsMatcher]? = nil,
             maxIterations: Int? = nil
         ) {
             self.rubric = rubric
             self.mustCallTools = mustCallTools
             self.mustNotCallTools = mustNotCallTools
             self.argsMustContain = argsMustContain
+            self.argsMustNotContain = argsMustNotContain
             self.maxIterations = maxIterations
         }
 

@@ -1,0 +1,26 @@
+{
+  "id": "default_agent.apply-first-single-change",
+  "domain": "default_agent",
+  "label": "default agent • one small change is applied directly — no plan round-trip",
+  "query": "Give my agent \"Eval Browser Agent\" the description \"Browses the web and reports back briefly.\"",
+  "notes": "Apply-first contract (PR1 `osaurus_config` description/menuHint/writeContract alignment): a single, reversible, low-risk change goes straight to `action: apply` — the approval card IS the preview, so a preceding `action: plan` is a wasted round-trip and contradicts the addendum. `argsMustNotContain` pins that NO osaurus_config call used `plan`; `plan` remains correct only for large or destructive edits (prune, deleting agents, emptying the spawn pool), which this is not. A read-only `osaurus_inspect describe` beforehand is tolerated. The agent is seeded so the patch matches by name instead of creating a new agent.",
+  "fixtures": {
+    "seedAgents": [
+      { "id": "5c1e7a2b-9d44-4f0e-8b37-6a2d0c9e1f53", "name": "Eval Browser Agent" }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_config"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load", "clarify", "spawn_agent"],
+      "argsMustContain": [
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "Eval Browser Agent" } },
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "description" } }
+      ],
+      "argsMustNotContain": [
+        { "tool": "osaurus_config", "args": { "action": "plan" } }
+      ],
+      "maxIterations": 6
+    }
+  }
+}
