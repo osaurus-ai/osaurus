@@ -83,9 +83,35 @@ final class InsightsService: ObservableObject {
     /// the main-actor isolation boundary.
     private let logsChanged = PassthroughSubject<([RequestLog], Int), Never>()
 
+    /// Tags inputs before they leave the main actor. A completed background
+    /// snapshot must not undo a newer Clear, filter edit, or log insertion.
+    private(set) var snapshotRevision: UInt64 = 0
+
+    struct SnapshotInput: Sendable {
+        let logs: [RequestLog]
+        let totalCount: Int
+        let search: String
+        let source: SourceFilter
+        let method: MethodFilter
+        let revision: UInt64
+    }
+
+    struct SnapshotResult: Sendable {
+        let filtered: [RequestLog]
+        let stats: InsightsStats
+        let totalCount: Int
+        let hasLogs: Bool
+        let revision: UInt64
+    }
+
+    nonisolated private static let computeQueue = DispatchQueue(
+        label: "ai.osaurus.insights.compute",
+        qos: .userInitiated
+    )
+
     // MARK: - Initialization
 
-    private init() {
+    init(computeQueue: DispatchQueue? = nil) {
         // Seed the snapshots with current (empty) state so the first
         // render of InsightsView has something to show before the
         // pipeline's debounced emission lands.
@@ -108,45 +134,52 @@ final class InsightsService: ObservableObject {
         // miss the very first user keystroke when it lands inside
         // the debounce window.
         .dropFirst()
-        // Debounce on a background queue so the filter + stats passes
-        // over the (up to 500-entry) ring buffer run off the main thread.
-        // Running them on main caused multi-second app hangs under load.
-        .debounce(for: .milliseconds(200), scheduler: Self.computeQueue)
-        // `computeSnapshot` is a nonisolated static function (not a
-        // closure formed inside this @MainActor init), so Swift 6 does not
-        // attach a main-actor isolation check to it when it runs on
-        // `computeQueue`.
+        // All upstream mutations are main-actor isolated. Increment here,
+        // rather than after debounce, to invalidate an already running job.
+        .map { [weak self] logsAndCount, search, source, method in
+            let revision = (self?.snapshotRevision ?? 0) &+ 1
+            self?.snapshotRevision = revision
+            let (snapshot, totalCount) = logsAndCount
+            return SnapshotInput(
+                logs: snapshot,
+                totalCount: totalCount,
+                search: search,
+                source: source,
+                method: method,
+                revision: revision
+            )
+        }
+        .debounce(for: .milliseconds(200), scheduler: computeQueue ?? Self.computeQueue)
+        // A nonisolated function reference avoids forming a main-actor
+        // closure that would assert when Combine invokes it on this queue.
         .map(Self.computeSnapshot)
         .receive(on: DispatchQueue.main)
-        .sink { [weak self] filtered, stats, totalCount, hasLogs in
-            guard let self else { return }
-            self.filteredLogs = filtered
-            self.stats = stats
-            self.totalRequestCount = totalCount
-            self.hasLogs = hasLogs
+        .sink { [weak self] result in
+            self?.applySnapshot(result)
         }
     }
 
-    /// Serial background queue for the debounced filter/stats pipeline.
-    nonisolated private static let computeQueue = DispatchQueue(
-        label: "com.dinoki.osaurus.insights.compute",
-        qos: .userInitiated
-    )
-
-    /// Pure transform for the debounced pipeline. Operates only on the
-    /// passed-in value snapshot, so it's safe to run off the main actor.
-    nonisolated private static func computeSnapshot(
-        _ input: (([RequestLog], Int), String, SourceFilter, MethodFilter)
-    ) -> ([RequestLog], InsightsStats, Int, Bool) {
-        let ((snapshot, totalCount), search, source, method) = input
-        let filtered = computeFilteredLogs(
-            logs: snapshot,
-            search: search,
-            source: source,
-            method: method
+    nonisolated static func computeSnapshot(_ input: SnapshotInput) -> SnapshotResult {
+        SnapshotResult(
+            filtered: computeFilteredLogs(
+                logs: input.logs,
+                search: input.search,
+                source: input.source,
+                method: input.method
+            ),
+            stats: computeStats(logs: input.logs),
+            totalCount: input.totalCount,
+            hasLogs: !input.logs.isEmpty,
+            revision: input.revision
         )
-        let stats = computeStats(logs: snapshot)
-        return (filtered, stats, totalCount, !snapshot.isEmpty)
+    }
+
+    func applySnapshot(_ result: SnapshotResult) {
+        guard result.revision == snapshotRevision else { return }
+        filteredLogs = result.filtered
+        stats = result.stats
+        totalRequestCount = result.totalCount
+        hasLogs = result.hasLogs
     }
 
     nonisolated private static func computeFilteredLogs(
@@ -173,10 +206,27 @@ final class InsightsService: ObservableObject {
                 if log.source != .chatUI { return false }
             case .httpAPI:
                 if log.source != .httpAPI { return false }
-    /// Single pass over the logs: avoids materializing intermediate arrays
-    /// (each copy of the large `RequestLog` struct retains many fields).
-    nonisolated private static func computeStats(logs: [RequestLog]) -> InsightsStats {
+            case .plugin:
                 if log.source != .plugin { return false }
+            case .p2p:
+                if log.source != .p2p { return false }
+            }
+
+            switch method {
+            case .all:
+                break
+            case .get:
+                if log.method != "GET" { return false }
+            case .post:
+                if log.method != "POST" { return false }
+            }
+
+            return true
+        }
+    }
+
+    nonisolated private static func computeStats(logs: [RequestLog]) -> InsightsStats {
+        let total = logs.count
         var successCount = 0
         var errors = 0
         var durationSum: Double = 0
@@ -185,7 +235,6 @@ final class InsightsService: ObservableObject {
         var totalOutputTokens = 0
         var speedSum: Double = 0
         var speedCount = 0
-
         for log in logs {
             if log.isSuccess { successCount += 1 }
             if log.isError { errors += 1 }
@@ -194,45 +243,22 @@ final class InsightsService: ObservableObject {
                 inferenceCount += 1
                 totalInputTokens += log.inputTokens ?? 0
                 totalOutputTokens += log.outputTokens ?? 0
-                if let tps = log.tokensPerSecond {
-                    speedSum += tps
+                if let speed = log.tokensPerSecond {
+                    speedSum += speed
                     speedCount += 1
                 }
             }
         }
 
-                if log.source != .p2p { return false }
-        let avgDuration = total > 0 ? durationSum / Double(total) : 0
-        let avgSpeed = speedCount > 0 ? speedSum / Double(speedCount) : 0
-            return true
-        }
-    }
-
-    private static func computeStats(logs: [RequestLog]) -> InsightsStats {
-        let total = logs.count
-            inferenceCount: inferenceCount,
-        let successRate = total > 0 ? Double(successCount) / Double(total) * 100 : 0
-        let errors = logs.filter { $0.isError }.count
-        let avgDuration =
-            logs.isEmpty ? 0 : logs.map(\.durationMs).reduce(0, +) / Double(logs.count)
-
-        let inferenceLogs = logs.filter { $0.isInference }
-        let totalInputTokens = inferenceLogs.reduce(0) { $0 + ($1.inputTokens ?? 0) }
-        let totalOutputTokens = inferenceLogs.reduce(0) { $0 + ($1.outputTokens ?? 0) }
-        let avgSpeed: Double = {
-            let speeds = inferenceLogs.compactMap { $0.tokensPerSecond }
-            return speeds.isEmpty ? 0 : speeds.reduce(0, +) / Double(speeds.count)
-        }()
-
         return InsightsStats(
             totalRequests: total,
-            successRate: successRate,
+            successRate: total > 0 ? Double(successCount) / Double(total) * 100 : 0,
             errorCount: errors,
-            averageDurationMs: avgDuration,
-            inferenceCount: inferenceLogs.count,
+            averageDurationMs: total > 0 ? durationSum / Double(total) : 0,
+            inferenceCount: inferenceCount,
             totalInputTokens: totalInputTokens,
             totalOutputTokens: totalOutputTokens,
-            averageSpeed: avgSpeed
+            averageSpeed: speedCount > 0 ? speedSum / Double(speedCount) : 0
         )
     }
 
