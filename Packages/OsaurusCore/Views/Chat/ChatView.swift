@@ -1133,8 +1133,9 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
-                // While an advisory is up the composer can't send, so the
-                // conversation still belongs to the model it was raised for.
+                // Sending dismisses the advisory, so while one is up no turn
+                // has run on a newer model and the conversation still belongs
+                // to the model it was raised for.
                 // Compare against that one, so further hops keep naming it and
                 // switching back to it clears the advisory.
                 let previousModel = self.modelSwitchContinuityWarning?.previousModelId ?? self.selectedModel

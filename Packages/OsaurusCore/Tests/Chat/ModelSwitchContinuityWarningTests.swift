@@ -28,8 +28,8 @@ struct ModelSwitchContinuityWarningTests {
         #expect(!rows.contains("if modelSwitchContinuityWarning != nil"))
     }
 
-    @Test("advisory blocks send and only offers keep-original or new chat")
-    func advisoryBlocksSendAndDropsContinue() throws {
+    @Test("sending dismisses the advisory, which only offers keep-original or new chat")
+    func sendDismissesAdvisoryAndDropsContinue() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -38,9 +38,13 @@ struct ModelSwitchContinuityWarningTests {
             contentsOf: packageRoot.appendingPathComponent("Views/Chat/FloatingInputCard.swift"),
             encoding: .utf8
         )
+        // Send stays available under the advisory and accepts the new model.
         let canSendStart = try #require(source.range(of: "private var canSend: Bool {"))
         let canSendBody = String(source[canSendStart.upperBound...].prefix(2000))
-        #expect(canSendBody.contains("guard modelSwitchContinuityWarning == nil else { return false }"))
+        #expect(!canSendBody.contains("modelSwitchContinuityWarning"))
+        let sendStart = try #require(source.range(of: "private func syncAndSend() {"))
+        let sendBody = String(source[sendStart.upperBound...].prefix(600))
+        #expect(sendBody.contains("onDismissModelSwitchContinuityWarning?()"))
 
         #expect(source.contains("\"Keep Using \\(previous)\""))
         #expect(!source.contains("Continue with This Model"))

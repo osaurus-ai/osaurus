@@ -587,10 +587,6 @@ struct FloatingInputCard: View {
         // nothing sends until the lock clears.
         guard composerLock == nil else { return false }
 
-        // Mid-conversation model switch advisory: the user must keep the
-        // original model or start a new chat before anything sends.
-        guard modelSwitchContinuityWarning == nil else { return false }
-
         // Hard token gate: when the NON-compactable prefix alone (system
         // prompt + tools + memory + input + response reservation) can't
         // fit the model window, the request would fail no matter how much
@@ -1892,6 +1888,13 @@ extension FloatingInputCard {
 
     private func syncAndSend() {
         guard canSend else { return }
+        // Sending under a model-switch advisory accepts the new model, so the
+        // advisory has nothing left to ask.
+        if modelSwitchContinuityWarning != nil {
+            withAnimation(.easeOut(duration: 0.2)) {
+                onDismissModelSwitchContinuityWarning?()
+            }
+        }
         // The runtime owns admission and actual load failures. Host swap must
         // never add a second Send/acknowledgment gate.
         commitSend(localText)
