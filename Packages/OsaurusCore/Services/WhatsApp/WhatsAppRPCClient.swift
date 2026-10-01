@@ -258,6 +258,98 @@ enum WhatsAppRPCSecurity {
 
 #if os(macOS)
 
+    /// One ordered output/exit stream per helper. The final drain reads only
+    /// bytes already in the pipe: descendants holding stdout open cannot block
+    /// process retirement. All reads and event publication share one lock.
+    final class WhatsAppRPCProcessOutputReader: @unchecked Sendable {
+        enum Event: Sendable, Equatable {
+            case data(Data)
+            case readFailed(Int32)
+            case terminated
+        }
+
+        let events: AsyncStream<Event>
+        private let continuation: AsyncStream<Event>.Continuation
+        private let handle: FileHandle
+        private let lock = NSLock()
+        private var finished = false
+
+        init(handle: FileHandle) throws {
+            self.handle = handle
+            let pair = AsyncStream<Event>.makeStream()
+            events = pair.stream
+            continuation = pair.continuation
+            let flags = fcntl(handle.fileDescriptor, F_GETFL)
+            guard flags >= 0, fcntl(handle.fileDescriptor, F_SETFL, flags | O_NONBLOCK) >= 0 else {
+                throw WhatsAppRPCError.spawnFailed("could not configure nonblocking helper stdout")
+            }
+        }
+
+        func start() {
+            handle.readabilityHandler = { [weak self] _ in self?.captureReadableData() }
+        }
+
+        func captureReadableData() {
+            lock.withLock {
+                guard !finished else { return }
+                drainBufferedBytes(finishing: false)
+            }
+        }
+
+        func finishAfterTermination() {
+            lock.withLock {
+                guard !finished else { return }
+                drainBufferedBytes(finishing: true)
+                // Previously queued and just-drained frames precede this event.
+                continuation.yield(.terminated)
+                finish()
+            }
+        }
+
+        func cancel() {
+            lock.withLock {
+                guard !finished else { return }
+                finish()
+            }
+        }
+
+        /// Lock held. Nonblocking reads plus an attempt bound prevent a noisy
+        /// descendant or repeated EINTR from holding the termination callback.
+        private func drainBufferedBytes(finishing: Bool) {
+            var buffer = [UInt8](repeating: 0, count: 65_536)
+            for _ in 0 ..< 64 {
+                let count = read(handle.fileDescriptor, &buffer, buffer.count)
+                if count > 0 {
+                    continuation.yield(.data(Data(buffer.prefix(count))))
+                    continue
+                }
+                if count == 0 {
+                    handle.readabilityHandler = nil
+                    return
+                }
+                let code = errno
+                if code == EINTR { continue }
+                if code != EAGAIN && code != EWOULDBLOCK {
+                    continuation.yield(.readFailed(code))
+                    handle.readabilityHandler = nil
+                }
+                return
+            }
+            // Normal readiness callbacks can continue draining on the next
+            // notification. A terminating descendant that floods the pipe must
+            // fail explicitly rather than silently dropping a final response.
+            if finishing { continuation.yield(.readFailed(EOVERFLOW)) }
+        }
+
+        /// Lock held. Queued callbacks see finished before touching a closed fd.
+        private func finish() {
+            finished = true
+            handle.readabilityHandler = nil
+            try? handle.close()
+            continuation.finish()
+        }
+    }
+
     // MARK: - Process-backed client
 
     /// Long-lived `osaurus-wa rpc` child process speaking newline-framed
@@ -269,6 +361,9 @@ enum WhatsAppRPCSecurity {
         }
 
         private var process: Process?
+        private(set) var processGeneration: UUID?
+        private var outputReader: WhatsAppRPCProcessOutputReader?
+        private var outputTask: Task<Void, Never>?
         private var stdinHandle: FileHandle?
         private var nextRequestId = 1
         private var pending: [Int: PendingCall] = [:]
@@ -373,11 +468,7 @@ enum WhatsAppRPCSecurity {
         }
 
         func shutdown() async {
-            let running = process
-            process = nil
-            try? stdinHandle?.close()
-            stdinHandle = nil
-            failAllPending(with: WhatsAppRPCError.notRunning)
+            let running = retireCurrentProcess()
             if let running, running.isRunning {
                 running.terminate()
                 let deadline = Date().addingTimeInterval(2)
@@ -390,10 +481,39 @@ enum WhatsAppRPCSecurity {
             }
         }
 
+        private func retireCurrentProcess() -> Process? {
+            let running = process
+            process = nil
+            processGeneration = nil
+            outputReader?.cancel()
+            outputReader = nil
+            // The reader has closed and finished its finite stream. Let the
+            // consumer drain now-inert events naturally: this method can run
+            // inside that consumer's read-error shutdown, whose exit wait must
+            // not inherit cancellation from canceling itself.
+            outputTask = nil
+            try? stdinHandle?.close()
+            stdinHandle = nil
+            readBuffer.removeAll()
+            failAllPending(with: WhatsAppRPCError.notRunning)
+            if running != nil {
+                notificationHandler?(WhatsAppRPCNotification.helperTerminated, Data("{}".utf8))
+            }
+            return running
+        }
+
         // MARK: - Lifecycle
 
         private func ensureRunning() async throws {
-            if let process, process.isRunning { return }
+            // A new request may observe death before the ordered output reader
+            // has delivered the last response. Finish that generation first.
+            while let process {
+                if process.isRunning { return }
+                let generation = processGeneration
+                await outputTask?.value
+                // Another request can install a replacement across the await.
+                if generation == processGeneration { _ = retireCurrentProcess() }
+            }
             let verification = WhatsAppRuntimeAssets.verifyExecutable()
             guard let executableURL = verification.trustedURL else {
                 switch verification {
@@ -415,6 +535,7 @@ enum WhatsAppRPCSecurity {
             OsaurusPaths.ensureExistsSilent(storeDir)
 
             let process = Process()
+            let generation = UUID()
             process.executableURL = executableURL
             process.arguments = ["rpc", "--store-dir", storeDir.path]
             let stdin = Pipe()
@@ -431,41 +552,50 @@ enum WhatsAppRPCSecurity {
                     handle.readabilityHandler = nil
                 }
             }
-            stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let data = handle.availableData
-                if data.isEmpty {
-                    handle.readabilityHandler = nil
-                    return
-                }
-                Task { await self?.ingest(data) }
-            }
-            process.terminationHandler = { [weak self] _ in
-                Task { await self?.handleTermination() }
-            }
+            let reader = try WhatsAppRPCProcessOutputReader(handle: stdout.fileHandleForReading)
+            reader.start()
+            process.terminationHandler = { _ in reader.finishAfterTermination() }
 
             do {
                 try process.run()
             } catch {
+                reader.cancel()
                 throw WhatsAppRPCError.spawnFailed(error.localizedDescription)
             }
             self.process = process
+            processGeneration = generation
             self.stdinHandle = stdin.fileHandleForWriting
+            outputReader = reader
+            outputTask = Task { [weak self] in
+                for await event in reader.events {
+                    switch event {
+                    case .data(let data):
+                        await self?.ingest(data, generation: generation)
+                    case .readFailed(let code):
+                        await self?.handleReadFailure(code, generation: generation)
+                    case .terminated:
+                        await self?.handleTermination(generation: generation)
+                    }
+                }
+            }
         }
 
-        private func handleTermination() {
-            process = nil
-            try? stdinHandle?.close()
-            stdinHandle = nil
-            readBuffer.removeAll()
-            failAllPending(with: WhatsAppRPCError.notRunning)
-            // Tell stream consumers their session died so they can
-            // resubscribe against a fresh helper.
-            notificationHandler?(WhatsAppRPCNotification.helperTerminated, Data("{}".utf8))
+        func handleTermination(generation: UUID) {
+            guard generation == processGeneration else { return }
+            _ = retireCurrentProcess()
+        }
+
+        private func handleReadFailure(_ code: Int32, generation: UUID) async {
+            guard generation == processGeneration else { return }
+            failAllPending(with: WhatsAppRPCError.decodeFailed(
+                NSError(domain: NSPOSIXErrorDomain, code: Int(code)).localizedDescription))
+            await killWedgedProcess(generation: generation)
         }
 
         // MARK: - Reader
 
-        private func ingest(_ data: Data) {
+        func ingest(_ data: Data, generation: UUID) {
+            guard generation == processGeneration else { return }
             readBuffer.append(data)
             while let newlineIndex = readBuffer.firstIndex(of: 0x0A) {
                 let line = readBuffer[readBuffer.startIndex ..< newlineIndex]
@@ -499,7 +629,7 @@ enum WhatsAppRPCSecurity {
                 }
             }
             if readBuffer.count > Self.maxReadBufferBytes {
-                Task { await self.killWedgedProcess() }
+                Task { await self.killWedgedProcess(generation: generation) }
             }
         }
 
@@ -511,15 +641,16 @@ enum WhatsAppRPCSecurity {
 
         private func resolveTimeout(id: Int, method: String) async {
             guard let call = pending.removeValue(forKey: id) else { return }
+            let generation = processGeneration
             call.timeoutTask?.cancel()
             call.continuation.resume(throwing: WhatsAppRPCError.timeout(method: method))
             // A request past its deadline is still occupying the helper;
             // kill the process so the next call gets a fresh one.
-            await killWedgedProcess()
+            await killWedgedProcess(generation: generation)
         }
 
-        private func killWedgedProcess() async {
-            guard process != nil else { return }
+        private func killWedgedProcess(generation: UUID?) async {
+            guard process != nil, generation == processGeneration else { return }
             await shutdown()
         }
 

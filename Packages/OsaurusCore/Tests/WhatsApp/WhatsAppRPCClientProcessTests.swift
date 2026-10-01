@@ -25,6 +25,35 @@
     @Suite(.serialized)
     struct WhatsAppRPCClientProcessTests {
 
+        @Test func delayedOldTerminationCannotRetireReplacement() async throws {
+            try await withScriptedHelper { client in
+                let received = NotificationCollector()
+                await client.setNotificationHandler { method, _ in received.append(method) }
+                _ = try await helperPid(client)
+                let oldGeneration = try #require(await client.processGeneration)
+                await client.shutdown()
+                let replacementPid = try await helperPid(client)
+                let replacementGeneration = try #require(await client.processGeneration)
+                #expect(replacementGeneration != oldGeneration)
+                #expect(received.methods.filter { $0 == WhatsAppRPCNotification.helperTerminated }.count == 1)
+                await client.handleTermination(generation: oldGeneration)
+                #expect(try await helperPid(client) == replacementPid)
+                #expect(await client.processGeneration == replacementGeneration)
+                #expect(received.methods.filter { $0 == WhatsAppRPCNotification.helperTerminated }.count == 1)
+            }
+        }
+
+        @Test func delayedOldOutputCannotContaminateReplacement() async throws {
+            try await withScriptedHelper { client in
+                _ = try await helperPid(client)
+                let oldGeneration = try #require(await client.processGeneration)
+                await client.shutdown()
+                let replacementPid = try await helperPid(client)
+                await client.ingest(Data("{\"old_partial\":".utf8), generation: oldGeneration)
+                #expect(try await helperPid(client) == replacementPid)
+            }
+        }
+
         @Test func timeoutKillsWedgedHelperSoNextCallGetsFreshProcess() async throws {
             try await withScriptedHelper { client in
                 let firstPid = try await helperPid(client)
@@ -61,7 +90,7 @@
             }
         }
 
-        @Test func helperExitEmitsTerminationNotification() async throws {
+        @Test(.timeLimit(.minutes(1))) func helperExitEmitsTerminationNotification() async throws {
             try await withScriptedHelper { client in
                 let received = NotificationCollector()
                 await client.setNotificationHandler { method, _ in
@@ -71,15 +100,28 @@
                 // `quit` answers, then the script exits: the client must
                 // synthesize the local termination notification the watch
                 // consumer uses to end its session and resubscribe.
-                _ = try await client.call(method: "quit", params: [:], timeout: 5)
-                for _ in 0 ..< 100 {
-                    if received.methods.contains(WhatsAppRPCNotification.helperTerminated) {
-                        break
-                    }
-                    try await Task.sleep(nanoseconds: 50_000_000)
-                }
+                let response = try await client.call(method: "quit", params: [:], timeout: 5)
+                #expect(response.bool("ok") == true)
+                await received.waitFor(WhatsAppRPCNotification.helperTerminated)
                 #expect(received.methods.contains(WhatsAppRPCNotification.helperTerminated))
                 await client.shutdown()
+            }
+        }
+
+        @Test(.timeLimit(.minutes(1))) func consecutiveFinalResponsesSurviveImmediateHelperExit() async throws {
+            try await withScriptedHelper { client in
+                let received = NotificationCollector()
+                await client.setNotificationHandler { method, _ in received.append(method) }
+                var previousPid: Int32?
+                for iteration in 1 ... 10 {
+                    let pid = try await helperPid(client)
+                    if let previousPid { #expect(pid != previousPid) }
+                    let response = try await client.call(method: "quit", params: [:], timeout: 5)
+                    #expect(response.bool("ok") == true)
+                    await received.waitFor(WhatsAppRPCNotification.helperTerminated)
+                    #expect(received.methods.filter { $0 == WhatsAppRPCNotification.helperTerminated }.count == iteration)
+                    previousPid = pid
+                }
             }
         }
 
@@ -118,9 +160,16 @@
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o755], ofItemAtPath: script.path
                 )
+                let previousOverride = ProcessInfo.processInfo.environment[
+                    WhatsAppRuntimeAssets.executableOverrideEnvKey
+                ]
                 setenv(WhatsAppRuntimeAssets.executableOverrideEnvKey, script.path, 1)
                 defer {
-                    unsetenv(WhatsAppRuntimeAssets.executableOverrideEnvKey)
+                    if let previousOverride {
+                        setenv(WhatsAppRuntimeAssets.executableOverrideEnvKey, previousOverride, 1)
+                    } else {
+                        unsetenv(WhatsAppRuntimeAssets.executableOverrideEnvKey)
+                    }
                     try? FileManager.default.removeItem(at: directory)
                 }
 
@@ -130,7 +179,14 @@
                     Issue.record("OSAURUS_WA_PATH override was not honored in this build")
                     return
                 }
-                try await body(WhatsAppProcessRPCClient())
+                let client = WhatsAppProcessRPCClient()
+                do {
+                    try await body(client)
+                } catch {
+                    await client.shutdown()
+                    throw error
+                }
+                await client.shutdown()
             }
         }
 
@@ -154,11 +210,26 @@
     private final class NotificationCollector: @unchecked Sendable {
         private let lock = NSLock()
         private var collected: [String] = []
+        private let notifications: AsyncStream<String>
+        private let continuation: AsyncStream<String>.Continuation
+
+        init() {
+            let pair = AsyncStream<String>.makeStream()
+            notifications = pair.stream
+            continuation = pair.continuation
+        }
 
         var methods: [String] { lock.withLock { collected } }
 
         func append(_ method: String) {
             lock.withLock { collected.append(method) }
+            continuation.yield(method)
+        }
+
+        func waitFor(_ method: String) async {
+            for await notification in notifications {
+                if notification == method { return }
+            }
         }
     }
 
