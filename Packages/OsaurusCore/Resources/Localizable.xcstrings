@@ -163471,6 +163471,40 @@
         }
       }
     },
+    "Open request and response log" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anfrage- und Antwortprotokoll öffnen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "요청 및 응답 로그 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Открыть журнал запроса и ответа"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打开请求和响应日志"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "開啟請求與回應記錄"
+          }
+        }
+      }
+    },
     "Open this conversation" : {
       "extractionState" : "stale",
       "localizations" : {
