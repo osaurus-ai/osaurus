@@ -4908,6 +4908,10 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         process.arguments = invocation.arguments
         process.currentDirectoryURL = rootPath
 
+        // Reject invalid strings before allocating streaming pipes or registering
+        // a live execution. The shared launch helper also validates other callers.
+        try ProcessInputValidation.validate(process)
+
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe

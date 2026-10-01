@@ -4,6 +4,25 @@ import Testing
 @testable import OsaurusCore
 
 struct ProcessInputValidationTests {
+    @Test func shellRejectsNulBeforeRegisteringLiveExecution() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let callID = "nul-input-\(UUID().uuidString)"
+        let tool = ShellRunTool(rootPath: root)
+        let arguments = String(
+            decoding: try JSONSerialization.data(withJSONObject: ["command": "true\u{0}false"]),
+            as: UTF8.self
+        )
+        let result = try await ChatExecutionContext.$currentToolCallId.withValue(callID) {
+            try await ToolRegistry.runToolBodyUntimed(tool, argumentsJSON: arguments)
+        }
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("NUL character"))
+        let entry = await LiveExecRegistry.shared.handle(toolCallId: callID)
+        #expect(entry == nil)
+    }
+
     @Test func rejectsNulArgumentsWithoutLaunching() async {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
