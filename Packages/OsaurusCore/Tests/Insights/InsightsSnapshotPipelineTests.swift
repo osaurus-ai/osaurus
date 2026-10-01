@@ -84,10 +84,16 @@ struct InsightsSnapshotPipelineTests {
         #expect(InsightsService.computeSnapshot(input(logs, search: "raw-wire-only")).filtered.isEmpty)
     }
 
+    nonisolated private static func computeWithThreadCheck(
+        _ snapshot: InsightsService.SnapshotInput
+    ) -> (Bool, InsightsService.SnapshotResult) {
+        (Thread.isMainThread, InsightsService.computeSnapshot(snapshot))
+    }
+
     @Test func transformCanRunOffMainActor() async {
         let snapshot = input(fixtures())
         let (wasMain, result) = await Task.detached {
-            (Thread.isMainThread, InsightsService.computeSnapshot(snapshot))
+            Self.computeWithThreadCheck(snapshot)
         }.value
         #expect(!wasMain)
         #expect(result.stats.totalRequests == 5)
