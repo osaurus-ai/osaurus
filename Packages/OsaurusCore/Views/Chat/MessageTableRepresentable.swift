@@ -67,8 +67,14 @@ final class CenteredMessageScrollView: NSScrollView {
         if contentWidth != lastFittedContentWidth {
             lastFittedContentWidth = contentWidth
             (documentView as? NSTableView)?.sizeLastColumnToFit()
+            onContentWidthChanged?(contentWidth)
         }
     }
+
+    /// Fired from `tile()` when the laid-out content width changes. This is
+    /// the width the column actually gets, which is narrower than SwiftUI's
+    /// width whenever a legacy (always-visible) scroller takes up room.
+    var onContentWidthChanged: ((CGFloat) -> Void)?
 
     /// Fired before a wheel / trackpad scroll is applied, so programmatic
     /// position holds (restore, bottom re-pin) can stand down for the user.
@@ -167,6 +173,9 @@ struct MessageTableRepresentable: NSViewRepresentable {
         )
         coordinator.setupHoverTracking(on: tableView)
         scrollView.onUserScroll = { [weak coordinator] in coordinator?.userDidScroll() }
+        scrollView.onContentWidthChanged = { [weak coordinator] width in
+            coordinator?.tiledContentWidthDidChange(width)
+        }
 
         // sync session store into coordinator's expand cache for the initial load
         coordinator.expandedIds = expandedBlocksStore.expandedIds
@@ -211,7 +220,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         }
 
         let rctx = renderingContext(for: coordinator)
-        coordinator.lastSwiftUIWidth = rctx.width
+        coordinator.lastSwiftUIWidth = max(100, width)
         coordinator.applyBlocks(
             blocks,
             groupHeaderMap: groupHeaderMap,
@@ -270,7 +279,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
 
     private func renderingContext(for coordinator: Coordinator) -> CellRenderingContext {
         CellRenderingContext(
-            width: max(100, width),
+            width: coordinator.resolvedContentWidth(swiftUIWidth: max(100, width)),
             agentName: agentName,
             agentAvatar: agentAvatar,
             agentCustomAvatarPath: agentCustomAvatarPath,
@@ -429,6 +438,16 @@ extension MessageTableRepresentable {
         /// Width last provided by SwiftUI (effectiveContentWidth, already clamped to maxContentWidth).
         /// Used by the frame-change debounce to avoid reading the clip view before tile() has run.
         var lastSwiftUIWidth: CGFloat = 100
+        /// Content width from the scroll view's last `tile()`, 0 until the
+        /// first real layout. Cells must render at this width, not SwiftUI's:
+        /// a legacy scroller makes the column narrower than SwiftUI's width,
+        /// and any later SwiftUI update would otherwise re-render every cell
+        /// wider than its column.
+        private var tiledContentWidth: CGFloat = 0
+
+        func resolvedContentWidth(swiftUIWidth: CGFloat) -> CGFloat {
+            tiledContentWidth > 100 ? tiledContentWidth : swiftUIWidth
+        }
         /// Clip-view width the table column was last fitted to; gates
         /// `sizeLastColumnToFit` in `updateNSView` to real width changes.
         var lastFitColumnClipWidth: CGFloat = -1
@@ -703,20 +722,31 @@ extension MessageTableRepresentable {
                 return
             }
 
-            // only reconfigure after the frame stops changing
-            // to avoid expensive per-frame work
+            scheduleWidthReconfigure()
+        }
+
+        /// `tile()` laid the column out at a new width (window resize, or a
+        /// legacy scroller appearing/disappearing). Reconfigure the cells
+        /// only if they were rendered for a different width, so overlay
+        /// scrollers (where the two always agree) keep the no-rewrap mount.
+        func tiledContentWidthDidChange(_ width: CGFloat) {
+            guard width > 100 else { return }
+            tiledContentWidth = width
+            guard abs(ctx.width - width) > 1.0 else { return }
+            scheduleWidthReconfigure()
+        }
+
+        /// Reconfigure every cell for the current content width once the
+        /// width stops changing, to avoid expensive per-frame work.
+        private func scheduleWidthReconfigure() {
             frameDebounceWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self, let tableView else { return }
-                // use SwiftUI's pre-computed effectiveContentWidth (already clamped to
-                // maxContentWidth). Reading contentView.bounds.width here is unreliable
-                // because tile() may not have applied centering insets yet at this point.
-                let contentWidth = self.lastSwiftUIWidth
+                // By now tile() has run, so prefer its content width (which
+                // accounts for a legacy scroller) over SwiftUI's.
+                let contentWidth = self.resolvedContentWidth(swiftUIWidth: self.lastSwiftUIWidth)
                 self.ctx.width = contentWidth
                 self.heightCache.removeAll()
-                // set column width explicitly to match SwiftUI's effective content width
-                // (tile() may not have updated clip view insets yet, so sizeLastColumnToFit
-                // could give a stale value).
                 if let col = tableView.tableColumns.first {
                     col.width = contentWidth
                 }
