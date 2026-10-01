@@ -350,6 +350,7 @@ enum FolderToolHelpers {
     /// Run a process and wait for completion asynchronously without blocking the main thread.
     /// The termination handler is set before running to avoid race conditions.
     static func runProcessAsync(_ process: Process) async throws {
+        try ProcessInputValidation.validate(process)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { _ in
                 continuation.resume()
