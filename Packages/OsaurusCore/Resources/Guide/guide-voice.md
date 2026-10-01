@@ -29,4 +29,4 @@ Voice → Transcription → **Enable Transcription Mode** turns on system-wide d
 - Default engine: On-Device (PocketTTS) — English, ~700 MB one-time download, offline afterwards; choose a voice (default `alba`).
 - Alternative: any OpenAI-compatible TTS server (`/v1/audio/speech`) — endpoint, model, voice, speed, optional API key (Keychain).
 - In chat, a speaker button appears on assistant messages when TTS is on; agents can also be granted a `speak` tool in the agent's Abilities settings.
-- Every dictation session and every spoken reply is recorded in Settings… (⌘,) → Insights (**Transcription** / **Speech** chips). On-device work is **Local**; an OpenAI-compatible TTS server shows as **Cloud** with the text that was sent.
+- Every dictation session and every spoken reply is recorded in Settings… (⌘,) → Insights (**Audio & Media** scope tab, **Transcription** / **Speech** rows). On-device work is **Local**; an OpenAI-compatible TTS server shows as **Cloud** with the text that was sent.

@@ -2,15 +2,24 @@
 //  InsightsDetailPane.swift
 //  osaurus
 //
-//  Pushed full-width detail view for the Insights screen. Surfaces the
-//  formatted prompt (system / user / assistant / tool messages + tools),
-//  the full pretty request and response JSON, and the model parameters
-//  for a selected RequestLog so users can self-diagnose what was sent
-//  to the model. Pop is invoked via the back button or Escape key.
+//  Detail view for one Insights row. Shown beside the list as a side
+//  inspector at wide widths, or pushed full-width (with Back / Escape) in
+//  narrow windows. Overview answers what happened, where the data went and
+//  who drove it with progressive disclosure; Prompt shows the parsed chat
+//  messages; Raw holds the pretty request / response bodies (local and
+//  wire) for self-diagnosis.
 //
 
 import AppKit
 import SwiftUI
+
+/// How the pane is being shown; drives Back vs. Close and horizontal metrics.
+enum InsightsDetailPresentation: Equatable {
+    /// Replaces the list; a Back button (and Escape) returns.
+    case page
+    /// Sits beside the list; a close button dismisses it.
+    case inspector
+}
 
 // MARK: - Detail View
 
@@ -18,9 +27,12 @@ struct InsightsDetailPane: View {
     @Environment(\.theme) private var theme
 
     let log: RequestLog
+    var presentation: InsightsDetailPresentation = .page
     let onBack: () -> Void
 
     @State private var selectedTab: DetailTab = .overview
+
+    private var hInset: CGFloat { presentation == .inspector ? 20 : 24 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,9 +42,11 @@ struct InsightsDetailPane: View {
             if log.isPluginLog {
                 pluginBody
             } else {
-                tabPicker
-                    .padding(.horizontal, 24)
-                    .padding(.top, 16)
+                if availableTabs.count > 1 {
+                    tabPicker
+                        .padding(.horizontal, hInset)
+                        .padding(.top, 12)
+                }
                 tabContent
             }
         }
@@ -45,234 +59,170 @@ struct InsightsDetailPane: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Button(action: onBack) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Back to Logs", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
+                if presentation == .page {
+                    Button(action: onBack) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Back", bundle: .module)
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.5)))
+                        .contentShape(Rectangle())
                     }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground.opacity(0.5))
-                    )
-                    .contentShape(Rectangle())
+                    .buttonStyle(PlainButtonStyle())
+                    .keyboardShortcut(.escape, modifiers: [])
                 }
-                .buttonStyle(PlainButtonStyle())
-                .keyboardShortcut(.escape, modifiers: [])
 
                 Spacer()
 
-                copyMenu(
-                    title: Text("Copy Request", bundle: .module),
-                    icon: "doc.on.doc",
-                    helpText: Text("Copy request JSON", bundle: .module),
-                    localBody: log.formattedRequestBody,
-                    serverBody: log.formattedWireRequestBody
-                )
+                copyMenu
 
-                copyMenu(
-                    title: Text("Copy Response", bundle: .module),
-                    icon: "arrow.down.doc",
-                    helpText: Text("Copy response", bundle: .module),
-                    localBody: log.formattedResponseBody,
-                    serverBody: log.formattedWireResponseBody
-                )
-            }
-
-            HStack(alignment: .center, spacing: 10) {
-                MethodBadgeCompact(method: log.method)
-                HTTPStatusBadgeCompact(statusCode: log.statusCode)
-
-                Text(Self.abbreviatedPath(log.path))
-                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .help(Text(verbatim: log.path))
-
-                Text(log.formattedDuration)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            // Wrap to multiple rows rather than overflowing the pane: a
-            // remote-agent run can carry six pills (time, source, model, mode,
-            // relay host, secure) whose fixed-size widths exceed a narrow
-            // detail pane on one line. `FlowLayout` breaks them onto new rows.
-            FlowLayout(spacing: 8) {
-                metaPill(icon: "clock", text: Text(verbatim: log.formattedTimestamp))
-                metaPill(icon: sourceIcon(log.source), text: Text(verbatim: log.source.displayName))
-                if let pluginId = log.pluginId {
-                    metaPill(
-                        icon: "puzzlepiece.extension.fill",
-                        text: Text(verbatim: pluginId),
-                        tint: .teal
-                    )
-                }
-                if let model = log.model {
-                    metaPill(icon: "cpu", text: Text(verbatim: log.shortModelName), tint: .purple)
-                        .help(Text(verbatim: model))
-                }
-                if let connection = log.connection {
-                    if let mode = connection.mode, mode != .local {
-                        metaPill(
-                            icon: connectionModeIcon(mode),
-                            text: Text(verbatim: mode.displayName),
-                            tint: .blue
-                        )
-                        .help(Text(verbatim: connection.remoteEndpoint ?? mode.displayName))
-                    }
-                    if let host = connectionHostLabel(connection) {
-                        metaPill(
-                            icon: "antenna.radiowaves.left.and.right",
-                            text: Text(verbatim: host),
-                            tint: .blue
-                        )
-                        .help(Text(verbatim: connection.remoteEndpoint ?? host))
-                    }
-                    if connection.transport == .secureChannel {
-                        metaPill(
-                            icon: "lock.fill",
-                            text: Text("Secure", bundle: .module),
-                            tint: .green
-                        )
-                        .help(
-                            Text(
-                                "End-to-end encrypted via Osaurus Secure Channel",
-                                bundle: .module
-                            )
-                        )
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(theme.secondaryBackground.opacity(0.4))
-    }
-
-    private func headerActionButton(
-        title: Text,
-        icon: String,
-        helpText: Text,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
-                title
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.tertiaryBackground.opacity(0.5))
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .help(helpText)
-    }
-
-    /// Copy affordance for Request / Response: collapses to a single
-    /// button when only one body exists (no wire capture: HTTP API,
-    /// MLX, Foundation, plugins), and expands to a Menu with
-    /// explicit Server / Local items when both are present. Hidden
-    /// entirely when neither body is captured.
-    @ViewBuilder
-    private func copyMenu(
-        title: Text,
-        icon: String,
-        helpText: Text,
-        localBody: String?,
-        serverBody: String?
-    ) -> some View {
-        if localBody != nil || serverBody != nil {
-            if localBody != nil && serverBody != nil {
-                Menu {
-                    Button(action: { copy(serverBody) }) {
-                        Text("insights.body.copy.server", bundle: .module)
-                    }
-                    Button(action: { copy(localBody) }) {
-                        Text("insights.body.copy.local", bundle: .module)
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: icon)
+                if presentation == .inspector {
+                    Button(action: onBack) {
+                        Image(systemName: "xmark")
                             .font(.system(size: 10, weight: .semibold))
-                        title
-                            .font(.system(size: 11, weight: .medium))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: 26, height: 26)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.5)))
+                            .contentShape(Rectangle())
                     }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground.opacity(0.5))
-                    )
+                    .buttonStyle(PlainButtonStyle())
+                    .help(Text("Close", bundle: .module))
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help(helpText)
-            } else {
-                headerActionButton(
-                    title: title,
-                    icon: icon,
-                    helpText: helpText,
-                    action: { copy(serverBody ?? localBody) }
-                )
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle().fill(log.category.tint.opacity(0.14))
+                    Image(systemName: log.category.icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(log.category.tint.opacity(0.9))
+                }
+                .frame(width: 32, height: 32)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(log.title)
+                        .font(.system(size: 16, weight: .semibold, design: usesMonospacedTitle ? .monospaced : .default))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if log.category != .system {
+                        Text(verbatim: "\(log.method) \(Self.abbreviatedPath(log.path))")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .help(Text(verbatim: log.path))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if log.isError {
+                    failurePill
+                }
             }
         }
+        .padding(.horizontal, hInset)
+        .padding(.vertical, 14)
     }
 
-    private func sourceIcon(_ source: RequestSource) -> String {
-        switch source {
-        case .chatUI: return "bubble.left.and.bubble.right.fill"
-        case .agent: return "person.2.fill"
-        case .httpAPI: return "network"
-        case .plugin: return "puzzlepiece.extension.fill"
-        case .p2p: return "antenna.radiowaves.left.and.right"
-        case .scheduled: return "clock.arrow.circlepath"
-        case .channel: return "bubble.left.and.text.bubble.right.fill"
-        case .schedule: return "calendar.badge.clock"
-        case .watcher: return "eye.fill"
-        case .selfSchedule: return "clock.badge.checkmark.fill"
-        case .tool: return "wrench.and.screwdriver.fill"
-        case .system: return "gearshape.fill"
+    /// `Category · time · duration · Source · Agent` — only the parts that exist.
+    private var subtitle: String {
+        var parts = [log.category.displayName, log.formattedTimestamp, log.formattedDuration, log.source.displayName]
+        if let agent = log.agentName { parts.append(agent) }
+        if let plugin = log.pluginId { parts.append(plugin) }
+        if log.locality == .remote { parts.append(log.destinationDisplay) }
+        return parts.joined(separator: " · ")
+    }
+
+    private var usesMonospacedTitle: Bool {
+        switch log.category {
+        case .inboundAPI, .routerControl, .mcpToolCall, .pluginCall, .urlExtract: return true
+        default: return false
         }
     }
 
-    private func connectionModeIcon(_ mode: RequestMode) -> String {
-        switch mode {
-        case .local: return "cpu"
-        case .remoteInference: return "cloud"
-        case .remoteAgentRun: return "person.crop.circle.badge.checkmark"
+    private var failurePill: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 9, weight: .bold))
+            Text(verbatim: log.statusCode == 200 ? L("failed") : "\(log.statusCode) · \(L("failed"))")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
         }
+        .foregroundColor(theme.errorColor)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(theme.errorColor.opacity(0.12)))
+        .fixedSize()
     }
 
-    /// Short host label for the relay/host pill, derived from the connection's
-    /// full endpoint URL. Falls back to nil so the pill is omitted when no
-    /// endpoint was captured. The raw host is abbreviated by
-    /// `InsightsDetailPane.abbreviatedHost` so a long agent address can't blow
-    /// out the header row (the full endpoint stays available via the pill's
-    /// tooltip).
-    private func connectionHostLabel(_ connection: RequestConnectionInfo) -> String? {
-        guard let endpoint = connection.remoteEndpoint,
-            let host = URL(string: endpoint)?.host
-        else { return nil }
-        return Self.abbreviatedHost(host)
+    /// Single `Copy ▾` menu listing every captured body. Hidden when nothing
+    /// was captured (metadata-only rows).
+    @ViewBuilder
+    private var copyMenu: some View {
+        let localReq = log.formattedRequestBody
+        let wireReq = log.formattedWireRequestBody
+        let localRes = log.formattedResponseBody
+        let wireRes = log.formattedWireResponseBody
+        if localReq != nil || wireReq != nil || localRes != nil || wireRes != nil {
+            Menu {
+                if wireReq != nil || localReq != nil {
+                    Section(header: Text("Request", bundle: .module)) {
+                        if let wireReq {
+                            Button(action: { copy(wireReq) }) { Text("insights.body.copy.server", bundle: .module) }
+                        }
+                        if let localReq {
+                            Button(action: { copy(localReq) }) {
+                                wireReq == nil ? Text("Copy request", bundle: .module) : Text("insights.body.copy.local", bundle: .module)
+                            }
+                        }
+                    }
+                }
+                if wireRes != nil || localRes != nil {
+                    Section(header: Text("Response", bundle: .module)) {
+                        if let wireRes {
+                            Button(action: { copy(wireRes) }) { Text("insights.body.copy.server", bundle: .module) }
+                        }
+                        if let localRes {
+                            Button(action: { copy(localRes) }) {
+                                wireRes == nil ? Text("Copy response", bundle: .module) : Text("insights.body.copy.local", bundle: .module)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Copy", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.5)))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(Text("Copy request or response JSON", bundle: .module))
+        }
     }
 
     /// Collapse a long leading crypto-address label (`0x` + 40 hex) in a relay
@@ -301,7 +251,7 @@ struct InsightsDetailPane: View {
     /// `RemoteAgent.shortAddress`), so a `/v1/agents/0x…40hex…/run` URL stays
     /// readable instead of dominating the header. Other segments are left as-is;
     /// the untruncated path remains available via the header tooltip and the
-    /// Copy Request action.
+    /// Copy action.
     static func abbreviatedPath(_ path: String) -> String {
         path
             .split(separator: "/", omittingEmptySubsequences: false)
@@ -319,38 +269,21 @@ struct InsightsDetailPane: View {
         return segment.dropFirst(2).allSatisfy(\.isHexDigit)
     }
 
-    private func metaPill(icon: String, text: Text, tint: Color? = nil) -> some View {
-        let color = tint ?? theme.tertiaryText
-        return HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
-            text
-                .font(.system(size: 10, weight: .medium))
-                .lineLimit(1)
-        }
-        .foregroundColor(color.opacity(tint == nil ? 1.0 : 0.9))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(
-            Capsule().fill(color.opacity(tint == nil ? 0.08 : 0.12))
-        )
-        // Lock the pill to its intrinsic size so multi-pill HStacks (with a
-        // trailing Spacer) never compress the text. Without this, pills
-        // like "HTTP API" can get clipped to "HTT…" when the available
-        // width is tight (narrow window or many pills present).
-        .fixedSize(horizontal: true, vertical: false)
-    }
-
     // MARK: - Tabs
 
-    /// Tabs that make sense for this row. Non-inference rows (search, MCP,
-    /// channel, Router) have no prompt or model params; their facts live in
-    /// Overview, with raw bodies still reachable under Request / Response.
+    /// Prompt only makes sense for chat-shaped rows; Raw only when some body
+    /// was captured. Everything else lives in Overview.
     private var availableTabs: [DetailTab] {
+        var tabs: [DetailTab] = [.overview]
         if log.isInference || log.category == .inboundAPI {
-            return DetailTab.allCases
+            tabs.append(.prompt)
         }
-        return [.overview, .request, .response]
+        if log.formattedRequestBody != nil || log.formattedWireRequestBody != nil
+            || log.formattedResponseBody != nil || log.formattedWireResponseBody != nil
+        {
+            tabs.append(.raw)
+        }
+        return tabs
     }
 
     private var tabPicker: some View {
@@ -365,7 +298,7 @@ struct InsightsDetailPane: View {
                     }
                     .foregroundColor(selectedTab == tab ? .white : theme.secondaryText)
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
+                    .padding(.vertical, 6)
                     .background(
                         RoundedRectangle(cornerRadius: 7)
                             .fill(selectedTab == tab ? theme.accentColor.opacity(0.85) : Color.clear)
@@ -387,23 +320,9 @@ struct InsightsDetailPane: View {
     private var tabContent: some View {
         Group {
             switch selectedTab {
-            case .overview: OverviewTab(log: log)
+            case .overview: OverviewTab(log: log, hInset: hInset)
             case .prompt: PromptTab(log: log)
-            case .request:
-                BodyTab(
-                    localBody: log.formattedRequestBody,
-                    serverBody: log.formattedWireRequestBody,
-                    kind: .request,
-                    log: log
-                )
-            case .response:
-                BodyTab(
-                    localBody: log.formattedResponseBody,
-                    serverBody: log.formattedWireResponseBody,
-                    kind: .response,
-                    log: log
-                )
-            case .params: ParamsTab(log: log)
+            case .raw: RawTab(log: log)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -443,7 +362,7 @@ struct InsightsDetailPane: View {
                             .stroke(levelColor.opacity(0.2), lineWidth: 1)
                     )
             )
-            .padding(.horizontal, 24)
+            .padding(.horizontal, hInset)
             .padding(.vertical, 20)
             .frame(maxWidth: 920, alignment: .topLeading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -464,17 +383,13 @@ struct InsightsDetailPane: View {
 private enum DetailTab: CaseIterable {
     case overview
     case prompt
-    case request
-    case response
-    case params
+    case raw
 
     var icon: String {
         switch self {
         case .overview: return "list.bullet.rectangle"
         case .prompt: return "text.bubble"
-        case .request: return "arrow.up.circle"
-        case .response: return "arrow.down.circle"
-        case .params: return "slider.horizontal.3"
+        case .raw: return "curlybraces"
         }
     }
 
@@ -483,10 +398,74 @@ private enum DetailTab: CaseIterable {
         switch self {
         case .overview: Text("Overview", bundle: .module)
         case .prompt: Text("Prompt", bundle: .module)
-        case .request: Text("Request", bundle: .module)
-        case .response: Text("Response", bundle: .module)
-        case .params: Text("Params", bundle: .module)
+        case .raw: Text("Raw", bundle: .module)
         }
+    }
+}
+
+// MARK: - Raw Tab
+
+/// Request / Response toggle over the shared `BodyTab`, which in turn
+/// offers the Server / Local sub-toggle when a wire body was captured.
+private struct RawTab: View {
+    @Environment(\.theme) private var theme
+    let log: RequestLog
+
+    @State private var kind: BodyTab.Kind
+
+    init(log: RequestLog) {
+        self.log = log
+        // Open on the side that actually has content.
+        let hasRequest = log.formattedRequestBody != nil || log.formattedWireRequestBody != nil
+        _kind = State(initialValue: hasRequest ? .request : .response)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 2) {
+                pill(.request, label: Text("Request", bundle: .module), icon: "arrow.up.circle")
+                pill(.response, label: Text("Response", bundle: .module), icon: "arrow.down.circle")
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
+
+            Group {
+                switch kind {
+                case .request:
+                    BodyTab(
+                        localBody: log.formattedRequestBody,
+                        serverBody: log.formattedWireRequestBody,
+                        kind: .request,
+                        log: log
+                    )
+                case .response:
+                    BodyTab(
+                        localBody: log.formattedResponseBody,
+                        serverBody: log.formattedWireResponseBody,
+                        kind: .response,
+                        log: log
+                    )
+                }
+            }
+            .id(kind)
+        }
+    }
+
+    private func pill(_ value: BodyTab.Kind, label: Text, icon: String) -> some View {
+        let isSelected = kind == value
+        return Button(action: { kind = value }) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                label.font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+            }
+            .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(isSelected ? theme.cardBackground : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
@@ -1082,196 +1061,235 @@ private struct BodyTab: View {
     }
 }
 
-// MARK: - Params Tab
-
 // MARK: - Overview Tab
 
-/// Plain-language summary for reviewers: what happened, where the data
-/// went, who drove it, and how it ended — before any raw JSON. Category-
-/// specific sections surface the facts that matter for that kind of row
-/// (search query and providers, fetched URLs, MCP server and arguments,
-/// channel destination, Router purpose).
+/// Plain-language summary for reviewers: the facts that matter for this
+/// kind of row up top, one sentence saying what happened, then
+/// progressively disclosed groups — where the data went, who drove it,
+/// generation settings and chain integrity — each collapsed to a one-line
+/// summary until opened.
 private struct OverviewTab: View {
     @Environment(\.theme) private var theme
 
     let log: RequestLog
+    var hInset: CGFloat = 24
 
     private var details: [String: String] { log.egress?.details ?? [:] }
+    private var isRemote: Bool { log.locality == .remote }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                summaryCard
-                whereSection
-                categorySection
-                whoSection
+            VStack(alignment: .leading, spacing: 18) {
                 if let error = log.errorMessage {
                     errorSection(error)
                 }
-                integritySection
+
+                let facts = commonFacts
+                if !facts.isEmpty {
+                    FactsGrid(facts: facts)
+                }
+
+                Text(summaryHeadline)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+
+                categorySection
+
+                CollapsibleGroup(
+                    icon: isRemote ? "icloud.and.arrow.up" : "lock.laptopcomputer",
+                    title: Text("Where it went", bundle: .module),
+                    summary: whereSummary,
+                    initiallyExpanded: isRemote
+                ) { whereRows }
+
+                CollapsibleGroup(
+                    icon: "person.crop.circle",
+                    title: Text("Who drove this", bundle: .module),
+                    summary: whoSummary,
+                    initiallyExpanded: false
+                ) { whoRows }
+
+                if log.isInference || log.connection != nil || !(log.toolCalls ?? []).isEmpty {
+                    CollapsibleGroup(
+                        icon: "slider.horizontal.3",
+                        title: Text("Generation settings", bundle: .module),
+                        summary: generationSummary,
+                        initiallyExpanded: false
+                    ) { generationRows }
+                }
+
+                if log.seq != nil {
+                    CollapsibleGroup(
+                        icon: "checkmark.seal",
+                        title: Text("Integrity", bundle: .module),
+                        summary: integritySummary,
+                        initiallyExpanded: false
+                    ) { integrityRows }
+                }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
+            .padding(.horizontal, hInset)
+            .padding(.vertical, 18)
             .frame(maxWidth: 920, alignment: .topLeading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
-    // MARK: Summary
+    // MARK: Facts
 
-    private var summaryCard: some View {
-        let isRemote = log.locality == .remote
-        let tint: Color = isRemote ? .orange : .green
-        return HStack(alignment: .top, spacing: 12) {
-            Image(systemName: isRemote ? "icloud.and.arrow.up" : "laptopcomputer")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(tint)
-                .frame(width: 32)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(summaryHeadline)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(summarySubline)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
-            Spacer()
+    /// Cross-category facts for the grid. Category sections below add the
+    /// kind-specific ones.
+    private var commonFacts: [Fact] {
+        var facts: [Fact] = []
+        if let model = log.model, log.category != .speechSynthesis {
+            facts.append(Fact(label: L("Model"), value: log.shortModelName, help: model))
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(tint.opacity(0.07))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.2), lineWidth: 1))
-        )
+        if let i = log.inputTokens, let o = log.outputTokens, i + o > 0 {
+            facts.append(Fact(label: L("Tokens"), value: L("\(i) in → \(o) out")))
+        }
+        if let speed = log.tokensPerSecond, speed > 0 {
+            facts.append(Fact(label: L("Speed"), value: String(format: "%.1f tok/s", speed)))
+        }
+        if let reason = log.finishReason {
+            facts.append(Fact(label: L("Finish"), value: reason.rawValue))
+        }
+        if let e = log.egress {
+            if let b = e.bytesSent, b > 0 {
+                facts.append(Fact(label: L("Sent"), value: ActivitySummary.formattedBytes(b)))
+            }
+            if let b = e.bytesReceived, b > 0 {
+                facts.append(Fact(label: L("Received"), value: ActivitySummary.formattedBytes(b)))
+            }
+        }
+        if isRemote {
+            facts.append(Fact(label: L("Destination"), value: log.destinationDisplay))
+        }
+        if log.category.isModelWork {
+            facts.append(
+                Fact(
+                    label: L("Content"),
+                    value: log.hasStoredContent ? L("Stored") : L("Not stored"),
+                    help: log.hasStoredContent
+                        ? L("Prompt and response are kept in the log — see Prompt / Raw")
+                        : L("Privacy › Activity Log › Store Prompts and Responses was off when this was written")
+                )
+            )
+        }
+        return facts
     }
 
     private var summaryHeadline: String {
         let outcome = log.isError ? L("failed") : L("completed")
         switch log.category {
         case .inference:
-            return log.locality == .remote
-                ? L("Model request sent to \(log.destinationDisplay) — \(outcome)")
-                : L("Model ran on this Mac — \(outcome)")
+            return isRemote
+                ? L("Model request sent to \(log.destinationDisplay) — \(outcome).")
+                : L("Model ran on this Mac — \(outcome).")
         case .compaction:
-            return log.locality == .remote
-                ? L("Conversation summary sent to \(log.destinationDisplay) — \(outcome)")
-                : L("Conversation summarized on this Mac — \(outcome)")
+            return isRemote
+                ? L("Conversation summary sent to \(log.destinationDisplay) — \(outcome).")
+                : L("Conversation summarized on this Mac — \(outcome).")
         case .webSearch:
-            return L("Web search sent to \(log.destinationDisplay) — \(outcome)")
+            return L("Web search sent to \(log.destinationDisplay) — \(outcome).")
         case .urlExtract:
             return details["mode"] == "hosted"
-                ? L("Pages fetched through \(log.destinationDisplay) — \(outcome)")
-                : L("Page fetched from \(log.destinationDisplay) — \(outcome)")
+                ? L("Pages fetched through \(log.destinationDisplay) — \(outcome).")
+                : L("Page fetched from \(log.destinationDisplay) — \(outcome).")
         case .mcpToolCall:
-            return log.locality == .remote
-                ? L("Tool call sent to MCP server \(log.destinationDisplay) — \(outcome)")
-                : L("Tool call to local MCP server \(log.destinationDisplay) — \(outcome)")
+            return isRemote
+                ? L("Tool call sent to MCP server \(log.destinationDisplay) — \(outcome).")
+                : L("Tool call to local MCP server \(log.destinationDisplay) — \(outcome).")
         case .channelDelivery:
-            return L("Message delivered to \(log.destinationDisplay) — \(details["outcome"] ?? outcome)")
+            return L("Message delivered to \(log.destinationDisplay) — \(details["outcome"] ?? outcome).")
         case .routerControl:
-            return L("\(details["purpose"] ?? L("Router call")) — Osaurus Router — \(outcome)")
+            return L("\(details["purpose"] ?? L("Router call")) — Osaurus Router — \(outcome).")
         case .inboundAPI:
             return log.source == .p2p
-                ? L("Request from a paired peer — \(outcome)")
-                : L("Request from an API client — \(outcome)")
+                ? L("Request from a paired peer — \(outcome).")
+                : L("Request from an API client — \(outcome).")
         case .pluginCall:
-            return L("Plugin call — \(outcome)")
+            return L("Plugin call — \(outcome).")
         case .pluginLog:
-            return L("Plugin log line")
+            return L("Plugin log line.")
         case .embedding:
-            return log.locality == .remote
-                ? L("Embeddings computed by \(log.destinationDisplay) — \(outcome)")
-                : L("Embeddings computed on this Mac — \(outcome)")
+            return isRemote
+                ? L("Embeddings computed by \(log.destinationDisplay) — \(outcome).")
+                : L("Embeddings computed on this Mac — \(outcome).")
         case .audioTranscription:
-            return log.locality == .remote
-                ? L("Audio sent to \(log.destinationDisplay) for transcription — \(outcome)")
-                : L("Audio transcribed on this Mac — \(outcome)")
+            return isRemote
+                ? L("Audio sent to \(log.destinationDisplay) for transcription — \(outcome).")
+                : L("Audio transcribed on this Mac — \(outcome).")
         case .speechSynthesis:
-            return log.locality == .remote
-                ? L("Text sent to \(log.destinationDisplay) for speech — \(outcome)")
-                : L("Speech synthesized on this Mac — \(outcome)")
+            return isRemote
+                ? L("Text sent to \(log.destinationDisplay) for speech — \(outcome).")
+                : L("Speech synthesized on this Mac — \(outcome).")
         case .mediaGeneration:
-            return log.locality == .remote
-                ? L("Media request sent to \(log.destinationDisplay) — \(outcome)")
-                : L("Media generated on this Mac — \(outcome)")
+            return isRemote
+                ? L("Media request sent to \(log.destinationDisplay) — \(outcome).")
+                : L("Media generated on this Mac — \(outcome).")
         case .system:
-            return log.title
+            return log.systemEventSummary ?? log.title
         }
-    }
-
-    private var summarySubline: String {
-        var parts: [String] = []
-        let df = DateFormatter()
-        df.dateStyle = .medium
-        df.timeStyle = .medium
-        parts.append(df.string(from: log.timestamp))
-        parts.append(log.formattedDuration)
-        if let e = log.egress {
-            if let b = e.bytesSent, b > 0 { parts.append(L("\(ActivitySummary.formattedBytes(b)) sent")) }
-            if let b = e.bytesReceived, b > 0 { parts.append(L("\(ActivitySummary.formattedBytes(b)) received")) }
-        }
-        if let i = log.inputTokens, let o = log.outputTokens, i + o > 0 {
-            parts.append(L("\(i) in / \(o) out tokens"))
-        }
-        return parts.joined(separator: " · ")
     }
 
     // MARK: Where
 
+    private var whereSummary: String {
+        if !isRemote { return L("Stayed on this Mac") }
+        var parts = [log.destinationDisplay]
+        if let classes = log.egress?.dataClasses, !classes.isEmpty {
+            parts.append(classes.map(Self.dataClassLabel).joined(separator: ", "))
+        }
+        if log.egress?.privacyFilterApplied == true { parts.append(L("Privacy Filter applied")) }
+        return parts.joined(separator: " · ")
+    }
+
     @ViewBuilder
-    private var whereSection: some View {
-        let isRemote = log.locality == .remote
-        section(
-            icon: isRemote ? "icloud.and.arrow.up" : "lock.laptopcomputer",
-            title: Text("Where the data went", bundle: .module),
-            tint: isRemote ? .orange : .green
-        ) {
-            DetailRow(
-                label: Text("Locality", bundle: .module),
-                value: isRemote ? L("Left this Mac (cloud)") : L("Stayed on this Mac"),
-                valueColor: isRemote ? .orange : .green
-            )
-            if isRemote {
-                DetailRow(label: Text("Destination", bundle: .module), value: log.destinationDisplay)
-                if let host = log.egress?.destinationHost ?? EgressInfo.host(from: log.connection?.remoteEndpoint) {
-                    DetailRow(label: Text("Host", bundle: .module), value: host)
-                }
-                if let endpoint = log.connection?.remoteEndpoint {
-                    DetailRow(label: Text("Endpoint", bundle: .module), value: endpoint)
-                }
-                if let transport = log.connection?.transport, transport != .local {
-                    DetailRow(label: Text("Transport", bundle: .module), value: transport.displayName)
-                }
-                if let classes = log.egress?.dataClasses, !classes.isEmpty {
+    private var whereRows: some View {
+        DetailRow(
+            label: Text("Locality", bundle: .module),
+            value: isRemote ? L("Left this Mac (cloud)") : L("Stayed on this Mac"),
+            valueColor: isRemote ? theme.warningColor : theme.successColor
+        )
+        if isRemote {
+            DetailRow(label: Text("Destination", bundle: .module), value: log.destinationDisplay)
+            if let host = log.egress?.destinationHost ?? EgressInfo.host(from: log.connection?.remoteEndpoint) {
+                DetailRow(label: Text("Host", bundle: .module), value: host)
+            }
+            if let endpoint = log.connection?.remoteEndpoint {
+                DetailRow(label: Text("Endpoint", bundle: .module), value: endpoint)
+            }
+            if let transport = log.connection?.transport, transport != .local {
+                DetailRow(label: Text("Transport", bundle: .module), value: transport.displayName)
+            }
+            if let mode = log.connection?.mode, mode != .local {
+                DetailRow(label: Text("Mode", bundle: .module), value: mode.displayName)
+            }
+            if let classes = log.egress?.dataClasses, !classes.isEmpty {
+                DetailRow(
+                    label: Text("Data sent", bundle: .module),
+                    value: classes.map(Self.dataClassLabel).joined(separator: ", ")
+                )
+            }
+            if let e = log.egress {
+                if e.privacyFilterApplied {
                     DetailRow(
-                        label: Text("Data sent", bundle: .module),
-                        value: classes.map(Self.dataClassLabel).joined(separator: ", ")
+                        label: Text("Privacy Filter", bundle: .module),
+                        value: L("Applied — \(e.redactedSpanCount ?? 0) item(s) redacted before send"),
+                        valueColor: theme.successColor
+                    )
+                } else if log.category == .inference || log.category == .compaction {
+                    DetailRow(
+                        label: Text("Privacy Filter", bundle: .module),
+                        value: L("Not applied"),
+                        valueColor: theme.secondaryText
                     )
                 }
-                if let e = log.egress {
-                    if e.privacyFilterApplied {
-                        DetailRow(
-                            label: Text("Privacy Filter", bundle: .module),
-                            value: L("Applied — \(e.redactedSpanCount ?? 0) item(s) redacted before send"),
-                            valueColor: .green
-                        )
-                    } else if log.category == .inference || log.category == .compaction {
-                        DetailRow(
-                            label: Text("Privacy Filter", bundle: .module),
-                            value: L("Not applied"),
-                            valueColor: theme.secondaryText
-                        )
-                    }
-                }
-            } else if let model = log.model {
-                DetailRow(label: Text("Model", bundle: .module), value: model)
             }
-            if let ip = log.clientIP, log.category == .inboundAPI {
-                DetailRow(label: Text("Caller address", bundle: .module), value: ip)
-            }
+        }
+        if let ip = log.clientIP, log.category == .inboundAPI {
+            DetailRow(label: Text("Caller address", bundle: .module), value: ip)
         }
     }
 
@@ -1299,7 +1317,7 @@ private struct OverviewTab: View {
         case .mcpToolCall: mcpSection
         case .channelDelivery: channelSection
         case .routerControl: routerSection
-        case .inference, .compaction: inferenceSection
+        case .inference, .compaction: EmptyView()
         case .embedding: embeddingSection
         case .audioTranscription: transcriptionSection
         case .speechSynthesis: speechSection
@@ -1311,7 +1329,7 @@ private struct OverviewTab: View {
 
     @ViewBuilder
     private var searchSection: some View {
-        section(icon: "magnifyingglass", title: Text("Search", bundle: .module), tint: .blue) {
+        FlatGroup(icon: "magnifyingglass", title: Text("Search", bundle: .module)) {
             if let q = details["query"] { DetailRow(label: Text("Query", bundle: .module), value: q) }
             if let c = details["category"] { DetailRow(label: Text("Category", bundle: .module), value: c) }
             if let s = details["site"] { DetailRow(label: Text("Site filter", bundle: .module), value: s) }
@@ -1326,27 +1344,19 @@ private struct OverviewTab: View {
                 DetailRow(label: Text("Note", bundle: .module), value: L("Provider test run from Settings"))
             }
             if let f = details["failures"] {
-                DetailRow(label: Text("Failures", bundle: .module), value: f, valueColor: .red.opacity(0.8))
+                DetailRow(label: Text("Failures", bundle: .module), value: f, valueColor: theme.errorColor.opacity(0.85))
             }
         }
         if let preview = details["result_preview"], !preview.isEmpty {
-            section(icon: "link", title: Text("Top results", bundle: .module), tint: theme.secondaryText) {
-                ForEach(preview.split(separator: "\n").map(String.init), id: \.self) { url in
-                    Text(url)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .padding(.vertical, 3)
-                }
+            FlatGroup(icon: "link", title: Text("Top results", bundle: .module)) {
+                urlList(preview)
             }
         }
     }
 
     @ViewBuilder
     private var extractSection: some View {
-        section(icon: "doc.text.magnifyingglass", title: Text("Fetched pages", bundle: .module), tint: .blue) {
+        FlatGroup(icon: "doc.text.magnifyingglass", title: Text("Fetched pages", bundle: .module)) {
             if let mode = details["mode"] {
                 DetailRow(
                     label: Text("Mode", bundle: .module),
@@ -1362,27 +1372,31 @@ private struct OverviewTab: View {
             if let w = details["word_count"] { DetailRow(label: Text("Words", bundle: .module), value: w) }
             if let m = details["message"] { DetailRow(label: Text("Message", bundle: .module), value: m) }
             if let f = details["failures"] {
-                DetailRow(label: Text("Failures", bundle: .module), value: f, valueColor: .red.opacity(0.8))
+                DetailRow(label: Text("Failures", bundle: .module), value: f, valueColor: theme.errorColor.opacity(0.85))
             }
         }
         if let urls = details["urls"], !urls.isEmpty {
-            section(icon: "link", title: Text("URLs", bundle: .module), tint: theme.secondaryText) {
-                ForEach(urls.split(separator: "\n").map(String.init), id: \.self) { url in
-                    Text(url)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .padding(.vertical, 3)
-                }
+            FlatGroup(icon: "link", title: Text("URLs", bundle: .module)) {
+                urlList(urls)
             }
+        }
+    }
+
+    private func urlList(_ joined: String) -> some View {
+        ForEach(joined.split(separator: "\n").map(String.init), id: \.self) { url in
+            Text(url)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.vertical, 3)
         }
     }
 
     @ViewBuilder
     private var mcpSection: some View {
-        section(icon: "wrench.and.screwdriver", title: Text("MCP tool call", bundle: .module), tint: .teal) {
+        FlatGroup(icon: "wrench.and.screwdriver", title: Text("MCP tool call", bundle: .module)) {
             if let s = details["server"] { DetailRow(label: Text("Server", bundle: .module), value: s) }
             if let t = details["tool"] { DetailRow(label: Text("Tool", bundle: .module), value: t) }
             if let e = details["exposed_as"] { DetailRow(label: Text("Exposed as", bundle: .module), value: e) }
@@ -1391,16 +1405,16 @@ private struct OverviewTab: View {
             if let c = details["command"] { DetailRow(label: Text("Command", bundle: .module), value: c) }
         }
         if let args = details["arguments"], !args.isEmpty {
-            codeSection(icon: "arrow.up.circle", title: Text("Arguments sent", bundle: .module), code: args)
+            codeBlock(icon: "arrow.up.circle", title: Text("Arguments sent", bundle: .module), code: args)
         }
         if let result = details["result_preview"], !result.isEmpty {
-            codeSection(icon: "arrow.down.circle", title: Text("Result (preview)", bundle: .module), code: result)
+            codeBlock(icon: "arrow.down.circle", title: Text("Result (preview)", bundle: .module), code: result)
         }
     }
 
     @ViewBuilder
     private var channelSection: some View {
-        section(icon: "paperplane", title: Text("Channel delivery", bundle: .module), tint: .blue) {
+        FlatGroup(icon: "paperplane", title: Text("Channel delivery", bundle: .module)) {
             if let c = details["channel"] { DetailRow(label: Text("Channel", bundle: .module), value: c) }
             if let c = details["connection"] { DetailRow(label: Text("Connection", bundle: .module), value: c) }
             if let r = details["room"] { DetailRow(label: Text("Room", bundle: .module), value: r) }
@@ -1425,58 +1439,23 @@ private struct OverviewTab: View {
 
     @ViewBuilder
     private var routerSection: some View {
-        section(icon: "network", title: Text("Router call", bundle: .module), tint: .blue) {
+        FlatGroup(icon: "network", title: Text("Router call", bundle: .module)) {
             if let p = details["purpose"] { DetailRow(label: Text("Purpose", bundle: .module), value: p) }
-            DetailRow(label: Text("Method", bundle: .module), value: log.method)
-            DetailRow(label: Text("Path", bundle: .module), value: log.path)
             if let q = details["query_string"] { DetailRow(label: Text("Query", bundle: .module), value: q) }
             DetailRow(label: Text("HTTP status", bundle: .module), value: "\(log.statusCode)")
         }
     }
 
     @ViewBuilder
-    private var inferenceSection: some View {
-        section(icon: "cpu", title: Text("Model request", bundle: .module), tint: .purple) {
-            if let model = log.model { DetailRow(label: Text("Model", bundle: .module), value: model) }
-            if let i = log.inputTokens, let o = log.outputTokens {
-                DetailRow(label: Text("Tokens", bundle: .module), value: L("\(i) in → \(o) out"))
-            }
-            if let speed = log.tokensPerSecond, speed > 0 {
-                DetailRow(label: Text("Speed", bundle: .module), value: String(format: "%.1f tok/s", speed))
-            }
-            if let reason = log.finishReason {
-                DetailRow(label: Text("Finish reason", bundle: .module), value: reason.rawValue)
-            }
-            if let tools = log.toolCalls, !tools.isEmpty {
-                DetailRow(
-                    label: Text("Tool calls", bundle: .module),
-                    value: tools.map(\.name).joined(separator: ", ")
-                )
-            }
-            if let mode = log.connection?.mode, mode != .local {
-                DetailRow(label: Text("Mode", bundle: .module), value: mode.displayName)
-            }
-            DetailRow(
-                label: Text("Content", bundle: .module),
-                value: log.hasStoredContent
-                    ? L("Stored — see Prompt / Request / Response")
-                    : L("Not stored (Privacy › Activity Log)"),
-                valueColor: theme.secondaryText
-            )
-        }
-    }
-
-    @ViewBuilder
     private var embeddingSection: some View {
-        section(icon: "point.3.connected.trianglepath.dotted", title: Text("Embedding", bundle: .module), tint: .mint) {
-            if let model = log.model { DetailRow(label: Text("Model", bundle: .module), value: model) }
+        FlatGroup(icon: "point.3.connected.trianglepath.dotted", title: Text("Embedding", bundle: .module)) {
             if let n = details["texts"] { DetailRow(label: Text("Texts embedded", bundle: .module), value: n) }
             if let d = details["dims"] { DetailRow(label: Text("Dimensions", bundle: .module), value: d) }
             if let c = details["chars"] { DetailRow(label: Text("Input size", bundle: .module), value: L("\(c) characters")) }
             if let p = details["purpose"] { DetailRow(label: Text("Purpose", bundle: .module), value: p) }
             DetailRow(
-                label: Text("Content", bundle: .module),
-                value: L("Texts are not copied into the log — only counts and sizes"),
+                label: Text("Texts", bundle: .module),
+                value: L("Not copied into the log — only counts and sizes"),
                 valueColor: theme.secondaryText
             )
         }
@@ -1484,8 +1463,7 @@ private struct OverviewTab: View {
 
     @ViewBuilder
     private var transcriptionSection: some View {
-        section(icon: "waveform", title: Text("Transcription", bundle: .module), tint: .green) {
-            if let model = log.model { DetailRow(label: Text("Model", bundle: .module), value: model) }
+        FlatGroup(icon: "waveform", title: Text("Transcription", bundle: .module)) {
             if let s = details["audio_seconds"], let secs = Double(s) {
                 DetailRow(label: Text("Audio length", bundle: .module), value: String(format: "%.1f s", secs))
             }
@@ -1498,19 +1476,12 @@ private struct OverviewTab: View {
                 DetailRow(label: Text("Transcript size", bundle: .module), value: L("\(c) characters"))
             }
             if let m = details["mode"] { DetailRow(label: Text("Mode", bundle: .module), value: m) }
-            DetailRow(
-                label: Text("Content", bundle: .module),
-                value: log.hasStoredContent
-                    ? L("Transcript stored — see Response")
-                    : L("Transcript not stored (Privacy › Activity Log)"),
-                valueColor: theme.secondaryText
-            )
         }
     }
 
     @ViewBuilder
     private var speechSection: some View {
-        section(icon: "speaker.wave.2", title: Text("Speech synthesis", bundle: .module), tint: .yellow) {
+        FlatGroup(icon: "speaker.wave.2", title: Text("Speech synthesis", bundle: .module)) {
             if let model = log.model { DetailRow(label: Text("Model / voice", bundle: .module), value: model) }
             if let v = details["voice"] { DetailRow(label: Text("Voice", bundle: .module), value: v) }
             if let c = details["chars"] { DetailRow(label: Text("Text size", bundle: .module), value: L("\(c) characters")) }
@@ -1520,20 +1491,12 @@ private struct OverviewTab: View {
             if details["cancelled"] == "true" {
                 DetailRow(label: Text("Playback", bundle: .module), value: L("Stopped by the user before it finished"))
             }
-            DetailRow(
-                label: Text("Content", bundle: .module),
-                value: log.hasStoredContent
-                    ? L("Spoken text stored — see Request")
-                    : L("Spoken text not stored (Privacy › Activity Log)"),
-                valueColor: theme.secondaryText
-            )
         }
     }
 
     @ViewBuilder
     private var mediaSection: some View {
-        section(icon: "photo.on.rectangle.angled", title: Text("Media generation", bundle: .module), tint: .pink) {
-            if let model = log.model { DetailRow(label: Text("Model", bundle: .module), value: model) }
+        FlatGroup(icon: "photo.on.rectangle.angled", title: Text("Media generation", bundle: .module)) {
             if let k = details["media_kind"] { DetailRow(label: Text("Kind", bundle: .module), value: k) }
             if let o = details["operation"] { DetailRow(label: Text("Operation", bundle: .module), value: o) }
             if let n = details["count"] { DetailRow(label: Text("Outputs", bundle: .module), value: n) }
@@ -1548,26 +1511,24 @@ private struct OverviewTab: View {
             if let p = details["provider"] ?? details["backend"] { DetailRow(label: Text("Provider", bundle: .module), value: p) }
             if let j = details["job_id"] { DetailRow(label: Text("Job", bundle: .module), value: j) }
             if let c = details["prompt_chars"] { DetailRow(label: Text("Prompt size", bundle: .module), value: L("\(c) characters")) }
-            DetailRow(
-                label: Text("Content", bundle: .module),
-                value: log.hasStoredContent
-                    ? L("Prompt stored — see Request")
-                    : L("Prompt not stored (Privacy › Activity Log)"),
-                valueColor: theme.secondaryText
-            )
         }
     }
 
     @ViewBuilder
     private var systemEventSection: some View {
-        section(icon: "checkmark.shield", title: Text("Chain of custody", bundle: .module), tint: theme.secondaryText) {
-            if let summary = log.systemEventSummary {
-                DetailRow(label: Text("What happened", bundle: .module), value: summary)
-            }
+        FlatGroup(icon: "checkmark.shield", title: Text("Chain of custody", bundle: .module)) {
             ForEach(details.keys.sorted().filter { $0 != "event" }, id: \.self) { key in
-                DetailRow(label: Text(verbatim: Self.systemDetailLabel(key)), value: details[key] ?? "")
+                if Self.isHashKey(key) {
+                    IdentifierRow(label: Text(verbatim: Self.systemDetailLabel(key)), value: details[key] ?? "")
+                } else {
+                    DetailRow(label: Text(verbatim: Self.systemDetailLabel(key)), value: details[key] ?? "")
+                }
             }
         }
+    }
+
+    private static func isHashKey(_ key: String) -> Bool {
+        key.hasSuffix("_hash")
     }
 
     private static func systemDetailLabel(_ key: String) -> String {
@@ -1600,9 +1561,10 @@ private struct OverviewTab: View {
 
     @ViewBuilder
     private var genericDetailsSection: some View {
-        if !details.isEmpty {
-            section(icon: "info.circle", title: Text("Details", bundle: .module), tint: theme.secondaryText) {
-                ForEach(details.keys.sorted(), id: \.self) { key in
+        let keys = details.keys.sorted().filter { $0 != "parent_turn_id" }
+        if !keys.isEmpty {
+            FlatGroup(icon: "info.circle", title: Text("Details", bundle: .module)) {
+                ForEach(keys, id: \.self) { key in
                     DetailRow(label: Text(verbatim: key), value: details[key] ?? "")
                 }
             }
@@ -1611,270 +1573,96 @@ private struct OverviewTab: View {
 
     // MARK: Who
 
-    @ViewBuilder
-    private var whoSection: some View {
-        section(icon: "person.crop.circle", title: Text("Who drove this", bundle: .module), tint: theme.secondaryText) {
-            DetailRow(label: Text("Source", bundle: .module), value: log.source.displayName)
-            if let name = log.agentName {
-                DetailRow(label: Text("Agent", bundle: .module), value: name)
-            } else if let id = log.agentId {
-                DetailRow(label: Text("Agent", bundle: .module), value: id.uuidString)
-            }
-            if let session = log.sessionId {
-                DetailRow(label: Text("Session", bundle: .module), value: session.uuidString)
-            }
-            if let turn = log.turnId {
-                DetailRow(label: Text("Turn", bundle: .module), value: turn.uuidString)
-            }
-            if let parent = log.egress?.details["parent_turn_id"] {
-                DetailRow(label: Text("Delegated from turn", bundle: .module), value: parent)
-            }
-            if let rid = log.requestId {
-                DetailRow(label: Text("Request ID", bundle: .module), value: rid)
-            }
-            if let plugin = log.pluginId {
-                DetailRow(label: Text("Plugin", bundle: .module), value: plugin)
-            }
-            if let ua = log.userAgent {
-                DetailRow(label: Text("User agent", bundle: .module), value: ua)
-            }
-            if let key = log.connection?.accessKeyId {
-                DetailRow(label: Text("Access key", bundle: .module), value: key)
-            }
-            if let aud = log.connection?.audience {
-                DetailRow(label: Text("Audience", bundle: .module), value: aud)
-            }
+    private var whoSummary: String {
+        var parts = [log.source.displayName]
+        if let name = log.agentName { parts.append(name) }
+        if let plugin = log.pluginId { parts.append(plugin) }
+        if let parent = details["parent_turn_id"] {
+            parts.append(String(format: L("Delegated from turn %@"), IdentifierRow.shortened(parent)))
         }
-    }
-
-    // MARK: Error / integrity
-
-    private func errorSection(_ message: String) -> some View {
-        section(icon: "exclamationmark.triangle.fill", title: Text("Error", bundle: .module), tint: .red) {
-            Text(message)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.red.opacity(0.85))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-        }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
-    private var integritySection: some View {
-        if let seq = log.seq {
-            section(icon: "checkmark.seal", title: Text("Log integrity", bundle: .module), tint: theme.secondaryText) {
-                DetailRow(label: Text("Record", bundle: .module), value: "#\(seq)")
-                if let hash = log.hash {
-                    DetailRow(label: Text("Hash", bundle: .module), value: hash)
-                }
-                if let prev = log.prevHash {
-                    DetailRow(label: Text("Previous", bundle: .module), value: prev)
-                }
-                Text("Each record is chained to the one before it with SHA-256. Use Verify on the Insights page to check the whole log.", bundle: .module)
-                    .font(.system(size: 10))
+    private var whoRows: some View {
+        DetailRow(label: Text("Source", bundle: .module), value: log.source.displayName)
+        if let name = log.agentName {
+            DetailRow(label: Text("Agent", bundle: .module), value: name)
+        } else if let id = log.agentId {
+            IdentifierRow(label: Text("Agent", bundle: .module), value: id.uuidString)
+        }
+        if let session = log.sessionId {
+            IdentifierRow(label: Text("Session", bundle: .module), value: session.uuidString)
+        }
+        if let turn = log.turnId {
+            IdentifierRow(label: Text("Turn", bundle: .module), value: turn.uuidString)
+        }
+        if let parent = details["parent_turn_id"] {
+            IdentifierRow(label: Text("Delegated from turn", bundle: .module), value: parent)
+        }
+        if let rid = log.requestId {
+            IdentifierRow(label: Text("Request ID", bundle: .module), value: rid)
+        }
+        if let plugin = log.pluginId {
+            DetailRow(label: Text("Plugin", bundle: .module), value: plugin)
+        }
+        if let ua = log.userAgent {
+            DetailRow(label: Text("User agent", bundle: .module), value: ua)
+        }
+        if let key = log.connection?.accessKeyId {
+            IdentifierRow(label: Text("Access key", bundle: .module), value: key)
+        }
+        if let aud = log.connection?.audience {
+            DetailRow(label: Text("Audience", bundle: .module), value: aud)
+        }
+    }
+
+    // MARK: Generation settings
+
+    private var generationSummary: String {
+        var parts: [String] = []
+        if let temp = log.temperature { parts.append(String(format: L("temp %.2f"), temp)) }
+        if let maxTokens = log.maxTokens { parts.append(String(format: L("max %d tokens"), maxTokens)) }
+        if let tools = log.toolCalls, !tools.isEmpty {
+            parts.append(tools.count == 1 ? L("1 tool call") : String(format: L("%d tool calls"), tools.count))
+        }
+        if let mode = log.connection?.mode, mode != .local { parts.append(mode.displayName) }
+        return parts.isEmpty ? L("Defaults") : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var generationRows: some View {
+        if let temp = log.temperature {
+            DetailRow(label: Text("Temperature", bundle: .module), value: String(format: "%.2f", temp))
+        }
+        if let maxTokens = log.maxTokens {
+            DetailRow(label: Text("Max tokens", bundle: .module), value: "\(maxTokens)")
+        }
+        if let reason = log.finishReason {
+            DetailRow(label: Text("Finish reason", bundle: .module), value: reason.rawValue)
+        }
+        if let connection = log.connection {
+            if let mode = connection.mode {
+                DetailRow(label: Text("Mode", bundle: .module), value: mode.displayName)
+            }
+            if let transport = connection.transport {
+                DetailRow(label: Text("Transport", bundle: .module), value: transport.displayName)
+            }
+            if let endpoint = connection.remoteEndpoint {
+                DetailRow(label: Text("Endpoint", bundle: .module), value: endpoint)
+            }
+        }
+        if let toolCalls = log.toolCalls, !toolCalls.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Tool calls", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
-            }
-        }
-    }
-
-    // MARK: Building blocks
-
-    private func section<Content: View>(
-        icon: String,
-        title: Text,
-        tint: Color,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(tint)
-                title
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-            }
-            VStack(alignment: .leading, spacing: 0) {
-                content()
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(tint.opacity(0.05))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(tint.opacity(0.15), lineWidth: 1))
-            )
-        }
-    }
-
-    private func codeSection(icon: String, title: Text, code: String) -> some View {
-        section(icon: icon, title: title, tint: theme.secondaryText) {
-            Text(code)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-// MARK: - Params Tab
-
-private struct ParamsTab: View {
-    @Environment(\.theme) private var theme
-
-    let log: RequestLog
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if log.isInference {
-                    inferenceSection
-                }
-                metadataSection
-                if let connection = log.connection {
-                    connectionSection(connection)
-                }
-                if let toolCalls = log.toolCalls, !toolCalls.isEmpty {
-                    toolCallsSection(toolCalls)
-                }
-                if let error = log.errorMessage {
-                    errorSection(error)
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
-            .frame(maxWidth: 920, alignment: .topLeading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-    }
-
-    @ViewBuilder
-    private var inferenceSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(icon: "bolt.fill", text: Text("Inference Details", bundle: .module), color: .purple)
-
-            VStack(spacing: 0) {
-                if log.model != nil {
-                    DetailRow(label: Text("Model", bundle: .module), value: log.shortModelName)
-                }
-                if let input = log.inputTokens, let output = log.outputTokens {
-                    DetailRow(label: Text("Tokens", bundle: .module), value: "\(input) → \(output)")
-                }
-                if let speed = log.tokensPerSecond, speed > 0 {
-                    DetailRow(
-                        label: Text("Speed", bundle: .module),
-                        value: String(format: "%.1f tok/s", speed),
-                        valueColor: speedColor(speed)
-                    )
-                }
-                if let temp = log.temperature {
-                    DetailRow(label: Text("Temperature", bundle: .module), value: String(format: "%.2f", temp))
-                }
-                if let maxTokens = log.maxTokens {
-                    DetailRow(label: Text("Max Tokens", bundle: .module), value: "\(maxTokens)")
-                }
-                if let reason = log.finishReason {
-                    DetailRow(label: Text("Finish Reason", bundle: .module), value: reason.rawValue)
-                }
-            }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.purple.opacity(0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.purple.opacity(0.15), lineWidth: 1)
-                    )
-            )
-        }
-    }
-
-    private var metadataSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(icon: "info.circle", text: Text("Request", bundle: .module), color: theme.secondaryText)
-
-            VStack(spacing: 0) {
-                DetailRow(label: Text("Source", bundle: .module), value: log.source.displayName)
-                DetailRow(label: Text("Method", bundle: .module), value: log.method)
-                DetailRow(label: Text("Path", bundle: .module), value: log.path)
-                DetailRow(label: Text("Status", bundle: .module), value: "\(log.statusCode)")
-                DetailRow(label: Text("Duration", bundle: .module), value: log.formattedDuration)
-                if let userAgent = log.userAgent {
-                    DetailRow(label: Text("User Agent", bundle: .module), value: userAgent)
-                }
-                if let pluginId = log.pluginId {
-                    DetailRow(label: Text("Plugin", bundle: .module), value: pluginId)
-                }
-            }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground.opacity(0.4))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
-                    )
-            )
-        }
-    }
-
-    /// Connection + attribution details for a remote run (outbound relay/host,
-    /// transport, mode) or an attributed inbound request (access key + audience).
-    private func connectionSection(_ connection: RequestConnectionInfo) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(
-                icon: "antenna.radiowaves.left.and.right",
-                text: Text("Connection", bundle: .module),
-                color: .blue
-            )
-
-            VStack(spacing: 0) {
-                if let mode = connection.mode {
-                    DetailRow(label: Text("Mode", bundle: .module), value: mode.displayName)
-                }
-                if let transport = connection.transport {
-                    DetailRow(
-                        label: Text("Transport", bundle: .module),
-                        value: transport.displayName
-                    )
-                }
-                if let endpoint = connection.remoteEndpoint {
-                    DetailRow(label: Text("Endpoint", bundle: .module), value: endpoint)
-                }
-                if let audience = connection.audience {
-                    DetailRow(label: Text("Audience", bundle: .module), value: audience)
-                }
-                if let keyId = connection.accessKeyId {
-                    DetailRow(label: Text("Access Key", bundle: .module), value: keyId)
-                }
-            }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.blue.opacity(0.15), lineWidth: 1)
-                    )
-            )
-        }
-    }
-
-    private func toolCallsSection(_ toolCalls: [ToolCallLog]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(icon: "wrench.and.screwdriver.fill", text: Text("Tool Calls", bundle: .module), color: .teal)
-
-            VStack(spacing: 6) {
+                    .padding(.top, 6)
                 ForEach(toolCalls) { tool in
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: tool.isError ? "xmark.circle.fill" : "checkmark.circle.fill")
                             .font(.system(size: 10))
-                            .foregroundColor(tool.isError ? .red.opacity(0.7) : .green.opacity(0.7))
+                            .foregroundColor(tool.isError ? theme.errorColor.opacity(0.8) : theme.successColor.opacity(0.8))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(tool.name)
                                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -1895,69 +1683,234 @@ private struct ParamsTab: View {
                         }
                     }
                     .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(theme.tertiaryBackground.opacity(0.3))
-                    )
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.35)))
                 }
             }
         }
     }
 
+    // MARK: Integrity
+
+    private var integritySummary: String {
+        guard let seq = log.seq else { return "" }
+        var s = "#\(seq)"
+        if let hash = log.hash { s += " · \(IdentifierRow.shortened(hash))" }
+        return s
+    }
+
+    @ViewBuilder
+    private var integrityRows: some View {
+        if let seq = log.seq {
+            DetailRow(label: Text("Record", bundle: .module), value: "#\(seq)")
+        }
+        if let hash = log.hash {
+            IdentifierRow(label: Text("Hash", bundle: .module), value: hash)
+        }
+        if let prev = log.prevHash {
+            IdentifierRow(label: Text("Previous", bundle: .module), value: prev)
+        }
+        Text("Each record is chained to the one before it with SHA-256. Use Verify Integrity from the Insights menu to check the whole log.", bundle: .module)
+            .font(.system(size: 10))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 6)
+    }
+
+    // MARK: Error
+
     private func errorSection(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(icon: "exclamationmark.triangle.fill", text: Text("Error", bundle: .module), color: .red)
-            Text(message)
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(theme.errorColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Error", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.errorColor)
+                Text(message)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.errorColor.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.errorColor.opacity(0.25), lineWidth: 1))
+        )
+    }
+
+    private func codeBlock(icon: String, title: Text, code: String) -> some View {
+        FlatGroup(icon: icon, title: title) {
+            Text(code)
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.red.opacity(0.8))
+                .foregroundColor(theme.primaryText)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.red.opacity(0.08))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.red.opacity(0.2), lineWidth: 1)
-                        )
-                )
+                .background(RoundedRectangle(cornerRadius: 6).fill(theme.codeBlockBackground))
         }
-    }
-
-    private func sectionHeader(icon: String, text: Text, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(color)
-            text
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-        }
-    }
-
-    private func speedColor(_ speed: Double) -> Color {
-        if speed >= 30 { return .green }
-        if speed >= 15 { return .orange }
-        return theme.secondaryText
     }
 }
 
-// MARK: - Detail Row
+// MARK: - Facts grid
+
+private struct Fact: Identifiable {
+    let label: String
+    let value: String
+    var help: String?
+    var id: String { label }
+}
+
+private struct FactsGrid: View {
+    @Environment(\.theme) private var theme
+    let facts: [Fact]
+
+    private let columns = [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+            ForEach(facts) { fact in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(fact.label)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                        .textCase(.uppercase)
+                    Text(fact.value)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(Text(verbatim: fact.help ?? fact.value))
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.secondaryBackground.opacity(0.5))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.primaryBorder.opacity(0.25), lineWidth: 1))
+        )
+    }
+}
+
+// MARK: - Groups
+
+/// Always-open group: a small heading over flat rows. Used for the
+/// category-specific facts that *are* the point of the row.
+private struct FlatGroup<Content: View>: View {
+    @Environment(\.theme) private var theme
+    let icon: String
+    let title: Text
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                title
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                Spacer()
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                content()
+            }
+            .padding(.leading, 16)
+        }
+    }
+}
+
+/// Disclosure group with a one-line summary shown while collapsed, so a
+/// reviewer can read the gist of every group without opening any of them.
+private struct CollapsibleGroup<Content: View>: View {
+    @Environment(\.theme) private var theme
+    let icon: String
+    let title: Text
+    let summary: String
+    @State private var isExpanded: Bool
+    @ViewBuilder let content: () -> Content
+
+    init(
+        icon: String,
+        title: Text,
+        summary: String,
+        initiallyExpanded: Bool,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.icon = icon
+        self.title = title
+        self.summary = summary
+        self.content = content
+        _isExpanded = State(initialValue: initiallyExpanded)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.16)) { isExpanded.toggle() } }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText.opacity(0.8))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 10)
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                    title
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                    if !isExpanded, !summary.isEmpty {
+                        Text(summary)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .padding(.leading, 4)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    content()
+                }
+                .padding(.leading, 16)
+            }
+        }
+        .padding(.vertical, 2)
+        .overlay(alignment: .top) {
+            Divider().background(theme.primaryBorder.opacity(0.2)).offset(y: -9)
+        }
+    }
+}
+
+// MARK: - Rows
 
 private struct DetailRow: View {
     @Environment(\.theme) private var theme
 
     let label: Text
     let value: String
-    var valueColor: Color? = nil
+    var valueColor: Color?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
             label
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
-                .frame(width: 100, alignment: .leading)
+                .frame(width: 104, alignment: .leading)
             Text(value)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(valueColor ?? theme.primaryText)
@@ -1968,55 +1921,53 @@ private struct DetailRow: View {
     }
 }
 
-// MARK: - Compact Header Badges
+/// Row for a long identifier (UUID, hash, request id). Renders the
+/// shortened form, keeps the full value in the tooltip and copies it on
+/// click.
+private struct IdentifierRow: View {
+    @Environment(\.theme) private var theme
 
-private struct MethodBadgeCompact: View {
-    let method: String
+    let label: Text
+    let value: String
 
-    var body: some View {
-        Text(method)
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(methodColor.opacity(0.9))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(methodColor.opacity(0.15))
-            )
+    @State private var copied = false
+
+    static func shortened(_ value: String) -> String {
+        guard value.count > 16 else { return value }
+        return "\(value.prefix(8))…\(value.suffix(4))"
     }
 
-    private var methodColor: Color {
-        switch method {
-        case "GET": return .green
-        case "POST": return .blue
-        case "PUT": return .orange
-        case "DELETE": return .red
-        case "LOG": return .teal
-        default: return .gray
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            label
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 104, alignment: .leading)
+            Button(action: copy) {
+                HStack(spacing: 5) {
+                    Text(Self.shortened(value))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(copied ? theme.successColor : theme.tertiaryText.opacity(0.7))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help(Text(verbatim: value))
+            Spacer(minLength: 0)
         }
-    }
-}
-
-private struct HTTPStatusBadgeCompact: View {
-    let statusCode: Int
-
-    var body: some View {
-        Text("\(statusCode)")
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(statusColor)
-            )
+        .padding(.vertical, 4)
     }
 
-    private var statusColor: Color {
-        if statusCode >= 200 && statusCode < 300 { return .green }
-        if statusCode >= 400 && statusCode < 500 { return .orange }
-        if statusCode >= 500 { return .red }
-        return .gray
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        withAnimation(.easeOut(duration: 0.15)) { copied = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            withAnimation(.easeOut(duration: 0.2)) { copied = false }
+        }
     }
 }
 

@@ -14,7 +14,7 @@ Plugins add new tools to Osaurus. There are two kinds: native plugins (compiled,
 - Or ask the default Osaurus assistant to search and install a plugin for you.
 - Release plugins must be code-signed; unsigned plugins are refused.
 - Some plugins need secrets (API keys): open the plugin card and choose Configure Secrets — they go to the Keychain, never through chat.
-- Plugin activity (every host API call) is logged in Settings… (⌘,) → Insights — filter by the **Plugin call** chip; plugin console lines are under More → Show plugin console logs (**Plugin log**).
+- Plugin activity (every host API call) is logged in Settings… (⌘,) → Insights — pick the **Tools** scope tab (Plugin call rows); plugin console lines (**Plugin log**) appear there once you enable Filter → Show plugin console logs.
 
 ## Built into Osaurus (superseded plugins)
 

@@ -31,62 +31,86 @@ workflow.
 
 | Column          | Meaning                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------- |
-| **Time**        | When the interaction finished. Rows are grouped by day.                                     |
-| **Category**    | Inference, Compaction, Web search, URL fetch, MCP tool, Channel, Router, API, Plugin call, Plugin log, Embedding, Transcription, Speech, Media, System. |
-| **Title**       | Plain-language one-liner (model + tokens, query, destination, media size…).                |
-| **Locality**    | **Local** / **Cloud** badge.                                                                 |
-| **Destination** | Provider or host for Cloud rows; "This Mac" otherwise.                                      |
-| **Source**      | Chat UI, Agent, HTTP API, Plugin, P2P, Channel, Schedule, Watcher, Self-scheduled, Tool, System. |
-| **Status / Duration** | HTTP-style status, wall time; errors are tinted.                                      |
+| **Time**        | When the interaction finished. Rows are grouped by day; the day header stays pinned while scrolling. A red dot before the time marks a failed row (orange for a 4xx that was not an error). |
+| **Event**       | Category glyph, then the plain-language title (model + tokens, query, destination, media size…) over a secondary line: category · plugin · agent · destination (Cloud rows only) · tools sent. A hand glyph marks rows the Privacy Filter rewrote. |
+| **Source**      | Chat UI, Agent, HTTP API, Plugin, P2P, Channel, Schedule, Watcher, Self-scheduled, Tool, System. Hidden while the inspector is open. |
+| **Duration**    | Wall time. Token counts and bytes live in the detail.                                      |
 
-The summary card totals Cloud rows and bytes sent for the current filter and
-lists the destinations involved.
+Status is deliberately not a column: an `ok` row carries no badge. Failed
+rows are the only ones that are tinted.
+
+The glance strip above the list shows **Events**, **Left this Mac** (Cloud
+rows and their share), **Failed** and **Privacy-filtered** for the current
+filter. The last three are one-tap filters. Beneath it a local/cloud bar and
+a **destinations** disclosure list every host that received data (requests,
+bytes); clicking a host filters by it.
 
 ### Filtering
 
 | Filter              | Where                   | Notes                                                                                          |
 | ------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
 | Text                | Search field            | Path, model, title, destination, agent.                                                        |
-| Category chips      | Chip row                | Multi-select. **System** is not a chip; enable it under **More → Category: System**.          |
-| Local / Cloud       | Segmented control       |                                                                                                |
-| Source, Destination, Agent, Model | **More** menu |                                                                                               |
-| Errors only, Privacy-filtered only | **More** menu |                                                                                              |
-| Time range          | **More** menu           | Today, 7 days, 30 days, all.                                                                   |
-| Plugin console logs | **More** menu           | Hidden by default.                                                                             |
+| Time range          | Toolbar segmented control | Today, 7 days, 30 days, All time.                                                            |
+| Scope               | Scope tab row           | **All**, **Models** (inference, compaction, embedding), **Web** (search, URL fetch), **Tools** (MCP, plugin call, plugin log), **Channels**, **API** (inbound API, Router), **Audio & Media** (transcription, speech, media), **System**. Writes `filter.categories`; an ad-hoc category set from a deep link shows as a token instead. |
+| Local / Cloud       | **Filter** popover, or the **Left this Mac** tile |                                                                                  |
+| Status              | **Filter** popover, or the **Failed** tile | Any, Succeeded, Failed.                                                                 |
+| Source (multi)      | **Filter** popover      |                                                                                                |
+| Destination, Model  | **Filter** popover      | Menus of the hosts / models present in the log.                                                |
+| Privacy Filter      | **Filter** popover, or the **Privacy-filtered** tile | Any, only filtered, only unfiltered.                                       |
+| Plugin console logs | **Filter** popover      | Hidden by default.                                                                             |
 
-Filters apply to the list, the summary card and **Export**.
+Every active criterion (other than the visible search and time range)
+appears as a removable token under the toolbar; the **Filter** button badge
+counts them and **Clear all** resets everything. Filters apply to the list,
+the glance strip and **Export**.
 
-### Detail pane
+### Detail
 
-Click a row:
+Click a row. When the content area is at least 1040 pt wide the detail opens
+as a side inspector next to the list (rows can be clicked through; ↑/↓ move
+the selection; Escape or × closes). Narrower windows push the detail
+full-width with a **Back** button.
 
-- **Overview** — what / where / who / outcome, data classes, privacy-filter
-  result, bytes, chain position (`seq`, hash), and a category section:
-  inference facts (model, tokens, tok/s, finish reason, tool calls), search
-  providers and result count, MCP transport, channel outcome, embedding
-  counts, audio seconds, voice and trigger, media size / steps / job, or the
-  chain-of-custody facts for System rows.
-- **Prompt / Request / Response / Params** — bodies (formatted JSON when
-  possible) with copy buttons. For remote inference the **Server Request /
-  Server Response** sub-sections show the exact bytes captured by
-  `WireTransportProbe` (post-Privacy-Filter on the way out, pre-unscrub on
-  the way in).
+- **Overview** — a facts grid (model, tokens, tok/s, finish, bytes sent /
+  received, destination, whether content was stored), one plain-language
+  sentence, the category section (search providers and result count, MCP
+  transport and arguments, channel outcome, embedding counts, audio seconds,
+  voice and trigger, media size / steps / job, or the chain-of-custody facts
+  for System rows), then collapsible groups each summarised in one line while
+  closed: **Where it went** (open by default for Cloud rows: destination,
+  host, endpoint, transport, data classes, privacy-filter result), **Who
+  drove this** (source, agent, session, turn, delegated-from turn, request
+  id, access key), **Generation settings** (temperature, max tokens, finish
+  reason, connection, tool calls) and **Integrity** (`seq`, hash, previous
+  hash). Long identifiers are shortened to `XXXXXXXX…XXXX`; click to copy,
+  hover for the full value. An error, when present, is shown first.
+- **Prompt** — the parsed chat messages and tool definitions (chat-shaped
+  rows only).
+- **Raw** — the request and response bodies (formatted JSON when possible)
+  behind a Request / Response toggle. For remote inference the **Server /
+  Local** sub-toggle shows the exact bytes captured by `WireTransportProbe`
+  (post-Privacy-Filter on the way out, pre-unscrub on the way in) next to
+  what the local caller sent. **Copy** in the header lists every captured
+  body.
 - Rows written while *Store Prompts and Responses* was off show
   `[content withheld — metadata only]` instead of bodies.
 
 ### Verify and Export
 
-- **Verify** walks the whole chain and reports record count, head hash and
-  any broken link / gap / edit / head mismatch. The check is itself recorded
-  as a System row.
+**Export** is the header's primary action; **Verify Integrity** and **Clear
+Activity Log…** live in the **⋯** menu beside it.
+
+- **Verify Integrity** walks the whole chain and reports record count, head
+  hash and any broken link / gap / edit / head mismatch in a banner above
+  the glance strip. The check is itself recorded as a System row.
 - **Export** writes the current filter (or everything) as JSONL (manifest
   line + one canonical record per line — re-verifiable offline, see
   [ACTIVITY_LOG.md §7](ACTIVITY_LOG.md#7-export-format-and-offline-verification)),
   CSV, or Markdown; with or without message content. The export is recorded
   as a System row (format, record count, file name, head hash).
-- **Clear** removes every row, moves the chain anchor and writes a
-  `cleared` System row, so the log still verifies and the clearing is
-  visible.
+- **Clear Activity Log…** removes every row, moves the chain anchor and
+  writes a `cleared` System row, so the log still verifies and the clearing
+  is visible.
 
 ### Settings
 
@@ -96,10 +120,12 @@ Privacy → **Activity Log**: *Keep Activity History* (7 / 30 / 90 days,
 
 ### Use cases
 
-- **"Did this leave my Mac?"** — filter **Cloud**; the summary card lists
-  every destination and the bytes sent.
-- **Debugging an API integration** — filter source **HTTP API**, open the
-  row, compare Request / Response.
+- **"Did this leave my Mac?"** — click the **Left this Mac** tile; the
+  destinations disclosure under the glance strip lists every host and the
+  bytes sent.
+- **Debugging an API integration** — Filter → source **HTTP API** (or the
+  **API** scope), open the row, switch to **Raw** and compare Request /
+  Response.
 - **Verifying the Privacy Filter** — open a Cloud inference row → Request →
   **Server Request**; placeholders should appear where PII was.
 - **Tracing a delegated run** — the parent turn and every subagent / helper
