@@ -118,7 +118,7 @@ public final class ChatLayoutTour: ObservableObject {
     /// launch, and never again once finished or dismissed.
     ///
     /// The start is deferred while any first-run dialog is on screen or
-    /// still queued (post-onboarding import prompt, launch campaign,
+    /// still queued (post-onboarding import prompt, router announcement,
     /// consent) so the coachmarks never fight a modal for the same window.
     func autoStartIfEligible(windowId: UUID) {
         guard !didAutoCheckThisLaunch else { return }

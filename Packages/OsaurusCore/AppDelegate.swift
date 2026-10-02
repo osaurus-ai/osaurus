@@ -1261,10 +1261,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     /// Foreground activation. Many users leave the app running for days, so
-    /// time-window features (the one-time Product Hunt launch dialog) must
-    /// re-check here — a launch-only check would miss them. The dialog's own
-    /// gates make this a cheap no-op outside the campaign window and after
-    /// it has been seen.
+    /// time-window features (router announcements) must re-check here — a
+    /// launch-only check would miss them. `AnnouncementsService`'s own
+    /// throttle and seen keys make this a cheap no-op when nothing is live
+    /// or everything has been dismissed.
     public func applicationDidBecomeActive(_ notification: Notification) {
         let promptForConsent = telemetryConsentDeferredToActivation
         telemetryConsentDeferredToActivation = false
@@ -2833,8 +2833,8 @@ extension AppDelegate {
 
 // MARK: - Router Announcements Dialog
 extension AppDelegate {
-    /// Present the first unseen router-served announcement (Product Hunt
-    /// launches, events, heads-ups — see `AnnouncementsService`) when its own
+    /// Present the first unseen router-served announcement (launches,
+    /// events, heads-ups — see `AnnouncementsService`) when its own
     /// gates allow it AND nothing critical is in progress. A blocked attempt
     /// does NOT consume eligibility — the next launch/foreground activation
     /// or onboarding completion simply rechecks while the announcement is

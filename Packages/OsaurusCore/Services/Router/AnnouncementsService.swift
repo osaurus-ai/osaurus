@@ -2,10 +2,9 @@
 //  AnnouncementsService.swift
 //  osaurus
 //
-//  Router-served community announcements (Product Hunt launches, events,
-//  heads-ups) — the replacement for the hard-coded `ProductHuntLaunchCampaign`
-//  constants whose dates had to be edited in three separate releases and
-//  then postponed with a kill switch that still shipped stale copy.
+//  Router-served community announcements (launches, events, heads-ups).
+//  The router owns copy, artwork, CTAs, and the live window, so nothing
+//  about a campaign is hard-coded in the app or needs a release to change.
 //
 //  Contract (see docs/osaurus-integration.md in osaurus-router):
 //  - `GET /announcements?app_version=…` is unauthenticated, IP rate-limited,
