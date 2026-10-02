@@ -1113,6 +1113,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/tools/preset") {
+                handleAgentToolPresetEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .PATCH || head.method == .DELETE, path.hasPrefix("/agents/"),
+                path.split(separator: "/").count == 2
+            {
+                handleEditAgentEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .PATCH, path.hasPrefix("/agents/"), path.contains("/tools/") {
                 handleUpdateAgentToolEndpoint(
                     head: head,
@@ -4640,6 +4658,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// The agent's system prompt, on `GET /agents/{id}` and for owner
         /// callers only — a workspace peer has no business reading it.
         let system_prompt: String?
+        /// What the phone can change (§13.2): `GET /agents/{id}` for owner
+        /// callers and custom agents only.
+        var settings: PhoneAgentEditing.Settings? = nil
     }
 
     private struct AgentListResponse: Codable {
@@ -5481,6 +5502,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let remote_safe: Bool
         /// Ungranted requirements / missing system permissions, when any.
         let blocked_by: [String]?
+        /// Always loaded, not picked per agent: it follows the agent's own
+        /// switches (§14.11).
+        let built_in: Bool
+        /// The agent has it on: in its own tool list, or built in.
+        let agent_enabled: Bool
     }
 
     private struct AgentToolsResponse: Encodable {
@@ -5504,9 +5530,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // The agent the catalog is for: which of its tools it has on.
+        let agentId = path.split(separator: "/").dropFirst().first.flatMap { UUID(uuidString: String($0)) }
         runRequestTask(priority: .userInitiated) {
             let tools: [AgentToolDTO] = await MainActor.run {
-                ToolRegistry.shared.listTools().map(Self.agentToolDTO(for:))
+                let agent = agentId.flatMap { AgentManager.shared.agent(for: $0) }
+                return ToolRegistry.shared.listTools().map { Self.agentToolDTO(for: $0, agent: agent) }
             }
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
@@ -5548,7 +5577,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     /// One row of the tool catalog, shared by the GET and the PATCH reply.
     @MainActor
-    private static func agentToolDTO(for entry: ToolRegistry.ToolEntry) -> AgentToolDTO {
+    private static func agentToolDTO(for entry: ToolRegistry.ToolEntry, agent: Agent?) -> AgentToolDTO {
         let registry = ToolRegistry.shared
         let info = registry.policyInfo(for: entry.name)
         let policy = info?.effectivePolicy ?? .auto
@@ -5566,7 +5595,190 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             enabled: entry.enabled,
             policy: policy.rawValue,
             remote_safe: policy == .auto && blocked.isEmpty && !deniedHere && entry.enabled,
-            blocked_by: blocked.isEmpty ? nil : blocked
+            blocked_by: blocked.isEmpty ? nil : blocked,
+            built_in: PhoneAgentEditing.isBuiltInTool(entry.name),
+            agent_enabled: agent.map { PhoneAgentEditing.agentHasTool(entry.name, agent: $0) } ?? true
+        )
+    }
+
+    /// PATCH /agents/{id} changes a custom agent's settings, DELETE /agents/{id}
+    /// deletes it (docs/MOBILE_PROTOCOL.md §13.3–§13.4). Owner-only.
+    private func handleEditAgentEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let method = head.method.rawValue
+        let components = path.split(separator: "/")
+        guard components.count == 2, let agentId = UUID(uuidString: String(components[1])) else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"invalid_agent_id"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        let isDelete = head.method == .DELETE
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (status: HTTPResponseStatus, json: String)
+            do {
+                if isDelete {
+                    let deleted = await PhoneAgentEditing.delete(agentId)
+                    outcome = deleted ? (.ok, #"{"ok":true}"#) : Self.agentEditFailure(.notEditable)
+                } else {
+                    let patch = try PhoneAgentEditing.patch(from: body)
+                    try await PhoneAgentEditing.apply(patch, to: agentId)
+                    outcome = (.ok, #"{"ok":true}"#)
+                }
+            } catch let error as PhoneAgentEditing.EditError {
+                outcome = Self.agentEditFailure(error)
+            } catch {
+                // The sandbox failed to start; the switch is saved on.
+                outcome = (
+                    .ok,
+                    Self.jsonObjectString(["ok": true, "warning": error.localizedDescription])
+                )
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime,
+                    method: method
+                )
+            }
+        }
+    }
+
+    /// POST /agents/{id}/tools/preset: `{"preset":"all" | "essential" | "none"}`,
+    /// the Tools window's presets (docs/MOBILE_PROTOCOL.md §14.11). Answers
+    /// with the agent's tool catalog, as §14.4.
+    private func handleAgentToolPresetEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        struct PresetRequest: Decodable { let preset: String }
+        guard components.count == 4, let agentId = UUID(uuidString: String(components[1])),
+            let raw = try? JSONDecoder().decode(PresetRequest.self, from: body),
+            let preset = PhoneAgentEditing.ToolPreset(rawValue: raw.preset)
+        else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected {preset: all, essential or none}"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (status: HTTPResponseStatus, json: String) = await MainActor.run {
+                do {
+                    try PhoneAgentEditing.apply(preset, to: agentId)
+                } catch let error as PhoneAgentEditing.EditError {
+                    return Self.agentEditFailure(error)
+                } catch {
+                    return Self.agentEditFailure(.notEditable)
+                }
+                let agent = AgentManager.shared.agent(for: agentId)
+                let tools = ToolRegistry.shared.listTools().map { Self.agentToolDTO(for: $0, agent: agent) }
+                let json =
+                    (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? #"{"tools":[]}"#
+                return (.ok, json)
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private static func agentEditFailure(
+        _ error: PhoneAgentEditing.EditError
+    ) -> (status: HTTPResponseStatus, json: String) {
+        let reply = error.reply
+        return (
+            HTTPResponseStatus(statusCode: reply.status),
+            jsonObjectString(["error": reply.code, "message": reply.message])
+        )
+    }
+
+    private func sendAgentEditResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date,
+        method: String? = nil
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: method ?? head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
         )
     }
 
@@ -5612,15 +5824,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         if var body = stateRef.value.requestBodyBuffer {
             data = Data(body.readBytes(length: body.readableBytes) ?? [])
         }
-        guard let patch = Self.toolPatch(from: data) else {
+        // `agent_enabled` is this agent's own choice (§14.11); `enabled` and
+        // `policy` are the Mac-wide ones.
+        struct AgentEnabledRequest: Decodable { let agent_enabled: Bool? }
+        let agentEnabled = (try? JSONDecoder().decode(AgentEnabledRequest.self, from: data))?.agent_enabled
+        let patch = Self.toolPatch(from: data)
+        guard patch != nil || agentEnabled != nil else {
             reply(
                 .badRequest,
-                #"{"error":"bad_request","message":"Expected {enabled?, policy?} with policy auto, ask or deny"}"#
+                #"{"error":"bad_request","message":"Expected {enabled?, agent_enabled?, policy?}"}"#
             )
             return
         }
-        let policy = patch.policy
-        let enabled = patch.enabled
+        let policy = patch?.policy
+        let enabled = patch?.enabled
+        let agentId = UUID(uuidString: String(components[1]))
 
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
@@ -5633,10 +5851,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 if let enabled { registry.setEnabled(enabled, for: toolName) }
                 if let policy { registry.setPolicy(policy, for: toolName) }
+                if let agentEnabled {
+                    guard let agentId else { return (.badRequest, #"{"error":"invalid_agent_id"}"#) }
+                    do {
+                        try PhoneAgentEditing.setTool(toolName, enabled: agentEnabled, for: agentId)
+                    } catch {
+                        let failure = Self.agentEditFailure(
+                            error as? PhoneAgentEditing.EditError ?? .notEditable
+                        )
+                        return (failure.status, failure.json)
+                    }
+                }
                 guard let entry = registry.listTools().first(where: { $0.name == toolName }) else {
                     return (.notFound, #"{"error":"tool_not_found"}"#)
                 }
-                let dto = Self.agentToolDTO(for: entry)
+                let agent = agentId.flatMap { AgentManager.shared.agent(for: $0) }
+                let dto = Self.agentToolDTO(for: entry, agent: agent)
                 let json =
                     (try? JSONEncoder.osaurusCanonical().encode(dto))
                     .map { String(decoding: $0, as: UTF8.self) } ?? #"{"ok":true}"#
@@ -8843,7 +9073,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let pinned = (try? db.pinnedFactCount(agentId: agent.id.uuidString)) ?? 0
                 return episodes + pinned
             }()
-            let item = AgentListItem(
+            var item = AgentListItem(
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
@@ -8864,6 +9094,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 custom_avatar: agent.customAvatarURL != nil ? true : nil,
                 system_prompt: ownerCaller ? agent.systemPrompt : nil
             )
+            if ownerCaller {
+                item.settings = await MainActor.run { PhoneAgentEditing.settings(for: agent) }
+            }
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
 

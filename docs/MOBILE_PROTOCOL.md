@@ -948,6 +948,47 @@ phone can show what the agent was told to be. It is absent (null) for
 agent-scoped callers — a workspace peer has no business reading it — and is
 never included in the `GET /agents` list, which stays small.
 
+## 13.2 The agent's settings
+
+`GET /agents/{id}` also carries `settings` for owner callers and custom
+agents (never the Orchestrator, whose settings live in the Mac's
+Orchestrator settings):
+
+```json
+"settings":{"tools_enabled":true,"memory_enabled":false,"web_search_enabled":true,
+            "autonomous_exec_enabled":false,"autonomous_exec_available":true,
+            "temperature":0.7,"max_tokens":null}
+```
+
+`autonomous_exec_available: false` means this Mac can't run the sandbox, so
+the switch can't turn on. `temperature` / `max_tokens` are null while the
+model's own defaults apply. Web search (and the agent's other built-in
+tools) only work while `tools_enabled` is true.
+
+## 13.3 `PATCH /agents/{id}`
+
+Changes a custom agent as the Mac's agent editor does. Any of `name`,
+`description`, `system_prompt` (strings), `tools_enabled`, `memory_enabled`,
+`web_search_enabled`, `autonomous_exec_enabled` (booleans), `temperature`
+(0–2) and `max_tokens` (1–1,000,000); a field left out is untouched, and
+`null` puts `temperature` / `max_tokens` back to the model's default. The
+name is trimmed and capped at 80 characters; the description is kept to one
+line. Turning `autonomous_exec_enabled` on also starts the sandbox.
+
+`{"ok":true}` on success, plus `"warning"` when the switch was saved but the
+sandbox failed to start; `GET /agents/{id}` then has the new values.
+`400 bad_request` for a malformed or out-of-range field, `403
+agent_not_editable` for an unknown or built-in agent, `409
+sandbox_unavailable` for Autonomous Execution on a Mac that can't run it.
+Owner-only.
+
+## 13.4 `DELETE /agents/{id}`
+
+Deletes a custom agent, as the Mac's Delete Agent does: its sandbox is
+cleaned up, and the Mac's windows and new chats fall back to the
+Orchestrator. `{"ok":true}`, or `403 agent_not_editable` for an unknown or
+built-in agent. Owner-only.
+
 ---
 
 ## 14. Reading the Mac's chats
@@ -1039,6 +1080,9 @@ surface allows it — an `ask` tool would block on a card the phone can't
 answer yet (that arrives with remote approvals), and only when the tool is
 enabled. `blocked_by` lists ungranted requirements or missing system
 permissions.
+`enabled` is the Mac-wide switch; `agent_enabled` whether this agent has the
+tool on, and `built_in` marks the tools every agent has while its Tools
+switch is on, which can't be picked one by one (§14.11).
 
 ### 14.5 Continuing a Mac chat
 
@@ -1072,9 +1116,13 @@ Owner-only.
 Body `{"enabled":false}` and/or `{"policy":"auto"}` — turn a tool off, or
 change its permission behaviour, as the Mac's Tools catalog does. The reply
 is that tool's row in the §14.4 shape, already reflecting the change, so a
-client can redraw without refetching the catalog. Tool settings are global
-on this Mac, so `{id}` only scopes the route. `404 tool_not_found` when the
-name is not registered; the name is percent-decoded. Owner-only.
+client can redraw without refetching the catalog. `enabled` and `policy`
+are Mac-wide, so for them `{id}` only scopes the route. `404 tool_not_found`
+when the name is not registered; the name is percent-decoded. Owner-only.
+
+`{"agent_enabled":false}` turns a plugin or MCP tool off for `{id}` alone
+(§14.11), leaving it on for other agents. `400 bad_request` for a built-in
+tool, `403 agent_not_editable` for a built-in agent.
 
 ### 14.8 `POST /sessions/{id}/truncate`
 
@@ -1104,6 +1152,23 @@ is cancelled, every window showing it moves to a fresh chat, and the row
 and its turns go. Archiving (§14.3) is the reversible alternative.
 `{"ok":true}` on success; `404 session_not_found` for an unknown id or a
 workspace chat served for a teammate (the chats §14.5 would ignore).
+Owner-only.
+
+### 14.11 An agent's own tools, and `POST /agents/{id}/tools/preset`
+
+Each custom agent keeps its own list of the plugin and MCP tools it may
+use, the list the Mac's agent Tools picker edits. Built-in tools are not on
+it: every agent has them while its Tools switch is on, and some follow the
+agent's own switches (web search, §13.2). An agent with no list yet has
+every tool; the first tool turned off (§14.7) starts the list from all of
+them, as the Mac's picker does.
+
+`POST /agents/{id}/tools/preset` with `{"preset":"…"}` sets the list in one
+go: `all` (every plugin and MCP tool on), `essential` (the built-in tools
+only, every plugin and MCP tool off) or `none` (the agent's Tools switch off,
+its list kept for when it goes back on); `all` and `essential` turn Tools on.
+The reply is the §14.4 catalog for that agent. `400 bad_request` for another
+preset, `403 agent_not_editable` for an unknown or built-in agent.
 Owner-only.
 
 ---
