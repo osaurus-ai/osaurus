@@ -5896,7 +5896,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // control one left raw made a 201 the phone could not decode.
             let outcome: (status: HTTPResponseStatus, json: String) = await MainActor.run {
                 do {
-                    let agent = try AgentManager.shared.create(
+                    let agent = try AgentManager.shared.createFromPhone(
                         name: String(name.prefix(80)),
                         description: description,
                         systemPrompt: systemPrompt,

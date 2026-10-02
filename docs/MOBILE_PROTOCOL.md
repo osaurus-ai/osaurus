@@ -1258,8 +1258,11 @@ default. The reply is `201 {"id":"<uuid>","name":"…"}`, and `GET /agents/{id}`
 then returns the full record, so a client can open a chat with the new agent
 straight away.
 
-Owner-only: a new agent is a new identity on this Mac. The agent is created
-exactly as the Mac's own New Agent flow creates it, sandbox policy included.
+Owner-only: a new agent is a new identity on this Mac. Unlike the Mac's own
+New Agent flow, the agent starts with every capability off: tools (web
+search included), memory and the sandbox. A client can't reach an agent's
+settings, so anything on by default would stay on until the user got to the
+Mac; they opt in from the Mac's agent settings instead.
 
 ---
 

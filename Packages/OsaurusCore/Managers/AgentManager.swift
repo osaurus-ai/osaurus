@@ -475,6 +475,52 @@ public final class AgentManager: ObservableObject {
         )
     }
 
+    /// Creates an agent from the paired phone (`POST /agents`) with every
+    /// capability off; see `phoneAgentRecord`.
+    public func createFromPhone(
+        name: String,
+        description: String = "",
+        systemPrompt: String = "",
+        defaultModel: String? = nil
+    ) -> Agent {
+        let agent = Self.phoneAgentRecord(
+            name: name,
+            description: AgentDescriptionPolicy.normalized(description),
+            systemPrompt: systemPrompt,
+            defaultModel: defaultModel
+        )
+        add(agent)
+        return agent
+    }
+
+    /// A custom agent made on the phone, which can't reach the agent's
+    /// settings: whatever started on (tools, web search, memory, the
+    /// sandbox) would stay on until the user got to the Mac. So nothing
+    /// starts on, and the user opts in from the Mac's agent settings. The
+    /// Orchestrator and the Mac's own create flow keep the usual defaults.
+    static func phoneAgentRecord(
+        name: String,
+        description: String = "",
+        systemPrompt: String = "",
+        defaultModel: String? = nil,
+        now: Date = Date()
+    ) -> Agent {
+        var agent = newCustomAgentRecord(
+            name: name,
+            description: description,
+            systemPrompt: systemPrompt,
+            defaultModel: defaultModel,
+            now: now
+        )
+        agent.toolsEnabled = false
+        agent.memoryEnabled = false
+        // An explicit opt-out: nil would resolve to on where the sandbox runs.
+        agent.autonomousExec = AutonomousExecConfig(enabled: false)
+        agent.settings.webSearchEnabled = false
+        agent.settings.screenContextEnabled = false
+        return agent
+    }
+
     /// Build the record used by the Agents UI's duplicate action.
     ///
     /// `autonomousExec` is copied verbatim rather than re-seeded from the
