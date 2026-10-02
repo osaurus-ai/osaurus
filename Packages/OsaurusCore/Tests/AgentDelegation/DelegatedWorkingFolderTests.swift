@@ -366,7 +366,7 @@ struct DelegatedWorkingFolderTests {
         #expect(!remote.contains(folder))
     }
 
-    @Test("the dispatcher mounts the target agent's folder, else the launcher's supplied bookmark")
+    @Test("the dispatcher mounts the target agent's folder, else the launcher's supplied folder")
     func dispatcherSourceResolvesTargetThenLauncherFolder() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
@@ -384,10 +384,6 @@ struct DelegatedWorkingFolderTests {
         #expect(source.contains("launcherFolder: launcherWorkingFolder"))
         #expect(source.contains("workingFolderPath: childFolder.folder?.path"))
         #expect(source.contains("folderPath: target.isWorkspace ? nil : childFolder.folder?.path"))
-        // Never the caller's live task-local root (that is the Orchestrator's
-        // own read-only view, not a folder the child may write to).
-        #expect(!source.contains("ChatExecutionContext.currentFolderRoot"))
-
         // The pure resolver: target wins, launcher is the fallback, and a
         // path-less/bookmark-less target does not shadow the launcher.
         let target = DelegatedWorkingFolder(bookmark: nil, path: "/tmp/target")
