@@ -1168,6 +1168,11 @@ when the name is not registered; the name is percent-decoded. Owner-only.
 (§14.11), leaving it on for other agents. `400 bad_request` for a built-in
 tool, `403 agent_not_editable` for a built-in agent.
 
+A body is applied whole or not at all: any field that is present but invalid
+(an unknown `policy`, a non-boolean switch) refuses it with `400
+bad_request`, and when `agent_enabled` is refused, `enabled` and `policy` are
+left as they were too.
+
 ### 14.8 `POST /sessions/{id}/truncate`
 
 Body `{"from_turn_id":"<uuid>"}`, a turn id from §14.2. Drops that turn and

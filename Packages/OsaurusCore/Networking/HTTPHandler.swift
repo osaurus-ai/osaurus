@@ -5560,19 +5560,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private struct AgentToolPatchRequest: Decodable {
         let enabled: Bool?
         let policy: String?
+        let agent_enabled: Bool?
     }
 
-    /// Parses a §14.7 body. Nil when it carries neither field or names a
-    /// policy that is not `auto` / `ask` / `deny`.
-    static func toolPatch(from data: Data) -> (enabled: Bool?, policy: ToolPermissionPolicy?)? {
-        guard let patch = try? JSONDecoder().decode(AgentToolPatchRequest.self, from: data),
-            patch.enabled != nil || patch.policy != nil
+    /// A §14.7 body: `enabled` and `policy` are Mac-wide, `agentEnabled` is
+    /// the agent's own choice (§14.11).
+    struct ToolPatch: Equatable {
+        let enabled: Bool?
+        let policy: ToolPermissionPolicy?
+        let agentEnabled: Bool?
+    }
+
+    /// Parses a §14.7 body. Nil when it carries no field, or when any field
+    /// it does carry is invalid (a policy that is not `auto` / `ask` /
+    /// `deny`, a switch that is not a boolean), so nothing is half-applied.
+    static func toolPatch(from data: Data) -> ToolPatch? {
+        guard let request = try? JSONDecoder().decode(AgentToolPatchRequest.self, from: data),
+            request.enabled != nil || request.policy != nil || request.agent_enabled != nil
         else { return nil }
-        if let raw = patch.policy {
+        var policy: ToolPermissionPolicy?
+        if let raw = request.policy {
             guard let parsed = ToolPermissionPolicy(rawValue: raw) else { return nil }
-            return (patch.enabled, parsed)
+            policy = parsed
         }
-        return (patch.enabled, nil)
+        return ToolPatch(enabled: request.enabled, policy: policy, agentEnabled: request.agent_enabled)
     }
 
     /// One row of the tool catalog, shared by the GET and the PATCH reply.
@@ -5830,20 +5841,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         if var body = stateRef.value.requestBodyBuffer {
             data = Data(body.readBytes(length: body.readableBytes) ?? [])
         }
-        // `agent_enabled` is this agent's own choice (§14.11); `enabled` and
-        // `policy` are the Mac-wide ones.
-        struct AgentEnabledRequest: Decodable { let agent_enabled: Bool? }
-        let agentEnabled = (try? JSONDecoder().decode(AgentEnabledRequest.self, from: data))?.agent_enabled
-        let patch = Self.toolPatch(from: data)
-        guard patch != nil || agentEnabled != nil else {
+        guard let patch = Self.toolPatch(from: data) else {
             reply(
                 .badRequest,
                 #"{"error":"bad_request","message":"Expected {enabled?, agent_enabled?, policy?}"}"#
             )
             return
         }
-        let policy = patch?.policy
-        let enabled = patch?.enabled
+        let policy = patch.policy
+        let enabled = patch.enabled
+        let agentEnabled = patch.agentEnabled
         let agentId = UUID(uuidString: String(components[1]))
 
         let loop = context.eventLoop
@@ -5855,8 +5862,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 guard registry.isRegistered(toolName) else {
                     return (.notFound, #"{"error":"tool_not_found"}"#)
                 }
-                if let enabled { registry.setEnabled(enabled, for: toolName) }
-                if let policy { registry.setPolicy(policy, for: toolName) }
                 if let agentEnabled {
                     guard let agentId else { return (.badRequest, #"{"error":"invalid_agent_id"}"#) }
                     do {
@@ -5868,6 +5873,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         return (failure.status, failure.json)
                     }
                 }
+                // Only after the agent's own change, which can still be refused
+                // and changes nothing when it is: a refusal must leave the
+                // Mac-wide settings untouched too.
+                if let enabled { registry.setEnabled(enabled, for: toolName) }
+                if let policy { registry.setPolicy(policy, for: toolName) }
                 guard let entry = registry.listTools().first(where: { $0.name == toolName }) else {
                     return (.notFound, #"{"error":"tool_not_found"}"#)
                 }
