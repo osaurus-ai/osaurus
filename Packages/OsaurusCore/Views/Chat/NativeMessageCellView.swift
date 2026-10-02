@@ -670,7 +670,7 @@ final class NativeAssistantActionsView: NSView {
     /// "3 files changed · View changes" — the end-of-turn entry point into
     /// the File Changes panel. Hidden until the journal reports this turn
     /// recorded something; refreshed when history changes (e.g. a revert).
-    private let fileChangesButton = NSButton(title: "", target: nil, action: nil)
+    private let fileChangesButton = NSButton(frame: .zero)
     private var fileChangesSummary: FileChangeTurnSummary?
     private var fileChangesLookupTurnId: UUID?
     nonisolated(unsafe) private var fileChangesObservation: NSObjectProtocol?
@@ -792,6 +792,7 @@ final class NativeAssistantActionsView: NSView {
             overflowButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ])
 
+        fileChangesButton.title = ""
         fileChangesButton.translatesAutoresizingMaskIntoConstraints = false
         fileChangesButton.isBordered = false
         fileChangesButton.bezelStyle = .inline
