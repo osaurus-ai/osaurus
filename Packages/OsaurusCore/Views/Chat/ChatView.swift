@@ -10463,7 +10463,7 @@ struct ChatView: View {
                             try? await Task.sleep(for: .seconds(0.25))
                             if !NSApp.windows.contains(where: { $0.attachedSheet != nil }) { break }
                         }
-                        AppDelegate.shared?.presentProductHuntLaunchDialogIfEligible()
+                        AppDelegate.shared?.presentAnnouncementIfEligible()
                     }
                 },
                 onAction: { action in

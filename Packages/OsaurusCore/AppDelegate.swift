@@ -230,6 +230,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // reasoning for installing here: roster fixtures in tests must not
         // write the billing preference.
         WorkspaceRosterStore.installDefaultPoolBilling()
+        // One `GET /workspaces` feeds both the chat roster and the Settings
+        // Workspaces list; the Settings service never refetches on the same
+        // trigger.
+        WorkspaceRosterStore.installWorkspaceListSync()
 
         // A phone paired before this launch: take the keep-awake assertion
         // and keep agents created from now on reachable over the relay. The
@@ -776,16 +780,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     maybePromptForTelemetryConsent()
                 }
 
-                // One-time Product Hunt launch dialogs (Raptor, Sept 2026). Delayed
-                // past the consent prompt's own 900ms settle so the two can
-                // never race for a scope; if consent is still pending the
-                // eligibility gate defers to the next activation. Silent
-                // launches skip it here; `applicationDidBecomeActive`
-                // re-checks eligibility on the next foreground activation.
+                // Router-served announcements (launches, events). Fetched
+                // ~2s after launch, past the consent prompt's own 900ms
+                // settle so the two can never race for a scope; if consent
+                // is still pending the eligibility gate defers to the next
+                // activation. Silent launches skip it here;
+                // `applicationDidBecomeActive` re-checks on the next
+                // foreground activation (throttled by the service).
                 if !silentLaunch {
                     Task { @MainActor [weak self] in
                         try? await Task.sleep(for: .seconds(2))
-                        self?.presentProductHuntLaunchDialogIfEligible()
+                        await AnnouncementsService.shared.refreshIfDue(trigger: .launch)
+                        self?.presentAnnouncementIfEligible()
                     }
                 }
             }
@@ -935,7 +941,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                         // first-run announcement, which defers while it is up
                         // and otherwise waits for the next activation. Chain
                         // it so it lands in the same session.
-                        self?.presentProductHuntLaunchDialogIfEligible()
+                        self?.presentAnnouncementIfEligible()
                     }
                 ),
                 scope: scope
@@ -1270,7 +1276,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             if promptForConsent {
                 self?.maybePromptForTelemetryConsent()
             }
-            self?.presentProductHuntLaunchDialogIfEligible()
+            // Foreground activation is the second natural fetch trigger for
+            // announcements; the service throttles it (30 min) so rapid app
+            // switching never turns into a stream of feed requests.
+            await AnnouncementsService.shared.refreshIfDue(trigger: .activation)
+            self?.presentAnnouncementIfEligible()
         }
     }
 
@@ -1291,15 +1301,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             )
             menu.addItem(
                 NSMenuItem(
-                    title: "Reset & Test PH Teaser",
-                    action: #selector(dockResetProductHuntTeaser),
-                    keyEquivalent: ""
-                )
-            )
-            menu.addItem(
-                NSMenuItem(
-                    title: "Reset & Test PH Launch Day",
-                    action: #selector(dockResetProductHuntLaunchDay),
+                    title: "Reset Announcements & Fetch",
+                    action: #selector(dockResetAnnouncements),
                     keyEquivalent: ""
                 )
             )
@@ -1340,34 +1343,38 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ChatWindowManager.shared.createWindow()
         }
 
-        /// Clear the teaser's seen flag, force the teaser phase regardless
-        /// of the UTC clock, and run the normal eligibility/presentation
-        /// path — including all onboarding/modal/active-work deferrals — so
-        /// the debug run exercises the production coordination. Dismissing
-        /// re-persists seen; pick this item again to test another pass.
-        @objc private func dockResetProductHuntTeaser() {
-            ProductHuntLaunchCampaign.shared.resetForDebugTesting(phase: .teaser)
-            debugReportProductHuntDeferral(presentProductHuntLaunchDialogIfEligible(), phase: .teaser)
-        }
-
-        /// Same as above for the launch-day dialog. The teaser's flag is
-        /// left alone so the teaser → launch-day handoff can be exercised.
-        @objc private func dockResetProductHuntLaunchDay() {
-            ProductHuntLaunchCampaign.shared.resetForDebugTesting(phase: .launch)
-            debugReportProductHuntDeferral(presentProductHuntLaunchDialogIfEligible(), phase: .launch)
+        /// Forget the seen flags of every cached announcement, force an
+        /// immediate refetch (bypassing the launch/activation throttles),
+        /// and run the normal eligibility/presentation path — including all
+        /// onboarding/modal/active-work deferrals — so the debug run
+        /// exercises the production coordination against the configured
+        /// router (point `ai.osaurus.router.baseURL` at staging to test a
+        /// draft campaign). Dismissing re-persists seen; pick this item
+        /// again to test another pass.
+        @objc private func dockResetAnnouncements() {
+            Task { @MainActor [weak self] in
+                let service = AnnouncementsService.shared
+                service.resetForDebugTesting()
+                await service.refreshIfDue(trigger: .debug)
+                // Seen flags of slugs that only arrived with this fetch.
+                service.resetForDebugTesting()
+                guard let self else { return }
+                self.debugReportAnnouncementDeferral(
+                    self.presentAnnouncementIfEligible(), cached: service.announcements.count)
+            }
         }
 
         /// The production presenter defers silently by design (the next
-        /// activation rechecks). For the dock test items that reads as
+        /// activation rechecks). For the dock test item that reads as
         /// "nothing happened", so name the gate in a toast + log. The
-        /// flag stays cleared, so fixing the blocker and picking the item
+        /// flags stay cleared, so fixing the blocker and picking the item
         /// again (or just re-activating the app) shows the dialog.
-        private func debugReportProductHuntDeferral(_ reason: String?, phase: ProductHuntLaunchCampaign.Phase) {
+        private func debugReportAnnouncementDeferral(_ reason: String?, cached: Int) {
             guard let reason else { return }
-            NSLog("[ProductHunt] \(phase.rawValue) dialog deferred: \(reason)")
+            NSLog("[Announcements] dialog deferred: \(reason) (\(cached) cached)")
             ToastManager.shared.warning(
-                "PH \(phase.rawValue) dialog deferred",
-                message: "\(reason). Resolve it and pick the dock item again, or re-activate the app.",
+                "Announcement deferred",
+                message: "\(reason) — \(cached) live on the router. Resolve it and pick the dock item again, or re-activate the app.",
                 timeout: 8
             )
         }
@@ -2285,7 +2292,7 @@ extension AppDelegate {
     /// `osaurus://open_from_hf?model=<org/repo>[&file=<path>]` — the link
     /// Hugging Face's "Use this model" menu generates for Osaurus; same
     /// handling as `huggingface://?model=…` (see `HuggingFaceModelDeepLink`).
-    fileprivate func handleOsaurusDeepLink(_ url: URL) {
+    func handleOsaurusDeepLink(_ url: URL) {
         if HuggingFaceModelDeepLink.matches(url) {
             handleHuggingFaceDeepLink(url)
             return
@@ -2558,11 +2565,11 @@ extension AppDelegate {
                         if wasFreshInstall {
                             self?.presentImportHistoryPromptIfEligible()
                         }
-                        // Fresh installs during the Product Hunt launch window
-                        // deferred the launch dialog behind onboarding; recheck
-                        // now that the chat window is up to host it. Its guard
-                        // defers again while the import prompt is on screen.
-                        self?.presentProductHuntLaunchDialogIfEligible()
+                        // Fresh installs deferred any live announcement behind
+                        // onboarding; recheck now that the chat window is up
+                        // to host it. Its guard defers again while the import
+                        // prompt is on screen.
+                        self?.presentAnnouncementIfEligible()
                     }
                 }
             )
@@ -2824,24 +2831,26 @@ extension AppDelegate {
     }
 }
 
-// MARK: - Product Hunt Launch Dialog
+// MARK: - Router Announcements Dialog
 extension AppDelegate {
-    /// Present whichever Product Hunt campaign dialog (pre-launch teaser or
-    /// launch-day reminder) the campaign's own gates resolve to — the
-    /// current UTC phase, never seen for that phase — AND nothing critical
-    /// is in progress. A blocked attempt does NOT consume eligibility — the
-    /// next launch/foreground activation or onboarding completion simply
-    /// rechecks while the phase remains open. On launch day the same
-    /// rechecks are what surface the second dialog to users who already
-    /// dismissed the teaser.
+    /// Present the first unseen router-served announcement (Product Hunt
+    /// launches, events, heads-ups — see `AnnouncementsService`) when its own
+    /// gates allow it AND nothing critical is in progress. A blocked attempt
+    /// does NOT consume eligibility — the next launch/foreground activation
+    /// or onboarding completion simply rechecks while the announcement is
+    /// still live on the router.
+    ///
+    /// Presents from the service's cache only; the launch and activation
+    /// call sites refresh the feed first (`refreshIfDue`), the chained
+    /// first-run dialogs just recheck.
     ///
     /// Returns `nil` when a dialog was presented, otherwise a short,
     /// developer-facing token naming the gate that deferred it. Production
-    /// callers ignore it; the DEBUG dock items surface it so a silent
+    /// callers ignore it; the DEBUG dock item surfaces it so a silent
     /// deferral is diagnosable instead of looking like a no-op.
     @MainActor
     @discardableResult
-    func presentProductHuntLaunchDialogIfEligible() -> String? {
+    func presentAnnouncementIfEligible() -> String? {
         // Headless keychain-free live-proof launches never show UI; the
         // keychain-free UI-proof mode (`OSAURUS_KEYCHAIN_FREE_SHOW_UI=1`)
         // does, and is how this dialog is exercised without a signed build.
@@ -2849,10 +2858,9 @@ extension AppDelegate {
             return "keychain-free headless mode"
         }
 
-        let campaign = ProductHuntLaunchCampaign.shared
-        guard let phase = campaign.eligiblePhase else {
-            if ProductHuntLaunchCampaign.isPostponed { return "campaign postponed" }
-            return campaign.isPresenting ? "already presenting" : "no eligible phase (outside window or already seen)"
+        let service = AnnouncementsService.shared
+        guard let announcement = service.eligibleAnnouncement else {
+            return service.isPresenting ? "already presenting" : "no eligible announcement (none live or all seen)"
         }
 
         // Defer instead of stacking: onboarding flow (fresh installs see the
@@ -2895,80 +2903,73 @@ extension AppDelegate {
 
         // Seen is persisted at presentation time, so even a force-quit while
         // the dialog is up can't make it reappear.
-        campaign.willPresent(phase)
-        FeatureTelemetry.productHuntLaunchDialogShown(phase: phase)
+        service.willPresent(announcement)
+        let slug = announcement.slug
+        FeatureTelemetry.announcementShown(slug: slug)
 
         // The dismiss button carries the cancel role so Escape and an outside
-        // click follow the same permanent-dismiss path. Alone (teaser) it
-        // renders in the primary style and also takes Return; on launch day
-        // it is promoted to the corner X.
-        let dismissButton = { (label: String) -> AlertButtonConfig in
-            .cancel(label) {
-                campaign.markSeen(phase)
-                FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "later")
-            }
+        // click follow the same permanent-dismiss path. With CTAs it is
+        // promoted to the corner X; alone it renders inline as the primary
+        // "Got it" and also takes Return.
+        let ctas = announcement.actionableCTAs
+        let dismissButton = AlertButtonConfig.cancel(ctas.isEmpty ? L("Got it") : L("Close")) {
+            service.markSeen(slug)
+            FeatureTelemetry.announcementClicked(slug: slug, action: "dismiss")
         }
 
-        let title: String
-        let message: String
-        let buttons: [AlertButtonConfig]
-        switch phase {
-        case .teaser:
-            // No launch page exists yet, so the teaser is acknowledge-only.
-            let countdown = ProductHuntLaunchCampaign.countdownDescription(from: Date())
-            title = L("A note from the Osaurus team")
-            message = L(
-                """
-                Thanks for using Osaurus. We believe everyone should be able to own their AI, and we're trying to make that as easy as possible.
-
-                We heard from a lot of you that not everyone has a high-end Mac. So we built Raptor: our model for agentic tasks that runs locally in under 4GB.
-
-                Raptor launches on Product Hunt in \(countdown). We'll remind you when it's live. Your support means a lot.
-                """
-            )
-            buttons = [dismissButton(L("Got it"))]
-        case .launch:
-            title = L("We're live on Product Hunt! 🥳")
-            message = L(
-                """
-                Raptor by Osaurus runs in less than 4GB, and is built for Macs with 16GB RAM or less.
-
-                We hope Osaurus is useful to you and if so, we need your support to share it with more people! A comment about what you like really helps.
-                """
-            )
-            // No "Maybe later" — later never comes. The cancel-role button is
-            // promoted to the corner X (`showsCloseButton`), leaving "Check
-            // it out" as the only inline (primary) action.
-            buttons = [
-                dismissButton(L("Close")),
-                .primary(L("Check it out")) {
-                    campaign.markSeen(phase)
-                    FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "launch")
-                    // `open` makes a synchronous XPC round-trip to
-                    // LaunchServices that can block for seconds while the
-                    // browser cold-launches and hang the main thread;
-                    // NSWorkspace is thread-safe, so fire it off main.
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+        // Primary-styled CTA first: the dialog accent-styles (and binds
+        // Return to) the first role-nil button.
+        let ordered = ctas.enumerated().sorted { lhs, rhs in
+            if lhs.element.isPrimary != rhs.element.isPrimary { return lhs.element.isPrimary }
+            return lhs.offset < rhs.offset
+        }
+        var buttons: [AlertButtonConfig] = [dismissButton]
+        var seenLabels: Set<String> = [dismissButton.title]
+        for (index, cta) in ordered {
+            guard let url = cta.resolvedURL else { continue }
+            // Button rows are keyed by title; a duplicate label would
+            // collapse two CTAs into one.
+            var label = cta.label
+            while !seenLabels.insert(label).inserted { label += " " }
+            buttons.append(
+                .primary(label) { [weak self] in
+                    service.markSeen(slug)
+                    FeatureTelemetry.announcementClicked(
+                        slug: slug, action: "cta", ctaKind: cta.kind, ctaIndex: index)
+                    if cta.isDeepLink {
+                        self?.handleOsaurusDeepLink(url)
+                    } else {
+                        // `open` makes a synchronous XPC round-trip to
+                        // LaunchServices that can block for seconds while
+                        // the browser cold-launches and hang the main
+                        // thread; NSWorkspace is thread-safe, so fire it
+                        // off main.
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
-                },
-            ]
+                })
         }
 
         let requestId = UUID()
         ThemedAlertCenter.shared.present(
             ThemedAlertRequest(
                 id: requestId,
-                title: title,
-                message: message,
-                headerImageNames: ["osaurus-thanks", "ph-cat"],
-                headerImageAccessibilityLabel: L(
-                    "Osaurus dinosaur and the Product Hunt kitty saying thank you"),
+                title: announcement.title,
+                message: nil,
+                showsHeaderIcon: false,
+                accessory: AnyView(
+                    AnnouncementDialogContent(
+                        body: announcement.body,
+                        imageURL: announcement.resolvedImageURL
+                    )
+                ),
                 buttons: buttons,
-                showsCloseButton: phase == .launch,
+                showsCloseButton: !ctas.isEmpty,
+                titleFontSize: 18,
                 width: 400,
                 onDismiss: {
-                    campaign.didDismiss()
+                    service.didDismiss()
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                 }
             ),
@@ -3051,7 +3052,7 @@ extension AppDelegate {
                     // Run the next first-run dialog (if any) straight after
                     // this one, so every modal is done before the deferred
                     // layout tour starts.
-                    self?.presentProductHuntLaunchDialogIfEligible()
+                    self?.presentAnnouncementIfEligible()
                 }
             ),
             scope: scope

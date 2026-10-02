@@ -6,6 +6,7 @@ struct RouterAccountUsageCenterView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var themeManager = ThemeManager.shared
     @StateObject private var model = RouterAccountUsageCenterViewModel()
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @State private var hasAppeared = false
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -72,6 +73,9 @@ struct RouterAccountUsageCenterView: View {
         .environment(\.theme, themeManager.currentTheme)
         .task {
             await model.refresh()
+        }
+        .onChange(of: accountService.usageRevision) { _, _ in
+            Task { await model.refreshUsageAfterBilledTurn() }
         }
         .onAppear {
             withAnimation(.easeOut(duration: 0.22).delay(0.04)) {

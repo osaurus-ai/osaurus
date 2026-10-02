@@ -65,6 +65,26 @@ actor OsaurusRouterAPIClient {
         try ensureOK(data: data, response: response)
     }
 
+    /// `GET /announcements?app_version=…` — the live community announcements.
+    /// Unauthenticated (onboarding users have no wallet yet) and IP
+    /// rate-limited; a 429 surfaces as `.rateLimited(retryAfter:)` so the
+    /// caller can back off. `appVersion` lets operators bound an
+    /// announcement to a build range, so always send it.
+    func announcements(appVersion: String?) async throws -> OsaurusRouterAnnouncementsResponse {
+        var queryItems: [URLQueryItem] = []
+        if let appVersion, !appVersion.isEmpty {
+            queryItems.append(URLQueryItem(name: "app_version", value: appVersion))
+        }
+        let url = try url(path: "/announcements", queryItems: queryItems)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        return try decoder.decode(OsaurusRouterAnnouncementsResponse.self, from: data)
+    }
+
     /// `timeout` bounds the request for callers that must answer quickly (the
     /// local `GET /credits/balance` endpoint); nil keeps the session default.
     func balance(timeout: TimeInterval? = nil) async throws -> OsaurusRouterBalanceResponse {
@@ -747,10 +767,14 @@ actor OsaurusRouterAPIClient {
     }
 
     /// Hosted search/contents are logged by the search layer with richer
-    /// facts; everything else on the Router is a control-plane call.
+    /// facts; everything else on the Router is a control-plane call. The
+    /// unauthenticated announcements feed and health probe carry no account
+    /// data (no wallet headers, no body) and are excluded like theme fetches
+    /// and the appcast.
     nonisolated static func shouldLogControlPlaneCall(path: String?) -> Bool {
         guard let path else { return true }
         return path != "/v1/search" && path != "/v1/contents"
+            && path != "/announcements" && path != "/health"
     }
 
     /// Plain-language purpose for a Router path, so the activity row reads

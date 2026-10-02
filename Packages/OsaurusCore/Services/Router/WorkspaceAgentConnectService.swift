@@ -15,7 +15,7 @@
 //  key validity is bound to attestation freshness).
 //
 //  Shared agents are also connected automatically: whenever a workspace
-//  roster is loaded (tab open, detail poll, launch/activation sweep), every
+//  roster arrives (sync-stream snapshot, roster refresh, tab open), every
 //  agent a teammate shared that isn't paired yet gets the handshake in the
 //  background, so "share once and it appears for everyone, ready to chat"
 //  holds without each member clicking Connect. Failures are recorded per
@@ -56,11 +56,10 @@ final class WorkspaceAgentConnectService: ObservableObject {
     /// view polls presence every 30 s; retrying a host that just failed on
     /// every poll would only spam an offline Mac.
     nonisolated static let autoConnectRetryInterval: TimeInterval = 2
-    /// Minimum spacing between full sweeps (launch, app activation, tab open).
+    /// Minimum spacing between full sweeps (Workspaces tab open).
     nonisolated static let sweepInterval: TimeInterval = 300
     private var lastSweep: Date?
     private var sweepInFlight = false
-    private var activationObserver: NSObjectProtocol?
 
     private struct ConnectFailure: LocalizedError {
         let message: String
@@ -74,18 +73,10 @@ final class WorkspaceAgentConnectService: ObservableObject {
     /// Injectable for tests.
     var client: OsaurusRouterAPIClient = .shared
 
-    init(observeAppActivation: Bool = true) {
-        guard observeAppActivation else { return }
-        activationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                await self?.sweepWorkspaces()
-            }
-        }
-    }
+    /// `observeAppActivation` is retained for call-site compatibility; the
+    /// activation sweep was removed (the roster store and sync stream drive
+    /// auto-connect), so there is nothing to observe.
+    init(observeAppActivation: Bool = true) {}
 
     private func scope(_ address: String, _ workspaceId: String?) -> String {
         guard let workspaceId else { return address.lowercased() }
@@ -237,8 +228,11 @@ final class WorkspaceAgentConnectService: ObservableObject {
         )
     }
 
-    /// Lists every workspace the user belongs to and auto-connects each
-    /// roster. Throttled; safe to call from launch, activation, and tab open.
+    /// Auto-connects every roster the chat store already holds. Throttled;
+    /// safe to call from tab open. Issues no Router requests of its own: the
+    /// sync stream and the roster store's refreshes both call `autoConnect`
+    /// with every fresh roster, so a self-fetching sweep was a second
+    /// `GET /workspaces` + per-workspace agents on every trigger.
     func sweepWorkspaces(force: Bool = false) async {
         guard OsaurusRouter.isEnabled, MasterKey.existsCached() else { return }
         guard !sweepInFlight else { return }
@@ -249,10 +243,8 @@ final class WorkspaceAgentConnectService: ObservableObject {
         defer { sweepInFlight = false }
         lastSweep = Date()
 
-        guard let workspaces = try? await client.listWorkspaces() else { return }
-        for workspace in workspaces {
-            guard let agents = try? await client.workspaceAgents(id: workspace.id) else { continue }
-            await autoConnect(workspaceId: workspace.id, agents: agents)
+        for roster in WorkspaceRosterStore.shared.rosters {
+            await autoConnect(workspaceId: roster.id, agents: roster.agents)
         }
     }
 

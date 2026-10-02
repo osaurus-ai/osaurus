@@ -940,9 +940,13 @@ struct FloatingInputCard: View {
             // than chip visibility because the chip stays hidden until a
             // balance has been fetched — this task is what performs that
             // first fetch, and it re-fires on the connectivity-recovery edge.
+            // Passive chrome: a balance fetched in the last five minutes is
+            // kept (the billed-summary frames keep it current between
+            // fetches), and every composer mounting at once shares one
+            // request.
             .task(id: creditsChipAvailable) {
                 if creditsChipAvailable {
-                    await accountService.refreshBalance()
+                    await accountService.refreshBalance(ifOlderThan: 300)
                 }
             }
             // Float the configuration-context error ABOVE the card as an
@@ -7393,6 +7397,12 @@ private struct WalletPopover: View {
             await accountService.refreshTransactions(reset: true)
             await accountService.refreshWebUsage(reset: true)
             await accountService.refreshWebSettings()
+        }
+        // A billed turn settled while the popover is open: refetch the
+        // activity rows. Only fires while this view is mounted, so a closed
+        // wallet costs nothing per turn.
+        .onChange(of: accountService.usageRevision) { _, _ in
+            Task { await accountService.refreshUsage(reset: true) }
         }
     }
 

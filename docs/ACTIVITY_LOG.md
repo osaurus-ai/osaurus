@@ -393,6 +393,8 @@ Network traffic without rows:
 - Agent Channel polling, gateway websockets and inbound message receipt
   (deliveries *out* are logged; reads are not).
 - Workspace / Secure Channel handshake, liveness and relay keep-alives.
+- The unauthenticated Osaurus Router announcements feed (`GET /announcements`)
+  and health probe: no wallet headers, no body, no account data.
 - Themes API fetches.
 - GitHub skill / plugin imports and plugin registry downloads.
 - Sandbox package downloads (`pip`, `npm`, `go`) inside the Linux VM.

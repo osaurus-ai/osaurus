@@ -77,6 +77,11 @@ struct CreditsView: View {
         .onChange(of: accountService.usage) { _, _ in
             Task { await reloadLedger() }
         }
+        // A billed turn settled while Credits is open: refetch the usage
+        // rows (debounced upstream). Fires only while this tab is mounted.
+        .onChange(of: accountService.usageRevision) { _, _ in
+            Task { await accountService.refreshUsage(reset: true) }
+        }
         .onChange(of: providerManager.isOsaurusRouterEnabled) { _, isEnabled in
             // Re-enabling while viewing Credits should populate balance/activity
             // immediately (the toggle action itself only reconnects the router).

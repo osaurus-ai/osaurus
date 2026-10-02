@@ -328,4 +328,242 @@ struct WorkspaceRosterStoreTests {
         store.apply(rosters: [ws1, ws2])
         #expect(box.calls.count == 3)
     }
+
+    // MARK: - Activation refresh budget
+
+    private final class CallLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var paths: [String] = []
+        func record(_ path: String) {
+            lock.lock()
+            paths.append(path)
+            lock.unlock()
+        }
+        func count(of path: String) -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return paths.filter { $0 == path }.count
+        }
+    }
+
+    /// A store over a stubbed Router that lists one workspace with one agent.
+    /// The agent is offline so the refresh's auto-connect pass (through the
+    /// shared connect service) has no candidate and never attempts a handshake.
+    private func makeNetworkedStore() throws -> (WorkspaceRosterStore, CallLog, () -> Void) {
+        let log = CallLog()
+        RosterURLProtocol.handler = { request in
+            let path = request.url?.path ?? "?"
+            log.record(path)
+            switch path {
+            case "/workspaces":
+                return (200, Data(#"{"data":[{"id":"ws-1","name":"Acme","role":"member","source":"subscription","active":true}]}"#.utf8))
+            case "/workspaces/ws-1/agents":
+                return (200, Data(#"{"data":[{"agent_address":"0xaa","display_name":"Research Agent","owner":{"account_id":"acct-1","wallet_address":"0xowner","display_name":"Alice"},"relay_url":"wss://relay.example","online":false,"last_seen":"2026-01-01T00:00:00Z","shared_at":"2026-01-01T00:00:00Z"}]}"#.utf8))
+            default:
+                return (404, Data(#"{"error":{"code":"NOT_FOUND","message":"nope"}}"#.utf8))
+            }
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RosterURLProtocol.self]
+        let client = OsaurusRouterAPIClient(
+            baseURL: try #require(URL(string: "https://router.test")),
+            session: URLSession(configuration: config),
+            authOverride: { request, _ in
+                request.setValue("0xabc", forHTTPHeaderField: "x-wallet-address")
+            }
+        )
+        let previous = UserDefaults.standard.object(forKey: OsaurusRouter.enabledDefaultsKey)
+        OsaurusRouter.setEnabled(true)
+        let store = WorkspaceRosterStore(client: client, observeAppActivation: false)
+        store.hasIdentity = { true }
+        let restore: () -> Void = {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: OsaurusRouter.enabledDefaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: OsaurusRouter.enabledDefaultsKey)
+            }
+        }
+        return (store, log, restore)
+    }
+
+    /// While the sync stream is verified, activation has nothing to add:
+    /// no `GET /workspaces`, no per-workspace agents fetch.
+    @Test func activationRefresh_isSkippedWhileSyncStreamVerified() async throws {
+        let (store, log, restore) = try makeNetworkedStore()
+        defer { restore() }
+        store.isSyncVerified = { true }
+
+        for _ in 0..<3 {
+            await store.refresh(reason: .activation)
+        }
+        #expect(log.paths.isEmpty)
+        #expect(store.rosters.isEmpty)
+
+        // Other reasons still run (one list + one agents call).
+        await store.refresh(reason: .manual)
+        #expect(log.count(of: "/workspaces") == 1)
+        #expect(log.count(of: "/workspaces/ws-1/agents") == 1)
+        #expect(store.rosters.map(\.id) == ["ws-1"])
+    }
+
+    /// Without a verified stream, activation refreshes at most every 15 min.
+    @Test func activationRefresh_withoutStream_isThrottledToFifteenMinutes() async throws {
+        let (store, log, restore) = try makeNetworkedStore()
+        defer { restore() }
+        #expect(WorkspaceRosterStore.activationRefreshInterval == 15 * 60)
+        store.isSyncVerified = { false }
+        var clock = Date(timeIntervalSince1970: 1_790_000_000)
+        store.now = { clock }
+
+        await store.refresh(reason: .activation)
+        #expect(log.count(of: "/workspaces") == 1)
+
+        for _ in 0..<14 {
+            clock = clock.addingTimeInterval(60)
+            await store.refresh(reason: .activation)
+        }
+        #expect(log.count(of: "/workspaces") == 1)
+
+        clock = clock.addingTimeInterval(61)
+        await store.refresh(reason: .activation)
+        #expect(log.count(of: "/workspaces") == 2)
+    }
+
+    /// Every fetched list is handed to the installed reconciler so the
+    /// Settings surface never fetches its own copy on the same trigger.
+    @Test func refresh_handsFetchedListToWorkspaceListReconciler() async throws {
+        let (store, log, restore) = try makeNetworkedStore()
+        defer { restore() }
+        let previous = WorkspaceRosterStore.workspaceListReconciler
+        defer { WorkspaceRosterStore.workspaceListReconciler = previous }
+
+        final class Box: @unchecked Sendable { var lists: [[String]] = [] }
+        let box = Box()
+        WorkspaceRosterStore.workspaceListReconciler = { box.lists.append($0.map(\.id)) }
+
+        await store.refresh(reason: .launch)
+        #expect(box.lists == [["ws-1"]])
+        #expect(log.count(of: "/workspaces") == 1)
+
+        WorkspaceRosterStore.workspaceListReconciler = nil
+        await store.refresh(reason: .manual)
+        #expect(box.lists.count == 1)
+    }
+
+    @Test func refresh_withoutIdentityOrRouter_makesNoRequest() async throws {
+        let (store, log, restore) = try makeNetworkedStore()
+        defer { restore() }
+
+        store.hasIdentity = { false }
+        await store.refresh(reason: .launch)
+        #expect(log.paths.isEmpty)
+
+        store.hasIdentity = { true }
+        OsaurusRouter.setEnabled(false)
+        await store.refresh(reason: .manual)
+        #expect(log.paths.isEmpty)
+    }
+}
+
+private final class RosterURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: (@Sendable (URLRequest) -> (Int, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        let (status, data) = handler(request)
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: "HTTP/1.1",
+            headerFields: ["content-type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+// MARK: - Sync stream policy
+
+@Suite("Workspace sync stream policy", .serialized)
+@MainActor
+struct WorkspaceSyncServicePolicyTests {
+    typealias Decision = WorkspaceSyncService.StreamDecision
+
+    @Test func stream_runsOnlyForKnownMembership() {
+        #expect(
+            WorkspaceSyncService.streamDecision(
+                wanted: true, routerEnabled: true, hasKnownMembership: true, alreadyProbed: false, hasIdentity: true
+            ) == .stream)
+        #expect(
+            WorkspaceSyncService.streamDecision(
+                wanted: true, routerEnabled: true, hasKnownMembership: true, alreadyProbed: true, hasIdentity: true
+            ) == .stream)
+    }
+
+    @Test func zeroWorkspaces_probesOncePerLaunchThenStaysOff() {
+        #expect(
+            WorkspaceSyncService.streamDecision(
+                wanted: true, routerEnabled: true, hasKnownMembership: false, alreadyProbed: false, hasIdentity: true
+            ) == .probe)
+        #expect(
+            WorkspaceSyncService.streamDecision(
+                wanted: true, routerEnabled: true, hasKnownMembership: false, alreadyProbed: true, hasIdentity: true
+            ) == .stop)
+        // No identity: nothing to sign the probe with.
+        #expect(
+            WorkspaceSyncService.streamDecision(
+                wanted: true, routerEnabled: true, hasKnownMembership: false, alreadyProbed: false, hasIdentity: false
+            ) == .stop)
+    }
+
+    @Test func notWantedOrRouterOff_stopsRegardlessOfMembership() {
+        #expect(
+            WorkspaceSyncService.streamDecision(
+                wanted: false, routerEnabled: true, hasKnownMembership: true, alreadyProbed: false, hasIdentity: true
+            ) == .stop)
+        #expect(
+            WorkspaceSyncService.streamDecision(
+                wanted: true, routerEnabled: false, hasKnownMembership: true, alreadyProbed: false, hasIdentity: true
+            ) == .stop)
+    }
+
+    @Test func membershipFlag_persistsAcrossInstances() {
+        let suite = "sync-membership-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let service = WorkspaceSyncService(defaults: defaults)
+        #expect(!service.hasKnownMembership)
+        service.noteMembership(hasWorkspaces: true)
+        #expect(service.hasKnownMembership)
+        #expect(defaults.bool(forKey: WorkspaceSyncService.membershipDefaultsKey))
+
+        // A relaunch reads the flag back without a probe.
+        #expect(WorkspaceSyncService(defaults: defaults).hasKnownMembership)
+
+        service.noteMembership(hasWorkspaces: false)
+        #expect(!WorkspaceSyncService(defaults: defaults).hasKnownMembership)
+        #expect(!service.isStreaming)
+    }
+
+    @Test func fallbackDelay_doublesFromTenSecondsToFiveMinutes() {
+        #expect(WorkspaceSyncService.fallbackInitialDelay == 10)
+        #expect(WorkspaceSyncService.fallbackMaxDelay == 300)
+        var delay = WorkspaceSyncService.fallbackInitialDelay
+        var schedule: [TimeInterval] = []
+        for _ in 0..<7 {
+            delay = WorkspaceSyncService.nextFallbackDelay(after: delay)
+            schedule.append(delay)
+        }
+        #expect(schedule == [20, 40, 80, 160, 300, 300, 300])
+        // A reset (any frame) restarts from the floor; sub-floor input clamps up.
+        #expect(WorkspaceSyncService.nextFallbackDelay(after: 0) == 10)
+        #expect(WorkspaceSyncService.nextFallbackDelay(after: 3) == 10)
+    }
 }

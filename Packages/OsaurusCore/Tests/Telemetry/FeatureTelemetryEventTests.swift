@@ -619,39 +619,42 @@ struct FeatureTelemetryEventTests {
         #expect(business(event.props).count == 1)
     }
 
-    // MARK: - Product Hunt launch dialog
+    // MARK: - Router announcements dialog
 
-    @Test func productHuntLaunchDialog_shown_and_clicked_shapes() {
+    @Test func announcement_shown_and_clicked_shapes() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        FeatureTelemetry.productHuntLaunchDialogShown(phase: .launch, service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(phase: .launch, action: "launch", service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(phase: .teaser, action: "later", service: service)
+        FeatureTelemetry.announcementShown(slug: "raptor-launch", service: service)
+        FeatureTelemetry.announcementClicked(
+            slug: "raptor-launch", action: "cta", ctaKind: "external_url", ctaIndex: 0, service: service
+        )
+        FeatureTelemetry.announcementClicked(slug: "raptor-launch", action: "dismiss", service: service)
 
         #expect(
             rec.events.map(\.name) == [
-                "product_hunt_launch_dialog_shown",
-                "product_hunt_launch_dialog_clicked",
-                "product_hunt_launch_dialog_clicked",
+                "announcement_shown",
+                "announcement_clicked",
+                "announcement_clicked",
             ]
         )
-        // Both events carry the campaign + phase tokens so the Raptor run
-        // is separable from the July 2026 launch (same event names, no
-        // props); clicked adds only the closed action token.
-        #expect(rec.events[0].props["campaign"] as? String == "raptor-2026-09")
-        #expect(rec.events[0].props["phase"] as? String == "launch")
-        #expect(business(rec.events[0].props).count == 2)
-        #expect(rec.events[1].props["campaign"] as? String == "raptor-2026-09")
-        #expect(rec.events[1].props["phase"] as? String == "launch")
-        #expect(rec.events[1].props["action"] as? String == "launch")
-        #expect(business(rec.events[1].props).count == 3)
-        #expect(rec.events[2].props["phase"] as? String == "teaser")
-        #expect(rec.events[2].props["action"] as? String == "later")
+        // The slug is the router-side campaign key; clicked adds the closed
+        // action token and, for CTAs, the kind + position of the button.
+        // Never the label/body/URL (operator-defined free text).
+        #expect(rec.events[0].props["slug"] as? String == "raptor-launch")
+        #expect(business(rec.events[0].props).count == 1)
+        #expect(rec.events[1].props["slug"] as? String == "raptor-launch")
+        #expect(rec.events[1].props["action"] as? String == "cta")
+        #expect(rec.events[1].props["cta_kind"] as? String == "external_url")
+        #expect(rec.events[1].props["cta_index"] as? Int == 0)
+        #expect(business(rec.events[1].props).count == 4)
+        #expect(rec.events[2].props["action"] as? String == "dismiss")
+        #expect(rec.events[2].props["cta_kind"] == nil)
+        #expect(business(rec.events[2].props).count == 2)
     }
 
-    @Test func productHuntLaunchDialog_events_drop_when_consent_declined() {
-        let suiteName = "feature-telemetry-ph-declined-\(UUID().uuidString)"
+    @Test func announcement_events_drop_when_consent_declined() {
+        let suiteName = "feature-telemetry-announcement-declined-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let recorder = Recorder()
@@ -664,8 +667,8 @@ struct FeatureTelemetryEventTests {
         service.markStartedForTesting()
         service.setEnabled(false)  // declined → drop
 
-        FeatureTelemetry.productHuntLaunchDialogShown(phase: .teaser, service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(phase: .teaser, action: "later", service: service)
+        FeatureTelemetry.announcementShown(slug: "raptor-launch", service: service)
+        FeatureTelemetry.announcementClicked(slug: "raptor-launch", action: "dismiss", service: service)
 
         #expect(recorder.events.isEmpty)
     }
