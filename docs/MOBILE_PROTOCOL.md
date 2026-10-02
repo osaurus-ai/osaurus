@@ -1097,6 +1097,15 @@ from its first bytes; `application/octet-stream` when unrecognised).
 `404 image_not_found` when the chat, turn or index doesn't exist,
 `400 invalid_image_path` for a malformed path. Owner-only.
 
+### 14.10 `DELETE /sessions/{id}`
+
+Deletes the chat for good, as the Mac's History Delete does: a run in it
+is cancelled, every window showing it moves to a fresh chat, and the row
+and its turns go. Archiving (§14.3) is the reversible alternative.
+`{"ok":true}` on success; `404 session_not_found` for an unknown id or a
+workspace chat served for a teammate (the chats §14.5 would ignore).
+Owner-only.
+
 ---
 
 ## 15. Workspace agents

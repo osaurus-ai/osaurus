@@ -1096,7 +1096,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
-            } else if head.method == .GET || head.method == .PATCH, path.hasPrefix("/sessions/") {
+            } else if [.GET, .PATCH, .DELETE].contains(head.method), path.hasPrefix("/sessions/") {
                 handleSessionEndpoint(
                     head: head,
                     context: context,
@@ -7042,7 +7042,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
-    /// GET /sessions/{id} and PATCH /sessions/{id}.
+    /// GET, PATCH and DELETE /sessions/{id}.
     private func handleSessionEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -7066,6 +7066,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers: headers,
                 body: #"{"error":"invalid_session_id"}"#
             )
+            return
+        }
+
+        if head.method == .DELETE {
+            let loop = context.eventLoop
+            let ctx = NIOLoopBound(context, eventLoop: loop)
+            let hop = Self.makeHop(channel: context.channel, loop: loop)
+            runRequestTask(priority: .userInitiated) {
+                let deleted = await MainActor.run { RemoteSessionContinuation.delete(sessionId) }
+                let status: HTTPResponseStatus = deleted ? .ok : .notFound
+                let json = deleted ? #"{"ok":true}"# : #"{"error":"session_not_found"}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: status,
+                        headers: headers,
+                        body: json
+                    )
+                    self.logRequest(
+                        method: "DELETE",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: json,
+                        responseStatus: Int(status.code),
+                        startTime: startTime
+                    )
+                }
+            }
             return
         }
 

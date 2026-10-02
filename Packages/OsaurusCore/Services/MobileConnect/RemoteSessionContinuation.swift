@@ -128,6 +128,15 @@ enum RemoteSessionContinuation {
         return .removed(removed)
     }
 
+    /// Deletes the chat for good, as the Mac's History Delete does
+    /// (docs/MOBILE_PROTOCOL.md §14.10). False for an unknown id or a chat
+    /// the phone may not continue (a teammate's).
+    static func delete(_ sessionId: UUID) -> Bool {
+        guard isContinuable(sessionId) else { return false }
+        ChatWindowManager.shared.deleteSession(id: sessionId)
+        return true
+    }
+
     /// Whether this session can be continued by the owner's phone. The
     /// owner's own chats qualify, as do the rows the phone itself created
     /// (hosted runs stamp a workspace context whose caller is the pairing
