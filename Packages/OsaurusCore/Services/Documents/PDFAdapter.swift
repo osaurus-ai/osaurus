@@ -109,32 +109,77 @@ public struct PDFAdapter: DocumentFormatAdapter {
         return pages
     }
 
-    private static func glyphs(
+    static func glyphs(
         from page: PDFPage,
         pageIndex: Int,
         text: String
     ) throws -> [PDFTableDetector.Glyph] {
         let nsText = text as NSString
-        let count = min(page.numberOfCharacters, nsText.length)
-        guard count > 0 else { return [] }
+        let characterCount = page.numberOfCharacters
+        guard nsText.length > 0, characterCount > 0 else { return [] }
 
         var glyphs: [PDFTableDetector.Glyph] = []
-        glyphs.reserveCapacity(count)
-        for index in 0 ..< count {
+        glyphs.reserveCapacity(nsText.length)
+        var index = 0
+        while index < nsText.length {
             try Task.checkCancellation()
-            let character = nsText.substring(with: NSRange(location: index, length: 1))
-            let bounds = page.characterBounds(at: index)
-            guard bounds.width.isFinite, bounds.height.isFinite else { continue }
+            let range = nsText.rangeOfComposedCharacterSequence(at: index)
+            index = NSMaxRange(range)
+            guard index <= characterCount,
+                let selection = page.selection(for: range),
+                selection.numberOfTextRanges(on: page) == 1,
+                Self.selectionRange(selection.range(at: 0, on: page), covers: range, in: nsText),
+                let character = selection.string,
+                character.utf16.elementsEqual(nsText.substring(with: range).utf16)
+            else { continue }
+
+            // Keep text and geometry from the same selection. Independently
+            // indexing page.string and characterBounds can associate text
+            // with another run's bounds. page.string also contains inserted
+            // separators; never repair a mismatch from flattened rows.
+            let bounds = selection.bounds(for: page)
+            guard bounds.origin.x.isFinite, bounds.origin.y.isFinite,
+                bounds.width.isFinite, bounds.height.isFinite,
+                !bounds.isNull, !bounds.isEmpty
+            else { continue }
             glyphs.append(
                 PDFTableDetector.Glyph(
                     pageIndex: pageIndex,
-                    characterIndex: index,
+                    characterIndex: range.location,
                     text: character,
                     bounds: bounds
                 )
             )
         }
         return glyphs
+    }
+
+    /// PDFKit can include an inserted line separator in a glyph's native
+    /// selection range. Accept that only when the range covers the entire
+    /// requested composed character and every extra source character is whitespace.
+    /// Text and bounds must still come from the same exact native selection.
+    static func selectionRange(_ selected: NSRange, covers requested: NSRange, in text: NSString) -> Bool {
+        guard requested.location != NSNotFound, requested.location >= 0, requested.length > 0,
+            requested.location < text.length, requested.length <= text.length - requested.location,
+            selected.location != NSNotFound, selected.location >= 0, selected.length > 0,
+            selected.location <= text.length, selected.length <= text.length - selected.location,
+            text.rangeOfComposedCharacterSequence(at: requested.location) == requested,
+            text.rangeOfComposedCharacterSequences(for: selected) == selected,
+            selected.location <= requested.location,
+            NSMaxRange(selected) >= NSMaxRange(requested)
+        else { return false }
+        // NSString's composed-range API treats CR and LF separately, unlike
+        // Swift Character. Do not admit a native extension that splits CRLF.
+        for boundary in [requested.location, NSMaxRange(requested), selected.location, NSMaxRange(selected)] {
+            if boundary > 0, boundary < text.length,
+                text.character(at: boundary - 1) == 13, text.character(at: boundary) == 10 {
+                return false
+            }
+        }
+        let prefix = NSRange(location: selected.location, length: requested.location - selected.location)
+        let suffix = NSRange(location: NSMaxRange(requested), length: NSMaxRange(selected) - NSMaxRange(requested))
+        return text.substring(with: prefix).allSatisfy(\.isWhitespace)
+            && text.substring(with: suffix).allSatisfy(\.isWhitespace)
     }
 
     private static func pageRepresentations(

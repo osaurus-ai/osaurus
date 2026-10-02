@@ -19,6 +19,9 @@ struct PDFTableDetector {
         let bounds: CGRect
 
         var midY: CGFloat { bounds.midY }
+        var characterRange: Range<Int> {
+            characterIndex ..< (characterIndex + text.utf16.count)
+        }
     }
 
     struct Row: Equatable {
@@ -28,9 +31,11 @@ struct PDFTableDetector {
         let cells: [Cell]
 
         var characterRange: Range<Int> {
-            let indexes = glyphs.map(\.characterIndex)
-            guard let min = indexes.min(), let max = indexes.max() else { return 0 ..< 0 }
-            return min ..< (max + 1)
+            let ranges = glyphs.map(\.characterRange)
+            guard let min = ranges.map(\.lowerBound).min(),
+                let max = ranges.map(\.upperBound).max()
+            else { return 0 ..< 0 }
+            return min ..< max
         }
     }
 
@@ -43,9 +48,11 @@ struct PDFTableDetector {
         let bounds: CGRect
 
         var characterRange: Range<Int> {
-            let indexes = glyphs.map(\.characterIndex)
-            guard let min = indexes.min(), let max = indexes.max() else { return 0 ..< 0 }
-            return min ..< (max + 1)
+            let ranges = glyphs.map(\.characterRange)
+            guard let min = ranges.map(\.lowerBound).min(),
+                let max = ranges.map(\.upperBound).max()
+            else { return 0 ..< 0 }
+            return min ..< max
         }
     }
 
@@ -56,9 +63,11 @@ struct PDFTableDetector {
         let bounds: CGRect
 
         var characterRange: Range<Int> {
-            let indexes = rows.flatMap(\.glyphs).map(\.characterIndex)
-            guard let min = indexes.min(), let max = indexes.max() else { return 0 ..< 0 }
-            return min ..< (max + 1)
+            let ranges = rows.flatMap(\.glyphs).map(\.characterRange)
+            guard let min = ranges.map(\.lowerBound).min(),
+                let max = ranges.map(\.upperBound).max()
+            else { return 0 ..< 0 }
+            return min ..< max
         }
     }
 
