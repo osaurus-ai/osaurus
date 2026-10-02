@@ -1086,7 +1086,7 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
                 } else if url.scheme == KnowledgeLinkResolver.scheme {
                     handleKnowledgeLink(url)
                 } else {
-                    NSWorkspace.shared.open(url)
+                    Self.openAsync(url)
                 }
                 return
             }
@@ -1117,8 +1117,22 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
             )
             return
         }
-        if !NSWorkspace.shared.open(fileURL) {
+        Self.openAsync(fileURL) {
             NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        }
+    }
+
+    /// Open a URL without blocking the main thread. The synchronous
+    /// `NSWorkspace.open(_:)` waits on a Launch Services round-trip until the
+    /// handler app finishes launching, which can hang the UI for seconds
+    /// when called from `mouseDown`. The completion-handler variant returns
+    /// immediately; `onFailure` (if any) runs on the main queue.
+    private static func openAsync(_ url: URL, onFailure: (@MainActor @Sendable () -> Void)? = nil) {
+        NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            guard error != nil, let onFailure else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { onFailure() }
+            }
         }
     }
 
@@ -1218,7 +1232,9 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
 
     @objc private func openKnowledgeDocument(_ sender: NSMenuItem) {
         guard let fileURL = sender.representedObject as? URL else { return }
-        NSWorkspace.shared.open(fileURL)
+        Self.openAsync(fileURL) {
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        }
     }
 
     @objc private func openKnowledgeDocumentWith(_ sender: NSMenuItem) {
