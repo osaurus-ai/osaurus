@@ -87,13 +87,24 @@ struct PrivacyRegionsSection: View {
             .buttonStyle(.plain)
             .localizedHelp("Remove this region. Its presets stay as they are.")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(theme.tertiaryBackground)
-                .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
-        )
+        .modifier(ChipChrome(theme: theme))
+    }
+
+    /// Shared capsule for region chips and the "Add region…" button so
+    /// the two sit at exactly the same height in the flow.
+    private struct ChipChrome: ViewModifier {
+        let theme: ThemeProtocol
+        func body(content: Content) -> some View {
+            content
+                .frame(height: 16)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(theme.tertiaryBackground)
+                        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
+                )
+        }
     }
 
     /// The chip reads "(detected)" while the list is still exactly the
@@ -110,12 +121,16 @@ struct PrivacyRegionsSection: View {
             showAddRegion = true
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "plus.circle.fill")
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .semibold))
                 Text("Add region…", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
             }
-            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(theme.accentColor)
+            .modifier(ChipChrome(theme: theme))
+            .contentShape(Capsule())
         }
-        .buttonStyle(SettingsButtonStyle(isPrimary: false))
+        .buttonStyle(.plain)
         .popover(isPresented: $showAddRegion, arrowEdge: .bottom) {
             PrivacyRegionPicker(excluded: Set(configuration.homeRegions)) { code in
                 configuration.addHomeRegion(code)
@@ -135,6 +150,9 @@ private struct PrivacyRegionPicker: View {
     let onPick: (String) -> Void
 
     @State private var query: String = ""
+    /// All candidate regions, built once on appear (≈250 locale
+    /// lookups) rather than on every keystroke / render.
+    @State private var entries: [Entry] = []
 
     private struct Entry: Identifiable {
         let code: String
@@ -143,9 +161,18 @@ private struct PrivacyRegionPicker: View {
         var id: String { code }
     }
 
-    private var trimmedQuery: String { query.trimmingCharacters(in: .whitespaces) }
+    /// Everything `body` needs, derived from `entries` + `query` in a
+    /// single pass so the list is filtered once per render.
+    private struct Buckets {
+        var detected: Entry?
+        var specific: [Entry] = []
+        var generic: [Entry] = []
+        var isEmpty: Bool { detected == nil && specific.isEmpty && generic.isEmpty }
+        var rowCount: Int { (detected == nil ? 0 : 1) + specific.count + generic.count }
+        var headerCount: Int { (detected == nil ? 0 : 1) + (specific.isEmpty ? 0 : 1) + (generic.isEmpty ? 0 : 1) }
+    }
 
-    private var matching: [Entry] {
+    private func buildEntries() -> [Entry] {
         PrivacyRulePresets.allISORegionCodes
             .filter { !excluded.contains($0) }
             .map {
@@ -155,28 +182,50 @@ private struct PrivacyRegionPicker: View {
                     presetCount: PrivacyRulePresets.presets(in: $0).count
                 )
             }
-            .filter { entry in
-                let q = trimmedQuery
-                guard !q.isEmpty else { return true }
-                return entry.name.localizedCaseInsensitiveContains(q)
-                    || entry.code.localizedCaseInsensitiveContains(q)
-            }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// The Mac's locale region, offered first when it isn't chosen yet
-    /// (e.g. the user removed it, or a migrated config never seeded it).
-    private var detected: Entry? {
-        guard trimmedQuery.isEmpty,
-            let code = PrivacyFilterConfiguration.regionCode(from: .current)
-        else { return nil }
-        return matching.first { $0.code == code }
+    private func bucket() -> Buckets {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let localeRegion = q.isEmpty ? PrivacyFilterConfiguration.regionCode(from: .current) : nil
+        var out = Buckets()
+        for entry in entries {
+            if !q.isEmpty,
+                !entry.name.localizedCaseInsensitiveContains(q),
+                !entry.code.localizedCaseInsensitiveContains(q)
+            {
+                continue
+            }
+            if entry.code == localeRegion {
+                // The Mac's locale region is offered first when it isn't
+                // chosen yet (removed, or a migrated config never seeded it).
+                out.detected = entry
+            } else if entry.presetCount > 0 {
+                out.specific.append(entry)
+            } else {
+                out.generic.append(entry)
+            }
+        }
+        return out
     }
 
-    private var specific: [Entry] { matching.filter { $0.presetCount > 0 && $0.code != detected?.code } }
-    private var generic: [Entry] { matching.filter { $0.presetCount == 0 && $0.code != detected?.code } }
+    private static let rowHeight: CGFloat = 26
+    private static let headerHeight: CGFloat = 24
+    private static let maxListHeight: CGFloat = 300
 
     var body: some View {
+        let buckets = bucket()
+        // Explicit height: a `fixedSize` ScrollView lays out at full
+        // content height and then gets clipped, which drew rows over the
+        // search field. Sizing from the row count keeps short result
+        // lists tight and long ones scrollable.
+        let listHeight = min(
+            Self.maxListHeight,
+            max(
+                Self.rowHeight,
+                CGFloat(buckets.rowCount) * Self.rowHeight + CGFloat(buckets.headerCount) * Self.headerHeight
+            )
+        )
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
@@ -194,36 +243,36 @@ private struct PrivacyRegionPicker: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
             )
 
-            // A plain VStack (not Lazy) so `fixedSize` can measure the
-            // content and the popover shrinks to a short result list
-            // instead of reserving the full height for three rows.
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    if let detected {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if let detected = buckets.detected {
                         header(L("Detected from your Mac"))
                         row(detected)
                     }
-                    if !specific.isEmpty {
+                    if !buckets.specific.isEmpty {
                         header(L("Country-specific presets"))
-                        ForEach(specific) { row($0) }
+                        ForEach(buckets.specific) { row($0) }
                     }
-                    if !generic.isEmpty {
+                    if !buckets.generic.isEmpty {
                         header(L("Generic coverage only"))
-                        ForEach(generic) { row($0) }
+                        ForEach(buckets.generic) { row($0) }
                     }
-                    if matching.isEmpty {
+                    if buckets.isEmpty {
                         Text("No regions match.", bundle: .module)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
-                            .padding(8)
+                            .frame(height: Self.rowHeight)
+                            .padding(.horizontal, 8)
                     }
                 }
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxHeight: 300)
+            .frame(height: listHeight)
         }
         .padding(10)
         .frame(width: 320)
+        .onAppear {
+            if entries.isEmpty { entries = buildEntries() }
+        }
     }
 
     private func header(_ text: String) -> some View {
@@ -231,8 +280,7 @@ private struct PrivacyRegionPicker: View {
             .font(.system(size: 9, weight: .semibold))
             .foregroundColor(theme.tertiaryText)
             .padding(.horizontal, 8)
-            .padding(.top, 6)
-            .padding(.bottom, 2)
+            .frame(height: Self.headerHeight, alignment: .bottomLeading)
     }
 
     private func row(_ entry: Entry) -> some View {
@@ -256,7 +304,7 @@ private struct PrivacyRegionPicker: View {
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .frame(height: Self.rowHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -209,30 +209,41 @@ public enum PrivacyRulePresets {
     }
 
     /// Global (region-less) presets, in catalogue order.
-    public static var globalPresets: [Preset] {
-        all.filter { $0.regionCode == nil }
-    }
+    public static let globalPresets: [Preset] = all.filter { $0.regionCode == nil }
 
-    /// Every region code that has at least one specific preset,
-    /// sorted by the current locale's display name.
-    public static var regionCodes: [String] {
-        let codes = Set(all.compactMap(\.regionCode))
-        return codes.sorted { regionDisplayName($0) < regionDisplayName($1) }
-    }
-
-    /// Presets for one region (not Global), sorted by kind then title.
-    public static func presets(in regionCode: String) -> [Preset] {
-        all.filter { $0.regionCode == regionCode }
-            .sorted {
+    /// Region → its presets sorted by kind then title. Built once; the
+    /// Rules tab asks for this per region per render, and the region
+    /// picker asks for ~250 regions per keystroke, so a linear filter
+    /// over the 200+ catalogue each call beachballed the UI.
+    private static let byRegion: [String: [Preset]] = {
+        var map: [String: [Preset]] = [:]
+        for preset in all {
+            guard let region = preset.regionCode else { continue }
+            map[region, default: []].append(preset)
+        }
+        for key in map.keys {
+            map[key]?.sort {
                 if $0.kind.sortOrder != $1.kind.sortOrder { return $0.kind.sortOrder < $1.kind.sortOrder }
                 return $0.name < $1.name
             }
+        }
+        return map
+    }()
+
+    /// Every region code that has at least one specific preset,
+    /// sorted by the current locale's display name.
+    public static let regionCodes: [String] =
+        byRegion.keys.sorted { regionDisplayName($0) < regionDisplayName($1) }
+
+    /// Presets for one region (not Global), sorted by kind then title.
+    public static func presets(in regionCode: String) -> [Preset] {
+        byRegion[regionCode] ?? []
     }
 
     /// Whether `regionCode` has country-specific (Tier 1/2) presets.
     /// Regions without any still get the Global generic fallbacks.
     public static func hasSpecificCoverage(_ regionCode: String) -> Bool {
-        all.contains { $0.regionCode == regionCode }
+        byRegion[regionCode] != nil
     }
 
     /// The preset ids that should be ON for a user whose home regions
@@ -265,8 +276,20 @@ public enum PrivacyRulePresets {
     /// Localized country / region name via the OS, e.g. "Germany".
     /// Falls back to the code itself when the OS has no name for it.
     public static func regionDisplayName(_ regionCode: String, locale: Locale = .current) -> String {
-        locale.localizedString(forRegionCode: regionCode) ?? regionCode
+        let key = locale.identifier + "|" + regionCode
+        displayNameLock.lock()
+        defer { displayNameLock.unlock() }
+        if let cached = displayNameCache[key] { return cached }
+        let name = locale.localizedString(forRegionCode: regionCode) ?? regionCode
+        displayNameCache[key] = name
+        return name
     }
+
+    /// `Locale.localizedString(forRegionCode:)` is a CFLocale lookup that
+    /// shows up in profiles once the picker asks for 250 names per
+    /// keystroke; the answer never changes for a (locale, code) pair.
+    private static let displayNameLock = NSLock()
+    nonisolated(unsafe) private static var displayNameCache: [String: String] = [:]
 
     /// Regional-indicator flag emoji for an alpha-2 code ("US" → 🇺🇸).
     public static func regionFlag(_ regionCode: String) -> String {
@@ -284,11 +307,10 @@ public enum PrivacyRulePresets {
     /// Every ISO 3166-1 alpha-2 region the OS knows about, excluding
     /// the macro-regions (`001`, `150`, …) and the "unknown" code, so
     /// the region picker lists countries only.
-    public static var allISORegionCodes: [String] {
+    public static let allISORegionCodes: [String] =
         Locale.Region.isoRegions
-            .map(\.identifier)
-            .filter { $0.count == 2 && $0 != "ZZ" && $0.allSatisfy(\.isLetter) }
-    }
+        .map(\.identifier)
+        .filter { $0.count == 2 && $0 != "ZZ" && $0.allSatisfy(\.isLetter) }
 
     // MARK: - Shared regex fragments
 
