@@ -211,15 +211,23 @@ struct MLXBatchAdapter {
         // `diffusionMaxDenoisingSteps`. So a non-nil runtime value here is
         // always something the user deliberately chose, and deliberate choices
         // outrank a bundle's suggestion. Per-request still wins over both.
+        let resolvedMaxTokens: Int = {
+            let inherited = runtimeMaxTokens ?? modelDefaults.maxTokens ?? generation.maxTokens
+            if generation.admissionOutputTokensAreImplicit {
+                // A synthesized delegated cap only tightens inherited defaults.
+                // It must not replace a smaller saved or model output limit.
+                return min(generation.maxTokens, inherited)
+            }
+            // Actual agent/API requests retain priority over saved defaults.
+            return generation.maxTokensExplicit ? generation.maxTokens : inherited
+        }()
         let resolved = EffectiveGenerationSettings(
             stage: stage,
             temperature: generation.temperature
                 ?? runtimeTemperature
                 ?? defaultTemperature
                 ?? engineDefaults.temperature,
-            maxTokens: generation.maxTokensExplicit
-                ? generation.maxTokens
-                : (runtimeMaxTokens ?? modelDefaults.maxTokens ?? generation.maxTokens),
+            maxTokens: resolvedMaxTokens,
             topP: generation.topPOverride ?? runtimeTopP ?? modelDefaults.topP ?? engineDefaults.topP,
             topK: generation.topKOverride ?? runtimeTopK ?? modelDefaults.topK ?? engineDefaults.topK,
             minP: generation.minPOverride ?? runtimeMinP ?? modelDefaults.minP ?? engineDefaults.minP,
