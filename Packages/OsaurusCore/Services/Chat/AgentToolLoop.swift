@@ -175,11 +175,6 @@ enum AgentLoopModelStep {
     /// and because the announcement is a preamble rather than an answer, the
     /// retry's tool call reads as the natural continuation of it.
     case announcedToolCall
-    /// The stream consumer cut the turn short because the model collapsed
-    /// into a phrase-repetition loop. Recoverable once: the repeat is a
-    /// decoding failure, not an answer, so ending here would present a wall
-    /// of the same sentence as the response.
-    case repetitionLoop(phrase: String?)
     /// The turn ended by asking the user for permission to carry on ("would
     /// you like me to continue?") instead of carrying on. Only a stall when
     /// tracked work is still pending — the driver checks that before
@@ -218,16 +213,8 @@ enum AgentLoopModelStep {
         unclosedReasoning: Bool = false,
         requiresVisibleFinalResponse: Bool,
         toolsWereOffered: Bool = false,
-        content: String? = nil,
-        repetitionLoopPhrase: String? = nil
+        content: String? = nil
     ) -> Self {
-        // Checked before `stopReason`: the consumer stopped reading, so the
-        // reported terminal reason describes a stream nobody finished. A
-        // repeated sentence is never a usable answer regardless of how the
-        // generation would otherwise have ended.
-        if let repetitionLoopPhrase {
-            return .repetitionLoop(phrase: repetitionLoopPhrase.isEmpty ? nil : repetitionLoopPhrase)
-        }
         if stopReason == "length" {
             return .lengthExhausted
         }
@@ -1168,8 +1155,8 @@ enum AgentToolLoop {
         /// A streamed tool envelope repeatedly hit the model output ceiling
         /// before becoming executable.
         case truncatedToolCallExhausted
-        /// The model degenerated into a phrase-repetition loop and the bounded
-        /// retry did not recover it.
+        /// Legacy diagnostic value retained for existing consumers. Content
+        /// repetition no longer cancels generation or starts a recovery retry.
         case repetitionLoopExhausted
         /// Bounded recovery could not turn reasoning-only/unclosed output into
         /// a user-visible final answer.
@@ -1220,6 +1207,7 @@ enum AgentToolLoop {
         var emptyTurn: Int = 0
         var announcedToolCall: Int = 0
         var continuationRequest: Int = 0
+        /// Legacy telemetry field; no content-repetition recovery is emitted.
         var repetitionLoop: Int = 0
         var incompleteReasoning: Int = 0
 
@@ -1382,26 +1370,6 @@ enum AgentToolLoop {
             + "something only the user can decide, call `clarify` with the specific question "
             + "instead of asking in prose."
     }
-
-    /// One retry. A model that degenerated once usually degenerates again,
-    /// and each attempt costs the user real wall-clock time.
-    static let maxRepetitionLoopRetries = 1
-
-    static func repetitionLoopNotice(phrase: String?) -> String {
-        let quoted = phrase.map { " (\"\($0)\")" } ?? ""
-        return
-            "[System Notice] Your previous turn repeated the same sentence\(quoted) over and over "
-            + "and was stopped. Repeating a plan is not progress. Do exactly ONE concrete thing "
-            + "now: emit a single tool call, or state plainly what is blocking you. Do not restate "
-            + "what you are about to do."
-    }
-
-    /// Shown when the retry degenerates too. Honest about what happened
-    /// rather than leaving a wall of repeated text as the answer.
-    static let repetitionLoopFallback =
-        "The model got stuck repeating itself and the response was stopped. "
-        + "This usually means the task is too large for one turn — try narrowing it to a single "
-        + "step, or switch to a different model."
 
     static let emptyToolTaskFallback =
         "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
@@ -2459,8 +2427,6 @@ enum AgentToolLoop {
         // Consecutive announce-only turns (visible "let me…" preamble, no
         // call). Reset by any productive turn, for the same reason.
         var consecutiveAnnouncedToolCalls = 0
-        // Total repetition-loop recoveries this run.
-        var repetitionLoopRetries = 0
         // Consecutive "shall I continue?" hand-backs this run.
         var consecutiveContinuationRequests = 0
         // Total (not merely consecutive) reasoning-only recovery attempts.
@@ -2490,7 +2456,6 @@ enum AgentToolLoop {
                         emptyTurn: totalEmptyTurnRetries,
                         announcedToolCall: totalAnnouncedToolCallRetries,
                         continuationRequest: totalContinuationRequestRetries,
-                        repetitionLoop: repetitionLoopRetries,
                         incompleteReasoning: incompleteReasoningRetries)))
         }
 
@@ -2823,17 +2788,6 @@ enum AgentToolLoop {
                 // on once we have tried twice.
                 await recordExit(.finalResponse, .continuationRequestRecoveryExhausted)
                 return RunResult(exit: .finalResponse, iterations: iteration)
-
-            case .repetitionLoop(let phrase):
-                repetitionLoopRetries += 1
-                if repetitionLoopRetries <= Self.maxRepetitionLoopRetries {
-                    replaceStateNotice(Self.repetitionLoopNotice(phrase: phrase))
-                    // Not charged against the tool-iteration budget.
-                    iteration -= 1
-                    continue
-                }
-                await hooks.emitFallbackText?(Self.repetitionLoopFallback)
-                return RunResult(exit: .repetitionLoopExhausted, iterations: iteration)
 
             case .lengthExhausted:
                 // `stop=length` is authoritative. Do not mislabel a

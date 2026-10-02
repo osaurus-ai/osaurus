@@ -1065,52 +1065,64 @@ struct AgentToolLoopTests {
         #expect(AgentToolLoop.continuationRequestNotice(pending: 1).contains("1 item remains"))
     }
 
-    /// The stream consumer's cut is authoritative — it stopped reading, so
-    /// whatever terminal reason the runtime reports describes a generation
-    /// nobody finished. A wall of one repeated sentence is never an answer.
-    @Test func repetitionLoopOutranksTheReportedStopReason() {
-        for stopReason in ["stop", "length", nil] {
-            let step = AgentLoopModelStep.classifyTerminal(
+    /// Repetition can be requested data: quotes, code and fixture rows are
+    /// not grounds to override the runtime's terminal reason or retry a turn.
+    @Test func repeatedVisibleDataKeepsTheAuthoritativeTerminalReason() async throws {
+        let line = "The north gate remains open.\n"
+        let payloads = [
+            String(repeating: line, count: 20),
+            String(repeating: "> " + line, count: 20),
+            "~~~text\n" + String(repeating: line, count: 20) + "~~~",
+            "```text\n" + String(repeating: line, count: 20) + "```",
+            "| Status |\n| --- |\n" + String(repeating: "| unchanged |\n", count: 20),
+        ]
+        for content in payloads {
+            let completed = AgentLoopModelStep.classifyTerminal(
                 contentIsBlank: false,
-                thinkingIsBlank: true,
-                stopReason: stopReason,
-                requiresVisibleFinalResponse: false,
+                thinkingIsBlank: false,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: true,
                 toolsWereOffered: true,
-                content: "Let me continue:",
-                repetitionLoopPhrase: "let me continue"
+                content: content
             )
-            guard case .repetitionLoop(let phrase) = step else {
-                Issue.record("a cut stream must classify as a loop (stop=\(stopReason ?? "nil"))")
-                return
+            guard case .finalResponse = completed else {
+                Issue.record("requested repeated data must respect natural stop")
+                continue
             }
-            #expect(phrase == "let me continue")
-        }
-    }
+            for policy in [chatPolicy(), headlessPolicy()] {
+                let surface = ScriptedLoopSurface(steps: [completed, .emptyResponse])
+                let result = try await AgentToolLoop.run(
+                    policy: policy, state: AgentTaskState(), hooks: surface.makeHooks()
+                )
+                #expect(result.exit == .finalResponse)
+                #expect(result.iterations == 1)
+                #expect(surface.steps.count == 1, "no extra generation for repeated data")
+                #expect(surface.builtNotices == [[]], "no injected repetition instruction")
+                #expect(surface.emittedFinalTexts.isEmpty, "no fake task-size fallback")
+                #expect(surface.executedCalls.isEmpty)
+            }
 
-    /// Turns the consumer did not cut are unaffected.
-    @Test func absentRepetitionPhraseLeavesClassificationUnchanged() {
-        let step = AgentLoopModelStep.classifyTerminal(
-            contentIsBlank: false,
-            thinkingIsBlank: true,
-            stopReason: "stop",
-            requiresVisibleFinalResponse: false,
-            toolsWereOffered: true,
-            content: "All ten documents are loaded."
-        )
-        guard case .finalResponse = step else {
-            Issue.record("an ordinary turn must not be treated as a loop")
-            return
+            let capped = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: false,
+                stopReason: "length",
+                requiresVisibleFinalResponse: true,
+                toolsWereOffered: true,
+                content: content
+            )
+            guard case .lengthExhausted = capped else {
+                Issue.record("an explicit output limit must remain authoritative")
+                continue
+            }
+            let surface = ScriptedLoopSurface(steps: [capped, .finalResponse])
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(), state: AgentTaskState(), hooks: surface.makeHooks()
+            )
+            #expect(result.exit == .lengthExhausted)
+            #expect(surface.steps.count == 1, "a capped turn must not silently retry")
+            #expect(surface.builtNotices == [[]])
+            #expect(surface.emittedFinalTexts == [AgentToolLoop.lengthExhaustedFallback])
         }
-    }
-
-    /// The notice has to name the repeated phrase — a generic "you repeated
-    /// yourself" gives a small model nothing to steer away from.
-    @Test func repetitionNoticeNamesThePhraseAndDemandsOneAction() {
-        let notice = AgentToolLoop.repetitionLoopNotice(phrase: "let me continue")
-        #expect(notice.contains("let me continue"))
-        #expect(notice.contains("exactly ONE concrete thing"))
-        // Degrades cleanly when the phrase was not captured.
-        #expect(!AgentToolLoop.repetitionLoopNotice(phrase: nil).contains("(\"\")"))
     }
 
     @Test func recoveryIdempotencyOrdinalDistinguishesLogicalReplayOnly() {
