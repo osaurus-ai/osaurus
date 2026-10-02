@@ -7743,13 +7743,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             // Resolve the agent the client expects to talk to. Any agent with
             // a derived identity can hold sessions; access control happens on
-            // the inner request's Bearer, not here.
+            // the inner request's Bearer, not here. The Mac's own connect
+            // identity also answers, so a phone paired to a Mac with only the
+            // built-in agent still has a channel (`MobileConnectIdentity`).
             let wanted = hello.agentAddress.lowercased()
             let agents = await MainActor.run { AgentManager.shared.agents }
-            guard
-                let agent = agents.first(where: { $0.agentAddress?.lowercased() == wanted }),
-                let agentKeyPath = agent.agentKeyPath
-            else {
+            let agentKeyPath = agents.first(where: { $0.agentAddress?.lowercased() == wanted })?.agentKeyPath
+            guard agentKeyPath != nil || MobileConnectIdentity.address() == wanted else {
                 reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
                 return
             }
@@ -7757,6 +7757,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let result: (session: SecureChannelSession, serverHello: SecureChannel.ServerHello)
             do {
                 result = try SecureChannel.establishServerSession(hello: hello) { transcript in
+                    guard let agentKeyPath else {
+                        let signature = try MobileConnectIdentity.withPrivateKey {
+                            try signSecureChannelPayload(transcript, privateKey: $0)
+                        }
+                        guard let signature else { throw OsaurusIdentityError.keychainReadFailed }
+                        return signature
+                    }
                     let signContext = LAContext()
                     signContext.touchIDAuthenticationAllowableReuseDuration = 300
                     signContext.interactionNotAllowed = true
@@ -8908,6 +8915,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let relayEnabled = await MainActor.run {
                 Set(agents.map(\.id).filter { RelayTunnelManager.shared.isTunnelEnabled(for: $0) })
             }
+            // The owner's phone pins the Mac's connect identity under the
+            // built-in agent, which has no address of its own. Without it, a
+            // Mac with no custom agents leaves the phone no Secure Channel.
+            // With one, the phone rides that agent's channel instead, which
+            // the relay can carry too (`MobilePairingService.connectEntry`).
+            let needsConnectIdentity = ownerCaller && !agents.contains { !$0.isBuiltIn && $0.agentAddress != nil }
+            let connectAddress = needsConnectIdentity ? MobileConnectIdentity.address() : nil
             let items = agents.map { agent in
                 let modelId = effectiveModels[agent.id] ?? agent.defaultModel
                 let supportsVision = modelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
@@ -8928,7 +8942,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     memory_entry_count: memoryCounts[agent.id.uuidString] ?? 0,
                     created_at: formatter.string(from: agent.createdAt),
                     updated_at: formatter.string(from: agent.updatedAt),
-                    address: agent.agentAddress?.lowercased(),
+                    address: agent.id == Agent.defaultId ? connectAddress : agent.agentAddress?.lowercased(),
                     relay_url: relayEnabled.contains(agent.id)
                         ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
                     ,

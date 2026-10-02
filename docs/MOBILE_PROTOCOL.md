@@ -809,6 +809,15 @@ key as the Bearer inside the Secure Channel. `GET /agents` and
 pairing can be learned; fetch the roster **inside** the Secure Channel of an
 already-pinned agent so the new addresses are authenticated.
 
+The built-in Default agent has no address of its own, so the payload also
+lists it with the Mac's **connect identity**: a key derived from the master
+under the `osaurus-connect-v1` domain (device-scoped), accepted only by
+`POST /secure/session`. `GET /agents` reports the same address for the
+built-in agent to the owner's phone. Without it, a Mac with no custom agents
+left the phone nothing to pin, and every run went out as plaintext and was
+refused with `426 secure_channel_required`. The connect identity is never
+relayed.
+
 ### 11.4 Lifecycle
 
 - Keys last 90 days; re-pair to renew. Unpair on the Mac revokes the key
