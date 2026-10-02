@@ -174,6 +174,11 @@ struct SettingsSearchSelfFindProbe {
             ("Per-Provider", "privacy.filter.providers"),
             ("Forget Redactions in Every Conversation", "privacy.filter.forget"),
             ("Require Review for Background Requests", "privacy.filter.nonInteractive"),
+            ("Detection Patterns", "privacy.rules.detectionPatterns"),
+            ("My Regions", "privacy.rules.regions"),
+            ("Preset Rules", "privacy.rules.presets"),
+            ("Custom Rules", "privacy.rules.custom"),
+            ("Test Your Rules", "privacy.rules.test"),
             ("Detection Models", "privacy.models"),
             // Privacy → Activity Log (retention + content policy for Insights).
             ("Keep Activity History", "privacy.activityLog.retention"),

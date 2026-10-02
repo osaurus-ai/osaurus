@@ -1491,6 +1491,70 @@ public enum SettingsSearchIndex {
             subTab: "overview"
         ),
         .init(
+            id: "privacy.rules.detectionPatterns",
+            tab: .privacy,
+            section: "Rules",
+            title: "Detection Patterns",
+            keywords: [
+                "detection patterns", "built-in patterns", "phone numbers", "international phone", "email addresses",
+                "urls", "account numbers", "credit card", "luhn", "regex layer",
+            ],
+            subTab: "rules",
+            disambiguation:
+                "Privacy → Rules → Detection Patterns. Per-category switches for the built-in regex detectors (phone, email, URL, card numbers). National ID formats such as SSN, NINO or Aadhaar live under Preset Rules, not here."
+        ),
+        .init(
+            id: "privacy.rules.regions",
+            tab: .privacy,
+            section: "Rules",
+            title: "My Regions",
+            keywords: [
+                "my regions", "region", "country", "locale", "home region", "add region", "remove region",
+                "detected region", "which country", "international", "country presets",
+            ],
+            subTab: "rules",
+            disambiguation:
+                "Privacy → Rules → My Regions. The countries whose ID / tax / health / bank number presets are on by default. Adding a region enables its presets; removing one never disables anything. Not the Preset Rules list itself and not the app language."
+        ),
+        .init(
+            id: "privacy.rules.presets",
+            tab: .privacy,
+            section: "Rules",
+            title: "Preset Rules",
+            keywords: [
+                "preset rules", "presets", "country", "national id", "passport", "ssn", "social security",
+                "nino", "aadhaar", "iban", "tax id", "vat", "driver's licence", "health number", "bank account",
+                "api key", "secret", "aws key", "github token", "enable all", "disable all", "ip address",
+                "bitcoin", "ethereum",
+            ],
+            subTab: "rules",
+            disambiguation:
+                "Privacy → Rules → Preset Rules. Ready-made patterns grouped My regions → Global → Other regions, each with Enable all / Disable all and a per-row switch. Not My Regions (which picks the countries) and not Custom Rules (which you write yourself)."
+        ),
+        .init(
+            id: "privacy.rules.custom",
+            tab: .privacy,
+            section: "Rules",
+            title: "Custom Rules",
+            keywords: [
+                "custom rules", "add rule", "regex", "pattern", "placeholder", "codename", "customer id",
+                "rule builder", "my own pattern",
+            ],
+            subTab: "rules",
+            disambiguation:
+                "Privacy → Rules → Custom Rules. User-written patterns (regex or builder) with their own placeholder label. Not Preset Rules (ready-made, per country)."
+        ),
+        .init(
+            id: "privacy.rules.test",
+            tab: .privacy,
+            section: "Rules",
+            title: "Test Your Rules",
+            keywords: [
+                "test rules", "dry run", "preview redaction", "try sample", "what gets redacted", "tester",
+            ],
+            subTab: "rules"
+        ),
+        .init(
             id: "privacy.models",
             tab: .privacy,
             section: "Models",

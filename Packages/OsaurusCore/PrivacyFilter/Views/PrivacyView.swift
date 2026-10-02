@@ -86,7 +86,6 @@ struct PrivacyView: View {
     @State private var configuration: PrivacyFilterConfiguration = PrivacyFilterStore.snapshot()
     @State private var hasAppeared = false
     @State private var forgetActionMessage: String?
-    @State private var presetsExpanded = false
     @State private var customRuleEditorContext: CustomRuleEditorContext?
     @State private var selectedTab: PrivacyTab = .overview
 
@@ -230,7 +229,6 @@ struct PrivacyView: View {
                 save: save,
                 saveDebounced: saveDebounced,
                 isModelReady: isModelReady,
-                presetsExpanded: $presetsExpanded,
                 customRuleEditorContext: $customRuleEditorContext,
                 onDeleteCustomRule: deleteCustomRule(id:),
                 onToggleCustomRule: setCustomRuleEnabled(id:enabled:)
@@ -981,7 +979,6 @@ private struct PrivacyRulesTab: View {
     /// when it's installed + loaded (otherwise it previews the regex
     /// layer alone).
     let isModelReady: Bool
-    @Binding var presetsExpanded: Bool
     @Binding var customRuleEditorContext: CustomRuleEditorContext?
     let onDeleteCustomRule: (UUID) -> Void
     let onToggleCustomRule: (UUID, Bool) -> Void
@@ -989,7 +986,8 @@ private struct PrivacyRulesTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             detectionPatternsSection
-            presetRulesSection
+            PrivacyRegionsSection(configuration: $configuration, save: save)
+            PrivacyPresetRulesSection(configuration: $configuration, saveDebounced: saveDebounced)
             customRulesSection
             PrivacyDryRunTester(configuration: configuration, isModelReady: isModelReady)
         }
@@ -998,7 +996,7 @@ private struct PrivacyRulesTab: View {
     // MARK: Detection patterns
 
     private var detectionPatternsSection: some View {
-        SettingsSection(title: L("Detection Patterns"), icon: "ruler") {
+        SettingsSection(title: L("Detection Patterns"), icon: "ruler", anchorId: "privacy.rules.detectionPatterns") {
             VStack(alignment: .leading, spacing: 10) {
                 Text(
                     "Built-in deterministic detectors run alongside the on-device model. Turning a category off stops Osaurus from flagging it AND from blocking sends when it leaks past redaction.",
@@ -1012,7 +1010,9 @@ private struct PrivacyRulesTab: View {
                 builtinPatternToggle(
                     category: .phone,
                     title: L("Phone numbers"),
-                    description: L("US-style 10–12 digit phone numbers, with or without separators.")
+                    description: L(
+                        "International phone numbers: +country-code, national 0-prefixed, and North American formats."
+                    )
                 )
                 builtinPatternToggle(
                     category: .email,
@@ -1027,7 +1027,9 @@ private struct PrivacyRulesTab: View {
                 builtinPatternToggle(
                     category: .accountNumber,
                     title: L("Account numbers"),
-                    description: L("US Social Security numbers and Luhn-valid credit card numbers.")
+                    description: L(
+                        "Luhn-valid credit and debit card numbers. National ID numbers are in Preset Rules."
+                    )
                 )
             }
         }
@@ -1051,108 +1053,10 @@ private struct PrivacyRulesTab: View {
         )
     }
 
-    // MARK: Preset rules
-
-    private var presetRulesSection: some View {
-        SettingsSection(title: L("Preset Rules"), icon: "books.vertical.fill") {
-            VStack(alignment: .leading, spacing: 0) {
-                presetsHeaderRow
-                if presetsExpanded {
-                    Divider()
-                        .padding(.vertical, 8)
-                    VStack(spacing: 10) {
-                        ForEach(PrivacyRulePresets.all) { preset in
-                            presetRow(preset)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var presetsHeaderRow: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                presetsExpanded.toggle()
-            }
-        } label: {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(
-                        "Opt-in patterns for common secrets and IDs.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-
-                    Text(
-                        "All disabled by default. Enable individually — Osaurus will redact matches and block sends that leak them.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Text(verbatim: "\(enabledPresetCount)/\(PrivacyRulePresets.all.count)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                Image(systemName: presetsExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var enabledPresetCount: Int {
-        PrivacyRulePresets.all.filter { configuration.isPresetEnabled($0.id) }.count
-    }
-
-    private func presetRow(_ preset: PrivacyRulePresets.Preset) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(LocalizedStringKey(presetTitleKey(preset.id)), bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    PrivacyCategoryBadge(category: preset.category)
-                }
-                Text(LocalizedStringKey(presetDescriptionKey(preset.id)), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(verbatim: preset.sample)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer()
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { configuration.isPresetEnabled(preset.id) },
-                    set: { newValue in
-                        configuration.presetRules[preset.id] = newValue
-                        saveDebounced()
-                    }
-                )
-            )
-            .labelsHidden()
-            .toggleStyle(.switch)
-        }
-        .settingsRowChrome()
-    }
-
-    private func presetTitleKey(_ id: String) -> String { "privacy.presets.\(id).title" }
-    private func presetDescriptionKey(_ id: String) -> String { "privacy.presets.\(id).description" }
-
     // MARK: Custom rules
 
     private var customRulesSection: some View {
-        SettingsSection(title: L("Custom Rules"), icon: "wand.and.rays") {
+        SettingsSection(title: L("Custom Rules"), icon: "wand.and.rays", anchorId: "privacy.rules.custom") {
             VStack(alignment: .leading, spacing: 10) {
                 Text(
                     "Catch internal codenames, customer IDs, or anything the built-ins miss. Build a rule with no regex, or write your own pattern.",
@@ -1290,7 +1194,7 @@ private struct PrivacyDryRunTester: View {
     @State private var isRunning: Bool = false
 
     var body: some View {
-        SettingsSection(title: L("Test Your Rules"), icon: "play.circle.fill") {
+        SettingsSection(title: L("Test Your Rules"), icon: "play.circle.fill", anchorId: "privacy.rules.test") {
             VStack(alignment: .leading, spacing: 10) {
                 Text(
                     "Paste sample text to preview exactly what Osaurus would redact with your current rules — before anything reaches a provider.",
@@ -1437,7 +1341,7 @@ private struct PrivacyDryRunTester: View {
 /// Tiny accent pill used in rule rows (preset + custom) and the dry-run
 /// tester. Factored out of the old in-line helper so every call site
 /// uses the same component without re-passing a theme instance.
-private struct PrivacyCategoryBadge: View {
+struct PrivacyCategoryBadge: View {
     @Environment(\.theme) private var theme
     let category: EntityCategory
 

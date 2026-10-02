@@ -5,8 +5,9 @@
 //  High-confidence pattern detectors that run alongside the on-device
 //  classifier. Exist to catch the well-formed PII the model
 //  empirically misses — chiefly bare 10-digit phone numbers without
-//  separators, emails in lowercase context, and URLs / SSNs / credit
-//  cards. Recall is the priority here, not precision: false positives
+//  separators, emails in lowercase context, and URLs / credit cards
+//  (national IDs such as US SSN live in `PrivacyRulePresets`).
+//  Recall is the priority here, not precision: false positives
 //  show up in the review sheet and the user can untick them; false
 //  negatives leak PII to the upstream provider, which is the whole
 //  failure mode this feature exists to prevent.
@@ -37,17 +38,24 @@ enum RegexEntityDetector {
         /// Custom placeholder label (sanitized uppercase letters) from
         /// a custom rule, or `nil` to use the category default prefix.
         let label: String?
+        /// `true` when the hit came from a checksum-verified preset
+        /// (`PrivacyRulePresets.Tier.validated`). Used only by
+        /// `resolveOverlaps` so a Tier-1 match outranks a same-span
+        /// anchored / generic one.
+        let validated: Bool
 
         init(
             category: EntityCategory,
             original: String,
             range: Range<String.Index>,
-            label: String? = nil
+            label: String? = nil,
+            validated: Bool = false
         ) {
             self.category = category
             self.original = original
             self.range = range
             self.label = label
+            self.validated = validated
         }
     }
 
@@ -82,6 +90,33 @@ enum RegexEntityDetector {
         /// Custom placeholder label from a custom rule, `nil` for
         /// built-ins / presets (which always use the category prefix).
         let label: String?
+        /// Semantic post-filter run on the redactable token (the
+        /// checksum validator of a preset). `nil` for custom rules —
+        /// users get exactly what they wrote — and for presets that
+        /// rely on their regex alone.
+        let accepts: (@Sendable (String) -> Bool)?
+        /// `true` for `PrivacyRulePresets.Tier.validated` presets.
+        let validated: Bool
+        /// Keyword-anchored presets put the redactable value in capture
+        /// group 1 so the keyword itself stays visible to the model.
+        /// Custom rules are substituted whole.
+        let redactsCaptureGroup: Bool
+
+        init(
+            category: EntityCategory,
+            regex: NSRegularExpression,
+            label: String?,
+            accepts: (@Sendable (String) -> Bool)? = nil,
+            validated: Bool = false,
+            redactsCaptureGroup: Bool = false
+        ) {
+            self.category = category
+            self.regex = regex
+            self.label = label
+            self.accepts = accepts
+            self.validated = validated
+            self.redactsCaptureGroup = redactsCaptureGroup
+        }
     }
 
     /// Run every active pattern over `text` and return non-overlapping
@@ -103,8 +138,7 @@ enum RegexEntityDetector {
                 let captured = String(text[stringRange])
                 // Apply category-specific post-filters that the regex
                 // alone can't express (Luhn for cards, digit-count
-                // check for phones, etc.). Presets/custom rules don't
-                // get post-filters; users get exactly what they wrote.
+                // check for phones, etc.).
                 guard pattern.accepts(captured) else { return }
                 raw.append(
                     Match(
@@ -116,19 +150,31 @@ enum RegexEntityDetector {
             }
         }
 
+        // Presets carry an optional checksum validator (`accepts`) and
+        // may redact only capture group 1 (keyword-anchored forms).
+        // Custom rules get neither: users get exactly what they wrote.
         let extra = ruleset.presets + ruleset.customs
         for rule in extra {
             rule.regex.enumerateMatches(in: text, options: [], range: fullRange) { result, _, _ in
                 guard let result, result.numberOfRanges > 0 else { return }
-                let nsr = result.range
+                var nsr = result.range
+                if rule.redactsCaptureGroup, result.numberOfRanges > 1 {
+                    let group = result.range(at: 1)
+                    if group.location != NSNotFound, group.length > 0 {
+                        nsr = group
+                    }
+                }
                 guard nsr.location != NSNotFound, nsr.length > 0 else { return }
                 guard let stringRange = Range(nsr, in: text) else { return }
+                let captured = String(text[stringRange])
+                if let accepts = rule.accepts, !accepts(captured) { return }
                 raw.append(
                     Match(
                         category: rule.category,
-                        original: String(text[stringRange]),
+                        original: captured,
                         range: stringRange,
-                        label: rule.label
+                        label: rule.label,
+                        validated: rule.validated
                     )
                 )
             }
@@ -146,39 +192,40 @@ enum RegexEntityDetector {
 
     /// Sort matches start-ascending and drop later spans that overlap
     /// an already-kept one. Ties broken by preferring the longer span,
-    /// then the more-specific category (credit card > phone, since
-    /// they can share digit patterns). Keeps the pass linear after
-    /// sort.
+    /// then a checksum-validated preset hit over an unvalidated one
+    /// (so a generic Tier-3 pattern never shadows a verified national
+    /// ID on the same span), then the more-specific category (credit
+    /// card > phone, since they can share digit patterns). Keeps the
+    /// pass linear after sort.
     private static func resolveOverlaps(_ matches: [Match]) -> [Match] {
         let priority: [EntityCategory: Int] = [
             .email: 5,
             .url: 4,
-            .accountNumber: 3,  // SSN / credit card
+            .accountNumber: 3,  // national IDs / credit card
             .phone: 2,
             .address: 1,
             .person: 1,
             .date: 1,
             .secret: 1,
         ]
+        /// `true` when `a` should win a same-start tie against `b`.
+        func outranks(_ a: Match, _ b: Match) -> Bool {
+            let aLen = a.original.count
+            let bLen = b.original.count
+            if aLen != bLen { return aLen > bLen }
+            if a.validated != b.validated { return a.validated }
+            return (priority[a.category] ?? 0) > (priority[b.category] ?? 0)
+        }
         let sorted = matches.sorted { a, b in
             if a.range.lowerBound != b.range.lowerBound {
                 return a.range.lowerBound < b.range.lowerBound
             }
-            let aLen = a.original.count
-            let bLen = b.original.count
-            if aLen != bLen { return aLen > bLen }
-            return (priority[a.category] ?? 0) > (priority[b.category] ?? 0)
+            return outranks(a, b)
         }
         var kept: [Match] = []
         for match in sorted {
             if let last = kept.last, last.range.overlaps(match.range) {
-                // Resolve: prefer longer; ties → higher-priority category.
-                let lastLen = last.original.count
-                let newLen = match.original.count
-                if newLen > lastLen
-                    || (newLen == lastLen
-                        && (priority[match.category] ?? 0) > (priority[last.category] ?? 0))
-                {
+                if outranks(match, last) {
                     kept.removeLast()
                     kept.append(match)
                 }
@@ -228,6 +275,15 @@ extension RegexEntityDetector.EffectiveRuleSet {
             customs: []
         )
     }
+
+    /// Built-ins plus the presets a fresh install would enable for
+    /// `locale` (`PrivacyFilterConfiguration.freshInstall`). This is
+    /// the floor for codepaths that scrub without a user config —
+    /// screenshot frames and tool output — so moving US SSN out of the
+    /// built-ins did not silently drop it there.
+    static func defaultSafetyNet(locale: Locale = .current) -> Self {
+        build(from: .freshInstall(locale: locale))
+    }
 }
 
 // MARK: - Pattern catalog (built-ins)
@@ -260,31 +316,22 @@ extension RegexEntityDetector {
                 regex: compileBuiltin(#"\bhttps?://[^\s<>\"\)\],]+"#),
                 accepts: { _ in true }
             ),
-            // SSN — US format XXX-XX-XXXX. Rejected if any block is
-            // all zeros (real SSNs forbid 000-* / *-00-* / *-*-0000).
-            Pattern(
-                category: .accountNumber,
-                regex: compileBuiltin(#"\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b"#),
-                accepts: { _ in true }
-            ),
             // Credit card — 13-19 digit runs, optionally space/dash
             // separated. Filtered by Luhn so we don't flag random
-            // numeric IDs as cards.
+            // numeric IDs as cards. National ID numbers (US SSN
+            // included) live in `PrivacyRulePresets`, not here.
             Pattern(
                 category: .accountNumber,
                 regex: compileBuiltin(#"\b(?:\d[\s\-]?){12,18}\d\b"#),
                 accepts: { captured in
-                    let digits = captured.unicodeScalars.filter {
-                        CharacterSet.decimalDigits.contains($0)
-                    }
-                    let digitCount = digits.count
+                    let digitCount = PrivacyChecksums.digits(captured).count
                     guard (13 ... 19).contains(digitCount) else { return false }
-                    return luhnIsValid(String(String.UnicodeScalarView(digits)))
+                    return PrivacyChecksums.luhn(captured)
                 }
             ),
-            // Phone — multi-format. Anchored to (3-digit area)
-            // (3-digit prefix) (4-digit line) with optional country
-            // code and optional separators. Covers:
+            // Phone (NANP) — anchored to (3-digit area) (3-digit
+            // prefix) (4-digit line) with optional country code and
+            // optional separators. Covers:
             //   +1 (123) 456-7890
             //   +1-123-456-7890
             //   123-456-7890
@@ -299,11 +346,50 @@ extension RegexEntityDetector {
                     #"(?:\+?\d{1,3}[\-.\s]?)?\(?\b\d{3}\)?[\-.\s]?\d{3}[\-.\s]?\d{4}\b"#
                 ),
                 accepts: { captured in
-                    // Reject SSN-shaped strings (XXX-XX-XXXX) which
-                    // the phone regex would otherwise sometimes pick
-                    // up — they're handled by the SSN pattern.
+                    // 10–12 digits: rejects SSN-shaped 9-digit strings
+                    // (XXX-XX-XXXX, now the `us.ssn` preset) and
+                    // over-long runs that belong to the card pattern.
                     let digitCount = captured.filter { $0.isNumber }.count
                     return (10 ... 12).contains(digitCount)
+                }
+            ),
+            // Phone (international, E.164 / `00` dial prefix) —
+            //   +44 7911 123456
+            //   +33 6 12 34 56 78
+            //   +49 (0)30 901820
+            //   0049 30 901820
+            //   +91-98765-43210
+            // Requires a `+` not glued to a word (so `C+1234567890`
+            // doesn't fire) or a `00` international prefix, then
+            // 8–15 digits total per ITU E.164.
+            Pattern(
+                category: .phone,
+                regex: compileBuiltin(
+                    #"(?:(?<!\w)\+|\b00)\d{1,3}[\s.\-]?(?:\(0\)[\s.\-]?)?(?:\d[\s.\-]?){6,13}\d\b"#
+                ),
+                accepts: { captured in
+                    let digitCount = captured.filter { $0.isNumber }.count
+                    return (8 ... 15).contains(digitCount)
+                }
+            ),
+            // Phone (national trunk prefix) — a leading `0` followed
+            // by 8–11 more digits with optional separators:
+            //   07911 123456      (GB)
+            //   06 12 34 56 78    (FR)
+            //   030 901820        (DE)
+            //   0151 23456789     (DE mobile, 12 digits)
+            //   0412 345 678      (AU)
+            //   03-1234-5678      (JP)
+            //   081 234 5678      (ZA / NG)
+            // `0.` is rejected so decimals like `0.123456789` don't
+            // register as phones.
+            Pattern(
+                category: .phone,
+                regex: compileBuiltin(#"\b0(?:[\s.\-]?\d){8,11}\b"#),
+                accepts: { captured in
+                    if captured.hasPrefix("0.") { return false }
+                    let digitCount = captured.filter { $0.isNumber }.count
+                    return (9 ... 12).contains(digitCount)
                 }
             ),
         ]
@@ -317,23 +403,6 @@ extension RegexEntityDetector {
         }
     }
 
-    /// Luhn checksum. Standard algorithm: double every second digit
-    /// from the right, sum the digits of the result, modulo 10 == 0.
-    fileprivate static func luhnIsValid(_ digits: String) -> Bool {
-        var sum = 0
-        var alternate = false
-        for ch in digits.reversed() {
-            guard let d = ch.wholeNumberValue else { return false }
-            if alternate {
-                let doubled = d * 2
-                sum += (doubled > 9) ? (doubled - 9) : doubled
-            } else {
-                sum += d
-            }
-            alternate.toggle()
-        }
-        return sum % 10 == 0 && !digits.isEmpty
-    }
 }
 
 // MARK: - Safe compilation + cache
@@ -423,7 +492,14 @@ extension RegexEntityDetector {
         guard let regex = cachedCompile(id: "preset:" + preset.id, pattern: preset.pattern) else {
             return nil
         }
-        return CompiledRule(category: preset.category, regex: regex, label: nil)
+        return CompiledRule(
+            category: preset.category,
+            regex: regex,
+            label: nil,
+            accepts: preset.validator,
+            validated: preset.tier == .validated,
+            redactsCaptureGroup: regex.numberOfCaptureGroups > 0
+        )
     }
 
     /// Compile (or fetch from cache) a user-defined custom rule. The
