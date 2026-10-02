@@ -28,7 +28,7 @@
 import Foundation
 
 final class TextSubagentKind:
-    SubagentKind, SubagentPostAdmissionResidencyPlanning, @unchecked Sendable
+    SubagentKind, SubagentPostAdmissionResidencyPlanning, SubagentContextAdmission, @unchecked Sendable
 {
     let capability = SubagentCapabilityRegistry.spawn
 
@@ -156,6 +156,24 @@ final class TextSubagentKind:
     /// prices it. Internal (not private) so regression tests can inject a
     /// contract and assert the estimator prices exactly its ceiling.
     var delegatedContract: DelegatedRunContract?
+    /// Keep enough room for the actual composed seed and one full tool round.
+    /// Further rounds may compact history, as they do at the model window.
+    var minimumAdmissionContextPositions: Int?
+    private(set) var admissionContextWasMemoryFitted = false
+
+    func tightenAdmissionContextPositions(to limit: Int) -> Bool {
+        guard let contract = delegatedContract,
+            let minimum = minimumAdmissionContextPositions,
+            limit >= minimum, limit < contract.contextPositions
+        else { return false }
+        delegatedContract = DelegatedRunContract(
+            responseTokens: contract.responseTokens,
+            assistantTurns: contract.assistantTurns,
+            contextPositions: limit
+        )
+        admissionContextWasMemoryFitted = true
+        return true
+    }
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
 
@@ -523,6 +541,8 @@ final class TextSubagentKind:
         self.temperature = nil
         self.residencyPlan = .none
         self.delegatedContract = nil
+        self.minimumAdmissionContextPositions = nil
+        self.admissionContextWasMemoryFitted = false
         return ResolvedModel(
             name: (pinnedModel?.isEmpty == false ? pinnedModel : nil) ?? Self.workspaceHostModelLabel,
             id: nil,
@@ -679,6 +699,17 @@ final class TextSubagentKind:
                 toolEnabled: !composed.tools.isEmpty,
                 resolvedContextWindow: window
             )
+            self.admissionContextWasMemoryFitted = false
+            var firstRoundBudgets = budgets
+            firstRoundBudgets.maxDelegateTurns = 1
+            self.minimumAdmissionContextPositions = DelegatedRunContract.derive(
+                seedCharacters: dispatchedPrompt.count,
+                systemPromptCharacters: composed.prompt.count,
+                toolSchemaTokens: composed.toolTokens,
+                budgets: firstRoundBudgets,
+                toolEnabled: !composed.tools.isEmpty,
+                resolvedContextWindow: window
+            )?.contextPositions
         }
         return ResolvedModel(
             name: resolved.model,

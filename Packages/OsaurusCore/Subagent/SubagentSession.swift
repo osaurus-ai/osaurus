@@ -1334,11 +1334,31 @@ public enum SubagentSession {
         }
         if requested == 1, !rejectUnsafeSingleRun { return .init(capacity: 1) }
 
-        let memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
+        var memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
             for: prepared.resolved.name,
             residencyPlan: residencyPlan,
             requestEstimate: prepared.kind.admissionRequestEstimate()
         )
+        // A large lifetime tool budget is a ceiling on work, not a promise
+        // that all 24 maximum-size rounds remain in KV simultaneously. When
+        // even one resident child would be refused, tighten its actual history
+        // window to available memory. Keep the output/turn limits intact, and
+        // preserve all cold-load, pressure, allocator and model-budget gates.
+        if residencyPlan.ramSafetyEnabled,
+            let adaptive = prepared.kind as? any SubagentContextAdmission,
+            let minimum = adaptive.minimumAdmissionContextPositions,
+            let requested = prepared.kind.admissionRequestEstimate()?.boundedPositionBudget(),
+            let memory = memoryFacts,
+            let fitted = await ModelRuntime.shared.affordableSubagentContext(
+                for: prepared.resolved.name, requested: requested,
+                minimum: minimum, memory: memory
+            ), adaptive.tightenAdmissionContextPositions(to: fitted.positions)
+        {
+            memoryFacts = fitted.facts
+            subagentLog.info(
+                "[admission-context] model=\(prepared.resolved.name, privacy: .public) requested_positions=\(requested) enforced_positions=\(fitted.positions) minimum_positions=\(minimum) per_child_bytes=\(fitted.facts.effectiveChildHeadroomBytes ?? 0)"
+            )
+        }
         var plan = SpawnFanOutPolicy.makeLocalAdmissionPlan(
             localJobCount: requested,
             remoteJobCount: 0,
@@ -1352,6 +1372,14 @@ public enum SubagentSession {
         )
         plan.engineOccupancy = engineSnapshot
         plan.engineQueuedAtAdmission = engineWindow.queued
+        // A fitted window rescues one child, never increases fan-out. Keep
+        // this run serialized even if a stepped/fixed estimator or a later
+        // host sample would otherwise report more than one slot.
+        if (prepared.kind as? any SubagentContextAdmission)?.admissionContextWasMemoryFitted == true,
+            let positions = prepared.kind.admissionRequestEstimate()?.boundedPositionBudget()
+        {
+            plan.serializeMemoryFittedContext(jobCount: requested, positions: positions)
+        }
         if case .admitted = plan.verdict {
             return .init(capacity: max(1, plan.localCapacity), plan: plan)
         }

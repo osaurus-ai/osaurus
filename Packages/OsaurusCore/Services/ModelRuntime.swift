@@ -4022,6 +4022,38 @@ public actor ModelRuntime {
         )
     }
 
+    /// Price a memory-fitted history window from the SAME recovered sample.
+    /// The caller must install the returned ceiling on the child contract
+    /// before using these facts for admission. Unknown/cold/pressured models
+    /// retain the existing refusal policy.
+    func affordableSubagentContext(
+        for modelName: String,
+        requested: Int,
+        minimum: Int,
+        memory: SubagentBatchMemoryFacts
+    ) -> (positions: Int, facts: SubagentBatchMemoryFacts)? {
+        guard let found = ModelManager.findInstalledModel(named: modelName),
+            let directory = Self.findLocalDirectory(forModelId: found.id),
+            let footprint = memory.targetLoadFootprintBytes,
+            footprint > 0, footprint <= UInt64(Int64.max),
+            found.name.caseInsensitiveCompare(memory.canonicalModelKey) == .orderedSame
+        else { return nil }
+        func price(_ positions: Int) -> UInt64? {
+            Self.nonnegativeUInt64(Self.estimatedKVHeadroomBytes(
+                forWeights: Int64(footprint),
+                modelDirectory: directory,
+                modelName: found.name,
+                kvRetentionCap: nil,
+                requestPositionLimit: positions
+            ))
+        }
+        guard let positions = SubagentBatchAdmissionPlanner.affordablePositionCeiling(
+            requested: requested, minimum: minimum, memory: memory,
+            headroomForPositions: price
+        ), let bytes = price(positions) else { return nil }
+        return (positions, memory.pricingChildHeadroom(bytes))
+    }
+
     private func sampleSubagentBatchMemoryFacts(
         for modelName: String,
         residencyPlan: ResidencyPlan,

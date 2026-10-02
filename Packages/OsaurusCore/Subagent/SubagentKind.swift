@@ -115,6 +115,15 @@ protocol SubagentPostAdmissionResidencyPlanning: SubagentKind {
     ) async throws -> ResidencyPlan
 }
 
+/// A child whose history window can be tightened before dispatch. The same
+/// ceiling must be used by RAM pricing, history compaction and the rendered
+/// token check; changing an estimate without changing execution is unsafe.
+protocol SubagentContextAdmission: SubagentKind {
+    var minimumAdmissionContextPositions: Int? { get }
+    var admissionContextWasMemoryFitted: Bool { get }
+    func tightenAdmissionContextPositions(to limit: Int) -> Bool
+}
+
 extension SubagentKind {
     func admissionRequestEstimate() -> SubagentChildRequestEstimate? { nil }
 
