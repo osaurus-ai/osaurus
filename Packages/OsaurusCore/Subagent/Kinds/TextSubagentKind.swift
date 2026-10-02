@@ -1249,10 +1249,10 @@ final class TextSubagentKind:
         // The requester's folder is inherited when the target has none, so a
         // folder-less worker still reads inputs / writes deliverables where
         // the Orchestrator can `file_read` them.
-        let launcherFolder: DelegatedWorkingFolder? = await MainActor.run {
-            guard let folder = AgentManager.shared.workingFolder(for: scopeAgentId) else { return nil }
-            return DelegatedWorkingFolder(bookmark: folder.bookmark, path: folder.path)
-        }
+        let launcherFolder = await AgentDelegationDispatcher.resolveLauncherWorkingFolder(
+            scopeAgentId: scopeAgentId,
+            parentSessionId: parentSessionId
+        )
         let outcome = try await AgentDelegationDispatcher.run(
             targetAgentId: targetAgentId,
             targetAgentName: resolvedAgentName,
