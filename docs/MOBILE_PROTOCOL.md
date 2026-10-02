@@ -44,7 +44,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 Rules that follow from the current host implementation:
 
 - A client **never opens a relay tunnel**. The relay maps each agent address to exactly one tunnel; only the device that hosts the agent authenticates it. A client that did so would evict the real host (`agent_removed reason:"superseded"`, [`RelayTunnelManager.swift`](../Packages/OsaurusCore/Networking/RelayTunnelManager.swift)).
-- The **built-in Default agent is not reachable remotely** from any device, including the owner's own. `Agent.rejectBuiltInForExternalSurface` fires on every external surface ([`BuiltInAgentGuard.swift`](../Packages/OsaurusCore/Models/Agent/BuiltInAgentGuard.swift)); owner redeem returns `403` for it (§5.1). Only custom agents are addressable.
+- The **built-in Default agent is not reachable remotely** except by the owner's own paired phone. `Agent.rejectBuiltInForExternalSurface` fires on every other external surface ([`BuiltInAgentGuard.swift`](../Packages/OsaurusCore/Models/Agent/BuiltInAgentGuard.swift)); owner redeem returns `403` for it (§5.1). It has no agent address, so it is never addressable by one: the paired phone reaches it inside another agent's Secure Channel, or the Mac's connect identity (§11.3), with a master-scoped key (§18).
 - "Same identity" means the client can produce EIP-191 signatures with the **master** secp256k1 key whose address equals the host's master address. That is the entire trust root for owner access; there is no account, session, or server-side registry of devices.
 - Two Macs sharing an identity are just two hosts. Each mints device-scoped addresses (§3), so their agents never collide at the relay.
 
@@ -472,6 +472,10 @@ c2s    = HKDF-SHA256(shared, salt, info = "osaurus-sc1:c2s", 32)
 s2c    = HKDF-SHA256(shared, salt, info = "osaurus-sc1:s2c", 32)
 ```
 
+`agentAddress` must be one of the Mac's agent addresses or its connect
+identity (§11.3); anything else gets `404 {"error":"Unknown agent address"}`,
+which a client should read as "this pin is stale, drop it".
+
 Session TTL 1 h (`expiresAt`); re-handshake on `401 secure_session_unknown`.
 
 Call framing:
@@ -640,7 +644,7 @@ prefixes are never interchangeable:
 | `Ethereum Signed Message` | master | router headers, owner/workspace redeem proofs, relay `add_agent` |
 | `Osaurus Signed Access` | agent child | `osk-v1` |
 | `Osaurus Signed Invite` | agent child | `AgentInvite.sig` |
-| `Osaurus Secure Channel` | agent child | `ServerHello.signature` |
+| `Osaurus Secure Channel` | agent child, or the connect identity (§11.3) | `ServerHello.signature` |
 | `Osaurus Signed Pairing` / `… Pairing Server` | connector / agent child | LAN `/pair` (not used by a relay-only client) |
 | `Osaurus Signed Message` | master | `TokenPayload` internal tokens (not used on the wire by a client) |
 
@@ -809,14 +813,39 @@ key as the Bearer inside the Secure Channel. `GET /agents` and
 pairing can be learned; fetch the roster **inside** the Secure Channel of an
 already-pinned agent so the new addresses are authenticated.
 
-The built-in Default agent has no address of its own, so the payload also
-lists it with the Mac's **connect identity**: a key derived from the master
-under the `osaurus-connect-v1` domain (device-scoped), accepted only by
-`POST /secure/session`. `GET /agents` reports the same address for the
-built-in agent to the owner's phone. Without it, a Mac with no custom agents
-left the phone nothing to pin, and every run went out as plaintext and was
-refused with `426 secure_channel_required`. The connect identity is never
-relayed.
+**Connect identity.** The built-in Default agent has no address of its own,
+so the phone normally reaches it inside a custom agent's channel (§18). A Mac
+with no custom agents (with addresses) has no such channel to offer, so
+instead it lists the built-in agent's id with the Mac's **connect identity**:
+
+```
+HMAC-SHA512(key: masterKey, data: "osaurus-connect-v1" || utf8(deviceId) || 0x00)
+    → first 32 bytes → secp256k1 key → address, as for agent keys
+```
+
+(`deviceId` is empty on a Mac without one, §2.4.)
+
+- Device-scoped like v2 agent keys, so a master restored on another Mac
+  answers to a different address. Its own domain, so it never equals an
+  agent key.
+- Accepted only by `POST /secure/session` (§6.2). It is not an agent address:
+  the relay, Bonjour, access keys and invites never see it, and it grants
+  nothing by itself — the inner Bearer still decides.
+- Offered only while the Mac has no custom agent with an address, both in
+  the pairing payload and as the built-in agent's `address` in the owner's
+  `GET /agents`. Once a custom agent exists the built-in entry goes back to
+  `address: null`. A phone that already pinned the connect identity keeps it
+  (a null never removes a pin); the Mac keeps accepting it on the LAN, and on
+  the relay route the phone rides an agent the relay serves (§11.6).
+- A phone paired before the Mac offered it picks it up from the roster on its
+  next `GET /agents`, with no re-pairing.
+
+Without it, such a phone had nothing to pin, sent runs as plaintext, and got
+`426 secure_channel_required` on every message. A paired phone that still
+gets that `426` should refetch `GET /agents` before reporting it, so a retry
+finds the pin, and should tell the user to update Osaurus on the Mac: unlike
+an unpaired phone, it never learns identities from Bonjour, so joining the
+Mac's network does not help.
 
 ### 11.4 Lifecycle
 
@@ -854,6 +883,10 @@ created later are added automatically.
 - The phone keeps both routes and sends the same Secure Channel envelopes
   (§6.2) to either base URL; nothing else changes. Prefer the LAN address
   when it answers `/health` quickly, otherwise use the relay URL.
+- An agent the relay doesn't serve — the built-in agent, pinned to the
+  connect identity (§11.3) or not at all, or one created moments ago — rides
+  the channel of an agent the relay does serve. The connect identity is never
+  relayed, so a Mac with no custom agents is reachable on the LAN only.
 - Relay failures surface as the outer errors in §7.1 (`502 agent_offline`
   when the Mac is asleep, offline, or the tunnel is off).
 - `/pair/code` still refuses relay traffic (§11.3); pairing is LAN only.
@@ -1356,7 +1389,9 @@ tools stay off the open surface.
 
 It has no agent address of its own, so a client reaches it inside the Secure
 Channel of one of its pinned agents: the channel authenticates the phone, and
-the inner request names the Orchestrator.
+the inner request names the Orchestrator. On a Mac with no custom agents that
+channel is the Mac's connect identity (§11.3), which the owner's `GET /agents`
+reports as the Orchestrator's `address`.
 
 `PUT /agents/{id}/model` (§12.2) accepts it for owner callers. The
 Orchestrator's model belongs to the Mac's Orchestrator settings
