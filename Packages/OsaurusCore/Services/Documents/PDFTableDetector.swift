@@ -307,12 +307,18 @@ struct PDFTableDetector {
                 try Task.checkCancellation()
                 guard let order = rowOrderByKey[rowKey(row)],
                     order < lineTokens.count,
-                    lineTokens[order].count == row.cells.count
+                    lineTokens[order].count == row.cells.count,
+                    zip(row.cells, lineTokens[order]).allSatisfy({ cell, text in
+                        whitespaceFreeCellText(cell.text) == whitespaceFreeCellText(text)
+                    })
                 else {
                     rows.append(row)
                     continue
                 }
 
+                // PDFKit's logical lines may be column-ordered. Equal token
+                // counts do not identify a visual row; only reconcile spacing
+                // when every candidate retains that cell's glyph characters.
                 let cells = zip(row.cells, lineTokens[order]).map { cell, text in
                     Cell(
                         pageIndex: cell.pageIndex,
@@ -342,6 +348,10 @@ struct PDFTableDetector {
             )
         }
         return reconciledTables
+    }
+
+    private static func whitespaceFreeCellText(_ text: String) -> String {
+        text.components(separatedBy: .whitespacesAndNewlines).joined()
     }
 
     private static func rowKey(_ row: Row) -> String {
