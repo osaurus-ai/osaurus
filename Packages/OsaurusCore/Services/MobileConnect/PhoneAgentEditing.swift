@@ -40,6 +40,8 @@ enum PhoneAgentEditing {
         case notEditable
         case badRequest(String)
         case sandboxUnavailable
+        /// Shared to a workspace: teammates would keep a row nobody can reach.
+        case sharedInWorkspace
 
         /// `(status, error code, message)` for the reply.
         var reply: (status: Int, code: String, message: String) {
@@ -50,6 +52,8 @@ enum PhoneAgentEditing {
                 return (400, "bad_request", message)
             case .sandboxUnavailable:
                 return (409, "sandbox_unavailable", "This Mac can't run the sandbox.")
+            case .sharedInWorkspace:
+                return (409, "agent_shared", "Unshare this agent from its workspace on your Mac before deleting it.")
             }
         }
     }
@@ -192,11 +196,19 @@ enum PhoneAgentEditing {
         }
     }
 
-    /// Deletes a custom agent as the Mac's Delete Agent does. False for an
-    /// unknown or built-in one.
+    /// Deletes a custom agent as the Mac's Delete Agent does, refusing one
+    /// still shared to a workspace as the Mac does. False when the delete
+    /// itself fails.
     @MainActor
-    static func delete(_ agentId: UUID) async -> Bool {
-        guard let agent = AgentManager.shared.agent(for: agentId), !agent.isBuiltIn else { return false }
+    static func delete(_ agentId: UUID) async throws -> Bool {
+        guard let agent = AgentManager.shared.agent(for: agentId), !agent.isBuiltIn else {
+            throw EditError.notEditable
+        }
+        if let address = agent.agentAddress,
+            !WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address).isEmpty
+        {
+            throw EditError.sharedInWorkspace
+        }
         return await AgentManager.shared.delete(id: agentId).deleted
     }
 

@@ -5643,8 +5643,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let outcome: (status: HTTPResponseStatus, json: String)
             do {
                 if isDelete {
-                    let deleted = await PhoneAgentEditing.delete(agentId)
-                    outcome = deleted ? (.ok, #"{"ok":true}"#) : Self.agentEditFailure(.notEditable)
+                    let deleted = try await PhoneAgentEditing.delete(agentId)
+                    outcome =
+                        deleted
+                        ? (.ok, #"{"ok":true}"#)
+                        : (
+                            .internalServerError,
+                            Self.jsonObjectString(["error": "delete_failed", "message": "Couldn't delete the agent."])
+                        )
                 } else {
                     let patch = try PhoneAgentEditing.patch(from: body)
                     try await PhoneAgentEditing.apply(patch, to: agentId)

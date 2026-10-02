@@ -48,3 +48,21 @@ struct PhoneAgentEditingTests {
         }
     }
 }
+
+@Suite("Phone agent delete")
+@MainActor
+struct PhoneAgentDeleteTests {
+    @Test func unknownOrBuiltInAgentIsNotEditable() async {
+        for id in [UUID(), Agent.defaultId] {
+            await #expect(throws: PhoneAgentEditing.EditError.notEditable) {
+                _ = try await PhoneAgentEditing.delete(id)
+            }
+        }
+    }
+
+    @Test func sharedAgentIsRefusedAsAConflict() {
+        let reply = PhoneAgentEditing.EditError.sharedInWorkspace.reply
+        #expect(reply.status == 409)
+        #expect(reply.code == "agent_shared")
+    }
+}

@@ -1029,7 +1029,9 @@ Owner-only.
 Deletes a custom agent, as the Mac's Delete Agent does: its sandbox is
 cleaned up, and the Mac's windows and new chats fall back to the
 Orchestrator. `{"ok":true}`, or `403 agent_not_editable` for an unknown or
-built-in agent. Owner-only.
+built-in agent, `409 agent_shared` while it is shared to a workspace (unshare
+it on the Mac first, as the Mac's own Delete requires), `500 delete_failed`
+when the delete itself fails. Owner-only.
 
 ---
 
