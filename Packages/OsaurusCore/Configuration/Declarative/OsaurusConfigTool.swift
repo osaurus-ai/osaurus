@@ -484,6 +484,19 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         }
 
         let results = await ConfigApplier.apply(document: document, prune: prune)
+        if let template = basedOn, let actions = template.quickActions,
+            let name = document.agents?.first?.name,
+            plan.actions.contains(where: { $0.section == "agents" && $0.target == name && $0.kind == .create })
+        {
+            // Quick actions ride on the template envelope, not the config
+            // schema, so a freshly created agent picks them up here.
+            await MainActor.run {
+                guard var agent = AgentManager.shared.agents.first(where: { $0.name == name && !$0.isBuiltIn })
+                else { return }
+                agent.chatQuickActions = actions
+                AgentManager.shared.update(agent)
+            }
+        }
         if Task.isCancelled {
             return ToolEnvelope.failure(
                 kind: .executionError,

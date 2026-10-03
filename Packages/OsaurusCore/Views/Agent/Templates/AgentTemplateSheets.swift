@@ -304,8 +304,9 @@ struct SaveAgentTemplateSheet: View {
     @State private var name: String = ""
     @State private var summary: String = ""
     @State private var availableToOrchestrator = true
-    /// Sections the user chose to leave out of the shared JSON.
-    @State private var excluded: Set<AgentTemplate.Section> = []
+    /// Sections the user chose to leave out of the shared JSON. Actions
+    /// start off: they are per-person shortcuts, opt in to share them.
+    @State private var excluded: Set<AgentTemplate.Section> = [.actions]
     @State private var draft: AgentTemplate?
     @State private var errorMessage: String?
     @State private var hasAppeared = false
@@ -446,7 +447,7 @@ struct SaveAgentTemplateSheet: View {
         }
     }
 
-    /// What goes into the JSON. Everything is on by default; a user who
+    /// What goes into the JSON. Everything but Actions is on by default; a user who
     /// wants to share a tool setup but keep the prompt private, or drop the
     /// folder hint, flips the section off here.
     private var includeSection: some View {
@@ -504,6 +505,7 @@ struct SaveAgentTemplateSheet: View {
             case .workingFolder: return entry.workingFolder.valueOrNil != nil
             case .knowledge: return entry.capabilities?.knowledgeEnabled == true || !draft.knowledgeCollectionNames.isEmpty
             case .pluginInstructions: return !(entry.pluginInstructions ?? [:]).isEmpty
+            case .actions: return !(draft.actions ?? []).isEmpty
             }
         }
     }
@@ -528,6 +530,7 @@ struct SaveAgentTemplateSheet: View {
                 ? L("Collection names only, never the files")
                 : L("Collection names only, never the files: \(names.joined(separator: ", "))")
         case .pluginInstructions: return L("\(entry.pluginInstructions?.count ?? 0) plugins")
+        case .actions: return L("\(draft?.actions?.count ?? 0) quick actions")
         }
     }
 
@@ -542,6 +545,7 @@ struct SaveAgentTemplateSheet: View {
         case .workingFolder: return L("Working Folder")
         case .knowledge: return L("Enable Knowledge")
         case .pluginInstructions: return L("Plugin Instructions")
+        case .actions: return L("Actions")
         }
     }
 
@@ -556,6 +560,7 @@ struct SaveAgentTemplateSheet: View {
         case .workingFolder: return "folder"
         case .knowledge: return "books.vertical"
         case .pluginInstructions: return "puzzlepiece.extension"
+        case .actions: return "bolt"
         }
     }
 

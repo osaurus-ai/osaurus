@@ -57,6 +57,29 @@ public struct TemplateRequirement: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// One chat quick action carried by a template. Ids are left behind so
+/// hand-written JSON stays short and every agent built from the template
+/// gets fresh ones.
+public struct TemplateAction: Codable, Equatable, Sendable {
+    public var icon: String?
+    public var text: String
+    public var prompt: String
+
+    public init(icon: String? = nil, text: String, prompt: String) {
+        self.icon = icon
+        self.text = text
+        self.prompt = prompt
+    }
+
+    init(_ action: AgentQuickAction) {
+        self.init(icon: action.icon, text: action.text, prompt: action.prompt)
+    }
+
+    var quickAction: AgentQuickAction {
+        AgentQuickAction(icon: icon ?? "sparkles", text: text, prompt: prompt)
+    }
+}
+
 public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
     public static let formatIdentifier = "osaurus.agent-template"
     public static let currentVersion = 1
@@ -73,6 +96,9 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
     public var availableToOrchestrator: Bool
     public var agent: AgentEntry
     public var requires: [TemplateRequirement]
+    /// The author's chat quick actions. nil leaves the new agent on the
+    /// built-in defaults; an empty list hides them, as on the agent.
+    public var actions: [TemplateAction]?
 
     public var id: String { AgentTemplate.slug(for: name) }
 
@@ -83,7 +109,8 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
         author: String? = nil,
         createdAt: Date = Date(),
         availableToOrchestrator: Bool = true,
-        requires: [TemplateRequirement] = []
+        requires: [TemplateRequirement] = [],
+        actions: [TemplateAction]? = nil
     ) {
         self.name = name
         self.agent = agent
@@ -92,13 +119,14 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.availableToOrchestrator = availableToOrchestrator
         self.requires = requires
+        self.actions = actions
     }
 
     enum CodingKeys: String, CodingKey {
         case format, version, name, summary, author
         case createdAt = "created_at"
         case availableToOrchestrator = "available_to_orchestrator"
-        case agent, requires
+        case agent, requires, actions
     }
 
     public init(from decoder: Decoder) throws {
@@ -121,6 +149,7 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
         availableToOrchestrator = try c.decodeIfPresent(Bool.self, forKey: .availableToOrchestrator) ?? true
         agent = try c.decode(AgentEntry.self, forKey: .agent)
         requires = try c.decodeIfPresent([TemplateRequirement].self, forKey: .requires) ?? []
+        actions = try c.decodeIfPresent([TemplateAction].self, forKey: .actions)
     }
 
     // MARK: - Slug
@@ -220,6 +249,7 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
         case workingFolder = "working_folder"
         case knowledge
         case pluginInstructions = "plugin_instructions"
+        case actions
 
         public var id: String { rawValue }
     }
@@ -254,9 +284,15 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
             requires.removeAll { $0.kind == .knowledgeCollection }
         }
         if sections.contains(.pluginInstructions) { entry.pluginInstructions = nil }
+        if sections.contains(.actions) { copy.actions = nil }
         copy.agent = entry
         copy.requires = requires
         return copy
+    }
+
+    /// Quick actions for an agent built from this template, with fresh ids.
+    public var quickActions: [AgentQuickAction]? {
+        actions?.map(\.quickAction)
     }
 
     // MARK: - Requirements helpers
@@ -499,7 +535,8 @@ extension AgentTemplate {
             summary: summary ?? (agent.description.isEmpty ? nil : agent.description),
             author: author,
             availableToOrchestrator: availableToOrchestrator,
-            requires: requires
+            requires: requires,
+            actions: agent.chatQuickActions?.map(TemplateAction.init)
         )
     }
 

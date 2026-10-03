@@ -654,6 +654,7 @@ struct AgentsView: View {
         if let hint = entry.workingFolder.valueOrNil, draft.workingFolderPath == nil {
             draft.workingFolderPath = (hint as NSString).expandingTildeInPath
         }
+        if let actions = template.quickActions { draft.chatQuickActions = actions }
         setupSubject = .draft(draft, template: template)
     }
 
