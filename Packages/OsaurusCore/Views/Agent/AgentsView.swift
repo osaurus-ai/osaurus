@@ -54,10 +54,25 @@ struct AgentsView: View {
     @State private var selectedAgent: Agent?
     @State private var selectedRemoteAgentId: UUID?
     @State private var isCreating = false
+    /// Prefill for the Create Agent sheet when starting from a template.
+    /// Set together with `isCreating`; cleared when the sheet closes.
+    @State private var creationSeed: AgentEditorSeed?
     @State private var isReordering = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
     @State private var consumedDeeplinkAgentId: UUID?
+    /// Agents | Templates switch under the header.
+    @State private var section: AgentsSection = .agents
+    /// Template library sheets. `templateImportText` is non-nil while the
+    /// import sheet is up (empty string = open on the paste field).
+    @State private var templateImportText: String?
+    @State private var templateSourceAgent: Agent?
+    @State private var templateToRename: AgentTemplate?
+    @ObservedObject private var templateStore = AgentTemplateStore.shared
+    /// What the Set Up Agent wizard is working on: a saved agent (Run
+    /// Setup, first-open prompt) or a template draft (Use Template).
+    @State private var setupSubject: AgentSetupSubject?
+    @ObservedObject private var setupState = AgentSetupStateStore.shared
     /// One-shot inner-tab target paired with an agent id, set by the
     /// `.agentDetailDeeplink` handler so the detail view opens on a specific
     /// tab (e.g. Subagents). Kept as the RAW deep-link string (not a resolved
@@ -177,17 +192,100 @@ struct AgentsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .sheet(isPresented: $isCreating) {
+        .sheet(isPresented: $isCreating, onDismiss: { creationSeed = nil }) {
             AgentEditorSheet(
+                seed: creationSeed,
                 onSave: { agent in
+                    let fromTemplate = creationSeed != nil
                     agentManager.add(agent)
                     isCreating = false
                     showSuccess("Created \"\(agent.name)\"")
+                    withAnimation(Self.navTransition) { section = .agents }
+                    // An agent made from a template may carry requirements
+                    // this Mac cannot meet yet; walk the user through them
+                    // right away instead of letting the first run fail.
+                    if fromTemplate,
+                        let report = AgentSetupPromptCoordinator.shared.recheck(agent.id),
+                        !report.isClean
+                    {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            setupSubject = .saved(agent.id)
+                        }
+                    }
                 },
                 onCancel: {
                     isCreating = false
                 }
             )
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { templateImportText != nil },
+                set: { if !$0 { templateImportText = nil } }
+            )
+        ) {
+            AgentTemplateImportSheet(
+                initialText: templateImportText ?? "",
+                onImported: { template in
+                    templateImportText = nil
+                    showSuccess("Imported \"\(template.name)\"")
+                },
+                onCancel: { templateImportText = nil }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $templateSourceAgent) { agent in
+            SaveAgentTemplateSheet(
+                agent: agent,
+                onSaved: { template in
+                    templateSourceAgent = nil
+                    showSuccess("Saved template \"\(template.name)\"")
+                    withAnimation(Self.navTransition) { section = .templates }
+                },
+                onCancel: { templateSourceAgent = nil }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $templateToRename) { template in
+            RenameAgentTemplateSheet(template: template, onDone: { templateToRename = nil })
+                .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $setupSubject) { subject in
+            AgentSetupWizardView(
+                subject: subject,
+                onClose: { setupSubject = nil },
+                onFinished: { agent in
+                    if subject.isDraft {
+                        showSuccess("Created \"\(agent.name)\"")
+                        withAnimation(Self.navTransition) { section = .agents }
+                    }
+                }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .onReceive(managementState.$pendingAgentSetupId) { pending in
+            guard let pending else { return }
+            managementState.pendingAgentSetupId = nil
+            withAnimation(Self.navTransition) {
+                selectedAgent = nil
+                section = .agents
+            }
+            setupSubject = .saved(pending)
+        }
+        .onReceive(managementState.$pendingAgentSetupSubject) { _ in
+            resumeParkedSetupIfNeeded()
+        }
+        .onReceive(managementState.$pendingTemplateImportText) { pending in
+            // `osaurus://templates-import?t=…` share link: land on the
+            // Templates tab with the Import sheet prefilled.
+            guard let pending else { return }
+            managementState.pendingTemplateImportText = nil
+            withAnimation(Self.navTransition) {
+                selectedAgent = nil
+                selectedRemoteAgentId = nil
+                section = .templates
+            }
+            templateImportText = pending
         }
         .sheet(isPresented: $isReordering) {
             AgentReorderSheet()
@@ -200,6 +298,10 @@ struct AgentsView: View {
             }
             consumeDeeplinkIfPossible()
             applyPendingRemoteAgentDetail()
+            // The wizard parks itself here when it sends the user to another
+            // tab. Coming back rebuilds this view, so the publisher has
+            // already fired by now and the value has to be read directly.
+            resumeParkedSetupIfNeeded()
             routeSettingsLanding(highlightCoordinator.pending)
         }
         .onChange(of: agentManager.agents) { _, _ in
@@ -331,12 +433,15 @@ struct AgentsView: View {
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
                 .settingsLandingAnchor("agents.overview")
 
-            // First-agent onboarding stays reachable as long as the user has no
-            // *local* agents — even if they've already paired a remote agent.
-            // That way the "Create Your First Agent" CTA never silently
-            // disappears just because someone else's agent is sitting in the
-            // grid. When both lists exist, we fall through to the normal grid.
-            if customAgents.isEmpty {
+            if section == .templates {
+                templatesContent
+                    .transition(.opacity)
+            } else if customAgents.isEmpty {
+                // First-agent onboarding stays reachable as long as the user has no
+                // *local* agents — even if they've already paired a remote agent.
+                // That way the "Create Your First Agent" CTA never silently
+                // disappears just because someone else's agent is sitting in the
+                // grid. When both lists exist, we fall through to the normal grid.
                 ScrollView {
                     VStack(spacing: 24) {
                         SettingsEmptyState(
@@ -385,6 +490,9 @@ struct AgentsView: View {
                                     withAnimation(Self.navTransition) { selectedAgent = agent }
                                 },
                                 onDuplicate: { duplicateAgent(agent) },
+                                onSaveTemplate: { templateSourceAgent = agent },
+                                needsSetup: setupState.needsSetup(agent.id),
+                                onRunSetup: { setupSubject = .saved(agent.id) },
                                 onDelete: { deleteAgent(agent) },
                                 onOpenDatabase: { openDatabase(for: agent) }
                             )
@@ -474,23 +582,83 @@ struct AgentsView: View {
 
     private var headerView: some View {
         let totalCount = customAgents.count + remoteAgents.count
-        return ManagerHeaderWithActions(
+        return ManagerHeaderWithTabs(
             title: L("Agents"),
             subtitle: L("Create custom assistant personalities with unique behaviors"),
             count: totalCount == 0 ? nil : totalCount
         ) {
-            HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
-                agentManager.refresh()
-            }
-            if !customAgents.isEmpty {
-                HeaderIconButton("list.bullet.indent", help: "Reorder agents") {
-                    isReordering = true
+            switch section {
+            case .agents:
+                HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
+                    agentManager.refresh()
+                }
+                if !customAgents.isEmpty {
+                    HeaderIconButton("list.bullet.indent", help: "Reorder agents") {
+                        isReordering = true
+                    }
+                }
+                HeaderPrimaryButton("Create Agent", icon: "plus") {
+                    isCreating = true
+                }
+            case .templates:
+                HeaderIconButton("arrow.clockwise", help: "Refresh templates") {
+                    templateStore.reload()
+                }
+                HeaderPrimaryButton("Import Template", icon: "square.and.arrow.down") {
+                    templateImportText = ""
                 }
             }
-            HeaderPrimaryButton("Create Agent", icon: "plus") {
-                isCreating = true
-            }
+        } tabsRow: {
+            // Same `HeaderTabsRow` chrome as Memory / Tools / Voice.
+            HeaderTabsRow(
+                selection: $section,
+                tabs: AgentsSection.allCases,
+                counts: [
+                    .agents: customAgents.count,
+                    .templates: templateStore.allTemplates.count,
+                ]
+            )
         }
+    }
+
+    /// Templates tab body. Using a template builds an unsaved draft through
+    /// the same mapping `osaurus_config apply` uses and opens the Create
+    /// Agent sheet prefilled; unresolved requirements ride along as notices.
+    private var templatesContent: some View {
+        AgentTemplatesView(
+            columns: Self.gridColumns,
+            hasAppeared: hasAppeared,
+            onUse: { template in useTemplate(template) },
+            onImport: { templateImportText = "" },
+            onImportText: { text in templateImportText = text },
+            onRename: { template in templateToRename = template },
+            showSuccess: showSuccess,
+            showError: { message in _ = ToastManager.shared.error(L("Template"), message: message) }
+        )
+    }
+
+    /// Use Template: open the setup wizard on an UNSAVED draft. The agent
+    /// is created only when the wizard's Create Agent passes the readiness
+    /// check, so a template this Mac cannot honour never yields a broken
+    /// agent. The template's requested model stays on the draft even when it
+    /// is missing, so the Brain step can show it instead of silently falling
+    /// back; a `preferred` policy makes that step advisory.
+    private func useTemplate(_ template: AgentTemplate) {
+        var entry = template.resolvedEntry()
+        if case .available = template.modelResolution() {} else if let requested = template.agent.model.valueOrNil {
+            entry.model = .value(requested)
+        }
+        var draft = ConfigApplier.draftAgent(from: entry).agent
+        // The applier attaches a folder only when it can mint a bookmark;
+        // keep the author's path as a hint so the Working Folder step shows.
+        if let hint = entry.workingFolder.valueOrNil, draft.workingFolderPath == nil {
+            draft.workingFolderPath = (hint as NSString).expandingTildeInPath
+        }
+        if let actions = template.quickActions { draft.chatQuickActions = actions }
+        // Lets the setup check find the template's MCP servers and plugins,
+        // which add no tool names to the draft when missing here.
+        draft.sourceTemplateName = template.name
+        setupSubject = .draft(draft, template: template)
     }
 
     // MARK: - Success Toast
@@ -529,6 +697,18 @@ struct AgentsView: View {
     /// empty-state gear). Mirrors `PluginsView.applyPendingPluginDetailRequest`:
     /// waits until the matching `RemoteAgent` record is known (the list can load
     /// after this view appears), then navigates and clears the request.
+    /// Reopen a wizard that stepped aside for another tab, with whatever
+    /// the user had already filled in.
+    private func resumeParkedSetupIfNeeded() {
+        guard let parked = managementState.pendingAgentSetupSubject else { return }
+        managementState.pendingAgentSetupSubject = nil
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            section = .agents
+        }
+        setupSubject = parked
+    }
+
     private func applyPendingRemoteAgentDetail() {
         guard let pendingId = managementState.pendingRemoteAgentDetailId else { return }
         guard remoteAgentManager.remoteAgent(for: pendingId) != nil else { return }
@@ -619,6 +799,12 @@ private struct AgentCard: View {
     let hasAppeared: Bool
     let onSelect: () -> Void
     let onDuplicate: () -> Void
+    /// Snapshots the agent into the template library (Templates tab).
+    let onSaveTemplate: () -> Void
+    /// First-run setup still pending (`AgentSetupStateStore`).
+    var needsSetup: Bool = false
+    /// Opens the Set Up Agent wizard for this agent.
+    var onRunSetup: () -> Void = {}
     let onDelete: () -> Void
     /// Opens the agent's detail view directly on the Database workspace
     /// (Knowledge › Database) — surfaced in the card menu so users can jump
@@ -632,15 +818,21 @@ private struct AgentCard: View {
         hasAppeared: Bool,
         onSelect: @escaping () -> Void,
         onDuplicate: @escaping () -> Void,
+        onSaveTemplate: @escaping () -> Void,
+        needsSetup: Bool = false,
+        onRunSetup: @escaping () -> Void = {},
         onDelete: @escaping () -> Void,
         onOpenDatabase: @escaping () -> Void
     ) {
+        self.needsSetup = needsSetup
+        self.onRunSetup = onRunSetup
         self.agent = agent
         self.isActive = isActive
         self.animationDelay = animationDelay
         self.hasAppeared = hasAppeared
         self.onSelect = onSelect
         self.onDuplicate = onDuplicate
+        self.onSaveTemplate = onSaveTemplate
         self.onDelete = onDelete
         self.onOpenDatabase = onOpenDatabase
     }
@@ -698,6 +890,20 @@ private struct AgentCard: View {
                                             .fill(theme.successColor.opacity(0.12))
                                     )
                             }
+                            if needsSetup {
+                                Text("Needs setup", bundle: .module)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(theme.warningColor)
+                                    .lineLimit(1)
+                                    .fixedSize()
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(theme.warningColor.opacity(0.12))
+                                    )
+                                    .help(L("Run Setup from the card menu to finish configuring this agent"))
+                            }
                         }
 
                         // Always render the description line so card heights line
@@ -730,6 +936,20 @@ private struct AgentCard: View {
                                 Text("Duplicate", bundle: .module)
                             } icon: {
                                 Image(systemName: "doc.on.doc")
+                            }
+                        }
+                        Button(action: onSaveTemplate) {
+                            Label {
+                                Text("Save as Template", bundle: .module)
+                            } icon: {
+                                Image(systemName: "square.on.square.dashed")
+                            }
+                        }
+                        Button(action: onRunSetup) {
+                            Label {
+                                Text("Run Setup", bundle: .module)
+                            } icon: {
+                                Image(systemName: "checklist")
                             }
                         }
                         Button(action: onOpenDatabase) {
@@ -786,6 +1006,25 @@ private struct AgentCard: View {
                 }
 
                 Spacer(minLength: 0)
+                // Provenance sits on its own line above the stats: that band
+                // is the same width on every card, so a long template name
+                // can neither crowd the agent name nor squeeze the stat chips.
+                if let source = agent.sourceTemplateName, !source.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.on.square.dashed")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(L("From the \(source) template"))
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .foregroundColor(theme.infoColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(theme.infoColor.opacity(0.12)))
+                    .help(L("Created from the \(source) template"))
+                    .padding(.bottom, 6)
+                }
                 compactStats
             }
             .frame(maxWidth: .infinity, minHeight: 140, alignment: .top)
@@ -1434,6 +1673,8 @@ struct AgentDetailView: View {
 
     /// Drives the share-agent sheet (cross-device deeplink invite flow).
     @State private var showingShareSheet: Bool = false
+    /// Drives the Save as Template sheet from the share menu.
+    @State private var showingSaveTemplateSheet: Bool = false
 
     /// Local UI state: which tabs the user has dropped into the "Advanced" disclosure
     /// of the Configure tab. Persists only for the lifetime of this view (intentional —
@@ -2019,6 +2260,16 @@ struct AgentDetailView: View {
             onBack: onBack,
             identity: { identityButton },
             status: {
+                if saveIndicator == nil, let source = currentAgent.sourceTemplateName, !source.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.on.square.dashed")
+                            .font(.system(size: 10))
+                        Text(L("From the \(source) template"))
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.tertiaryText)
+                    .help(L("Created from the \(source) template"))
+                }
                 if let indicator = saveIndicator {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.circle.fill")
@@ -2063,6 +2314,17 @@ struct AgentDetailView: View {
         .sheet(isPresented: $showingShareSheet) {
             ShareAgentSheet(agent: currentAgent)
                 .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(isPresented: $showingSaveTemplateSheet) {
+            SaveAgentTemplateSheet(
+                agent: currentAgent,
+                onSaved: { template in
+                    showingSaveTemplateSheet = false
+                    showSuccess("Saved template \"\(template.name)\"")
+                },
+                onCancel: { showingSaveTemplateSheet = false }
+            )
+            .environment(\.theme, themeManager.currentTheme)
         }
     }
 
@@ -2710,6 +2972,16 @@ struct AgentDetailView: View {
             workspaceItem.submenu = submenu
         }
         menu.addItem(workspaceItem)
+
+        // Portable copy of the configuration (no data, no secrets): the
+        // same action as the grid card's Save as Template.
+        menu.addItem(.separator())
+        let templateItem = NSMenuItem(
+            title: L("Save as Template"), action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
+        let templateTarget = HeaderMenuTarget { showingSaveTemplateSheet = true }
+        templateItem.target = templateTarget
+        templateItem.representedObject = templateTarget
+        menu.addItem(templateItem)
 
         let origin = NSEvent.mouseLocation
         menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
@@ -8161,11 +8433,29 @@ private struct AgentConnectionsSection: View {
 
 // MARK: - Agent Editor Sheet (Smart Create)
 
+/// Prefill for `AgentEditorSheet` when the user starts from an agent
+/// template. `agent` is an UNSAVED record (built by
+/// `ConfigApplier.draftAgent`) whose tool selection, sandbox, subagent and
+/// capability settings are carried through to the saved agent verbatim; the
+/// sheet only edits the fields it shows. `notices` are the requirements the
+/// template could not resolve on this Mac (folder, MCP server, plugin) and
+/// are shown as an informational checklist above the form.
+struct AgentEditorSeed {
+    /// Verbatim header subtitle, e.g. "Based on Cloud Agent".
+    var subtitle: String
+    var agent: Agent
+    var notices: [String] = []
+    /// Set when the template's model policy is `always` and that model is
+    /// not installed: Create stays disabled until the user picks a model.
+    var requiredModelMissing: String? = nil
+}
+
 private struct AgentEditorSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    var seed: AgentEditorSeed? = nil
     let onSave: (Agent) -> Void
     let onCancel: () -> Void
 
@@ -8184,6 +8474,14 @@ private struct AgentEditorSheet: View {
     @State private var showModelPicker: Bool = false
     @State private var showAddModelWarning: Bool = false
     @State private var hasAppeared: Bool = false
+    /// Inline guidance in the footer when Create cannot proceed yet. Shown
+    /// next to the button, never as a toast, so the cause and the fix stay
+    /// in the same view.
+    @State private var footerWarning: String?
+    /// Drives the settings-search style glow on the Default Model field
+    /// while `footerWarning` points at it.
+    @State private var highlightModelField: Bool = false
+    @State private var highlightClearTask: Task<Void, Never>?
 
     /// When true, the form column is replaced in place by an embedded
     /// `AgentCapabilityManagerView` operating in draft mode. Toggling this
@@ -8337,6 +8635,22 @@ private struct AgentEditorSheet: View {
     private func seedDraftIfNeeded() {
         guard !draftSeeded else { return }
         draftSeeded = true
+        if let seed {
+            // Template prefill: the form mirrors the draft record. The name
+            // counts as user-chosen so starter presets never clobber it.
+            name = seed.agent.name
+            nameUserEdited = true
+            systemPrompt = seed.agent.systemPrompt
+            selectedModel = seed.agent.defaultModel
+            selectedAvatar = seed.agent.avatar
+            draftMode = seed.agent.toolSelectionMode ?? .auto
+            if draftMode == .manual {
+                draftToolNames = Set(seed.agent.manualToolNames ?? [])
+            } else {
+                draftToolNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
+            }
+            return
+        }
         draftToolNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
     }
 
@@ -8345,7 +8659,13 @@ private struct AgentEditorSheet: View {
     private var formColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                templatesStrip
+                if let seed {
+                    if !seed.notices.isEmpty {
+                        seedNoticesBanner(seed.notices)
+                    }
+                } else {
+                    templatesStrip
+                }
                 nameField
                 avatarField
                 modelField
@@ -8354,6 +8674,43 @@ private struct AgentEditorSheet: View {
             }
             .padding(20)
         }
+    }
+
+    /// Informational checklist of template requirements this Mac could not
+    /// satisfy automatically. Phase 1 surfaces them; the setup wizard later
+    /// turns each into a step.
+    private func seedNoticesBanner(_ notices: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+                Text("Finish setting up after creating", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+            ForEach(Array(notices.enumerated()), id: \.offset) { _, notice in
+                HStack(alignment: .top, spacing: 6) {
+                    Text("•")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(notice)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(theme.warningColor.opacity(0.25), lineWidth: 1)
+                )
+        )
     }
 
     private var templatesStrip: some View {
@@ -8501,6 +8858,13 @@ private struct AgentEditorSheet: View {
                     onDismiss: { showModelPicker = false },
                     onAddModel: handleAddModel
                 )
+            }
+        }
+        .settingsSearchHighlight(highlightModelField)
+        // Picking a model resolves the warning that pointed here.
+        .onChange(of: selectedModel) { _, newValue in
+            if newValue != nil {
+                withAnimation(.easeOut(duration: 0.15)) { footerWarning = nil }
             }
         }
     }
@@ -8743,13 +9107,23 @@ private struct AgentEditorSheet: View {
 
     // MARK: Header / Footer
 
+    @ViewBuilder
     private var headerView: some View {
-        AgentSheetHeader(
-            icon: "person.crop.circle.badge.plus",
-            title: "Create Agent",
-            subtitle: "Pick a starter, name it, write a prompt",
-            onClose: cancelCreation
-        )
+        if let seed {
+            AgentSheetHeader(
+                icon: "square.on.square.dashed",
+                title: "Create Agent from Template",
+                subtitleText: seed.subtitle,
+                onClose: cancelCreation
+            )
+        } else {
+            AgentSheetHeader(
+                icon: "person.crop.circle.badge.plus",
+                title: "Create Agent",
+                subtitle: "Pick a starter, name it, write a prompt",
+                onClose: cancelCreation
+            )
+        }
     }
 
     private var footerView: some View {
@@ -8763,8 +9137,27 @@ private struct AgentEditorSheet: View {
                 label: "Cancel",
                 handler: cancelCreation
             ),
-            hint: "+ Enter to create"
+            hint: "+ Enter to create",
+            warning: footerWarning
         )
+    }
+
+    /// Point the user at the Default Model field: inline warning in the
+    /// footer and a temporary glow on the field (same treatment as landing
+    /// on a settings-search result). The picker is left closed; the two
+    /// cues are enough and opening it uninvited felt pushy.
+    private func requestModelChoice(reason: String) {
+        // Quick fade, scoped to the warning: animating the whole footer made
+        // the buttons drift and the slide-in reflowed the wrapped text.
+        withAnimation(.easeOut(duration: 0.15)) { footerWarning = reason }
+        highlightClearTask?.cancel()
+        highlightModelField = false
+        highlightModelField = true
+        highlightClearTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_200_000_000)
+            guard !Task.isCancelled else { return }
+            highlightModelField = false
+        }
     }
 
     // MARK: Actions
@@ -8791,18 +9184,38 @@ private struct AgentEditorSheet: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
+        // A template that insists on a specific model needs one chosen
+        // first. Keep the button live and guide on tap: a disabled button
+        // gives no hint about what is missing.
+        if let required = seed?.requiredModelMissing, selectedModel == nil {
+            requestModelChoice(
+                reason: L("This template requires \(required), which is not installed. Pick another model in Default Model, or install it and try again."))
+            return
+        }
+
         // Bake the (possibly user-edited) draft sets directly into the new
         // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first
         // Capabilities-tab open. The auto-grow path keeps these sets fresh
         // when new plugins are installed later. The description stays blank
         // here; `AgentDescriptionBackfill` summarizes the prompt afterwards.
-        var agent = AgentManager.newCustomAgentRecord(
-            name: trimmedName,
-            description: "",
-            systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            themeId: nil,
-            defaultModel: selectedModel
-        )
+        var agent: Agent
+        if let seed {
+            // Keep everything the template carried (sandbox, subagents,
+            // capabilities, plugin instructions); overwrite only the fields
+            // this form edits.
+            agent = seed.agent
+            agent.name = trimmedName
+            agent.systemPrompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            agent.defaultModel = selectedModel
+        } else {
+            agent = AgentManager.newCustomAgentRecord(
+                name: trimmedName,
+                description: "",
+                systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                themeId: nil,
+                defaultModel: selectedModel
+            )
+        }
         agent.toolSelectionMode = draftMode
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar

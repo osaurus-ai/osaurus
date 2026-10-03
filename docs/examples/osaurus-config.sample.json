@@ -32,7 +32,13 @@
         "applescript_enabled": false,
         "apple_apps": [],
         "relay_enabled": false
-      }
+      },
+      "tools": { "mode": "manual", "enabled": ["get_current_time", "web_search"] },
+      "mcp_servers": { "enabled": [], "disabled": [] },
+      "plugins": { "enabled": [] },
+      "sandbox": { "enabled": true, "network_enabled": true, "allowed_domains": [] },
+      "subagents": { "enabled": false, "agents": [], "models": [] },
+      "working_folder": null
     }
   ],
   "tools": {

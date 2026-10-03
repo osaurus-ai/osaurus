@@ -173,6 +173,22 @@ public final class ManagementStateManager: ObservableObject {
     /// to false after presenting.
     @Published public var pendingCreateAgent: Bool = false
 
+    /// One-shot request to open the Set Up Agent wizard for a local agent,
+    /// e.g. from the first-open checklist alert in chat. `AgentsView`
+    /// observes this and resets it to nil after presenting.
+    @Published public var pendingAgentSetupId: UUID?
+
+    /// A setup wizard that stepped aside so the user could visit another
+    /// tab (downloading a model, say). Carries the unsaved draft with it,
+    /// so nothing the user has filled in is lost. `AgentsView` reopens the
+    /// wizard from this and resets it to nil.
+    @Published var pendingAgentSetupSubject: AgentSetupSubject?
+
+    /// One-shot request to open Agents → Templates with the Import sheet
+    /// prefilled, from an `osaurus://templates-import?t=…` share link.
+    /// `AgentsView` observes this and resets it to nil after presenting.
+    @Published public var pendingTemplateImportText: String?
+
     /// One-shot request to reveal a project's shared memory — the namespace
     /// key (`project-<uuid>`). `MemoryView` observes this, switches to its
     /// Agents subtab, opens the project's context preview, and resets it to

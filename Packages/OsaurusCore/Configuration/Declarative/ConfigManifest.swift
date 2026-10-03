@@ -220,6 +220,72 @@ public enum ConfigManifest {
                                 ]),
                         ]),
                         comment: "only provided keys change"),
+                    ConfigKeySpec(
+                        "tools",
+                        .mapping([
+                            ConfigKeySpec(
+                                "mode", .scalar(.string, example: "manual", allowed: ["auto", "manual"]),
+                                comment: "auto = RAG-picked, manual = only `enabled`"),
+                            ConfigKeySpec(
+                                "enabled", .scalarList(.string, example: ["get_current_time", "web_search"]),
+                                comment: "tool names; MCP/plugin tools go under mcp_servers / plugins"),
+                        ]),
+                        comment: "per-agent tool selection"),
+                    ConfigKeySpec(
+                        "mcp_servers",
+                        .mapping([
+                            ConfigKeySpec("enabled", .scalarList(.string, example: [])),
+                            ConfigKeySpec("disabled", .scalarList(.string, example: [])),
+                        ]),
+                        comment: "MCP server NAMES; enabled adds all its tools, disabled removes them"),
+                    ConfigKeySpec(
+                        "plugins",
+                        .mapping([
+                            ConfigKeySpec("enabled", .scalarList(.string, example: [])),
+                            ConfigKeySpec("disabled", .scalarList(.string, example: [])),
+                        ]),
+                        comment: "plugin registry ids; same semantics as mcp_servers"),
+                    ConfigKeySpec(
+                        "plugin_instructions",
+                        .freeformMap(.string, exampleKey: "osaurus.notes", exampleValue: "\"\""),
+                        comment: "plugin id -> extra instructions for that plugin's tools"),
+                    ConfigKeySpec(
+                        "sandbox",
+                        .mapping([
+                            ConfigKeySpec("enabled", .scalar(.boolean, example: "true")),
+                            ConfigKeySpec(
+                                "network_enabled", .scalar(.boolean, example: "true"),
+                                comment: "outbound network from the sandbox VM"),
+                            ConfigKeySpec(
+                                "allowed_domains", .scalarList(.string, example: []),
+                                comment: "egress allowlist; empty = unrestricted"),
+                            ConfigKeySpec("max_commands_per_turn", .scalar(.integer, example: "10")),
+                            ConfigKeySpec(
+                                "background_process_enabled", .scalar(.boolean, example: "false")),
+                            ConfigKeySpec("plugin_create", .scalar(.boolean, example: "true")),
+                        ]),
+                        comment: "autonomous code execution sandbox"),
+                    ConfigKeySpec(
+                        "subagents",
+                        .mapping([
+                            ConfigKeySpec(
+                                "enabled", .scalar(.boolean, example: "false"),
+                                comment: "exposes spawn tools to this agent"),
+                            ConfigKeySpec(
+                                "agents", .scalarList(.string, example: []),
+                                comment: "agent NAMES this agent may spawn"),
+                            ConfigKeySpec(
+                                "models", .scalarList(.string, example: []),
+                                comment: "deprecated, ignored: spawning by model id was removed"),
+                        ]),
+                        comment: "per-agent delegation (Default agent uses `delegation`)"),
+                    ConfigKeySpec(
+                        "working_folder", .scalar(.string, example: "null", nullable: true),
+                        comment: "folder PATH hint; attached when it exists locally,",
+                        moreComments: ["otherwise the apply asks the user to pick it"]),
+                    ConfigKeySpec(
+                        "source_template", .scalar(.string, example: "\"\""),
+                        comment: "provenance: agent template this agent came from"),
                 ],
                 requiredKey: "name")),
 

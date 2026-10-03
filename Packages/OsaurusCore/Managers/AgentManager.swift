@@ -517,7 +517,9 @@ public final class AgentManager: ObservableObject {
             avatar: agent.avatar,
             autoSpeak: agent.autoSpeak,
             ttsVoice: agent.ttsVoice,
-            settings: agent.settings
+            settings: agent.settings,
+            // A copy of a template-made agent is still that template's kin.
+            sourceTemplateName: agent.sourceTemplateName
         )
     }
 
@@ -581,6 +583,11 @@ public final class AgentManager: ObservableObject {
                 config.spawnableAgentIDs.append(agent.id)
             }
         }
+        // Same universal creation hook doubles as the first-run setup
+        // marker: the agent stays flagged until a readiness check passes
+        // or the user finishes the setup checklist (see
+        // `AgentSetupStateStore` / `AgentSetupChecker`).
+        AgentSetupStateStore.shared.markNeedsSetup(agent.id)
     }
 
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
@@ -904,6 +911,7 @@ public final class AgentManager: ObservableObject {
         _ = SubagentConfigurationStore.mutate { config in
             config.spawnableAgentIDs.removeAll { $0 == id }
         }
+        AgentSetupStateStore.shared.clear(id)
         // …and from every remaining custom agent's own allow-list, so no
         // launcher anywhere keeps advertising a target that no longer exists.
         pruneSpawnableAgentID(id)
