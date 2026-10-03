@@ -201,7 +201,7 @@ struct AgentSetupWizardView: View {
     /// including edits made to an unsaved draft, is parked on the shared
     /// management state; `AgentsView` reopens the wizard from there when the
     /// user comes back.
-    private func leaveForModels() {
+    private func leave(to tab: ManagementTab) {
         let resume: AgentSetupSubject
         if case .draft(let original, let template) = subject {
             resume = .draft(draft ?? original, template: template)
@@ -210,7 +210,7 @@ struct AgentSetupWizardView: View {
         }
         ManagementStateManager.shared.pendingAgentSetupSubject = resume
         onClose()
-        AppDelegate.shared?.showManagementWindow(initialTab: .models)
+        AppDelegate.shared?.showManagementWindow(initialTab: tab)
     }
 
     @ViewBuilder
@@ -434,11 +434,11 @@ struct AgentSetupWizardView: View {
                 ModelStep(
                     agent: agent, items: items, mutate: mutate,
                     onAddProvider: { showAddProvider = true },
-                    onBrowseModels: { leaveForModels() }
+                    onBrowseModels: { leave(to: .models) }
                 )
             case .folder: FolderStep(agent: agent, items: items, mutate: mutate)
             case .knowledge: KnowledgeStep(agent: agent, items: items, mutate: mutate)
-            case .tools: ToolsStep(agent: agent, items: items, mutate: mutate)
+            case .tools: ToolsStep(agent: agent, items: items, mutate: mutate, onLeave: { leave(to: $0) })
             case .permissions: PermissionsStep(agent: agent, items: items, onChanged: { refresh(rebuildSteps: false) })
             case .review:
                 ReviewStep(
@@ -791,6 +791,9 @@ private struct ToolsStep: View {
     let agent: Agent
     let items: [AgentSetupItem]
     let mutate: ((inout Agent) -> Void) -> Void
+    /// Parks the wizard (and an unsaved draft) before switching tabs; a
+    /// bare tab switch tears the sheet down and loses the draft.
+    let onLeave: (ManagementTab) -> Void
 
     private var missingNames: [String] {
         items.flatMap { $0.value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
@@ -816,10 +819,10 @@ private struct ToolsStep: View {
             }
             VStack(alignment: .leading, spacing: 12) {
                 StepActionButton(title: "Open MCP Servers", icon: "server.rack") {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .tools)
+                    onLeave(.tools)
                 }
                 StepActionButton(title: "Open Plugins", icon: "puzzlepiece.extension") {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .skills)
+                    onLeave(.skills)
                 }
                 OrSeparator()
                 StepActionButton(title: "Remove Missing Tools", icon: "minus.circle", primary: false) {
