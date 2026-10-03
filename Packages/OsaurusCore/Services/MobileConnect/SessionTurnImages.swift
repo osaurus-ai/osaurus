@@ -100,5 +100,6 @@ enum SessionTurnImages {
         return file
     }
 
+    // swiftlint:disable:next force_try
     private static let linkPattern = try! NSRegularExpression(pattern: #"!\[[^\]]*\]\((file://[^)\s]+)\)"#)
 }
