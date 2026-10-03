@@ -602,6 +602,11 @@ enum ConfigApplier {
                     "subagents.agents: no agent named \(missing.map { "`\($0)`" }.joined(separator: ", ")) here.")
             }
         }
+        if let models = section.models, !models.isEmpty {
+            outcome.notes.append(
+                "subagents.models was removed: create an agent with that model "
+                    + "(agents[].model) and list it in subagents.agents.")
+        }
     }
 
     /// A folder path is only a hint. The bookmark is minted here when the
