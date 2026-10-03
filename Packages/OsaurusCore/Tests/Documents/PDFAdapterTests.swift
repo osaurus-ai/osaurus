@@ -63,9 +63,20 @@ struct PDFAdapterTests {
         let secondRange = try #require(pages[1].anchor.textRange)
         let thirdRange = try #require(pages[2].anchor.textRange)
 
-        #expect(firstRange.startUTF16Offset == 0)
-        #expect(secondRange.startUTF16Offset == firstText.utf16.count + 2)
-        #expect(thirdRange.startUTF16Offset == secondRange.endUTF16Offset + 2)
+        let header1 = PDFAdapter.pageHeader(pageIndex: 0, pageCount: 3)
+        let header2 = PDFAdapter.pageHeader(pageIndex: 1, pageCount: 3)
+        let header3 = PDFAdapter.pageHeader(pageIndex: 2, pageCount: 3)
+        #expect(doc.textFallback.hasPrefix(header1))
+        #expect(firstRange.startUTF16Offset == header1.utf16.count)
+        #expect(secondRange.startUTF16Offset == firstRange.endUTF16Offset + 2 + header2.utf16.count)
+        #expect(thirdRange.startUTF16Offset == secondRange.endUTF16Offset + 2 + header3.utf16.count)
+        // Every page anchor slices the fallback to exactly that page's body.
+        let fallback = doc.textFallback as NSString
+        for (element, expected) in zip(pages, [firstText, secondText, pages[2].text ?? ""]) {
+            let range = try #require(element.anchor.textRange)
+            #expect(
+                fallback.substring(with: NSRange(location: range.startUTF16Offset, length: range.length)) == expected)
+        }
         #expect(pages.map { $0.anchor.sourceRange?.start.pageIndex ?? -1 } == [0, 1, 2])
         #expect(pages.map { $0.anchor.sourceRange?.end?.pageIndex ?? -1 } == [0, 1, 2])
         #expect(pages[0].anchor.sourceRange?.start.characterOffset == 0)
@@ -96,12 +107,17 @@ struct PDFAdapterTests {
             DocumentPageText(pageIndex: 1, text: "😀second"),
             DocumentPageText(pageIndex: 2, text: "third"),
         ]
-        let extracted = "first\n\n😀second\n\nthird"
-        let fallback = "first\n\n😀se"
+        let header1 = PDFAdapter.pageHeader(pageIndex: 0, pageCount: 3)
+        let header2 = PDFAdapter.pageHeader(pageIndex: 1, pageCount: 3)
+        let extracted = PDFAdapter.joinedText(pages: pages, pageCount: 3)
+        #expect(extracted == "\(header1)first\n\n\(header2)😀second\n\n--- Page 3 of 3 ---\nthird")
+        let fallback = String(extracted.prefix((header1 + "first\n\n" + header2 + "😀se").count))
+        #expect(fallback.hasSuffix("😀se"))
 
         let structure = PDFAdapter.structureForTextFallback(
             filename: "long.pdf",
             pages: pages,
+            pageCount: 3,
             extractedText: extracted,
             textFallback: fallback
         )
@@ -116,8 +132,9 @@ struct PDFAdapterTests {
         let secondRange = try #require(pageElements[1].anchor.textRange)
         let thirdRange = try #require(pageElements[2].anchor.textRange)
 
-        #expect(firstRange == DocumentTextRange(startUTF16Offset: 0, length: "first".utf16.count))
-        #expect(secondRange.startUTF16Offset == "first\n\n".utf16.count)
+        #expect(
+            firstRange == DocumentTextRange(startUTF16Offset: header1.utf16.count, length: "first".utf16.count))
+        #expect(secondRange.startUTF16Offset == (header1 + "first\n\n" + header2).utf16.count)
         #expect(secondRange.length == "😀se".utf16.count)
         #expect(thirdRange.startUTF16Offset == fallback.utf16.count)
         #expect(thirdRange.isEmpty)
