@@ -1140,6 +1140,11 @@ in `content`. Those files are listed in `images` too, after the turn's
 attachments, so a client shows them from §14.9 and drops the `file://` links
 from the text. Links outside that folder are never served.
 
+Images an agent shared with a tool (the `image` tool, `share_artifact`) follow
+them in `images`: the tool result keeps a `---SHARED_ARTIFACT_START---` marker
+whose metadata names the file (`context_id`, `filename`, `mime_type`), and
+every image one names that is still in `~/.osaurus/artifacts/` is listed.
+
 ### 14.3 `PATCH /sessions/{id}`
 
 `{"title"?: "…", "archived"?: bool, "pinned"?: bool}` → `{"ok":true}`. Each
@@ -1254,6 +1259,15 @@ its list kept for when it goes back on); `all` and `essential` turn Tools on.
 The reply is the §14.4 catalog for that agent. `400 bad_request` for another
 preset, `403 agent_not_editable` for an unknown or built-in agent.
 Owner-only.
+
+### 14.12 `GET /artifacts/{context id}/{filename}`
+
+The bytes of a file an agent shared, named as its `share_artifact` tool result
+names it (`context_id`, `filename` in the marker's metadata), so a client can
+show an image while the run is still going, before the chat is saved.
+`Content-Type` follows the file's extension. Only files in
+`~/.osaurus/artifacts/` are served: `404 artifact_not_found` for anything
+else, a missing file, or a directory. Owner-only.
 
 ---
 

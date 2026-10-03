@@ -1072,6 +1072,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path.hasPrefix("/artifacts/") {
+                handleArtifactFileEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path.hasPrefix("/sessions/"), path.hasSuffix("/truncate") {
                 handleSessionTruncateEndpoint(
                     head: head,
@@ -5525,7 +5533,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// Ungranted requirements / missing system permissions, when any.
         let blocked_by: [String]?
         /// Always loaded, not picked per agent: it follows the agent's own
-        /// switches (§14.11).
+        /// switches (§14.12).
         let built_in: Bool
         /// The agent has it on: in its own tool list, or built in.
         let agent_enabled: Bool
@@ -5589,7 +5597,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// A §14.7 body: `enabled` and `policy` are Mac-wide, `agentEnabled` is
-    /// the agent's own choice (§14.11).
+    /// the agent's own choice (§14.12).
     struct ToolPatch: Equatable {
         let enabled: Bool?
         let policy: ToolPermissionPolicy?
@@ -5721,7 +5729,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// POST /agents/{id}/tools/preset: `{"preset":"all" | "essential" | "none"}`,
-    /// the Tools window's presets (docs/MOBILE_PROTOCOL.md §14.11). Answers
+    /// the Tools window's presets (docs/MOBILE_PROTOCOL.md §14.12). Answers
     /// with the agent's tool catalog, as §14.4.
     private func handleAgentToolPresetEndpoint(
         head: HTTPRequestHead,
@@ -7684,6 +7692,82 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
             let contentType = Self.imageContentType(forData: data)
+            hop {
+                let context = ctx.value
+                var head2 = HTTPResponseHead(version: head.version, status: .ok)
+                var headers = HTTPHeaders()
+                headers.add(name: "Content-Type", value: contentType)
+                headers.add(name: "Content-Length", value: String(data.count))
+                headers.add(name: "Cache-Control", value: "no-store")
+                for (name, value) in cors { headers.add(name: name, value: value) }
+                head2.headers = headers
+                var buffer = context.channel.allocator.buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                context.write(NIOAny(HTTPServerResponsePart.head(head2)), promise: nil)
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)), promise: nil)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "<\(data.count) bytes \(contentType)>",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /artifacts/{context id}/{filename} — a file an agent shared
+    /// (`share_artifact`, the `image` tool), as its tool result names it
+    /// (`context_id`, `filename`). Owner-only; nothing outside
+    /// `~/.osaurus/artifacts/` is ever served (docs/MOBILE_PROTOCOL.md §14.12).
+    private func handleArtifactFileEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/").map { String($0).removingPercentEncoding ?? String($0) }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let file =
+                components.count == 3 && components[0] == "artifacts"
+                ? SessionTurnImages.artifactFile(contextId: components[1], filename: components[2]) : nil
+            guard let file, let data = try? Data(contentsOf: file) else {
+                hop {
+                    let body = #"{"error":"artifact_not_found"}"#
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: body
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: body,
+                        responseStatus: 404,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            let contentType = SharedArtifact.mimeType(from: file.lastPathComponent)
             hop {
                 let context = ctx.value
                 var head2 = HTTPResponseHead(version: head.version, status: .ok)
