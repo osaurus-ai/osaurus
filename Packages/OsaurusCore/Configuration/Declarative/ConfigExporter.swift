@@ -202,7 +202,6 @@ enum ConfigExporter {
         section.agents = agent.settings.spawnableAgentIDs.compactMap { id in
             agents.first { $0.id == id }?.name
         }
-        section.models = agent.settings.spawnableModelNames
         return section
     }
 

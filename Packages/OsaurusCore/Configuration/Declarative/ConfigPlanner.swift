@@ -1226,9 +1226,6 @@ enum ConfigPlanner {
                     changes.append("subagents.agents: \(names.count) agent(s)")
                 }
             }
-            if let models = subagents.models, Set(models) != Set(agent.settings.spawnableModelNames) {
-                changes.append("subagents.models: \(models.count) model(s)")
-            }
         }
         diff("source_template", desired: entry.sourceTemplate, current: agent.sourceTemplateName, into: &changes)
         switch entry.workingFolder {
@@ -1277,7 +1274,7 @@ enum ConfigPlanner {
             changes.append("sandbox: \(on ? "on" : "off")")
         }
         if let subagents = entry.subagents, subagents.enabled == true {
-            let targets = (subagents.agents ?? []) + (subagents.models ?? [])
+            let targets = subagents.agents ?? []
             changes.append(
                 "subagents: on" + (targets.isEmpty ? "" : " (\(targets.joined(separator: ", ")))"))
         }

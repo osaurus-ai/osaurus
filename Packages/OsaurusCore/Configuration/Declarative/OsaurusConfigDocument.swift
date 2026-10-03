@@ -408,10 +408,13 @@ public struct AgentSandboxEntry: Codable, Equatable, Sendable {
 }
 
 /// Subagent delegation for one agent. `agents` are agent names (resolved
-/// to local ids on apply); `models` are raw model ids for `spawn_model`.
+/// to local ids on apply).
 public struct AgentSubagentsEntry: Codable, Equatable, Sendable {
     public var enabled: Bool?
     public var agents: [String]?
+    /// Deprecated and ignored. Spawning by raw model id was removed, but
+    /// templates exported before that still carry the key, so it keeps
+    /// decoding instead of failing the strict validator.
     public var models: [String]?
 
     public init() {}

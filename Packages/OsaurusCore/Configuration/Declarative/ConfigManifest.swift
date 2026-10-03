@@ -276,7 +276,7 @@ public enum ConfigManifest {
                                 comment: "agent NAMES this agent may spawn"),
                             ConfigKeySpec(
                                 "models", .scalarList(.string, example: []),
-                                comment: "raw model ids for spawn_model"),
+                                comment: "deprecated, ignored: spawning by model id was removed"),
                         ]),
                         comment: "per-agent delegation (Default agent uses `delegation`)"),
                     ConfigKeySpec(
