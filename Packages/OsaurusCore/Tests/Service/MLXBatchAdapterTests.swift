@@ -437,6 +437,104 @@ struct MLXBatchAdapterTests {
         }
     }
 
+    /// A generated delegation cap is a ceiling, not an explicit agent override.
+    /// Exercise the same clamp and implicit marker the chat surface supplies.
+    private func delegatedOutputSettings(
+        agentTokens: Int?, serverTokens: Int?, bundleTokens: Int?
+    ) -> (
+        generation: GenerationParameters, runtime: VMLXServerGenerationDefaults,
+        effective: MLXBatchAdapter.EffectiveGenerationSettings
+    ) {
+        let contract = DelegatedRunContract(
+            responseTokens: 8_192, assistantTurns: 24, contextPositions: 131_072)
+        let generation = GenerationParameters(
+            temperature: nil,
+            maxTokens: contract.clampedResponseTokens(agentConfigured: agentTokens),
+            maxTokensExplicit: true,
+            admissionOutputTokensAreImplicit: agentTokens == nil)
+        let runtime = VMLXServerGenerationDefaults(maxTokens: serverTokens)
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "delegated-output-precedence",
+            generation: generation,
+            runtimeDefaults: runtime,
+            maxBatchSize: 1,
+            modelDefaults: LocalGenerationDefaults.Defaults(
+                maxTokens: bundleTokens, temperature: 0.7, topP: 0.9,
+                topK: 32, minP: 0.03, repetitionPenalty: 1.05, doSample: true))
+        return (generation, runtime, effective)
+    }
+
+    @Test("Delegated output ceilings preserve saved and bundle defaults and explicit agent priority")
+    func delegatedOutputDefaultPrecedence() {
+        let cases: [(name: String, agent: Int?, server: Int?, bundle: Int?, expected: Int)] = [
+            ("saved default below cap", nil, 2_048, 1_048_576, 2_048),
+            ("explicit agent outranks saved default", 4_096, 2_048, 1_048_576, 4_096),
+            ("explicit agent tightened by contract", 16_384, 2_048, 1_048_576, 8_192),
+            ("saved default above cap", nil, 16_384, 1_048_576, 8_192),
+            ("bundle default below cap", nil, nil, 512, 512),
+            ("bundle default above cap", nil, nil, 1_048_576, 8_192),
+            ("absent defaults retain contract fallback", nil, nil, nil, 8_192),
+        ]
+        for item in cases {
+            let effective = delegatedOutputSettings(
+                agentTokens: item.agent, serverTokens: item.server, bundleTokens: item.bundle).effective
+            #expect(effective.maxTokens == item.expected, "\(item.name)")
+            #expect(effective.temperature == 0.7)
+            #expect(effective.topP == 0.9)
+            #expect(effective.topK == 32)
+            #expect(effective.minP == 0.03)
+            #expect(effective.repetitionPenalty == 1.05)
+        }
+    }
+
+    @Test("An explicit API output request still outranks a smaller saved default")
+    func explicitAPIOutputPriorityIsUnchanged() {
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "explicit-output-precedence",
+            generation: GenerationParameters(
+                temperature: nil, maxTokens: 8_192, maxTokensExplicit: true),
+            runtimeDefaults: VMLXServerGenerationDefaults(maxTokens: 2_048),
+            maxBatchSize: 1,
+            modelDefaults: LocalGenerationDefaults.Defaults(maxTokens: 1_048_576))
+        #expect(effective.maxTokens == 8_192)
+    }
+
+    @Test("Prepared-position admission uses the resolved child output and preserves explicit strictness")
+    func delegatedResolvedOutputComposesWithPreparedPositionLimit() throws {
+        let saved = delegatedOutputSettings(
+            agentTokens: nil, serverTokens: 2_048, bundleTokens: 1_048_576)
+        // A saved runtime output limit is explicit at the prepared-token check,
+        // even though the chat surface's synthesized contract cap is implicit.
+        #expect(saved.generation.admissionOutputTokensAreImplicit)
+        let savedIsExplicit = (saved.generation.maxTokensExplicit
+            && !saved.generation.admissionOutputTokensAreImplicit) || saved.runtime.maxTokens != nil
+        #expect(try AdmissionPositionLimit.resolveOutputTokens(
+            promptTokens: 1_788, outputTokens: saved.effective.maxTokens,
+            limit: 8_192, isExplicit: savedIsExplicit) == 2_048)
+        #expect(throws: AdmissionPositionLimit.self) {
+            try AdmissionPositionLimit.resolveOutputTokens(
+                promptTokens: 7_000, outputTokens: saved.effective.maxTokens,
+                limit: 8_192, isExplicit: savedIsExplicit)
+        }
+
+        let agent = delegatedOutputSettings(
+            agentTokens: 4_096, serverTokens: 2_048, bundleTokens: 1_048_576)
+        #expect(agent.effective.maxTokens == 4_096)
+        #expect(throws: AdmissionPositionLimit.self) {
+            try AdmissionPositionLimit.resolveOutputTokens(
+                promptTokens: 5_000, outputTokens: agent.effective.maxTokens, limit: 8_192,
+                isExplicit: agent.generation.maxTokensExplicit
+                    && !agent.generation.admissionOutputTokensAreImplicit)
+        }
+
+        let inherited = delegatedOutputSettings(
+            agentTokens: nil, serverTokens: nil, bundleTokens: 1_048_576)
+        #expect(try AdmissionPositionLimit.resolveOutputTokens(
+            promptTokens: 1_788, outputTokens: inherited.effective.maxTokens, limit: 8_192,
+            isExplicit: inherited.generation.maxTokensExplicit
+                && !inherited.generation.admissionOutputTokensAreImplicit) == 6_404)
+    }
+
     /// Settings → Sampling Defaults must actually change sampling.
     ///
     /// The panel's own copy promises it: every field reads "Blank = model
