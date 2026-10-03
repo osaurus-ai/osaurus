@@ -138,9 +138,9 @@ Privacy → **Activity Log**: *Keep Activity History* (7 / 30 / 90 days,
 
 Provider `/models` and test-connection probes, OAuth flows, MCP capability
 probes, Browser Use page traffic, channel polling / inbound receipt,
-workspace handshake and keep-alives, theme fetches, skill / plugin / sandbox
-downloads, telemetry, crash reports, updates and model downloads do not
-produce rows. The full list and rationale: [ACTIVITY_LOG.md §9](ACTIVITY_LOG.md#9-what-is-not-captured).
+workspace handshake and keep-alives, the unauthenticated Router announcements
+feed and health probe, theme fetches, skill / plugin / sandbox downloads,
+telemetry, crash reports, updates and model downloads do not produce rows. The full list and rationale: [ACTIVITY_LOG.md §9](ACTIVITY_LOG.md#9-what-is-not-captured).
 
 ---
 

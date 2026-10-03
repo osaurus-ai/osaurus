@@ -29,7 +29,7 @@ Delegated subagents and Computer Use / AppleScript helper steps are shown with s
 
 ## Not captured
 
-The log records interactions, not every byte on the wire. These do **not** produce rows: cloud-provider model-list and Test connection probes, provider / MCP sign-in (OAuth) flows, MCP capability probes, pages the managed browser loads during Browser Use, channel polling and incoming-message receipt, workspace handshake and keep-alives, theme fetches, skill / plugin / sandbox package downloads, and local tool side effects (file edits, shell commands, clicks). Anonymous usage analytics, crash reports, app updates and model downloads are separate consent switches under Privacy → Data Collection.
+The log records interactions, not every byte on the wire. These do **not** produce rows: cloud-provider model-list and Test connection probes, provider / MCP sign-in (OAuth) flows, MCP capability probes, pages the managed browser loads during Browser Use, channel polling and incoming-message receipt, workspace handshake and keep-alives, the unauthenticated Router announcements feed and health probe (no account data is sent), theme fetches, skill / plugin / sandbox package downloads, and local tool side effects (file edits, shell commands, clicks). Anonymous usage analytics, crash reports, app updates and model downloads are separate consent switches under Privacy → Data Collection.
 
 ## Reading the dashboard
 

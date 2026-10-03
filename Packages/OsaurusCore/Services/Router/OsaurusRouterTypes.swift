@@ -354,6 +354,168 @@ struct OsaurusRouterRedeemCodeResponse: Decodable, Equatable, Sendable {
     }
 }
 
+// MARK: - Announcements (`GET /announcements`)
+
+/// `GET /announcements` — the router-served community announcements that
+/// are live right now (the router already filtered on status, schedule and
+/// app-version bounds against its own clock). Unauthenticated.
+struct OsaurusRouterAnnouncementsResponse: Decodable, Equatable, Sendable {
+    /// Informational database clock at response time (ISO-8601). Never used
+    /// to re-evaluate the window locally; handy for "N hours left" copy.
+    let serverTime: String?
+    let announcements: [OsaurusRouterAnnouncement]
+
+    enum CodingKeys: String, CodingKey {
+        case announcements
+        case serverTime = "server_time"
+    }
+
+    init(serverTime: String?, announcements: [OsaurusRouterAnnouncement]) {
+        self.serverTime = serverTime
+        self.announcements = announcements
+    }
+
+    /// Lenient: one malformed announcement is dropped, never the whole feed.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serverTime = try c.decodeIfPresent(String.self, forKey: .serverTime)
+        var list = try c.nestedUnkeyedContainer(forKey: .announcements)
+        var decoded: [OsaurusRouterAnnouncement] = []
+        while !list.isAtEnd {
+            if let item = try? list.decode(OsaurusRouterAnnouncement.self) {
+                decoded.append(item)
+            } else {
+                _ = try? list.decode(OsaurusRouterLenientJSONValue.self)
+            }
+        }
+        announcements = decoded
+    }
+}
+
+/// Swallows one arbitrary JSON value so a lenient array decode can skip it.
+struct OsaurusRouterLenientJSONValue: Decodable {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { return }
+        if (try? c.decode(Bool.self)) != nil { return }
+        if (try? c.decode(Double.self)) != nil { return }
+        if (try? c.decode(String.self)) != nil { return }
+        if (try? c.decode([OsaurusRouterLenientJSONValue].self)) != nil { return }
+        _ = try c.decode([String: OsaurusRouterLenientJSONValue].self)
+    }
+}
+
+struct OsaurusRouterAnnouncement: Decodable, Identifiable, Equatable, Sendable {
+    /// One call-to-action button. `kind` and `style` stay raw strings so an
+    /// unknown future kind is dropped at selection time instead of failing
+    /// the decode of the whole announcement.
+    struct CTA: Decodable, Equatable, Sendable {
+        let label: String
+        let kind: String
+        let url: String
+        let style: String?
+
+        init(label: String, kind: String, url: String, style: String? = nil) {
+            self.label = label
+            self.kind = kind
+            self.url = url
+            self.style = style
+        }
+
+        /// `https://` page opened in the default browser.
+        var isExternalURL: Bool { kind == "external_url" }
+        /// `osaurus://` link routed through the app's own URL handler.
+        var isDeepLink: Bool { kind == "deeplink" }
+        var isPrimary: Bool { (style ?? "").lowercased() == "primary" }
+
+        /// Parsed destination when the kind/scheme pair is one this build
+        /// understands; nil for anything else (dropped, per the contract).
+        var resolvedURL: URL? {
+            guard let url = URL(string: url), let scheme = url.scheme?.lowercased() else { return nil }
+            if isExternalURL { return scheme == "https" ? url : nil }
+            if isDeepLink { return scheme == "osaurus" ? url : nil }
+            return nil
+        }
+    }
+
+    let id: String
+    /// The dismissal key: a user who dismissed this slug never sees it again.
+    let slug: String
+    let title: String
+    let body: String
+    /// Only `"markdown"` is emitted today; anything else is skipped so
+    /// future formats stay forward-compatible.
+    let bodyFormat: String
+    let imageURL: String?
+    let ctas: [CTA]
+    let startsAt: String?
+    let endsAt: String?
+    let priority: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, slug, title, body, ctas, priority
+        case bodyFormat = "body_format"
+        case imageURL = "image_url"
+        case startsAt = "starts_at"
+        case endsAt = "ends_at"
+    }
+
+    init(
+        id: String,
+        slug: String,
+        title: String,
+        body: String,
+        bodyFormat: String = "markdown",
+        imageURL: String? = nil,
+        ctas: [CTA] = [],
+        startsAt: String? = nil,
+        endsAt: String? = nil,
+        priority: Int = 0
+    ) {
+        self.id = id
+        self.slug = slug
+        self.title = title
+        self.body = body
+        self.bodyFormat = bodyFormat
+        self.imageURL = imageURL
+        self.ctas = ctas
+        self.startsAt = startsAt
+        self.endsAt = endsAt
+        self.priority = priority
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        slug = try c.decode(String.self, forKey: .slug)
+        title = try c.decode(String.self, forKey: .title)
+        body = try c.decode(String.self, forKey: .body)
+        bodyFormat = try c.decodeIfPresent(String.self, forKey: .bodyFormat) ?? "markdown"
+        imageURL = try c.decodeIfPresent(String.self, forKey: .imageURL)
+        ctas = try c.decodeIfPresent([CTA].self, forKey: .ctas) ?? []
+        startsAt = try c.decodeIfPresent(String.self, forKey: .startsAt)
+        endsAt = try c.decodeIfPresent(String.self, forKey: .endsAt)
+        priority = try c.decodeIfPresent(Int.self, forKey: .priority) ?? 0
+    }
+
+    /// Whether this build can render the announcement at all.
+    var isRenderable: Bool { bodyFormat == "markdown" && !title.isEmpty && !body.isEmpty }
+
+    /// The CTAs this build can act on (`https` external / `osaurus` deep
+    /// link), capped at three per the contract. Order is preserved.
+    var actionableCTAs: [CTA] {
+        Array(ctas.filter { $0.resolvedURL != nil && !$0.label.isEmpty }.prefix(3))
+    }
+
+    /// Optional `https://` header image; any other scheme is ignored.
+    var resolvedImageURL: URL? {
+        guard let imageURL, let url = URL(string: imageURL), url.scheme?.lowercased() == "https" else {
+            return nil
+        }
+        return url
+    }
+}
+
 struct OsaurusRouterCheckoutResponse: Decodable, Equatable, Sendable {
     let clientSecret: String
     let checkoutURL: String

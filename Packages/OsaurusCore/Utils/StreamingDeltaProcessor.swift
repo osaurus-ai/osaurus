@@ -58,20 +58,6 @@ final class StreamingDeltaProcessor {
     private var lastFlushTime = Date()
     private var syncCount = 0
 
-    /// Watches revealed content for a phrase-repetition collapse. Fed from
-    /// `appendContent` so it sees exactly what the user sees, in order.
-    private var repetitionDetector = StreamRepetitionDetector()
-
-    /// True once the streamed content has collapsed into a repetition loop.
-    /// The stream consumer polls this and cuts the turn short rather than
-    /// letting the model spend its whole output budget on one sentence
-    /// (osaurus#2439). Latches once set.
-    var hasDetectedRepetitionLoop: Bool { repetitionDetector.hasDetectedLoop }
-
-    /// The repeated phrase that tripped the detector, for the model-facing
-    /// notice. Nil until `hasDetectedRepetitionLoop` is true.
-    var repeatedPhrase: String? { repetitionDetector.repeatedPhrase }
-
     /// Both the engine-completion relay and the stream consumer can finalize
     /// the same tail. MainActor methods are reentrant across the await, so
     /// retain every waiter: replacing a single continuation strands the
@@ -343,7 +329,6 @@ final class StreamingDeltaProcessor {
         turn.appendContent(s)
         contentLength += s.count
         hasPendingContent = true
-        repetitionDetector.feed(s)
     }
 
     private func appendThinking(_ s: String) {

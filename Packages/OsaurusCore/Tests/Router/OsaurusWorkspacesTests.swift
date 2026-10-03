@@ -2603,7 +2603,12 @@ struct WorkspacesServiceTests {
         }
     }
 
-    @Test func activationRootRefresh_isThrottled() async throws {
+    /// App activation is not a list-refresh trigger for the service any
+    /// more: the roster store owns the (verified-stream-aware, 15 min
+    /// throttled) activation refresh and hands the list over via
+    /// `applyWorkspaceList`. Without a pending Stripe confirmation an
+    /// activation issues no Router request, however stale the list is.
+    @Test func activationRootRefresh_makesNoListCallWithoutPendingConfirmation() async throws {
         let workspacesCalls = CallCounter()
         try await withService(handler: { request in
             switch (request.httpMethod, request.url?.path) {
@@ -2624,14 +2629,48 @@ struct WorkspacesServiceTests {
             await service.refreshWorkspaces()
             #expect(workspacesCalls.value == 1)
 
-            // Within the 60s window: activation must not refetch.
             await service.handleAppActivation()
             #expect(workspacesCalls.value == 1)
 
-            // Backdate the last refresh past the interval: activation polls.
-            service.lastRootRefresh = Date(timeIntervalSinceNow: -120)
+            // Even a stale list: no activation-driven refetch.
+            service.lastRootRefresh = Date(timeIntervalSinceNow: -3600)
             await service.handleAppActivation()
-            #expect(workspacesCalls.value == 2)
+            await service.handleAppActivation()
+            #expect(workspacesCalls.value == 1)
+        }
+    }
+
+    /// The roster store's list fetch is handed to the service so the two
+    /// never issue separate `GET /workspaces` for the same trigger.
+    @Test func applyWorkspaceList_installsListWithoutFetching() async throws {
+        let workspacesCalls = CallCounter()
+        try await withService(handler: { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/workspaces"):
+                workspacesCalls.increment()
+                return json(#"{"data":[]}"#)
+            default:
+                Issue.record(
+                    "Unexpected \(request.httpMethod ?? "?") \(request.url?.path ?? "?")"
+                )
+                throw URLError(.badURL)
+            }
+        }) { service, _ in
+            let fetched = [
+                OsaurusRouterWorkspaceSummary(
+                    id: "team-9", name: "Handed Over", role: "member", source: nil, active: true
+                )
+            ]
+            service.applyWorkspaceList(fetched)
+            #expect(service.workspaces.map(\.id) == ["team-9"])
+            #expect(service.hasLoadedWorkspaces)
+            #expect(service.lastRootRefresh != nil)
+            #expect(workspacesCalls.value == 0)
+
+            // Idempotent on the same list.
+            service.applyWorkspaceList(fetched)
+            #expect(service.workspaces.map(\.id) == ["team-9"])
+            #expect(workspacesCalls.value == 0)
         }
     }
 

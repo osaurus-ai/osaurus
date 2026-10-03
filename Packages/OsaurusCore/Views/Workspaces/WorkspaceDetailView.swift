@@ -131,8 +131,10 @@ struct WorkspaceDetailView: View {
             if renameDraft == workspace.name || renameDraft.isEmpty { renameDraft = name }
         }
         .task(id: workspace.id) {
-            // Presence re-poll: `online`/`last_seen` age out fast, so keep
-            // the roster live (~30s) while this detail view is on screen.
+            // Presence: while the sync stream is verified it reconciles
+            // `online`/`last_seen` every ~15s and pushes the roster here, so
+            // no request is made. Only without a verified stream (older
+            // router, offline) does this fall back to a 30s presence poll.
             // Each pass also auto-connects any shared agent this member
             // hasn't paired with yet (hosts that just came online included),
             // so the roster is "ready to chat" without a Connect click.
@@ -140,7 +142,9 @@ struct WorkspaceDetailView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 guard !Task.isCancelled else { break }
-                await service.refreshAgentsPresence()
+                if !WorkspaceSyncService.shared.isVerified {
+                    await service.refreshAgentsPresence()
+                }
                 await autoConnectSharedAgents()
             }
         }

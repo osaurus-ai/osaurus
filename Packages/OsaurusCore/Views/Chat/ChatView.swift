@@ -5488,20 +5488,6 @@ final class ChatSession: ObservableObject {
                     )
                     currentTurn.lastOutputAt = now
                     processor.receiveDelta(delta)
-
-                    // The model has collapsed into a phrase-repetition loop.
-                    // Leaving the stream running spends the entire output
-                    // budget on one repeated sentence and floods the
-                    // transcript with it (osaurus#2439, turn 144: ~200 copies
-                    // of "Let me continue:"). Stop consuming — the normal
-                    // end-of-stream path below finalises whatever was already
-                    // revealed, and the turn is classified as a loop so the
-                    // driver can nudge instead of presenting it as an answer.
-                    if processor.hasDetectedRepetitionLoop {
-                        currentTurn.repetitionLoopPhrase =
-                            processor.repeatedPhrase ?? ""
-                        break
-                    }
                 }
 
                 // Hand the main run loop a turn so SwiftUI can actually paint
@@ -8107,11 +8093,7 @@ final class ChatSession: ObservableObject {
                                         // the first batch:" preamble whose
                                         // tool call never arrived.
                                         content: assistantTurn.contentIsBlank
-                                            ? nil : assistantTurn.content,
-                                        // Set only when the stream consumer
-                                        // cut the turn on a repetition loop.
-                                        repetitionLoopPhrase:
-                                            assistantTurn.repetitionLoopPhrase
+                                            ? nil : assistantTurn.content
                                     )
                                 }
                                 hasStructuredToolWorkThisRun = true
@@ -10481,7 +10463,7 @@ struct ChatView: View {
                             try? await Task.sleep(for: .seconds(0.25))
                             if !NSApp.windows.contains(where: { $0.attachedSheet != nil }) { break }
                         }
-                        AppDelegate.shared?.presentProductHuntLaunchDialogIfEligible()
+                        AppDelegate.shared?.presentAnnouncementIfEligible()
                     }
                 },
                 onAction: { action in

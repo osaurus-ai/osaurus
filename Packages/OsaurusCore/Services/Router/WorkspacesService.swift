@@ -112,11 +112,9 @@ final class WorkspacesService: ObservableObject {
     private var confirmationPollCount = 0
     private static let maxConfirmationPolls = 10
 
-    /// Root refresh throttle for activation-driven polling (membership
-    /// changes have no server push). Internal (not private) so throttle
-    /// tests can backdate it instead of sleeping through the real interval.
+    /// When the list was last installed from any source (own fetch, roster
+    /// hand-off, sync snapshot). Internal so tests can read/backdate it.
     var lastRootRefresh: Date?
-    private static let activationRefreshInterval: TimeInterval = 60
 
     /// Seam for osaurus.ai / Billing Portal redirects; tests capture the
     /// URL instead of opening a real browser.
@@ -158,8 +156,10 @@ final class WorkspacesService: ObservableObject {
 
     // MARK: - Root refresh
 
-    /// Workspaces the caller belongs to. Membership changes have no server push,
-    /// so this runs on tab open and (throttled) on app activation.
+    /// Workspaces the caller belongs to. Runs on tab open and after
+    /// mutations (create / join / leave / delete); the sync stream and the
+    /// roster store's activation refresh keep it current otherwise (see
+    /// `applyWorkspaceList`).
     func refreshWorkspaces() async {
         guard OsaurusRouter.isEnabled else { return }
         guard !isLoadingWorkspaces else { return }
@@ -170,19 +170,14 @@ final class WorkspacesService: ObservableObject {
         do {
             let fetched = try await client.listWorkspaces()
             guard generation == rootGeneration else { return }
-            workspaces = fetched
-            hasLoadedWorkspaces = true
-            lastRootRefresh = Date()
-            // An authoritative workspace list is the reconciliation point for
-            // per-agent billing prefs: leaving, being removed, or the workspace
-            // being deleted must stop `workspace_context` injection.
-            reconcileBillingPreferences(validWorkspaceIds: Set(workspaces.map(\.id)))
+            installWorkspaceList(fetched)
             // Membership changed (create / join / leave / removed): the chat
             // sidebar's per-workspace sections follow the same list.
             let known = Set(WorkspaceRosterStore.shared.rosters.map(\.id))
             if known != Set(workspaces.map(\.id)) {
                 Task { await WorkspaceRosterStore.shared.refresh(reason: .manual) }
             }
+            WorkspaceSyncService.shared.noteMembership(hasWorkspaces: !fetched.isEmpty)
         } catch {
             noteError(error)
             return
@@ -203,15 +198,37 @@ final class WorkspacesService: ObservableObject {
         }
     }
 
+    /// An authoritative workspace list fetched by another surface (the chat
+    /// roster store's probe, fallback, or activation refresh). Installs it
+    /// exactly as `refreshWorkspaces` would, without a second
+    /// `GET /workspaces` for the same trigger.
+    func applyWorkspaceList(_ fetched: [OsaurusRouterWorkspaceSummary]) {
+        guard OsaurusRouter.isEnabled else { return }
+        installWorkspaceList(fetched)
+    }
+
+    private func installWorkspaceList(_ fetched: [OsaurusRouterWorkspaceSummary]) {
+        rootGeneration = UUID()
+        if workspaces != fetched { workspaces = fetched }
+        hasLoadedWorkspaces = true
+        lastRootRefresh = Date()
+        // An authoritative workspace list is the reconciliation point for
+        // per-agent billing prefs: leaving, being removed, or the workspace
+        // being deleted must stop `workspace_context` injection.
+        reconcileBillingPreferences(validWorkspaceIds: Set(workspaces.map(\.id)))
+    }
+
     /// Account-level billing summary (owner subscription + trial state) and
     /// the public plan/prices. Quiet on failure: the list is the primary
     /// surface, and a router without these routes must not raise a banner.
+    /// Prices are public catalog data that change by deploy, not by user
+    /// action: fetched once per session.
     func refreshBilling() async {
         guard OsaurusRouter.isEnabled else { return }
         if let summary = try? await client.workspaceBilling() {
             billing = summary
         }
-        if let fetched = try? await client.workspacePrices() {
+        if prices == nil, let fetched = try? await client.workspacePrices() {
             prices = fetched
         }
     }
@@ -1579,16 +1596,10 @@ final class WorkspacesService: ObservableObject {
             }
         }
 
-        // Membership has no server push (removals, role changes, deleted
-        // workspaces): refresh the list on activation so billing prefs reconcile
-        // promptly, throttled so rapid app switching doesn't hammer the router.
-        let stale =
-            lastRootRefresh.map {
-                Date().timeIntervalSince($0) >= Self.activationRefreshInterval
-            } ?? true
-        if stale {
-            await refreshWorkspaces()
-        }
+        // Membership changes reach this surface through the sync stream
+        // (`applySyncSnapshot`) and, when the stream is not verified, through
+        // the roster store's throttled activation refresh (`applyWorkspaceList`).
+        // No list fetch of our own here: that doubled every activation.
     }
 
     /// One poll for a pending Stripe round-trip. Returns true when the

@@ -667,41 +667,33 @@ enum FeatureTelemetry {
         }
     }
 
-    // MARK: - Product Hunt launch dialogs (one-shot per campaign phase)
+    // MARK: - Router-served announcements (one-shot per slug)
 
-    /// A Product Hunt campaign dialog was presented. `campaign` separates
-    /// the Raptor run (Sept 2026) from the July 2026 launch, which emitted
-    /// the same event name without props; `phase` is `teaser` or `launch`.
-    static func productHuntLaunchDialogShown(
-        phase: ProductHuntLaunchCampaign.Phase,
+    /// A router announcement dialog was presented. Keyed by `slug` (the
+    /// dismissal key) so an announcement's shown/clicked counts survive
+    /// operator reschedules and copy edits under the same slug.
+    static func announcementShown(
+        slug: String,
         service: TelemetryService = .shared
     ) {
-        service.track(
-            "product_hunt_launch_dialog_shown",
-            [
-                "campaign": ProductHuntLaunchCampaign.campaignId,
-                "phase": phase.rawValue,
-            ]
-        )
+        service.track("announcement_shown", ["slug": slug])
     }
 
-    /// The user dismissed a Product Hunt campaign dialog. `action` is a
-    /// closed enum token: `later` (dismiss button, Escape, outside click —
-    /// the teaser's only button) or `launch` (launch-day primary, opened
-    /// the PH page).
-    static func productHuntLaunchDialogClicked(
-        phase: ProductHuntLaunchCampaign.Phase,
+    /// The user acted on a router announcement dialog. `action` is a closed
+    /// enum token: `dismiss` (Close, Escape, outside click) or `cta`
+    /// (one of the operator-defined buttons; `cta_kind` is `external_url`
+    /// or `deeplink` and `cta_index` its 0-based position).
+    static func announcementClicked(
+        slug: String,
         action: String,
+        ctaKind: String? = nil,
+        ctaIndex: Int? = nil,
         service: TelemetryService = .shared
     ) {
-        service.track(
-            "product_hunt_launch_dialog_clicked",
-            [
-                "campaign": ProductHuntLaunchCampaign.campaignId,
-                "phase": phase.rawValue,
-                "action": action,
-            ]
-        )
+        var props: [String: Value] = ["slug": slug, "action": action]
+        if let ctaKind { props["cta_kind"] = ctaKind }
+        if let ctaIndex { props["cta_index"] = ctaIndex }
+        service.track("announcement_clicked", props)
     }
 
     // MARK: - Import history prompt (post-onboarding, one-shot)

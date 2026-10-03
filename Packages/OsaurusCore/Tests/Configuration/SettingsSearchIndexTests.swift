@@ -164,16 +164,27 @@ struct SettingsSearchIndexTests {
         )
     }
 
-    @Test func privacyRowsLandOnFilterOrModels() {
+    @Test func privacyRowsLandOnFilterRulesOrModels() {
         let privacyRows = SettingsSearchIndex.entries.filter { $0.tab == .privacy && $0.subTab != nil }
         #expect(!privacyRows.isEmpty)
+        let live = Set(PrivacyTab.allCases.map(\.rawValue))
         for row in privacyRows {
             #expect(
-                row.subTab == PrivacyTab.overview.rawValue || row.subTab == PrivacyTab.model.rawValue,
+                live.contains(row.subTab ?? ""),
                 "\(row.id) points at a retired Privacy sub-tab"
             )
         }
         #expect(!SettingsSearchIndex.entries.contains { $0.tab == .privacy && $0.subTab == "storage" })
+        // The Rules sub-tab's five sections are all reachable from search.
+        for id in [
+            "privacy.rules.detectionPatterns", "privacy.rules.regions", "privacy.rules.presets",
+            "privacy.rules.custom", "privacy.rules.test",
+        ] {
+            #expect(
+                SettingsSearchIndex.entries.contains { $0.id == id && $0.subTab == PrivacyTab.rules.rawValue },
+                "\(id) missing or not on the Rules sub-tab"
+            )
+        }
     }
 
     @Test func searchFindsAgentEntries() {

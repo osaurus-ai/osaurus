@@ -3,8 +3,9 @@
 //  osaurus
 //
 //  One-time post-onboarding "import your chat history" suggestion for
-//  brand-new users. Mirrors ProductHuntLaunchCampaign minus the date
-//  window: this type only owns the persisted seen flag and the
+//  brand-new users. Mirrors the seen/presenting gates of
+//  `AnnouncementsService` minus the fetch: this type only owns the
+//  persisted seen flag and the
 //  in-memory duplicate-presentation guard so it is trivially
 //  unit-testable with an injected defaults suite. Presentation and
 //  deferral (chat window up, no other modals) live in
