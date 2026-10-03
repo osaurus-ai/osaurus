@@ -4692,30 +4692,12 @@ public actor ModelRuntime {
             "loadContainer: compatibility preflight model=\(name, privacy: .public) status=\(compatibilityReport.preflight.status.rawValue, privacy: .public) reason=\(compatibilityReport.preflight.reason.rawValue, privacy: .public)"
         )
 
-        let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
-        // `.automatic`: a load may fill in absent metadata, but it must not
-        // rebuild a bundle the user deliberately trimmed or edited. Missing
-        // weights are caught loudly by `verifyShardManifest` below and fixed
-        // by the Repair button, not silently re-downloaded behind the user.
-        let completeVerified = await ModelDownloadService.ensureComplete(
-            for: probe,
-            directory: localURL,
-            intent: .automatic
-        )
-        if !completeVerified {
-            // `ensureComplete` returns false when the remote file list couldn't
-            // be fetched (offline / HF down) or a missing-file fetch failed. A
-            // complete local bundle is still loadable offline, so this is a
-            // warning, not a hard failure — the shard-manifest verification
-            // below is the authoritative local-integrity gate.
-            genLog.warning(
-                "loadContainer: ensureComplete could not verify remote completeness model=\(name, privacy: .public) — proceeding on local files; will manifest-verify shards"
-            )
-        }
+        // Loading an installed bundle must remain local. Missing support files
+        // require an explicit revision-consistent download or repair, not files
+        // silently fetched from the repository's current main branch.
         try Task.checkCancellation()
 
         // Recheck after asynchronous preparation in case the bundle changed.
-        // Automatic top-up never stamps a revision onto unverified weights.
         try ModelManifest.validateLoad(at: localURL)
 
         // Manifest-verify ALL weight shards. `MLXModel.isDownloaded` only
