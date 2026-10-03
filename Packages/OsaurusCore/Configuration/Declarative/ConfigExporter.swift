@@ -130,6 +130,8 @@ enum ConfigExporter {
         caps.computerUseEnabled = agent.settings.computerUseEnabled
         caps.browserUseEnabled = agent.settings.browserUseEnabled
         caps.appleApps = AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue)
+        caps.imageEnabled = agent.settings.imageEnabled
+        caps.applescriptEnabled = agent.settings.appleScriptEnabled
         caps.speakEnabled = agent.settings.speakEnabled
         caps.renderChartEnabled = agent.settings.renderChartEnabled
         caps.relayEnabled = relay.isEnabled(for: agent.id)
