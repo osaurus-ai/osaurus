@@ -988,6 +988,9 @@ private enum DetailTab: String, CaseIterable {
     /// Default agent has no detail view, so it never configures subagents here.
     case subagents
     case customization
+    /// The chat empty state's Action Bar: quick prompts the agent offers.
+    /// Its own tab next to Appearance so it is not buried in Empty State.
+    case actions
     case network
     /// Host-side "who can reach this agent" surface. Lists the access keys /
     /// invites granted to remote peers, their inbound usage, and a Revoke
@@ -1035,6 +1038,7 @@ private enum DetailTab: String, CaseIterable {
         case .capabilities: return L("Tools")
         case .subagents: return L("Subagents")
         case .customization: return L("Appearance")
+        case .actions: return L("Actions")
         case .network: return L("Network")
         case .connections: return L("Remote Connections")
         case .channels: return L("Channels")
@@ -1052,6 +1056,7 @@ private enum DetailTab: String, CaseIterable {
         case .capabilities: return "wrench.and.screwdriver"
         case .subagents: return "person.2.wave.2"
         case .customization: return "paintpalette.fill"
+        case .actions: return "bolt.fill"
         case .network: return "network"
         case .connections: return "person.2.badge.key"
         case .channels: return "bubble.left.and.bubble.right"
@@ -1076,6 +1081,7 @@ private enum DetailTab: String, CaseIterable {
                 "Let this agent delegate work — control your Mac, delegate tasks to other agents or models, or generate images."
             )
         case .customization: return L("Avatar, empty state, and visual theme.")
+        case .actions: return L("Quick prompts shown in the action bar when a chat is empty.")
         case .network: return L("Bonjour discovery and relay tunnel.")
         case .connections:
             return L("Peers granted access to this agent — usage and revocation.")
@@ -1131,7 +1137,7 @@ private enum DetailTabGroup: String, CaseIterable {
     /// Built-in tabs that live inside this group, in display order.
     var builtInTabs: [DetailTab] {
         switch self {
-        case .general: return [.configure, .customization]
+        case .general: return [.configure, .customization, .actions]
         case .abilities: return [.abilities, .capabilities, .subagents, .sandbox]
         case .connections: return [.network, .connections, .channels]
         case .automation: return [.automation]
@@ -2120,7 +2126,7 @@ struct AgentDetailView: View {
         switch tab {
         case .builtIn(let dt):
             switch dt {
-            case .configure, .abilities, .capabilities, .subagents, .customization, .network,
+            case .configure, .abilities, .capabilities, .subagents, .customization, .actions, .network,
                 .connections, .channels, .sandbox, .database:
                 return nil
             case .automation:
@@ -2294,6 +2300,8 @@ struct AgentDetailView: View {
             subagentsTabContent
         case .builtIn(.customization):
             customizationTabContent
+        case .builtIn(.actions):
+            actionsTabContent
         case .builtIn(.network):
             networkTabContent
         case .builtIn(.connections):
@@ -2446,8 +2454,16 @@ struct AgentDetailView: View {
         themeSection
     }
 
-    /// Customization → Empty State. Provides user-authored Greeting, Message,
-    /// and Action Bar controls.
+    @ViewBuilder
+    private var actionsTabContent: some View {
+        tabHelperText(DetailTab.actions.helperText)
+        AgentDetailSection(title: L("Action Bar"), icon: "bolt.fill") {
+            actionBarBlock
+        }
+    }
+
+    /// Customization → Empty State. Provides user-authored Greeting and
+    /// Message controls; the Action Bar has its own Actions tab.
     private var emptyStateSection: some View {
         AgentDetailSection(title: L("Empty State"), icon: "sparkles") {
             manualEmptyStateBody
@@ -2456,11 +2472,7 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Manual side: Greeting / Message / Action Bar. The Action Bar's
-    /// own group header (icon + label + Default/Custom badge + enable
-    /// toggle, rendered by `quickActionsModeGroup`) is the only header
-    /// — we no longer wrap it in an outer "Action Bar" Text since
-    /// there's just one quick-actions block now that work mode is gone.
+    /// Manual side: Greeting / Message. The Action Bar lives in the Actions tab.
     private var manualEmptyStateBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
@@ -2484,8 +2496,6 @@ struct AgentDetailView: View {
                     icon: "text.cursor"
                 )
             }
-
-            actionBarBlock
         }
     }
 
@@ -6190,8 +6200,7 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Single quick-actions block surfaced under Custom in the merged
-    /// Empty State section. Now that work mode is gone, there's only
+    /// Single quick-actions block, the body of the Actions tab. Now that work mode is gone, there's only
     /// one list — `chatQuickActions` — so we label the group "Action
     /// Bar" rather than "Chat" to match the surrounding section copy.
     private var actionBarBlock: some View {

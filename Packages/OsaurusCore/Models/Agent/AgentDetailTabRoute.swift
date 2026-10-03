@@ -40,7 +40,7 @@ public struct AgentDetailTabRoute: Equatable, Sendable {
     /// Current canonical tab raw values, kept in sync with the detail
     /// view's `DetailTab` enum.
     public static let canonicalTabRawValues: Set<String> = [
-        "abilities", "configure", "capabilities", "subagents", "customization", "network",
+        "abilities", "configure", "capabilities", "subagents", "customization", "actions", "network",
         "connections", "channels", "sandbox", "automation", "memory", "database",
     ]
 
