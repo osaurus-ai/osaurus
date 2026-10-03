@@ -32,6 +32,8 @@ struct AgentTemplateCard: View {
 
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
+    /// Flips the copy button to a checkmark for a moment after a copy.
+    @State private var justCopied = false
 
     private var accent: Color { agentColorFor(template.name) }
 
@@ -70,7 +72,10 @@ struct AgentTemplateCard: View {
                         .truncationMode(.tail)
                     }
                     Spacer(minLength: 8)
-                    menu
+                    HStack(spacing: 6) {
+                        copyJSONButton
+                        menu
+                    }
                 }
 
                 if let prompt = template.agent.systemPrompt, !prompt.isEmpty {
@@ -157,6 +162,28 @@ struct AgentTemplateCard: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.12)))
+    }
+
+    /// Sharing as JSON is the path we want people on, so it sits one click
+    /// away on the card instead of only inside the menu.
+    private var copyJSONButton: some View {
+        Button {
+            onCopyJSON()
+            withAnimation(.easeOut(duration: 0.15)) { justCopied = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                withAnimation(.easeOut(duration: 0.15)) { justCopied = false }
+            }
+        } label: {
+            Image(systemName: justCopied ? "checkmark" : "doc.on.clipboard")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(justCopied ? theme.successColor : theme.secondaryText)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(theme.tertiaryBackground))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(L("Copy JSON"))
+        .accessibilityLabel(Text("Copy JSON", bundle: .module))
     }
 
     private var menu: some View {
