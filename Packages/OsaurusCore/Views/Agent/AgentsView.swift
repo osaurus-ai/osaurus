@@ -7264,7 +7264,9 @@ struct AgentDetailView: View {
                 // The Default agent never carries any.
                 enabledAppleApps: agent.id == Agent.defaultId ? [] : current.settings.enabledAppleApps
             ),
-            order: current.order
+            order: current.order,
+            workingFolderBookmark: current.workingFolderBookmark,
+            workingFolderPath: current.workingFolderPath
         )
 
         agentManager.update(updated)

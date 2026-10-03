@@ -4,8 +4,8 @@
 //
 //  Issue #2703: "the orchestrator can't save files through agents". A
 //  delegated child is a REAL chat session of the target agent, so its file
-//  access is the target agent's configured Working Folder — the launcher's
-//  own chat folder is never inherited. This suite pins the whole chain so
+//  access uses the target agent's configured Working Folder, or inherits the
+//  launcher's active chat folder when the target has none. This suite pins the whole chain so
 //  a "save X to disk" delegation can actually complete:
 //
 //    • a folder-less `.delegation` dispatch for an agent WITH a Working
@@ -92,6 +92,140 @@ struct DelegatedWorkingFolderTests {
 
     private static let hostWriteTools: Set<String> = ["file_write", "file_edit"]
 
+    // MARK: - The launching chat owns its folder
+
+    @Test("an existing launcher chat keeps delegating its folder after the agent default is cleared")
+    func launcherChatFolderSurvivesDefaultClearThroughChildRead() async throws {
+        let dir = try makeFolder("launcher")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "fresh-launcher-content".write(
+            to: dir.appendingPathComponent("facts.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try await withAgents(2) { agents in
+            let parent = agents[0]
+            let worker = agents[1]
+            AgentManager.shared.updateWorkingFolder(for: parent.id, bookmark: nil, path: dir.path)
+            let session = ChatSession()
+            session.agentId = parent.id
+            session.sessionId = UUID()
+            _ = try #require(await session.folderState.restoreAndWait(bookmark: nil, path: dir.path))
+            defer { session.folderState.clearFolder() }
+            AgentManager.shared.clearWorkingFolder(for: parent.id)
+
+            let launcher = ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(session)) {
+                ChatExecutionContext.$currentFolderRoot.withValue(dir) {
+                    AgentDelegationDispatcher.resolveLauncherWorkingFolder(
+                        scopeAgentId: parent.id,
+                        parentSessionId: session.sessionId?.uuidString
+                    )
+                }
+            }
+            let child = AgentDelegationDispatcher.resolveChildWorkingFolder(targetFolder: nil, launcherFolder: launcher)
+            #expect(child.inherited)
+            #expect(child.folder?.path == dir.path)
+            let request = DispatchRequest(
+                prompt: "read facts.txt",
+                agentId: worker.id,
+                folderPath: child.folder?.path,
+                folderBookmark: child.folder?.bookmark,
+                source: .delegation
+            )
+            let context = BackgroundTaskManager.shared.makeContextForTesting(request)
+            #expect(await context.activateFolderContextIfNeeded() == nil)
+            defer { context.chatSession.folderState.clearFolder() }
+            #expect(sameFolder(context.chatSession.folderState.rootPath, dir))
+            let result = try await ChatExecutionContext.$currentFolderRoot.withValue(
+                context.chatSession.folderState.rootPath
+            ) {
+                try await FileReadTool().execute(argumentsJSON: "{\"path\":\"facts.txt\"}")
+            }
+            #expect(result.contains("fresh-launcher-content"))
+        }
+    }
+
+    enum LauncherFolderCase: CaseIterable {
+        case current, cleared, suspended, readOnly, differentRoot, differentAgent, differentSession, stale, defaultAgent
+    }
+
+    @Test(
+        "launcher folder scope overrides defaults without granting a cleared or unrelated folder",
+        arguments: LauncherFolderCase.allCases
+    )
+    func launcherChatFolderScope(_ scenario: LauncherFolderCase) async throws {
+        let dir = try makeFolder("chat")
+        let agentDir = try makeFolder("default")
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: agentDir)
+        }
+        try await withAgents(2) { agents in
+            let parent = agents[0]
+            AgentManager.shared.updateWorkingFolder(for: parent.id, bookmark: nil, path: agentDir.path)
+            let session = ChatSession()
+            session.agentId = scenario == .defaultAgent ? nil : parent.id
+            session.sessionId = UUID()
+            _ = try #require(await session.folderState.restoreAndWait(bookmark: nil, path: dir.path))
+            defer { session.folderState.clearFolder() }
+            if scenario == .cleared { session.folderState.clearFolder() }
+            if scenario == .stale {
+                _ = await session.folderState.restoreAndWait(
+                    bookmark: Data([0]),
+                    path: dir.appendingPathComponent("missing").path
+                )
+            }
+            let turnRoot: URL? =
+                switch scenario {
+                case .cleared, .suspended: nil
+                case .differentRoot: agentDir
+                default: dir
+                }
+            let folder = ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(session)) {
+                ChatExecutionContext.$currentFolderRoot.withValue(turnRoot) {
+                    ChatExecutionContext.$hostReadOnlyScope.withValue(scenario == .readOnly ? dir : nil) {
+                        AgentDelegationDispatcher.resolveLauncherWorkingFolder(
+                            scopeAgentId: scenario == .differentAgent
+                                ? agents[1].id : (session.agentId ?? Agent.defaultId),
+                            parentSessionId: scenario == .differentSession
+                                ? UUID().uuidString : session.sessionId?.uuidString
+                        )
+                    }
+                }
+            }
+            if scenario == .current || scenario == .defaultAgent {
+                #expect(folder?.path == dir.path)
+                #expect(folder?.path != agentDir.path)
+            } else {
+                #expect(folder == nil)
+            }
+        }
+    }
+
+    @Test("headless delegation retains configured agent folder fallback without borrowing a task-local path")
+    func headlessLauncherFolderFallback() async throws {
+        let dir = try makeFolder("headless")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withAgents(1) { agents in
+            let parent = agents[0]
+            AgentManager.shared.updateWorkingFolder(for: parent.id, bookmark: nil, path: dir.path)
+            let folder = ChatExecutionContext.$currentChatSessionBox.withValue(nil) {
+                ChatExecutionContext.$currentFolderRoot.withValue(URL(fileURLWithPath: "/unrelated")) {
+                    AgentDelegationDispatcher.resolveLauncherWorkingFolder(
+                        scopeAgentId: parent.id,
+                        parentSessionId: nil
+                    )
+                }
+            }
+            #expect(folder?.path == dir.path)
+            AgentManager.shared.clearWorkingFolder(for: parent.id)
+            #expect(
+                AgentDelegationDispatcher.resolveLauncherWorkingFolder(scopeAgentId: parent.id, parentSessionId: nil)
+                    == nil
+            )
+        }
+    }
+
     // MARK: - Dispatch → host-folder mode → writable schema
 
     @Test("a delegated child of an agent with a Working Folder can write files there")
@@ -103,7 +237,7 @@ struct DelegatedWorkingFolderTests {
             AgentManager.shared.updateWorkingFolder(for: agent.id, bookmark: nil, path: dir.path)
 
             // Exactly the request `AgentDelegationDispatcher.run` builds: no
-            // folder of its own (the launcher's folder is never threaded).
+            // folder of its own (no launcher folder was supplied here).
             let request = DispatchRequest(prompt: "save the report", agentId: agent.id, source: .delegation)
             #expect(request.folderBookmark == nil && request.folderPath == nil)
             #expect(BackgroundTaskManager.resolveDispatchFolder(for: request)?.path == dir.path)
@@ -232,7 +366,7 @@ struct DelegatedWorkingFolderTests {
         #expect(!remote.contains(folder))
     }
 
-    @Test("the dispatcher mounts the target agent's folder, else the launcher's, never the caller's live root")
+    @Test("the dispatcher mounts the target agent's folder, else the launcher's supplied folder")
     func dispatcherSourceResolvesTargetThenLauncherFolder() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
@@ -250,10 +384,6 @@ struct DelegatedWorkingFolderTests {
         #expect(source.contains("launcherFolder: launcherWorkingFolder"))
         #expect(source.contains("workingFolderPath: childFolder.folder?.path"))
         #expect(source.contains("folderPath: target.isWorkspace ? nil : childFolder.folder?.path"))
-        // Never the caller's live task-local root (that is the Orchestrator's
-        // own read-only view, not a folder the child may write to).
-        #expect(!source.contains("ChatExecutionContext.currentFolderRoot"))
-
         // The pure resolver: target wins, launcher is the fallback, and a
         // path-less/bookmark-less target does not shadow the launcher.
         let target = DelegatedWorkingFolder(bookmark: nil, path: "/tmp/target")

@@ -362,6 +362,33 @@ enum AgentDelegationDispatcher {
         )
     }
 
+    /// Resolve the launcher's folder from the chat executing this turn. Agent
+    /// defaults seed new chats; they do not replace an existing chat's choice.
+    /// A bound but cleared, suspended, or stale chat must stay folder-less.
+    /// Headless callers without a chat retain the configured-agent fallback.
+    @MainActor
+    static func resolveLauncherWorkingFolder(
+        scopeAgentId: UUID,
+        parentSessionId: String?
+    ) -> DelegatedWorkingFolder? {
+        if let box = ChatExecutionContext.currentChatSessionBox {
+            guard let session = box.session,
+                (session.agentId ?? Agent.defaultId) == scopeAgentId,
+                let parentSessionId, session.sessionId == UUID(uuidString: parentSessionId),
+                ChatExecutionContext.hostReadOnlyScope == nil,
+                let turnRoot = ChatExecutionContext.currentFolderRoot,
+                let activeRoot = session.folderState.rootPath,
+                turnRoot.standardizedFileURL == activeRoot.standardizedFileURL
+            else { return nil }
+            return DelegatedWorkingFolder(
+                bookmark: session.folderState.persistedBookmark,
+                path: activeRoot.standardizedFileURL.path
+            )
+        }
+        guard let folder = AgentManager.shared.workingFolder(for: scopeAgentId) else { return nil }
+        return DelegatedWorkingFolder(bookmark: folder.bookmark, path: folder.path)
+    }
+
     /// Pick the folder a local child runs in: the target agent's own Working
     /// Folder wins; otherwise the requester's folder is inherited for this
     /// task so a folder-less worker still has somewhere to read inputs and
