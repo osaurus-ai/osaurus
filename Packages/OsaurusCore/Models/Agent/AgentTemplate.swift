@@ -178,6 +178,44 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
         return out.isEmpty ? "template" : out
     }
 
+    /// A free display name: `base` itself when its slug is not in
+    /// `takenSlugs`, else "base 2", "base 3", … The import sheet offers this
+    /// so a collision never forces a replace.
+    public static func availableName(for base: String, takenSlugs: Set<String>) -> String {
+        let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard takenSlugs.contains(slug(for: trimmed)) else { return trimmed }
+        var n = 2
+        while takenSlugs.contains(slug(for: "\(trimmed) \(n)")) { n += 1 }
+        return "\(trimmed) \(n)"
+    }
+
+    /// The name to offer on import. The envelope `name` and `agent.name`
+    /// usually match; when someone hand-edited only one of them, the edited
+    /// one is the one that does not collide, so prefer it. Then make it free.
+    public func suggestedImportName(takenSlugs: Set<String>) -> String {
+        let agentName = agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var base = name
+        if !agentName.isEmpty, agentName != name,
+            takenSlugs.contains(Self.slug(for: name)),
+            !takenSlugs.contains(Self.slug(for: agentName))
+        {
+            base = agentName
+        }
+        return Self.availableName(for: base, takenSlugs: takenSlugs)
+    }
+
+    /// The same template under a new name. The library name and the agent it
+    /// creates are renamed together: two names that drift apart are what
+    /// made hand-editing the JSON confusing.
+    public func renamed(to newName: String) -> AgentTemplate {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return self }
+        var copy = self
+        copy.name = trimmed
+        copy.agent.name = trimmed
+        return copy
+    }
+
     // MARK: - Encoding
 
     /// Pretty JSON for the clipboard, files, and the website library.

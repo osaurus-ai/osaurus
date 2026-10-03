@@ -164615,36 +164615,36 @@
         }
       }
     },
-    "Or change the `name` in the JSON above to keep both." : {
+    "Or change the name above to keep both." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oder ändere oben im JSON den `name`, um beide zu behalten."
+            "value" : "Oder ändere oben den Namen, um beide zu behalten."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Or change the `name` in the JSON above to keep both."
+            "value" : "Or change the name above to keep both."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "또는 위 JSON의 `name`을 바꾸면 둘 다 유지할 수 있습니다."
+            "value" : "또는 위에서 이름을 바꾸면 둘 다 유지할 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Или измените `name` в JSON выше, чтобы сохранить оба."
+            "value" : "Или измените имя выше, чтобы сохранить оба."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "或者修改上方 JSON 中的 `name` 以同时保留两者。"
+            "value" : "或者修改上方的名称以同时保留两者。"
           }
         }
       }

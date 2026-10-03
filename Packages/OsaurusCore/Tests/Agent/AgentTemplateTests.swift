@@ -341,3 +341,47 @@ struct AgentTemplateSmartQuoteTests {
         #expect(template.agent.systemPrompt == "Say “hi” first.")
     }
 }
+
+struct AgentTemplateImportNameTests {
+
+    private func template(name: String, agentName: String) -> AgentTemplate {
+        AgentTemplate(name: name, agent: AgentEntry(name: agentName))
+    }
+
+    @Test
+    func availableName_keepsFreeName() {
+        #expect(AgentTemplate.availableName(for: "Plato", takenSlugs: []) == "Plato")
+    }
+
+    @Test
+    func availableName_suffixesTakenName() {
+        #expect(AgentTemplate.availableName(for: "Plato", takenSlugs: ["plato"]) == "Plato 2")
+        #expect(AgentTemplate.availableName(for: "Plato", takenSlugs: ["plato", "plato-2"]) == "Plato 3")
+    }
+
+    @Test
+    func suggestedName_prefersHandEditedAgentName() {
+        let edited = template(name: "Plato", agentName: "Plato Ultra")
+        #expect(edited.suggestedImportName(takenSlugs: ["plato"]) == "Plato Ultra")
+    }
+
+    @Test
+    func suggestedName_prefersHandEditedEnvelopeName() {
+        let edited = template(name: "Plato Ultra", agentName: "Plato")
+        #expect(edited.suggestedImportName(takenSlugs: ["plato"]) == "Plato Ultra")
+    }
+
+    @Test
+    func suggestedName_collisionOffersCopy() {
+        let same = template(name: "Plato", agentName: "Plato")
+        #expect(same.suggestedImportName(takenSlugs: ["plato"]) == "Plato 2")
+    }
+
+    @Test
+    func renamed_updatesTemplateAndAgent() {
+        let renamed = template(name: "Plato", agentName: "Plato").renamed(to: " Plato 2 ")
+        #expect(renamed.name == "Plato 2")
+        #expect(renamed.agent.name == "Plato 2")
+        #expect(renamed.id == "plato-2")
+    }
+}

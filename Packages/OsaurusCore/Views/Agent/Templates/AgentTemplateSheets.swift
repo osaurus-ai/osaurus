@@ -27,15 +27,24 @@ struct AgentTemplateImportSheet: View {
     @State private var parsed: AgentTemplate?
     @State private var parseError: String?
     @State private var overwrite = false
+    /// Name the template (and its agent) is imported under. Prefilled from
+    /// the JSON, or with a free variant ("Plato 2") when that one is taken,
+    /// so a collision never forces a replace or a JSON edit.
+    @State private var importName: String = ""
     @State private var hasAppeared = false
 
+    private var trimmedImportName: String {
+        importName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var collision: AgentTemplate? {
-        guard let parsed else { return nil }
-        return store.templates.first { $0.id == parsed.id }
+        guard parsed != nil, !trimmedImportName.isEmpty else { return nil }
+        let slug = AgentTemplate.slug(for: trimmedImportName)
+        return store.templates.first { $0.id == slug }
     }
 
     private var canImport: Bool {
-        parsed != nil && (collision == nil || overwrite)
+        parsed != nil && !trimmedImportName.isEmpty && (collision == nil || overwrite)
     }
 
     var body: some View {
@@ -139,6 +148,11 @@ struct AgentTemplateImportSheet: View {
 
     private func preview(_ template: AgentTemplate) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                AgentSheetSectionLabel("Name")
+                StyledTextField(placeholder: L("Template Name"), text: $importName, icon: "textformat")
+                    .onChange(of: importName) { _, _ in overwrite = false }
+            }
             AgentSheetSectionLabel("Preview")
             HStack(alignment: .top, spacing: 12) {
                 ZStack {
@@ -148,7 +162,7 @@ struct AgentTemplateImportSheet: View {
                         .foregroundColor(agentColorFor(template.name))
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(template.name)
+                    Text(trimmedImportName.isEmpty ? template.name : trimmedImportName)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     if let summary = template.summary, !summary.isEmpty {
@@ -185,7 +199,7 @@ struct AgentTemplateImportSheet: View {
                             .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                             .labelsHidden()
                     }
-                    Text("Or change the `name` in the JSON above to keep both.", bundle: .module)
+                    Text("Or change the name above to keep both.", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -262,8 +276,10 @@ struct AgentTemplateImportSheet: View {
             return
         }
         do {
-            parsed = try AgentTemplate.parse(trimmed)
+            let template = try AgentTemplate.parse(trimmed)
+            parsed = template
             parseError = nil
+            importName = template.suggestedImportName(takenSlugs: Set(store.templates.map(\.id)))
         } catch {
             parsed = nil
             parseError = error.localizedDescription
@@ -289,9 +305,10 @@ struct AgentTemplateImportSheet: View {
 
     private func performImport() {
         guard let parsed else { return }
+        let template = parsed.renamed(to: trimmedImportName)
         do {
-            try store.save(parsed)
-            onImported(parsed)
+            try store.save(template)
+            onImported(template)
         } catch {
             parseError = error.localizedDescription
         }
