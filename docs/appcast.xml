@@ -3,6 +3,45 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.17</title>
+            <pubDate>Sat, 03 Oct 2026 02:32:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.17</sparkle:version>
+            <sparkle:shortVersionString>0.25.17</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.17/Osaurus-0.25.17.dmg" length="81444028" type="application/octet-stream" sparkle:edSignature="XhF8GoUU2dT4U+03w8KHtk+se6IjDa6e24Z8uxWcFUqIKHOy0+5KUbhlONkFEsXNEfkV06A50Nu6MTrcFmC8BA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- PDF reading-order extraction for flattened forms (file\_read pages, page markers) (#2983) by @tpae
+- Router announcements feed and control-plane polling cuts (#2982) by @tpae
+- International privacy filter presets with region picker (#2979) by @tpae
+- Insights: tamper-evident activity log, Tier 1 coverage gaps, and IA redesign (#2964) by @tpae
+- Consume Naive attention-mask GPU ranges (#2967) by @jjang-ai
+- Seed Osaurus Cloud starter favorites and unify picker Model options column (#2958) by @tpae
+
+## 🐛 Bug Fixes
+
+- Fix: NativeAssistantActionsView NSButton init causes main thread hang (#2977) by @[sentry[bot]](https://github.com/apps/sentry)
+- Preserve requested repeated text without an automatic retry (#2978) by @jjang-ai
+- Preserve native PDF glyph and table cell identity (#2976) by @jjang-ai
+- Fit resident delegation context to available memory (#2973) by @jjang-ai
+- Use corrected mixed affine QMV Metal kernels (#2971) by @jjang-ai
+- Consume GLM native history and text cache boundary fix (#2969) by @jjang-ai
+- fix code block copy button and chat width shift after copying (#2960) by @RaajeevChandran
+- Preserve WhatsApp final responses when the helper exits (#2965) by @jjang-ai
+- Pin compiled post-answer cache persistence (#2962) by @jjang-ai
+- Keep the chat tab strip inside the chat column on new tab and live sidebar resize (#2963) by @tpae
+- Fix Notes -1708 "doesn't understand the count message" in built-in Notes tools (#2961) by @tpae
+- Refresh tool grants between turns and recheck dispatch authorization (#2921) by @jjang-ai
+- Move Insights snapshots off the main queue and reject stale results (#2926) by @[sentry[bot]](https://github.com/apps/sentry)
+- Move response metrics into Inspect response (#2959) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.16...0.25.17
+]]></description>
+        </item>
+        <item>
             <title>0.25.16</title>
             <pubDate>Thu, 01 Oct 2026 06:00:58 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

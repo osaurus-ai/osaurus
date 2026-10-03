@@ -89,6 +89,36 @@ struct FileSearchDocumentsTests {
         #expect(await DocumentTextExtractionCache.shared.count == 3)
     }
 
+    @Test func flattenedFormRowIsOneSearchUnit() async throws {
+        // A flattened form draws labels and values in separate passes, so
+        // PDFKit's own text puts "9 Total income" and "184,554" on different
+        // lines. Search must see the visual row the reader sees: searching
+        // for the amount returns the label beside it on one `[page 1]` hit.
+        DocumentAdaptersBootstrap.registerBuiltIns()
+        await DocumentTextExtractionCache.shared.removeAll()
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let taxes = root.appendingPathComponent("taxes")
+        try FileManager.default.createDirectory(at: taxes, withIntermediateDirectories: true)
+        _ = try PDFFormFixture.write(to: taxes.appendingPathComponent("return.pdf"))
+
+        let result = try await search(root, ["pattern": "70,820"])
+        #expect(ToolEnvelope.isSuccess(result), "search failed: \(result)")
+        let text = EnvelopeAssertions.successText(result) ?? ""
+        let hits = text.components(separatedBy: "\n").filter { $0.contains("70,820") }
+        #expect(hits.count == 1, Comment(rawValue: text))
+        let hit = try #require(hits.first)
+        #expect(hit.contains("taxes/return.pdf [page 1]"), Comment(rawValue: text))
+        #expect(hit.contains("8 Other income   70,820"), Comment(rawValue: text))
+
+        // Header cells too: the SSN lands beside the name on its visual row,
+        // and the page marker is a `file_read` affordance, not searchable text.
+        let ssn = EnvelopeAssertions.successText(try await search(root, ["pattern": "XXX-XX-7356"])) ?? ""
+        #expect(ssn.contains("Claire A.   Reyes   XXX-XX-7356"), Comment(rawValue: ssn))
+        let marker = EnvelopeAssertions.successText(try await search(root, ["pattern": "--- Page 1"])) ?? ""
+        #expect(marker.contains("No matches found"), Comment(rawValue: marker))
+    }
+
     @Test func modifiedDocumentInvalidatesCacheEntry() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
         await DocumentTextExtractionCache.shared.removeAll()
