@@ -309,3 +309,35 @@ struct AgentTemplateSectionTests {
         #expect(!noKnowledge.requires.contains { $0.kind == .knowledgeCollection })
     }
 }
+
+struct AgentTemplateSmartQuoteTests {
+
+    /// A name hand-edited in a text view that swaps `"` for `”`.
+    @Test
+    func smartQuoteDelimiter_parsesAfterStraightening() throws {
+        let json = """
+            {
+              "format": "osaurus.agent-template",
+              "name": "Plato Ultra”,
+              "agent": { "name": “Plato Ultra" }
+            }
+            """
+        let template = try AgentTemplate.parse(json)
+        #expect(template.name == "Plato Ultra")
+        #expect(template.agent.name == "Plato Ultra")
+    }
+
+    /// Curly quotes inside a prompt are content and must survive as-is.
+    @Test
+    func curlyQuotesInsideValues_areKept() throws {
+        let json = """
+            {
+              "format": "osaurus.agent-template",
+              "name": "Plato",
+              "agent": { "name": "Plato", "system_prompt": "Say “hi” first." }
+            }
+            """
+        let template = try AgentTemplate.parse(json)
+        #expect(template.agent.systemPrompt == "Say “hi” first.")
+    }
+}

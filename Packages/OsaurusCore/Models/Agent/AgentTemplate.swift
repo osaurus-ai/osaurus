@@ -353,6 +353,21 @@ extension AgentTemplate {
     /// The agent payload is always re-validated through the strict document
     /// decoder, so unknown keys are rejected with the usual did-you-mean.
     public static func parse(_ text: String) throws -> AgentTemplate {
+        do {
+            return try parseExactly(text)
+        } catch let original {
+            // Retry with smart quotes straightened only when the text as
+            // typed fails: curly quotes inside a prompt are legitimate and
+            // must survive a template that already parses.
+            let straightened = straighteningQuotes(text)
+            guard straightened != text, let template = try? parseExactly(straightened) else {
+                throw original
+            }
+            return template
+        }
+    }
+
+    private static func parseExactly(_ text: String) throws -> AgentTemplate {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw AgentTemplateError.empty }
 
@@ -409,6 +424,16 @@ extension AgentTemplate {
 
         throw AgentTemplateError.notATemplate(
             "Expected a `format` key, an `agents` list, or an agent with a `name`.")
+    }
+
+    /// macOS smart quotes (and Slack / Notes pastes) turn a typed `"` into
+    /// `“` or `”`, which no JSON parser accepts as a delimiter.
+    static func straighteningQuotes(_ text: String) -> String {
+        var out = text
+        for curly in ["\u{201C}", "\u{201D}", "\u{201E}"] {
+            out = out.replacingOccurrences(of: curly, with: "\"")
+        }
+        return out
     }
 
     /// Runs one agent mapping through the strict document decoder.

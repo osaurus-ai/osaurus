@@ -81,7 +81,14 @@ struct AgentTemplateImportSheet: View {
                 reparse()
             }
         }
-        .onChange(of: text) { _, _ in reparse() }
+        .task(id: text) {
+            // Parse once typing pauses, so a half-typed edit never flashes
+            // an error. Pastes and file loads land in one change and parse
+            // after the same short delay.
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            reparse()
+        }
     }
 
     private var pasteField: some View {
