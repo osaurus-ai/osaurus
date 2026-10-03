@@ -46,7 +46,30 @@ enum RemoteSessionContinuation {
     /// `model` updates the stored chat's recorded model, matching what the Mac
     /// does when a turn runs under a different model.
     static func append(_ messages: [ChatMessage], to sessionId: UUID, model: String?) async {
-        let turns = ChatHistoryWriter.turns(from: messages)
+        await append(turns: ChatHistoryWriter.turns(from: messages), to: sessionId, model: model)
+    }
+
+    /// Appends an image model's exchange from the phone (§12.5): the prompt,
+    /// with any source images, then a reply holding the generated files the
+    /// way the Mac's own image mode writes it, so both sides render it.
+    static func appendImageExchange(
+        prompt: String,
+        sourceImages: [Data],
+        generated: [URL],
+        to sessionId: UUID,
+        model: String
+    ) async {
+        guard !generated.isEmpty, isContinuable(sessionId) else { return }
+        let now = Date()
+        let reply = generated.map { "![\(prompt)](\($0.absoluteString))" }.joined(separator: "\n\n")
+        let turns = [
+            ChatTurnData(role: .user, content: prompt, attachments: sourceImages.map(Attachment.image), createdAt: now),
+            ChatTurnData(role: .assistant, content: reply, createdAt: now, completedAt: now),
+        ]
+        await append(turns: turns, to: sessionId, model: model)
+    }
+
+    private static func append(turns: [ChatTurnData], to sessionId: UUID, model: String?) async {
         guard !turns.isEmpty else { return }
         MobileConnectLog.hostedRun(
             "continuation appending \(turns.count) turn(s) to \(sessionId) after the run "

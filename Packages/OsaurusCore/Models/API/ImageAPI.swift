@@ -57,6 +57,9 @@ struct ImageGenerationRequestDTO: Decodable {
     let resolution: String?
     let quality: String?
     let allow_remote_media_spend: Bool?
+    /// A Mac chat (docs/MOBILE_PROTOCOL.md §12.5) the owner's phone is
+    /// generating in; the prompt and result are appended to it.
+    let osaurus_session_id: String?
 }
 
 struct ImageEditRequestDTO: Decodable {
@@ -79,6 +82,7 @@ struct ImageEditRequestDTO: Decodable {
     let response_format: String?
     let output_format: String?
     let stream: Bool?
+    let osaurus_session_id: String?
 }
 
 struct ImageUpscaleRequestDTO: Decodable {

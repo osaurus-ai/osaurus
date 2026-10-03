@@ -904,7 +904,7 @@ get `403 owner_only`). Send inside the Secure Channel like any other call.
 ### 12.1 `GET /models/picker`
 
 The models the Mac composer's picker lists — chat models
-(`ModelPickerItem.isLikelyChatCapable`) plus ready image models — in the
+(`ModelPickerItem.isLikelyChatCapable`) plus ready on-device image models — in the
 picker's tab order and its order within each tab, plus the Mac's favourites:
 
 ```json
@@ -971,6 +971,30 @@ stores one choice (`null` resets it) and answers with the same body as
 `{"key":"<favorite_key from 12.1>","favorite":true}` adds the model to the
 Mac's favourites (`false` removes it), as the heart on a picker row does, and
 answers with the whole list: `{"favorites":["…"]}`.
+
+### 12.5 Image models
+
+A `kind: "image"` model from 12.1 never takes a §14.5 run. The phone sends
+the prompt to `POST /images/generations` (or `POST /images/edits` with
+`images` as data URLs when the model has `edits`), with `stream: true` and
+`response_format: "b64_json"`:
+
+```json
+{"model":"<id>","prompt":"…","stream":true,"response_format":"b64_json",
+ "osaurus_session_id":"<Mac chat uuid, optional>"}
+```
+
+The stream is SSE, one JSON object per `data:` line, `type` being `queued`,
+`loading_model`, `step` (`step`, `total`, `progress`), `preview` (`image`, a
+PNG data URL), `completed` (`images[].b64_json`), `error` (`message`) or
+`cancelled`; every event carries `job_id`, which `POST /images/cancel`
+(`{"job_id":"…"}`) takes.
+
+With `osaurus_session_id` naming a chat the phone may continue (§14.5), the
+prompt (with its source images) and the reply are appended to it once the
+image is done, written as the Mac's own image mode writes them, so §14.2
+lists the result under `images`. Requests naming a session need the Secure
+Channel (426 otherwise) and the master key; anyone else's id is ignored.
 
 ---
 

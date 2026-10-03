@@ -5059,10 +5059,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            // Chat models plus ready image models, which the Mac picker also
-            // lists (picking one puts the composer in image mode).
+            // Chat models plus ready on-device image models, which the Mac
+            // picker also lists (picking one puts the composer in image mode).
             let items = await ModelPickerItemCache.shared.buildModelPickerItems()
-                .filter { $0.isLikelyChatCapable || $0.isImageGenerationDelegateCandidate }
+                .filter { $0.isLikelyChatCapable || $0.isPhoneImageModel }
             let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
             // Grouped as the Mac picker groups them, so the phone shows the
             // same tabs in the same order.
@@ -5095,7 +5095,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     inputPrice: item.inputPriceMicroPerMTok,
                     outputPrice: item.outputPriceMicroPerMTok,
                     externalSource: item.externalSource,
-                    kind: item.isImageGenerationDelegateCandidate ? "image" : "chat",
+                    kind: item.isPhoneImageModel ? "image" : "chat",
                     edits: item.isImageEditDelegateCandidate
                 )
             }
@@ -12147,6 +12147,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         let modelId = selectedTarget.modelID
+        let continuedSession = phoneImageSession(req.osaurus_session_id, context: context)
+        if continuedSession != nil,
+            requiresOwnerChannel(
+                head: head, context: context, path: "/images/generations", startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
         let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
         let params = ImageGenerationParameters(
             model: modelId,
@@ -12175,8 +12182,36 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBody: bodyString,
             streaming: req.stream ?? false,
             responseFormat: req.response_format ?? "url",
-            jobID: jobID
+            jobID: jobID,
+            onCompleted: Self.imageSessionAppender(
+                continuedSession, prompt: req.prompt, sourceImages: [], model: modelId)
         ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
+    }
+
+    /// The Mac chat an owner's phone named with `osaurus_session_id` on an
+    /// image request (docs/MOBILE_PROTOCOL.md §12.5); nil for anyone else.
+    private func phoneImageSession(_ raw: String?, context: ChannelHandlerContext) -> UUID? {
+        guard let raw, let id = UUID(uuidString: raw), callerOwnsThisMac(context) else { return nil }
+        return id
+    }
+
+    /// Appends the finished exchange to `sessionId`, when there is one.
+    private static func imageSessionAppender(
+        _ sessionId: UUID?,
+        prompt: String,
+        sourceImages: [Data],
+        model: String
+    ) -> (@Sendable ([GeneratedImage]) async -> Void)? {
+        guard let sessionId else { return nil }
+        return { images in
+            await RemoteSessionContinuation.appendImageExchange(
+                prompt: prompt,
+                sourceImages: sourceImages,
+                generated: images.map(\.url),
+                to: sessionId,
+                model: model
+            )
+        }
     }
 
     private func handleRemoteImageGeneration(
@@ -12716,6 +12751,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        let continuedSession = phoneImageSession(req.osaurus_session_id, context: context)
+        if continuedSession != nil,
+            requiresOwnerChannel(
+                head: head, context: context, path: "/images/edits", startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
         let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
         let params = ImageEditParameters(
             model: editModelId,
@@ -12747,7 +12789,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 kind: "image", operation: "edit", backend: .local,
                 count: nil, width: params.width, height: params.height,
                 aspect: nil, resolution: nil,
-                extra: ["source_images": String(sources.count), "job_id": jobID])
+                extra: ["source_images": String(sources.count), "job_id": jobID]),
+            onCompleted: Self.imageSessionAppender(
+                continuedSession, prompt: req.prompt, sourceImages: sources, model: editModelId)
         ) { await ImageGenerationService.shared.edit(params, jobID: jobID) }
     }
 
@@ -12859,6 +12903,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         jobID: String,
         model: String? = nil,
         activityDetails: [String: String] = [:],
+        onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
         build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
     ) {
         let cors = stateRef.value.corsHeaders
@@ -12902,6 +12947,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             let uri = "data:image/png;base64," + pngData.base64EncodedString()
                             emit(ImageStreamEventDTO(type: "preview", job_id: jobID, step: step, image: uri))
                         case .completed(let images):
+                            await onCompleted?(images)
                             let results = images.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
                             emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
                         case .failed(let message, let hfAuth):
@@ -12950,6 +12996,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             responseFormat: responseFormat,
             model: model,
             activityDetails: activityDetails,
+            onCompleted: onCompleted,
             build: build
         )
     }
@@ -12967,6 +13014,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         responseFormat: String,
         model: String? = nil,
         activityDetails: [String: String] = [:],
+        onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
         build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
     ) {
         runRequestTask(priority: .userInitiated) {
@@ -13014,6 +13062,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            await onCompleted?(produced)
             let results = produced.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
             let response = ImagesResponseDTO(created: Int(Date().timeIntervalSince1970), data: results)
             let json =
