@@ -5127,6 +5127,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         func reply(_ status: HTTPResponseStatus, _ body: String) {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5223,6 +5226,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         var data = Data()
         if var body = stateRef.value.requestBodyBuffer {
@@ -5314,6 +5320,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let method = head.method == .PUT ? "PUT" : "POST"
         let cors = stateRef.value.corsHeaders
         func reply(_ status: HTTPResponseStatus, _ body: String) {
@@ -5402,6 +5411,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -5526,6 +5538,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
@@ -5625,6 +5640,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         let method = head.method.rawValue
         let components = path.split(separator: "/")
@@ -5704,6 +5722,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -5812,6 +5833,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -5926,6 +5950,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -6099,6 +6126,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 startTime: startTime,
                 userAgent: userAgent
             )
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: "/agents", startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -6288,6 +6318,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         func reply(_ status: HTTPResponseStatus, _ body: String) {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -6426,6 +6459,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         func reply(_ status: HTTPResponseStatus, _ body: String) {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -6499,6 +6535,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let isSecrets = path == "/secrets/prompts"
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -6548,6 +6587,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -6724,6 +6766,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -7191,6 +7236,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         let components = path.split(separator: "/")
         guard components.count == 3, let sessionId = UUID(uuidString: String(components[1])) else {
@@ -7298,6 +7346,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -7572,6 +7623,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -7945,6 +7999,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         encryptor.arm(sealer: session.makeResponseSealer(requestSeq: requestSeq))
 
         return (newHead, normalize(extractPath(from: inner.path)))
+    }
+
+    /// The same gate for an owner route that changes something (anything but
+    /// GET): an agent's prompt, tools or sandbox, an approval, a chat. With
+    /// a master-scoped key these reach as far as a run does, so a sniffed or
+    /// leaked pairing key must not work them over plaintext. Reads stay
+    /// open. Sends the 426 and returns `true` when the request is refused.
+    private func requiresOwnerChannel(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) -> Bool {
+        guard head.method != .GET, head.method != .HEAD else { return false }
+        return sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
     }
 
     /// Hard-require gate for `/agents/{id}/run` and `/agents/{id}/dispatch`:
@@ -10802,6 +10878,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let components = path.split(separator: "/")
         guard components.count == 3, components[2] == "events",
             let run = DetachedPhoneRuns.shared.run(id: String(components[1]))
@@ -10840,6 +10919,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let components = path.split(separator: "/")

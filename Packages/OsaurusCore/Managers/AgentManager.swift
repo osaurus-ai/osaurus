@@ -493,10 +493,11 @@ public final class AgentManager: ObservableObject {
         return agent
     }
 
-    /// A custom agent made on the phone, which can't reach the agent's
-    /// settings: whatever started on (tools, web search, memory, the
-    /// sandbox) would stay on until the user got to the Mac. So nothing
-    /// starts on, and the user opts in from the Mac's agent settings. The
+    /// A custom agent made on the phone. Nothing starts on (tools, web
+    /// search, memory, the sandbox): each is a deliberate switch the user
+    /// turns on afterwards, from the Mac's agent settings or from the
+    /// phone's (`PATCH /agents/{id}`, which only arrives over the Secure
+    /// Channel), never a default that comes with typing a name. The
     /// Orchestrator and the Mac's own create flow keep the usual defaults.
     static func phoneAgentRecord(
         name: String,

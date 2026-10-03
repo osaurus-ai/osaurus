@@ -446,8 +446,11 @@ the tunnel that authenticated that address. No client auth at the relay.
 
 ### 6.2 Secure Channel v1 — mandatory
 
-Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch` that arrive
-in plaintext are refused with `426`:
+Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch`, and every
+owner-only request that changes something (any method but `GET`: creating,
+editing or deleting an agent, its tools, answering an approval or a privacy
+review, editing or deleting a chat, stopping a run), that arrive in plaintext
+are refused with `426`. Loopback callers are exempt; owner reads stay open:
 
 ```json
 {"error":{"code":"secure_channel_required","message":"…","type":"upgrade_required"}}
@@ -1372,11 +1375,12 @@ default. The reply is `201 {"id":"<uuid>","name":"…"}`, and `GET /agents/{id}`
 then returns the full record, so a client can open a chat with the new agent
 straight away.
 
-Owner-only: a new agent is a new identity on this Mac. Unlike the Mac's own
-New Agent flow, the agent starts with every capability off: tools (web
-search included), memory and the sandbox. A client can't reach an agent's
-settings, so anything on by default would stay on until the user got to the
-Mac; they opt in from the Mac's agent settings instead.
+Owner-only, inside the Secure Channel (§6.2): a new agent is a new identity
+on this Mac. Unlike the Mac's own New Agent flow, the agent starts with every
+capability off: tools (web search included), memory and the sandbox. Each is
+turned on deliberately afterwards, from the Mac's agent settings or with
+`PATCH /agents/{id}` (§13.2), which a remote caller can only send over the
+Secure Channel, so a leaked pairing key on the LAN can't switch them on.
 
 ---
 
