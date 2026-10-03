@@ -61,6 +61,10 @@ public enum AgentSetupChecker {
         var isPermissionGranted: (SystemPermission) -> Bool
         var bookmarkResolves: (Data) -> Bool
         var knowledgeCollectionExists: (UUID) -> Bool
+        /// Tools per MCP server / plugin registered here.
+        var toolGroups: [PortableToolGroup: [String]] = [:]
+        /// The MCP servers / plugins the named source template turns on.
+        var templateToolGroups: (String) -> [PortableToolGroup] = { _ in [] }
 
         @MainActor
         static func live() -> Environment {
@@ -71,7 +75,9 @@ public enum AgentSetupChecker {
                 // Cached: a live Automation probe can itself trigger a system prompt.
                 isPermissionGranted: { SystemPermissionService.shared.cachedIsGranted($0) },
                 bookmarkResolves: { FolderContextService.resolveSecurityScopedURL(from: $0) != nil },
-                knowledgeCollectionExists: { collections.contains($0) }
+                knowledgeCollectionExists: { collections.contains($0) },
+                toolGroups: ToolRegistry.shared.portableToolGroups(),
+                templateToolGroups: { AgentTemplateStore.shared.template(named: $0)?.toolGroups ?? [] }
             )
         }
     }
@@ -157,6 +163,49 @@ public enum AgentSetupChecker {
             }
         }
 
+        // MCP servers / plugins the source template turns on that this Mac
+        // does not have. They add no tool names to the agent, so the check
+        // above cannot see them.
+        if agent.toolSelectionMode == .manual, let source = agent.sourceTemplateName {
+            for group in env.templateToolGroups(source) where env.toolGroups[group] == nil {
+                switch group {
+                case .mcpServer(let name):
+                    items.append(
+                        AgentSetupItem(
+                            kind: .mcpServer, severity: .advisory,
+                            title: L("MCP Server"),
+                            detail: L("The \(source) template uses the \(name) MCP server, which is not set up on this Mac. Add it in MCP Servers to give the agent its tools."),
+                            value: name))
+                case .plugin(let id):
+                    items.append(
+                        AgentSetupItem(
+                            kind: .plugin, severity: .advisory,
+                            title: L("Plugin"),
+                            detail: L("The \(source) template uses the \(id) plugin, which is not installed on this Mac. Install it in Plugins to give the agent its tools."),
+                            value: id))
+                }
+            }
+        }
+
         return AgentSetupReport(agentId: agent.id, items: items)
+    }
+
+    /// The agent with every tool of its source template's MCP servers and
+    /// plugins that exist here now, for a group added after the agent was
+    /// drafted or created. Groups already partly selected are left alone so
+    /// a deliberate trim survives.
+    static func addingTemplateGroupTools(
+        to agent: Agent, groups: [PortableToolGroup], available: [PortableToolGroup: [String]]
+    ) -> Agent {
+        guard agent.toolSelectionMode == .manual else { return agent }
+        var names = agent.manualToolNames ?? []
+        var selected = Set(names)
+        for group in groups {
+            guard let tools = available[group], !tools.contains(where: selected.contains) else { continue }
+            for tool in tools where selected.insert(tool).inserted { names.append(tool) }
+        }
+        var copy = agent
+        copy.manualToolNames = names
+        return copy
     }
 }

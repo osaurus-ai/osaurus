@@ -163,3 +163,29 @@ struct AgentSetupWiringGuardTests {
         #expect(state.contains("AgentSetupPromptCoordinator.shared.agentShown(newAgentId, windowId: windowId)"))
     }
 }
+
+struct AgentSetupTemplateGroupTests {
+
+    @Test
+    func addingTemplateGroupTools_addsAvailableGroupOnly() {
+        var agent = Agent(name: "Plato")
+        agent.toolSelectionMode = .manual
+        agent.manualToolNames = ["web_search"]
+        let updated = AgentSetupChecker.addingTemplateGroupTools(
+            to: agent,
+            groups: [.mcpServer("Underwriting"), .plugin("osaurus.vision")],
+            available: [.mcpServer("Underwriting"): ["uw_case_get", "uw_apps_list"]])
+        #expect(updated.manualToolNames == ["web_search", "uw_case_get", "uw_apps_list"])
+    }
+
+    @Test
+    func addingTemplateGroupTools_keepsDeliberateTrim() {
+        var agent = Agent(name: "Plato")
+        agent.toolSelectionMode = .manual
+        agent.manualToolNames = ["uw_case_get"]
+        let updated = AgentSetupChecker.addingTemplateGroupTools(
+            to: agent, groups: [.mcpServer("Underwriting")],
+            available: [.mcpServer("Underwriting"): ["uw_case_get", "uw_apps_list"]])
+        #expect(updated.manualToolNames == ["uw_case_get"])
+    }
+}

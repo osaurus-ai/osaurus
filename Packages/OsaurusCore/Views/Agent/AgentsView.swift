@@ -655,6 +655,9 @@ struct AgentsView: View {
             draft.workingFolderPath = (hint as NSString).expandingTildeInPath
         }
         if let actions = template.quickActions { draft.chatQuickActions = actions }
+        // Lets the setup check find the template's MCP servers and plugins,
+        // which add no tool names to the draft when missing here.
+        draft.sourceTemplateName = template.name
         setupSubject = .draft(draft, template: template)
     }
 

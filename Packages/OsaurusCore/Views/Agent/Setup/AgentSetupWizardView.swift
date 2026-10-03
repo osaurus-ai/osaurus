@@ -389,6 +389,7 @@ struct AgentSetupWizardView: View {
     /// Re-run the check. Steps are rebuilt only on first appear so a fixed
     /// step stays in the rail with its check mark instead of vanishing.
     private func refresh(rebuildSteps: Bool) {
+        adoptTemplateGroupTools()
         guard let agent else { return }
         var fresh = AgentSetupChecker.check(agent)
         if let template, template.modelPolicy == .preferred {
@@ -398,6 +399,21 @@ struct AgentSetupWizardView: View {
         if rebuildSteps {
             steps = Step.steps(for: fresh)
             current = steps.first ?? .review
+        }
+    }
+
+    /// Pull in the tools of any template MCP server or plugin that exists
+    /// now, e.g. one the user just added from the Tools step.
+    private func adoptTemplateGroupTools() {
+        guard let agent, let source = agent.sourceTemplateName,
+            let groups = AgentTemplateStore.shared.template(named: source)?.toolGroups, !groups.isEmpty
+        else { return }
+        let updated = AgentSetupChecker.addingTemplateGroupTools(
+            to: agent, groups: groups, available: ToolRegistry.shared.portableToolGroups())
+        guard updated.manualToolNames != agent.manualToolNames else { return }
+        switch subject {
+        case .draft: draft = updated
+        case .saved: AgentManager.shared.update(updated)
         }
     }
 

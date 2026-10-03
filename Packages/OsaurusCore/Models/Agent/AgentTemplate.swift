@@ -330,6 +330,14 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
         return copy
     }
 
+    /// MCP servers and plugins the template turns on. They travel by name,
+    /// so an agent built where one is missing gets none of its tools until
+    /// the user adds it; the setup check and wizard use this to catch up.
+    public var toolGroups: [PortableToolGroup] {
+        (agent.mcpServers?.enabled ?? []).map { .mcpServer($0) }
+            + (agent.plugins?.enabled ?? []).map { .plugin($0) }
+    }
+
     /// Quick actions for an agent built from this template, with fresh ids.
     public var quickActions: [AgentQuickAction]? {
         actions?.map(\.quickAction)
