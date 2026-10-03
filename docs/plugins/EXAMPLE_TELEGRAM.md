@@ -459,7 +459,7 @@ private func handleReply(_ payload: String) async -> String {
 
 Three things to internalize:
 
-**Tool envelopes carry errors back to the agent.** The shape is `{"ok": true, "data": {...}, "summary": "..."}` for success, `{"ok": false, "error": "<code>", "message": "..."}` for failure. See [TOOL_CONTRACT.md](./TOOL_CONTRACT.md). The agent reads `summary` (or the message) and decides whether to keep going. If `sendMessage` fails because the user blocked the bot, the agent gets that signal in-band and stops — no cascading failures.
+**Tool envelopes carry errors back to the agent.** The shape is `{"ok": true, "data": {...}, "summary": "..."}` for success, `{"ok": false, "error": "<code>", "message": "..."}` for failure. See [TOOL_CONTRACT.md](../TOOL_CONTRACT.md). The agent reads `summary` (or the message) and decides whether to keep going. If `sendMessage` fails because the user blocked the bot, the agent gets that signal in-band and stops — no cascading failures.
 
 **The per-chat send actor.** Multiple sequential `reply` calls from the agent must arrive at Telegram in order. Without serialization, two HTTP POSTs are independent and can race on the network. A Swift actor keyed by chat id chains the sends:
 
@@ -852,6 +852,6 @@ See [TESTING.md](./TESTING.md) for general patterns. Telegram-specific cases wor
 - [HOST_API.md](./HOST_API.md) — canonical host primitive reference
 - [AUTHORING.md](./AUTHORING.md) — overall plugin mental model
 - [ROUTES_AND_WEB.md](./ROUTES_AND_WEB.md) — HTTP routes and tunnel exposure
-- [TOOL_CONTRACT.md](./TOOL_CONTRACT.md) — tool envelope schema
+- [TOOL_CONTRACT.md](../TOOL_CONTRACT.md) — tool envelope schema
 - [TESTING.md](./TESTING.md) — testing patterns
 - [DEBUGGING.md](./DEBUGGING.md) — when callbacks misbehave
