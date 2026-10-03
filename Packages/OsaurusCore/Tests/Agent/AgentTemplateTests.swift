@@ -409,3 +409,16 @@ struct AgentTemplateStaleToolTests {
         #expect(AgentTemplate.droppingUnregisteredTools(entry, registered: []) == entry)
     }
 }
+
+struct AgentTemplateSlugLengthTests {
+
+    /// 79 letters then a space: the 80-char cut lands on the dash.
+    @Test
+    func longName_slugIsStable() {
+        let name = String(repeating: "a", count: 79) + " tail"
+        let slug = AgentTemplate.slug(for: name)
+        #expect(!slug.hasSuffix("-"))
+        #expect(slug.count <= 80)
+        #expect(AgentTemplate.slug(for: slug) == slug)
+    }
+}

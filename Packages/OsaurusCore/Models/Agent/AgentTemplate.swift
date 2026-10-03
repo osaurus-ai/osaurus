@@ -172,9 +172,11 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
                 pendingDash = true
             }
         }
+        // Truncate before trimming, so a cut that lands on a dash is
+        // trimmed too and the slug stays a fixed point of `slug(for:)`.
+        if out.count > 80 { out = String(out.prefix(80)) }
         while out.hasPrefix(".") || out.hasPrefix("-") { out.removeFirst() }
         while out.hasSuffix("-") { out.removeLast() }
-        if out.count > 80 { out = String(out.prefix(80)) }
         return out.isEmpty ? "template" : out
     }
 
