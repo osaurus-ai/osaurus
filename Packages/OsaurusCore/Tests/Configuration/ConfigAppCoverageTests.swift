@@ -25,7 +25,6 @@ struct ConfigAppBehaviorEnumTests {
     func storeEnumKeys_matchTheRuntimeRawValues() {
         // The manifest's allowed lists derive from the store enums; a raw
         // value rename upstream must fail here, not in a live apply.
-        #expect(ConfigAppBehaviorEnums.spawnToolAccessValues.contains("read_only"))
         #expect(ConfigAppBehaviorEnums.permissionPolicies.contains("always_allow"))
         #expect(!ConfigAppBehaviorEnums.permissionKindIds.isEmpty)
         #expect(ConfigAppBehaviorEnums.applescriptMode(forKey: "confirm_each") == .confirmEach)
@@ -89,11 +88,11 @@ struct ConfigAppCoveragePlannerTests {
         let issues = planIssues { document in
             var delegation = DelegationSection()
             delegation.applescriptExecutionMode = "just_run_it"
-            delegation.spawnToolAccess = "full"
+            delegation.permissionDefaults = ["spawn": "maybe"]
             document.delegation = delegation
         }
         #expect(issues.contains { $0.contains("delegation.applescript_execution_mode") })
-        #expect(issues.contains { $0.contains("delegation.spawn_tool_access") })
+        #expect(issues.contains { $0.contains("delegation.permission_defaults") })
     }
 
     @Test
@@ -101,7 +100,7 @@ struct ConfigAppCoveragePlannerTests {
         let budgetIssues = planIssues { document in
             var delegation = DelegationSection()
             delegation.budgetMaxTokens = 1
-            delegation.budgetMaxTurns = 100
+            delegation.budgetMaxTurns = 101
             delegation.budgetMaxSeconds = 1
             document.delegation = delegation
         }
@@ -136,7 +135,9 @@ struct ConfigAppCoveragePlannerTests {
     func spawnableAgents_acceptAgentsCreatedByTheSameDocument() throws {
         let name = "Spawn Probe Agent \(UUID().uuidString.prefix(6))"
         let plan = try plan { document in
-            document.agents = [AgentEntry(name: name)]
+            var agent = AgentEntry(name: name)
+            agent.description = "Runs a separately requested task for the delegation planner probe."
+            document.agents = [agent]
             var delegation = DelegationSection()
             delegation.spawnableAgents = [name]
             document.delegation = delegation
@@ -171,12 +172,63 @@ struct ConfigAppCoveragePlannerTests {
         }
     }
 
+    /// `spawnable_agents` is a replace-list: `[]` wipes the pool. With a
+    /// member in the pool the plan must carry a named high-risk line so the
+    /// approval card says the Orchestrator loses `spawn_agent` — the silent
+    /// empty-pool state found live on a 14-agent Mac.
+    @Test
+    func emptyingTheSpawnPool_isFlaggedHighRisk() async throws {
+        let lease = await acquireSubagentStoreSandbox("config-coverage-empty-pool")
+        defer { lease.release() }
+        let agent = Agent(
+            name: "Pool Probe \(UUID().uuidString.prefix(6))",
+            systemPrompt: "Runs delegated probes",
+            agentAddress: "test-pool-probe-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        AgentManager.shared.add(agent)  // also joins the Default spawn pool
+        var thrown: Error?
+        do {
+            let before = ConfigExporter.export().delegation?.spawnableAgents ?? []
+            #expect(before.contains(agent.name))
+
+            let emptied = try plan { document in
+                var section = DelegationSection()
+                section.spawnableAgents = []
+                document.delegation = section
+            }
+            let customAgents = AgentManager.shared.agents.filter { !$0.isBuiltIn }.count
+            #expect(
+                emptied.risks.contains(
+                    ConfigRisk.emptiesSpawnPool(removed: before.count, customAgents: customAgents)),
+                "\(emptied.risks)")
+            #expect(emptied.hasHighRiskChanges)
+
+            // Keeping the member is a plain no-op, never a risk.
+            let kept = try plan { document in
+                var section = DelegationSection()
+                section.spawnableAgents = before
+                document.delegation = section
+            }
+            #expect(!kept.risks.contains { $0.contains("Empties the Orchestrator") }, "\(kept.risks)")
+        } catch {
+            thrown = error
+        }
+        _ = await AgentManager.shared.delete(id: agent.id)
+        if let thrown { throw thrown }
+        // The shape a delegation read embeds spells out the replace semantics.
+        let shape = ConfigManifest.renderedSchemaSections(only: [.delegation])
+        #expect(shape.contains("REPLACES the whole pool"))
+        #expect(shape.contains("[] empties it"))
+    }
+
     @Test
     func newAgentWithRelay_isFlaggedHighRisk() throws {
         let name = "Relay Probe Agent \(UUID().uuidString.prefix(6))"
         var caps = AgentCapabilitiesEntry()
         caps.relayEnabled = true
         var agent = AgentEntry(name: name)
+        agent.description = "Answers relay requests for the configuration risk probe."
         agent.capabilities = caps
         let plan = try plan { $0.agents = [agent] }
         #expect(plan.risks.contains(ConfigRisk.relayEnabled(name)))
@@ -225,23 +277,70 @@ struct ConfigAppCoverageApplyTests {
         var desired = DelegationSection()
         desired.budgetMaxTokens = before?.budgetMaxTokens == 4096 ? 2048 : 4096
         desired.budgetMaxTurns = before?.budgetMaxTurns == 4 ? 2 : 4
-        desired.spawnToolAccess = before?.spawnToolAccess == "none" ? "read_only" : "none"
+        desired.ramSafetyPreflight = !(before?.ramSafetyPreflight ?? true)
         desired.coexistenceEnabled = !(before?.coexistenceEnabled ?? false)
         Self.expectNoFailures(await Self.apply { $0.delegation = desired })
 
         let after = ConfigExporter.export().delegation
         #expect(after?.budgetMaxTokens == desired.budgetMaxTokens)
         #expect(after?.budgetMaxTurns == desired.budgetMaxTurns)
-        #expect(after?.spawnToolAccess == desired.spawnToolAccess)
+        #expect(after?.ramSafetyPreflight == desired.ramSafetyPreflight)
         #expect(after?.coexistenceEnabled == desired.coexistenceEnabled)
         try Self.expectIdempotentExport(sections: [.delegation])
 
         var restore = DelegationSection()
         restore.budgetMaxTokens = before?.budgetMaxTokens
         restore.budgetMaxTurns = before?.budgetMaxTurns
-        restore.spawnToolAccess = before?.spawnToolAccess
+        restore.ramSafetyPreflight = before?.ramSafetyPreflight
         restore.coexistenceEnabled = before?.coexistenceEnabled
         _ = await Self.apply { $0.delegation = restore }
+    }
+
+    /// `new_chat_agent` is its own persisted pointer: applying it moves what
+    /// NEW chats open with (and the exported value) and leaves the foreground
+    /// window's agent (`activeAgentId`) alone; browsing (`setActiveAgent`)
+    /// never moves it back. Deleting the agent falls back to the Orchestrator.
+    @Test
+    func newChatAgent_isIndependentOfTheForegroundAgent() async throws {
+        await SubagentStoreTestLock.shared.acquire()
+        defer { SubagentStoreTestLock.shared.release() }
+        let manager = AgentManager.shared
+        let originalActive = manager.activeAgentId
+        let originalNewChat = manager.newChatAgentId
+        let agent = Agent(
+            name: "New Chat Probe \(UUID().uuidString.prefix(6))",
+            systemPrompt: "Probe",
+            agentAddress: "test-new-chat-probe-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        manager.add(agent)
+        defer {
+            manager.setActiveAgent(originalActive)
+            manager.setNewChatAgent(originalNewChat)
+        }
+
+        Self.expectNoFailures(await Self.apply { $0.activeAgent = agent.name })
+        #expect(manager.newChatAgentId == agent.id)
+        #expect(manager.activeAgentId == originalActive, "apply must not move the foreground agent")
+        #expect(ConfigExporter.export().activeAgent == agent.name)
+
+        // Browsing to another agent (the picker / switchAgent path) leaves
+        // the new-chat pointer where the user put it.
+        manager.setActiveAgent(Agent.defaultId)
+        #expect(manager.newChatAgentId == agent.id)
+        manager.setActiveAgent(agent.id)
+        manager.setActiveAgent(Agent.defaultId)
+        #expect(manager.newChatAgentId == agent.id)
+
+        Self.expectNoFailures(await Self.apply { $0.activeAgent = "default" })
+        #expect(manager.newChatAgentId == Agent.defaultId)
+        #expect(ConfigExporter.export().activeAgent == "default")
+
+        // Deleting the new-chat agent falls back to the Orchestrator.
+        manager.setNewChatAgent(agent.id)
+        #expect(manager.newChatAgentId == agent.id)
+        _ = await manager.delete(id: agent.id)
+        #expect(manager.newChatAgentId == Agent.defaultId)
     }
 
     @Test

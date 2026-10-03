@@ -20,7 +20,7 @@ Osaurus ships nine: Web Researcher, Content Summarizer, Mac Automator, Personal 
 
 ## Managing skills
 
-- Management (⌘⇧M) → Skills: filter by All / Built-in / Yours / From Plugins.
+- Settings… (⌘,) → Skills: filter by All / Built-in / Yours / From Plugins.
 - Create Skill: Name, Description, Category, Keywords, Instructions → Save. Keywords matter — search indexes name + keywords + description, not the instructions body.
 - Expand a skill to Edit, Export (JSON, Markdown, or ZIP), or Delete. Built-ins are view-only.
 

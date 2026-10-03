@@ -53,9 +53,26 @@ public enum StringCleaning {
     /// keys is removed, so ordinary JSON the user asked to see is left intact.
     /// Display-only: the raw `content` is untouched for round-tripping.
     public static func stripLeakedActionJSON(_ content: String) -> String {
+        // Consume the complete XML envelope before stripping its JSON body.
+        // Otherwise a successfully recovered call leaves empty protocol tags
+        // visible, and a no-argument call without an arguments key leaks whole.
+        var content = content
+        var cursor = content.startIndex
+        while let open = content.range(of: "<tool_call>", range: cursor ..< content.endIndex),
+            let close = content.range(of: "</tool_call>", range: open.upperBound ..< content.endIndex)
+        {
+            let body = String(content[open.upperBound ..< close.lowerBound])
+            if isLeakedToolCallJSON(body, allowMissingArguments: true) {
+                let offset = content.distance(from: content.startIndex, to: open.lowerBound)
+                content.removeSubrange(open.lowerBound ..< close.upperBound)
+                cursor = content.index(content.startIndex, offsetBy: offset)
+            } else {
+                cursor = close.upperBound
+            }
+        }
         // Cheap guard: only do the work when a tool-call-shaped key is present.
         guard content.contains("\"action\"") || content.contains("\"arguments\"") else {
-            return content
+            return content.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         let chars = Array(content)
@@ -110,10 +127,13 @@ public enum StringCleaning {
     /// True when `block` parses as a JSON object that looks like a leaked tool
     /// call: a ReAct `action` + `action_input`, or a `name` + `arguments` /
     /// `parameters` pair.
-    private static func isLeakedToolCallJSON(_ block: String) -> Bool {
+    private static func isLeakedToolCallJSON(_ block: String, allowMissingArguments: Bool = false) -> Bool {
         guard let data = block.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
+        if allowMissingArguments, object["name"] is String, Set(object.keys) == ["name"] {
+            return true
+        }
         if object["action"] != nil, object["action_input"] != nil || object["action_inputs"] != nil {
             return true
         }

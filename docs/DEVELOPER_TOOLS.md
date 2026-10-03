@@ -1,96 +1,146 @@
 # Developer Tools
 
-Osaurus includes built-in developer tools for debugging, monitoring, and testing your integration. Access them via the Management window (`⌘ Shift M`).
+Osaurus includes built-in developer tools for debugging, monitoring, and testing your integration. Access them via Settings… (`⌘ ,`).
 
 ---
 
 ## Insights
 
-The **Insights** tab provides real-time monitoring of all API requests flowing through Osaurus.
+**Insights** is the activity log: one row for every interaction Osaurus
+performs — local model requests, cloud provider calls, web searches, URL
+fetches, MCP tool calls, channel deliveries, Router calls, inbound API
+requests, plugin host calls, embeddings, transcriptions, speech synthesis,
+media generation — plus chain-of-custody events about the log itself. Each
+row is marked **Local** (data stayed on this Mac) or **Cloud** (data left
+this Mac), persisted to `~/.osaurus/activity/activity.sqlite`, and chained
+with SHA-256 so edits and deletions are detectable.
+
+The reviewer-grade specification (schema, hash recipe, limits, redaction,
+threat model, what is *not* captured, offline verification script) is
+[ACTIVITY_LOG.md](ACTIVITY_LOG.md). This section covers the developer
+workflow.
 
 ### Accessing Insights
 
-1. Open the Management window (`⌘ Shift M`)
-2. Click **Insights** in the sidebar
+1. Open Settings… (`⌘ ,`) → **Insights** (also reachable from Privacy →
+   Activity Log → *Review Activity in Insights*, and from the per-message
+   Insights button in Chat, which focuses that turn's row).
+2. Or deep-link: `open "osaurus://settings?tab=insights"`.
 
-### Features
+### The list
 
-#### Request Logging
+| Column          | Meaning                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| **Time**        | When the interaction finished. Rows are grouped by day; the day header stays pinned while scrolling. A red dot before the time marks a failed row (orange for a 4xx that was not an error). |
+| **Event**       | Category glyph, then the plain-language title (model + tokens, query, destination, media size…) over a secondary line: category · plugin · agent · destination (Cloud rows only) · tools sent. A hand glyph marks rows the Privacy Filter rewrote. |
+| **Source**      | Chat UI, Agent, HTTP API, Plugin, P2P, Channel, Schedule, Watcher, Self-scheduled, Tool, System. Hidden while the inspector is open. |
+| **Duration**    | Wall time. Token counts and bytes live in the detail.                                      |
 
-Every API request is logged with:
+Status is deliberately not a column: an `ok` row carries no badge. Failed
+rows are the only ones that are tinted.
 
-| Field        | Description                 |
-| ------------ | --------------------------- |
-| **Time**     | Request timestamp           |
-| **Source**   | Origin: Chat UI or HTTP API |
-| **Method**   | HTTP method (GET/POST)      |
-| **Path**     | Request endpoint            |
-| **Status**   | HTTP status code            |
-| **Duration** | Total response time         |
+The glance strip above the list shows **Events**, **Left this Mac** (Cloud
+rows and their share), **Failed** and **Privacy-filtered** for the current
+filter. The last three are one-tap filters. Beneath it a local/cloud bar and
+a **destinations** disclosure list every host that received data (requests,
+bytes); clicking a host filters by it.
 
-Click any row to expand and see full request/response details.
+### Filtering
 
-#### Filtering
+| Filter              | Where                   | Notes                                                                                          |
+| ------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
+| Text                | Search field            | Path, model, title, destination, agent.                                                        |
+| Time range          | Toolbar segmented control | Today, 7 days, 30 days, All time.                                                            |
+| Scope               | Scope tab row           | **All**, **Models** (inference, compaction, embedding), **Web** (search, URL fetch), **Tools** (MCP, plugin call, plugin log), **Channels**, **API** (inbound API, Router), **Audio & Media** (transcription, speech, media), **System**. Writes `filter.categories`; an ad-hoc category set from a deep link shows as a token instead. |
+| Local / Cloud       | **Filter** popover, or the **Left this Mac** tile |                                                                                  |
+| Status              | **Filter** popover, or the **Failed** tile | Any, Succeeded, Failed.                                                                 |
+| Source (multi)      | **Filter** popover      |                                                                                                |
+| Destination, Model  | **Filter** popover      | Menus of the hosts / models present in the log.                                                |
+| Privacy Filter      | **Filter** popover, or the **Privacy-filtered** tile | Any, only filtered, only unfiltered.                                       |
+| Plugin console logs | **Filter** popover      | Hidden by default.                                                                             |
 
-Filter requests to find what you need:
+Every active criterion (other than the visible search and time range)
+appears as a removable token under the toolbar; the **Filter** button badge
+counts them and **Clear all** resets everything. Filters apply to the list,
+the glance strip and **Export**.
 
-| Filter     | Options                      |
-| ---------- | ---------------------------- |
-| **Search** | Filter by path or model name |
-| **Method** | All, GET only, POST only     |
-| **Source** | All, Chat UI, HTTP API       |
+### Detail
 
-#### Aggregate Stats
+Click a row. When the content area is at least 1040 pt wide the detail opens
+as a side inspector next to the list (rows can be clicked through; ↑/↓ move
+the selection; Escape or × closes). Narrower windows push the detail
+full-width with a **Back** button.
 
-The stats bar shows real-time metrics:
+- **Overview** — a facts grid (model, tokens, tok/s, finish, bytes sent /
+  received, destination, whether content was stored), one plain-language
+  sentence, the category section (search providers and result count, MCP
+  transport and arguments, channel outcome, embedding counts, audio seconds,
+  voice and trigger, media size / steps / job, or the chain-of-custody facts
+  for System rows), then collapsible groups each summarised in one line while
+  closed: **Where it went** (open by default for Cloud rows: destination,
+  host, endpoint, transport, data classes, privacy-filter result), **Who
+  drove this** (source, agent, session, turn, delegated-from turn, request
+  id, access key), **Generation settings** (temperature, max tokens, finish
+  reason, connection, tool calls) and **Integrity** (`seq`, hash, previous
+  hash). Long identifiers are shortened to `XXXXXXXX…XXXX`; click to copy,
+  hover for the full value. An error, when present, is shown first.
+- **Prompt** — the parsed chat messages and tool definitions (chat-shaped
+  rows only).
+- **Raw** — the request and response bodies (formatted JSON when possible)
+  behind a Request / Response toggle. For remote inference the **Server /
+  Local** sub-toggle shows the exact bytes captured by `WireTransportProbe`
+  (post-Privacy-Filter on the way out, pre-unscrub on the way in) next to
+  what the local caller sent. **Copy** in the header lists every captured
+  body.
+- Rows written while *Store Prompts and Responses* was off show
+  `[content withheld — metadata only]` instead of bodies.
 
-| Stat           | Description                           |
-| -------------- | ------------------------------------- |
-| **Requests**   | Total request count                   |
-| **Success**    | Success rate percentage               |
-| **Avg Time**   | Average response duration             |
-| **Errors**     | Total error count                     |
-| **Inferences** | Chat completion requests (if any)     |
-| **Avg Speed**  | Average tokens/second (for inference) |
+### Verify and Export
 
-#### Request Details
+**Export** is the header's primary action; **Verify Integrity** and **Clear
+Activity Log…** live in the **⋯** menu beside it.
 
-Expand a request row to see:
+- **Verify Integrity** walks the whole chain and reports record count, head
+  hash and any broken link / gap / edit / head mismatch in a banner above
+  the glance strip. The check is itself recorded as a System row.
+- **Export** writes the current filter (or everything) as JSONL (manifest
+  line + one canonical record per line — re-verifiable offline, see
+  [ACTIVITY_LOG.md §7](ACTIVITY_LOG.md#7-export-format-and-offline-verification)),
+  CSV, or Markdown; with or without message content. The export is recorded
+  as a System row (format, record count, file name, head hash).
+- **Clear Activity Log…** removes every row, moves the chain anchor and
+  writes a `cleared` System row, so the log still verifies and the clearing
+  is visible.
 
-**Request Panel:**
+### Settings
 
-- Full request body (formatted JSON)
-- Copy to clipboard
+Privacy → **Activity Log**: *Keep Activity History* (7 / 30 / 90 days,
+1 year, forever; default 30 days) and *Store Prompts and Responses*
+(default on). Changing either writes a `settings_changed` System row.
 
-**Response Panel:**
+### Use cases
 
-- Full response body (formatted JSON)
-- Status indicator (green for success, red for error)
-- Response duration
-- Copy to clipboard
+- **"Did this leave my Mac?"** — click the **Left this Mac** tile; the
+  destinations disclosure under the glance strip lists every host and the
+  bytes sent.
+- **Debugging an API integration** — Filter → source **HTTP API** (or the
+  **API** scope), open the row, switch to **Raw** and compare Request /
+  Response.
+- **Verifying the Privacy Filter** — open a Cloud inference row → Request →
+  **Server Request**; placeholders should appear where PII was.
+- **Tracing a delegated run** — the parent turn and every subagent / helper
+  step share one `turnId`; search by the agent name.
+- **Hidden model work** — rows with `/internal/...` paths are one-shots
+  (chat titles, follow-ups, memory distillation, compaction, transcription
+  cleanup, embeddings).
 
-**Inference Details** (for chat completions):
+### Not captured
 
-- Model used
-- Token counts (input → output)
-- Generation speed (tok/s)
-- Temperature
-- Max tokens
-- Finish reason
-
-**Tool Calls** (if applicable):
-
-- Tool name
-- Arguments
-- Duration
-- Success/error status
-
-### Use Cases
-
-- **Debugging API integration** — See exactly what's being sent and received
-- **Performance monitoring** — Track latency and throughput
-- **Tool call inspection** — Debug tool calling behavior
-- **Error investigation** — Understand why requests fail
+Provider `/models` and test-connection probes, OAuth flows, MCP capability
+probes, Browser Use page traffic, channel polling / inbound receipt,
+workspace handshake and keep-alives, the unauthenticated Router announcements
+feed and health probe, theme fetches, skill / plugin / sandbox downloads,
+telemetry, crash reports, updates and model downloads do not produce rows. The full list and rationale: [ACTIVITY_LOG.md §9](ACTIVITY_LOG.md#9-what-is-not-captured).
 
 ---
 
@@ -100,7 +150,7 @@ The **Server** tab provides an interactive API reference and testing interface.
 
 ### Accessing Server Explorer
 
-1. Open the Management window (`⌘ Shift M`)
+1. Open Settings… (`⌘ ,`)
 2. Click **Server** in the sidebar
 
 ### Features
@@ -234,16 +284,22 @@ This verifies Osaurus's local MCP server surface, including tools discovered fro
 
 ## Tips
 
-### Clear Logs Regularly
+### Let retention do the clearing
 
-The Insights log grows over time. Use the **Clear** button to reset when debugging a specific issue.
+The Insights log is pruned automatically by the Privacy → Activity Log
+retention setting (30 days by default). **Clear** is an audited action — it
+writes a chain-of-custody row — so prefer a filter (time range, source) when
+you just want a quieter view while debugging.
 
 ### Use Source Filters
 
 Filter by source to distinguish between:
 
-- **Chat** — Requests from the built-in chat UI
-- **HTTP** — Requests from external applications
+- **Chat UI** — Requests from the built-in chat UI
+- **Agent** — Delegated subagents and helper loops (Computer Use, AppleScript)
+- **HTTP API** — Requests from external applications
+- **Schedule / Watcher / Self-scheduled / Channel** — Headless runs
+- **Tool** — Egress performed by a tool (search, URL fetch, MCP, channel delivery)
 
 ### Copy Responses
 
@@ -348,6 +404,7 @@ Yet **64 of 70 test files use `@testable import OsaurusCore`**, so even tiny tes
 
 ## Related Documentation
 
+- [Activity Log specification](ACTIVITY_LOG.md) — Schema, hash chain, limits, threat model, offline verification
 - [Inference Runtime](INFERENCE_RUNTIME.md) — Single MLX path through vmlx-swift's BatchEngine, model leases, and the one max-batch-size knob
 - [OpenAI API Guide](OpenAI_API_GUIDE.md) — API usage and examples
 - [FEATURES.md](FEATURES.md) — Feature inventory

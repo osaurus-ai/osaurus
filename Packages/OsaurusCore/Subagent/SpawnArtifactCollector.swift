@@ -59,7 +59,7 @@ public enum SpawnArtifactCollector {
     }
 
     /// Remove and return every pending artifact for a session. The parent
-    /// chat loop calls this after each `spawn_agent` / `spawn_batch` tool
+    /// chat loop calls this after each `spawn_agent` tool
     /// returns — including failure envelopes, so artifacts a worker shared
     /// before failing or being cancelled still reach the user.
     public static func drain(sessionId: String) -> [SharedArtifact] {

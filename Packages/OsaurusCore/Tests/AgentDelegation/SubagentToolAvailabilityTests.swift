@@ -28,7 +28,8 @@ struct SubagentToolAvailabilityTests {
             }
             #expect(names.contains("image"))
             #expect(names.contains("spawn_agent"))
-            #expect(names.contains("spawn_model"))
+            #expect(!names.contains("spawn_model"))
+            #expect(!names.contains("spawn_batch"))
         }
     }
 
@@ -38,12 +39,11 @@ struct SubagentToolAvailabilityTests {
         // gate; they return the spec and carry no "agent delegation is disabled"
         // reason. The agent-scoped narrowing has the agent context these lack.
         try await withDelegationSandboxAsync(configuration: .default) {
-            let (imageSpecs, spawnAgentSpecs, spawnModelSpecs, imageAvail, spawnAgentAvail) =
+            let (imageSpecs, spawnAgentSpecs, imageAvail, spawnAgentAvail) =
                 await MainActor.run {
                     (
                         ToolRegistry.shared.specs(forTools: ["image"]).map(\.function.name),
                         ToolRegistry.shared.specs(forTools: ["spawn_agent"]).map(\.function.name),
-                        ToolRegistry.shared.specs(forTools: ["spawn_model"]).map(\.function.name),
                         ToolRegistry.shared.availability(forTool: "image"),
                         ToolRegistry.shared.availability(forTool: "spawn_agent")
                     )
@@ -51,7 +51,6 @@ struct SubagentToolAvailabilityTests {
 
             #expect(imageSpecs == ["image"])
             #expect(spawnAgentSpecs == ["spawn_agent"])
-            #expect(spawnModelSpecs == ["spawn_model"])
             #expect(!imageAvail.detail.contains("agent delegation is disabled"))
             #expect(!spawnAgentAvail.detail.contains("agent delegation is disabled"))
         }
@@ -78,21 +77,6 @@ struct SubagentToolAvailabilityTests {
             let result = try await SpawnAgentTool().execute(
                 argumentsJSON:
                     #"{"agent":"00000000-0000-4000-8000-000000000099","input":"Summarize this small function."}"#
-            )
-
-            #expect(ToolEnvelope.isError(result))
-            #expect(ToolEnvelope.failureMessage(result).contains("not spawnable"))
-        }
-    }
-
-    @Test
-    func spawnModelRejectsNonSpawnableModelExecution() async throws {
-        // The default global config has an empty model pool, so a `spawn_model`
-        // call against any id is rejected per-agent (reject-before-evict), not by
-        // a global gate.
-        try await withDelegationSandboxAsync(configuration: .default) {
-            let result = try await SpawnModelTool().execute(
-                argumentsJSON: #"{"model":"qwen3-4b-4bit","input":"Summarize this small function."}"#
             )
 
             #expect(ToolEnvelope.isError(result))

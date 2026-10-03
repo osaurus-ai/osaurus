@@ -131,7 +131,7 @@ public actor ModelResidencyManager {
     /// (zero fires on the next actor hop, i.e. immediately).
     ///
     /// Used when the last chat window referencing a model closes: instead of
-    /// waiting out the full idle policy (default 15 minutes), the model is
+    /// waiting out the full idle policy (default 30 seconds), the model is
     /// released right away — with the fire-time guards below still deciding
     /// whether the unload is safe.
     ///

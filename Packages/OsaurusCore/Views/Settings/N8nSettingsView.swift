@@ -65,6 +65,9 @@ struct N8nSettingsView: View {
     @State private var globalWritesEnabled = true
     /// Workflows that called in with an identity not approved yet.
     @State private var pendingContacts: [AgentChannelN8nPendingContact] = []
+    /// Bumped whenever the pending set may have changed; `pendingLoadKey`
+    /// folds it with the saved id so one `.task(id:)` owns every reload.
+    @State private var pendingRefreshToken = 0
 
     private let manager = AgentChannelConnectionManager.shared
     private let service = AgentChannelConnectionService.shared
@@ -152,12 +155,29 @@ struct N8nSettingsView: View {
             // ever needs plaintext from another machine.
             if location != .lan { draft.plaintextAllowed = false }
         }
+        .onChange(of: selectedSectionId) { _, sectionId in
+            // Prove it is where approvals live; re-read on the way in so a
+            // workflow that called while another step was open is shown.
+            if sectionId == N8nSetupSection.liveCheck.rawValue { reloadPendingContacts() }
+        }
         .onReceive(
             NotificationCenter.default
                 .publisher(for: .agentChannelN8nPendingContactsChanged)
                 .receive(on: DispatchQueue.main)
         ) { _ in
             reloadPendingContacts()
+        }
+        // Single owner of `pendingContacts`: re-runs when the saved id or the
+        // refresh token changes, and cancels a stale in-flight read instead
+        // of letting it overwrite a newer one.
+        .task(id: pendingLoadKey) {
+            guard let originalId = draft.originalId else {
+                pendingContacts = []
+                return
+            }
+            let rows = await pendingCenter.pending(connectionId: originalId)
+            guard !Task.isCancelled else { return }
+            pendingContacts = rows
         }
         .themedAlert(
             L("Delete Connection?"),
@@ -1447,15 +1467,16 @@ struct N8nSettingsView: View {
         )
     }
 
+    /// Key for the `.task(id:)` that loads `pendingContacts`.
+    private var pendingLoadKey: String {
+        "\(draft.originalId ?? "")\u{1F}\(pendingRefreshToken)"
+    }
+
+    /// Asks the pending-contacts task to re-read. Every path that can change
+    /// the set (first contact, approve/deny, allowlist edits, save, opening
+    /// Prove it) funnels through here so the card can never go stale.
     private func reloadPendingContacts() {
-        guard let originalId = draft.originalId else {
-            pendingContacts = []
-            return
-        }
-        Task {
-            let rows = await pendingCenter.pending(connectionId: originalId)
-            await MainActor.run { pendingContacts = rows }
-        }
+        pendingRefreshToken &+= 1
     }
 
     private static func randomSecret() -> String {
@@ -1509,7 +1530,10 @@ struct N8nSettingsView: View {
                 senderId: contact.senderId
             )
             adoptAllowlists(from: updated)
-            Task { await pendingCenter.resolve(contact) }
+            Task {
+                await pendingCenter.resolve(contact)
+                reloadPendingContacts()
+            }
             onDidChange()
             healthRefreshToken += 1
             showStatus(
@@ -1522,7 +1546,10 @@ struct N8nSettingsView: View {
     }
 
     private func deny(_ contact: AgentChannelN8nPendingContact) {
-        Task { await pendingCenter.deny(contact) }
+        Task {
+            await pendingCenter.deny(contact)
+            reloadPendingContacts()
+        }
         showStatus(
             L("Denied '\(contact.conversationId)' from '\(contact.senderId)' for this session. Its events stay rejected."),
             isError: false
@@ -1547,6 +1574,7 @@ struct N8nSettingsView: View {
                 senderId: senderId
             )
             adoptAllowlists(from: updated)
+            reloadPendingContacts()
             onDidChange()
             showStatus(L("Removed. Events with that id are rejected until you allow it again."), isError: false)
         } catch {
@@ -1629,13 +1657,15 @@ struct N8nSettingsView: View {
                     _ = ToastManager.shared.success(L("n8n channel saved"))
                     onDidChange()
                     Task {
+                        // Reconcile first, then re-read, so the card reflects
+                        // the saved allowlists rather than the pre-save set.
                         await pendingCenter.reconcile(
                             connectionId: connection.id,
                             roomAllowlist: connection.inboundAuthorization.roomAllowlist,
                             senderAllowlist: connection.inboundAuthorization.senderAllowlist
                         )
+                        reloadPendingContacts()
                     }
-                    reloadPendingContacts()
                     if pairingBlocked {
                         showStatus(
                             L("Saved. The pairing code is not ready yet — see Pair for what unblocks it."),
@@ -1827,8 +1857,10 @@ private struct FlowChips: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        // Simple wrap: chips are short ids; a lazy grid keeps layout cheap.
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)], alignment: .leading, spacing: 6) {
+        // Non-lazy wrap: this sits inside the sheet's ScrollView next to the
+        // pending-approval cards, and a lazy grid there can hold a stale
+        // layout when a sibling is inserted above it.
+        ChipFlowLayout(spacing: 6, lineSpacing: 6) {
             ForEach(values, id: \.self) { value in
                 HStack(spacing: 6) {
                     Text(value)

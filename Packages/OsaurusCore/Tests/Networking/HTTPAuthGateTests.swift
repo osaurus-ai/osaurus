@@ -279,6 +279,53 @@ struct HTTPAuthGateTests {
         #expect((resp as? HTTPURLResponse)?.statusCode == 200)
     }
 
+    // MARK: - Credits Balance Gate
+
+    /// Loopback skips the global gate, so the credits endpoint must refuse a
+    /// key-less local caller itself unless the user opted in.
+    @Test func creditsBalance_trustedLoopbackWithoutKey_returns403() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+        defaults.removeObject(forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+            }
+        }
+
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        for path in ["/credits/balance", "/v1/credits/balance"] {
+            let (data, resp) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)\(path)")!
+            )
+            #expect((resp as? HTTPURLResponse)?.statusCode == 403)
+            #expect(String(decoding: data, as: UTF8.self).contains("credits_access_not_authorized"))
+        }
+    }
+
+    /// Trusted loopback skips scope confinement, so the endpoint itself must
+    /// refuse a valid key that is not master-scoped, on either transport.
+    @Test func creditsBalance_agentScopedKey_returns403_onLoopbackAndRemote() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+        defaults.removeObject(forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+            }
+        }
+
+        let fixture = try Self.agentScopedFixture()
+        for trustLoopback in [true, false] {
+            let server = try await startAuthTestServer(validator: fixture.validator, trustLoopback: trustLoopback)
+            let result = try await Self.send("GET", "/credits/balance", token: fixture.token, server: server)
+            await server.shutdown()
+            #expect(result.status == 403)
+        }
+    }
+
     // MARK: - Agent-Scoped Key Confinement (by key origin)
 
     /// Builds a validator that knows Alice's master + one derived agent, and an

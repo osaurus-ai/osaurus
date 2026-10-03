@@ -2,8 +2,8 @@
 //  SubagentBackgroundTaskBridge.swift
 //  osaurus
 //
-//  Mirrors live spawned-helper runs (spawn_agent / spawn_model /
-//  spawn_batch) into `BackgroundTaskManager` so they surface in the
+//  Mirrors live spawned-helper runs (spawn_agent waves, image and other
+//  subagent kinds) into `BackgroundTaskManager` so they surface in the
 //  sidebar Activity section alongside dispatched chats. Helper runs
 //  launched from any chat whose window is closed
 //  were previously invisible outside the launching transcript.

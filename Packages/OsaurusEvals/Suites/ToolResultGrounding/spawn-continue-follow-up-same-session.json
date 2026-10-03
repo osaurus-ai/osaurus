@@ -1,0 +1,100 @@
+{
+  "id": "tool_result_grounding.spawn-continue-follow-up-same-session",
+  "domain": "tool_result_grounding",
+  "label": "spawn_agent continue • follow-up reuses the worker session and grounds on its answer",
+  "query": "Ask the worker for a draft, then send one follow-up to the same worker session and report the final result once.",
+  "notes": "Model-free committed-transcript contract for `continue`. The first call returns needs_input with a session_id; the second call passes that id as `continue` (no agent) and must follow the first result. expectedWaveSizes [1, 1] pins two sequential single calls rather than one wave.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "first",
+          "tool": "spawn_agent",
+          "arguments": "{\"agent\":\"A11CE001-0000-4000-8000-000000000341\",\"input\":\"Draft a one-line release note for v2.1.\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "first",
+          "tool": "spawn_agent",
+          "content": "{\"ok\":true,\"tool\":\"spawn_agent\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/worker-model\",\"summary\":\"NEEDS INPUT: Should the note mention the macOS 15 requirement?\",\"session_id\":\"0F0F0F0F-0000-4000-8000-000000000041\",\"needs_input\":true}}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "second",
+          "tool": "spawn_agent",
+          "arguments": "{\"continue\":\"0F0F0F0F-0000-4000-8000-000000000041\",\"input\":\"Yes, mention it.\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "second",
+          "tool": "spawn_agent",
+          "content": "{\"ok\":true,\"tool\":\"spawn_agent\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/worker-model\",\"summary\":\"CONTINUE_FINAL_NOTE_77: v2.1 adds offline sync and requires macOS 15.\",\"session_id\":\"0F0F0F0F-0000-4000-8000-000000000041\",\"needs_input\":false}}"
+        },
+        {
+          "kind": "assistant",
+          "content": "Final release note: CONTINUE_FINAL_NOTE_77: v2.1 adds offline sync and requires macOS 15."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "first",
+          "resultMustContain": [
+            "\"needs_input\":true",
+            "0F0F0F0F-0000-4000-8000-000000000041"
+          ]
+        },
+        {
+          "callId": "second",
+          "answerMustContain": [
+            "CONTINUE_FINAL_NOTE_77"
+          ],
+          "resultMustContain": [
+            "CONTINUE_FINAL_NOTE_77"
+          ],
+          "argumentsMustNotContain": [
+            "CONTINUE_FINAL_NOTE_77"
+          ],
+          "callMustFollowResultOf": "first"
+        }
+      ],
+      "expectedToolSequence": [
+        "spawn_agent",
+        "spawn_agent"
+      ],
+      "requireSingleFinalAssistant": true,
+      "requireFinalAfterAllToolResults": true,
+      "requireFinalIsLastEvent": true,
+      "spawnWave": {
+        "exactCallCount": 2,
+        "expectedTargets": [
+          "A11CE001-0000-4000-8000-000000000341",
+          ""
+        ],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedWaveSizes": [
+          1,
+          1
+        ],
+        "expectedRows": [
+          {
+            "target": "A11CE001-0000-4000-8000-000000000341",
+            "ok": true,
+            "summaryContains": [
+              "NEEDS INPUT"
+            ]
+          },
+          {
+            "ok": true,
+            "model": "test/worker-model",
+            "summaryContains": [
+              "CONTINUE_FINAL_NOTE_77"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

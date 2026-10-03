@@ -269,8 +269,146 @@ struct PrivacyRuleConfigTests {
                 "Legacy config should default \(category) built-in to enabled"
             )
         }
-        #expect(decoded.presetRules.isEmpty)
+        // Schema < 2 migration: SSN used to be part of the account-number
+        // built-in, so a legacy file keeps SSN detection via the
+        // `us.ssn` preset. Nothing else is implied.
+        #expect(decoded.presetRules == [PrivacyRulePresets.usSSN.id: true])
         #expect(decoded.customRules.isEmpty)
+        #expect(decoded.schemaVersion == 0)
+    }
+
+    // MARK: - Schema v2 migration (SSN → preset, homeRegions)
+
+    @Test func migration_v1_keepsSSNOn_whenAccountNumbersEnabled() throws {
+        let v1 = """
+            { "schemaVersion": 1, "enabled": true, "builtinPatternEnabled": { "accountNumber": true } }
+            """
+        let decoded = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: v1.data(using: .utf8)!)
+        #expect(decoded.presetRules["us.ssn"] == true)
+        // Re-encoding stamps the current schema so the migration runs once.
+        let data = try JSONEncoder().encode(decoded)
+        let again = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: data)
+        #expect(again.schemaVersion == PrivacyFilterConfiguration.currentSchemaVersion)
+        #expect(again.presetRules["us.ssn"] == true)
+    }
+
+    @Test func migration_v1_leavesSSNOff_whenAccountNumbersDisabled() throws {
+        let v1 = """
+            { "schemaVersion": 1, "enabled": true, "builtinPatternEnabled": { "accountNumber": false } }
+            """
+        let decoded = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: v1.data(using: .utf8)!)
+        #expect(decoded.presetRules["us.ssn"] == nil)
+        #expect(decoded.isPresetEnabled("us.ssn") == false)
+    }
+
+    @Test func migration_v1_respectsExplicitSSNChoice() throws {
+        let v1 = """
+            { "schemaVersion": 1, "enabled": true, "presetRules": { "us.ssn": false } }
+            """
+        let decoded = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: v1.data(using: .utf8)!)
+        #expect(decoded.presetRules["us.ssn"] == false)
+    }
+
+    @Test func migration_v1_seedsHomeRegions_withoutEnablingPresets() throws {
+        let v1 = """
+            { "schemaVersion": 1, "enabled": true }
+            """
+        let decoded = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: v1.data(using: .utf8)!)
+        if let region = PrivacyFilterConfiguration.regionCode(from: .current) {
+            #expect(decoded.homeRegions == [region])
+        } else {
+            #expect(decoded.homeRegions.isEmpty)
+        }
+        // Only the SSN carry-over; the suggestion banner offers the rest.
+        #expect(decoded.presetRules == ["us.ssn": true])
+    }
+
+    @Test func migration_v2_doesNotTouchPresets() throws {
+        let v2 = """
+            { "schemaVersion": 2, "enabled": true, "presetRules": {}, "homeRegions": [] }
+            """
+        let decoded = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: v2.data(using: .utf8)!)
+        #expect(decoded.presetRules.isEmpty)
+        #expect(decoded.homeRegions.isEmpty)
+    }
+
+    @Test func homeRegions_roundTrip() throws {
+        var config = PrivacyFilterConfiguration()
+        config.homeRegions = ["DE", "JP"]
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: data)
+        #expect(decoded.homeRegions == ["DE", "JP"])
+    }
+
+    // MARK: - Fresh install seeding
+
+    @Test func init_isNeutral() {
+        let config = PrivacyFilterConfiguration()
+        #expect(config.presetRules.isEmpty)
+        #expect(config.homeRegions.isEmpty)
+        #expect(PrivacyFilterConfiguration.default.presetRules.isEmpty)
+    }
+
+    @Test func freshInstall_seedsLocaleRegionAndPresets() {
+        let de = PrivacyFilterConfiguration.freshInstall(locale: Locale(identifier: "de_DE"))
+        #expect(de.homeRegions == ["DE"])
+        #expect(de.presetRules["de.steuerId"] == true)
+        #expect(de.presetRules["iban"] == true)
+        #expect(de.presetRules["euVAT"] == true)
+        #expect(de.presetRules["generic.passport"] == true)
+        #expect(de.presetRules["us.ssn"] == nil)
+        #expect(de.presetRules["awsKey"] == nil)
+        #expect(de.enabled == false, "master toggle stays off on a fresh install")
+
+        let us = PrivacyFilterConfiguration.freshInstall(locale: Locale(identifier: "en_US"))
+        #expect(us.homeRegions == ["US"])
+        #expect(us.presetRules["us.ssn"] == true)
+        #expect(us.presetRules["iban"] == nil)
+
+        let jp = PrivacyFilterConfiguration.freshInstall(locale: Locale(identifier: "ja_JP"))
+        #expect(jp.homeRegions == ["JP"])
+        #expect(jp.presetRules["jp.myNumber"] == true)
+
+        // Tier-3-only region: still gets the Global generics.
+        let aq = PrivacyFilterConfiguration.freshInstall(locale: Locale(identifier: "en_AQ"))
+        #expect(aq.homeRegions == ["AQ"])
+        #expect(aq.presetRules["generic.nationalID"] == true)
+        #expect(aq.presetRules.values.allSatisfy { $0 })
+        #expect(PrivacyRulePresets.hasSpecificCoverage("AQ") == false)
+
+        // Locale without a region: nothing seeded.
+        let bare = PrivacyFilterConfiguration.freshInstall(locale: Locale(identifier: "en"))
+        #expect(bare.homeRegions.isEmpty)
+        #expect(bare.presetRules.isEmpty)
+    }
+
+    @Test func addHomeRegion_enablesOnlyUnsetKeys() {
+        var config = PrivacyFilterConfiguration()
+        config.presetRules = ["de.steuerId": false, "iban": true]
+        config.addHomeRegion("de")
+        #expect(config.homeRegions == ["DE"])
+        #expect(config.presetRules["de.steuerId"] == false, "explicit opt-out survives")
+        #expect(config.presetRules["iban"] == true)
+        #expect(config.presetRules["de.svnr"] == true)
+        #expect(config.presetRules["euVAT"] == true)
+        // Idempotent.
+        config.addHomeRegion("DE")
+        #expect(config.homeRegions == ["DE"])
+    }
+
+    @Test func removeHomeRegion_leavesPresetRulesIntact() {
+        var config = PrivacyFilterConfiguration.freshInstall(locale: Locale(identifier: "fr_FR"))
+        let before = config.presetRules
+        config.removeHomeRegion("FR")
+        #expect(config.homeRegions.isEmpty)
+        #expect(config.presetRules == before)
+    }
+
+    @Test func defaultSafetyNet_includesLocalePresets() {
+        let ruleset = RegexEntityDetector.EffectiveRuleSet.defaultSafetyNet(locale: Locale(identifier: "en_US"))
+        let hits = RegexEntityDetector.detect(in: "SSN 123-45-6789 and card 4111 1111 1111 1111", ruleset: ruleset)
+        #expect(hits.contains { $0.original == "123-45-6789" })
+        #expect(hits.contains { $0.original == "4111 1111 1111 1111" })
     }
 
     /// A config that explicitly opts a category OUT must keep that

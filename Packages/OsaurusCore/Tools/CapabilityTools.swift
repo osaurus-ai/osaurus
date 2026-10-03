@@ -1276,10 +1276,10 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         "Tool '\(toolId)' is a workspace tool and cannot be loaded here — "
                         + "it activates only when a working folder is attached to this "
                         + "chat, and this chat has none (no folder was picked, or it was "
-                        + "cleared). Ask the user to attach a folder via the Folder chip — "
-                        + "that also becomes the agent's Working Folder for future chats and "
-                        + "background runs — or enable Autonomous execution; deliver file "
-                        + "content with share_artifact meanwhile."
+                        + "cleared). " + PromptWorkingFolderTool.attachFolderSteer
+                        + " An attached folder also becomes the agent's Working Folder for "
+                        + "future chats and background runs; enabling Autonomous execution is "
+                        + "the other option. Deliver file content with share_artifact meanwhile."
                 )
             )
         }
@@ -1292,19 +1292,24 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        // Idempotent re-load — checked BEFORE the enabled/grant guards. A
-        // tool already in this session's schema (the always-loaded baseline
-        // snapshot or an earlier capabilities_load) is ALREADY callable, so
-        // re-loading it must return success regardless of the current
-        // global-enabled or agent-grant state. Rejecting it here was a
-        // guard-ordering bug: the `isEnabled`/`allowedNames` guards fired
-        // first, so re-loading an already-baseline tool returned
-        // `{"ok":false,"kind":"rejected","message":"… is disabled"}` for a
-        // tool the model could already call — which derails the loop (the
-        // model believes a working capability failed). The early return also
-        // prevents re-buffering, which would re-trigger the deferred-schema
-        // bookkeeping and a redundant "callable now" notice.
+        // A loaded schema is not a permanent grant. Match dispatch before
+        // claiming that a previously loaded dynamic tool is still callable.
+        // Preserve first-load diagnostics and dedicated built-in policy below.
         if await isAlreadyLoadedInSession(toolId) {
+            let dynamicallyGranted = await MainActor.run {
+                ToolRegistry.shared.isDynamicToolGranted(
+                    toolId, agentId: ChatExecutionContext.currentAgentId
+                )
+            }
+            guard dynamicallyGranted else {
+                return .failure(
+                    LoadFailure(
+                        kind: .rejected,
+                        message: "Tool '\(toolId)' is not available in this conversation."
+                    )
+                )
+            }
+            // Never rebuffer an already-loaded schema.
             return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
         }
         // Built-ins are not dynamic capabilities. If the composer withheld one
@@ -1317,6 +1322,18 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         let isDeferredDefaultConfigureWrite =
             isDefaultAgent && configureWrites.contains(toolId)
         let isOnDemandBuiltIn = ToolRegistry.onDemandBuiltInToolNames.contains(toolId)
+        if let app = AppleApp.app(forTool: toolId) {
+            // Never reachable when the app is on (the tool is already in the
+            // baseline and returned "already loaded" above); this is the
+            // off-agent path, so name the real switch.
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' belongs to the built-in \(app.displayName) app, which is off for this agent and cannot be enabled with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps, or have the Orchestrator set capabilities.apple_apps for this agent."
+                )
+            )
+        }
         if isBuiltIn, !isDeferredDefaultConfigureWrite, !isOnDemandBuiltIn {
             return .failure(
                 LoadFailure(

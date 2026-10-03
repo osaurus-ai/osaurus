@@ -95,7 +95,6 @@ struct WhatsNewGateFilterTests {
         #expect(
             release.pages.map(\.id) == [
                 "browser-use-0.22.9:summary",
-                "browser-use-0.22.9:safety",
                 "browser-use-0.22.9:enable",
             ]
         )
@@ -110,7 +109,6 @@ struct WhatsNewGateFilterTests {
         #expect(
             release.pages.map(\.id) == [
                 "channels-0.22.13:summary",
-                "channels-0.22.13:routing",
                 "channels-0.22.13:control",
             ]
         )
@@ -125,12 +123,40 @@ struct WhatsNewGateFilterTests {
         #expect(
             release.pages.map(\.id) == [
                 "orchestrator-0.24.0:summary",
-                "orchestrator-0.24.0:delegation",
                 "orchestrator-0.24.0:settings",
             ]
         )
         #expect(release.pages.last?.actionLabel == "Open Orchestrator settings")
         #expect(release.pages.last?.action == .openOrchestratorSettings)
+    }
+
+    /// The Raptor notes name the current onboarding default (0.6) so the
+    /// CTA lands on the model new users actually get, not the version that
+    /// was current when the release shipped.
+    @Test
+    func raptorReleaseTargetsCurrentDefaultModel() throws {
+        let release = try #require(WhatsNewContent.release(for: "0.24.4"))
+
+        #expect(
+            release.pages.map(\.id) == [
+                "raptor-0.24.4:summary",
+                "raptor-0.24.4:download",
+            ]
+        )
+        #expect(release.pages.last?.actionLabel == "Open Models")
+        #expect(
+            release.pages.last?.action
+                == .openModelDownloads(modelId: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
+        )
+    }
+
+    /// Every retained release is capped at two pages so the aggregated
+    /// carousel a multi-version updater sees stays short.
+    @Test
+    func everyReleaseHasAtMostTwoPages() {
+        for release in WhatsNewContent.releases {
+            #expect(release.pages.count <= 2, "\(release.version) has \(release.pages.count) pages")
+        }
     }
 
     /// Catalog keeps only the most recent announcements, sorted

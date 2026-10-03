@@ -10,7 +10,7 @@ Memory is what Osaurus learns from your conversations. Knowledge is what you tea
 
 ## Memory
 
-- On by default; view and manage in Management (⌘⇧M) → Memory.
+- On by default; view and manage in Settings… (⌘,) → Memory.
 - Osaurus distills sessions into compact memory (identity, pinned facts, episode digests) and injects only a small relevant slice into each turn (~800 tokens or nothing) — never a full transcript dump.
 - Memory is global across chats. Distillation runs after ~60 seconds of idle or when you leave a session, using the core model (default: Apple's on-device `foundation` on macOS 26+; change it in Settings → General).
 - Your Overrides (Memory → Your Overrides → Add): facts that are always included in context.
@@ -23,7 +23,7 @@ Memory is what Osaurus learns from your conversations. Knowledge is what you tea
 ## Knowledge
 
 - A human-curated library of your docs (SOPs, guides, standards) that agents search and read on demand — different from memory, which is learned from conversation.
-- Setup: Management → Knowledge → Add Collection → pick any folder of `.md`/`.markdown`/`.mdx` files. Files are indexed in place, never moved; edits are picked up within seconds.
+- Setup: Settings… (⌘,) → Knowledge → Add Collection → pick any folder of `.md`/`.markdown`/`.mdx` files. Files are indexed in place, never moved; edits are picked up within seconds.
 - Grant per agent: agent → Abilities → Overview → Knowledge → enable and check collections. The default agent cannot use knowledge.
 - Granted agents get `search_knowledge`, `read_knowledge`, `list_knowledge` — read-only; no tool ever writes to your folder.
 - Optional Curator mode lets an agent propose document updates as diffs that you Approve or Dismiss in the Knowledge tab; only Approve writes to disk.

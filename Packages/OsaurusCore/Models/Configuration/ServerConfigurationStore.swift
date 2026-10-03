@@ -32,7 +32,7 @@ enum ServerConfigurationStore {
         func encode(to encoder: Encoder) throws {
             try configuration.encode(to: encoder)
             var metadata = encoder.container(keyedBy: SaveMetadata.CodingKeys.self)
-            try metadata.encode(1, forKey: .idleResidencyPolicyVersion)
+            try metadata.encode(2, forKey: .idleResidencyPolicyVersion)
         }
     }
 
@@ -59,6 +59,15 @@ enum ServerConfigurationStore {
             let decoder = JSONDecoder()
             var configuration = try decoder.decode(ServerConfiguration.self, from: data)
             let metadata = try decoder.decode(SaveMetadata.self, from: data)
+            // Version 1 saved the former 15-minute default without recording
+            // whether that duration was user-selected. Migrate that value once;
+            // explicit Never, Immediate and other custom durations stay intact.
+            if (metadata.idleResidencyPolicyVersion ?? 0) < 2,
+                configuration.modelIdleResidencyPolicy == .afterSeconds(900)
+            {
+                configuration.modelIdleResidencyPolicy = .defaultWarm
+                save(configuration)
+            }
             if (metadata.idleResidencyPolicyVersion ?? 0) < 1,
                 migrateLegacyImmediateIdleResidencyIfNeeded(&configuration)
             {

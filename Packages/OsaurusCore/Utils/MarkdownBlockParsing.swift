@@ -749,11 +749,17 @@ private func parseOrderedListItemWithIndent(_ line: Substring, trimmed: Substrin
     )
 }
 
+/// Compiled once: this runs for every paragraph of every parse inside cell
+/// configure on the main thread, and compiling the pattern per call showed up
+/// as the hang leaf. NSRegularExpression is immutable and safe to share.
+private let standaloneImagePattern = try? NSRegularExpression(
+    pattern: #"^!\[([^\]]*)\]\(([^)]+)\)$"#, options: [])
+
 private func extractStandaloneImageKind(from text: String) -> MessageBlock.Kind? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     // Match ![alt](url) pattern for standalone images
-    let pattern = #"^!\[([^\]]*)\]\(([^)]+)\)$"#
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+    guard trimmed.hasPrefix("!["),
+        let regex = standaloneImagePattern,
         let match = regex.firstMatch(in: trimmed, options: [], range: NSRange(trimmed.startIndex..., in: trimmed))
     else { return nil }
 

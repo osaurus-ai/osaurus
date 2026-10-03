@@ -140,12 +140,18 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// Default on, like `autoGenerateChatTitles`.
     public var generateFollowUpSuggestions: Bool
 
+    // MARK: - File History
+    /// How long per-chat file change history (the undo journal) is kept.
+    /// Default keeps it until the chat is deleted, with no size cap.
+    public var fileHistoryRetention: FileHistoryRetention
+
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         contextLength: Int? = nil,
+        contextLengthCap: Int? = nil,
         topPOverride: Float? = nil,
         maxToolAttempts: Int? = nil,
         defaultModel: String? = nil,
@@ -156,13 +162,15 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
         autoGenerateChatTitles: Bool = true,
-        generateFollowUpSuggestions: Bool = true
+        generateFollowUpSuggestions: Bool = true,
+        fileHistoryRetention: FileHistoryRetention = .keepUntilChatDeleted
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.contextLength = contextLength
+        self.contextLengthCap = contextLengthCap
         self.topPOverride = topPOverride
         self.maxToolAttempts = maxToolAttempts
         self.defaultModel = defaultModel
@@ -174,6 +182,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.warmModelsOnLoad = warmModelsOnLoad
         self.autoGenerateChatTitles = autoGenerateChatTitles
         self.generateFollowUpSuggestions = generateFollowUpSuggestions
+        self.fileHistoryRetention = fileHistoryRetention
     }
 
     public init(from decoder: Decoder) throws {
@@ -183,6 +192,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         temperature = try container.decodeIfPresent(Float.self, forKey: .temperature)
         maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens)
         contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength)
+        contextLengthCap = try container.decodeIfPresent(Int.self, forKey: .contextLengthCap)
         topPOverride = try container.decodeIfPresent(Float.self, forKey: .topPOverride)
         maxToolAttempts = try container.decodeIfPresent(Int.self, forKey: .maxToolAttempts)
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
@@ -198,6 +208,9 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? true
         generateFollowUpSuggestions =
             try container.decodeIfPresent(Bool.self, forKey: .generateFollowUpSuggestions) ?? true
+        fileHistoryRetention =
+            try container.decodeIfPresent(FileHistoryRetention.self, forKey: .fileHistoryRetention)
+            ?? .keepUntilChatDeleted
     }
 
     public static var `default`: ChatConfiguration {

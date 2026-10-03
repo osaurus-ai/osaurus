@@ -2,10 +2,9 @@
 //  SpawnWaveGate.swift
 //  OsaurusCore
 //
-//  N `spawn_agent` / `spawn_model` calls emitted in ONE model message are one
-//  fan-out wave: the same thing `spawn_batch(jobs)` spells out as a job list.
-//  This gate makes the implicit shape behave like the explicit one at the two
-//  places where per-call execution would otherwise diverge:
+//  N `spawn_agent` calls emitted in ONE model message are one fan-out wave.
+//  This gate makes the wave behave like a single delegation at the two places
+//  where per-call execution would otherwise diverge:
 //
 //  - one approval card for the whole wave instead of N identical cards, and
 //  - one local/remote fan-out limit check across the siblings, rejecting the
@@ -27,7 +26,7 @@
 import Foundation
 
 /// Bound by `AgentToolLoop.runBatchInParallel` for a parallel wave that
-/// carries at least two foreground `spawn_agent` / `spawn_model` calls.
+/// carries at least two foreground `spawn_agent` calls.
 public struct SpawnWaveContext: Sendable, Equatable {
     public let waveId: UUID
     /// Sibling call ids in model order. Only these ids may join the wave.
@@ -39,8 +38,7 @@ public struct SpawnWaveContext: Sendable, Equatable {
     }
 
     static let waveToolNames: Set<String> = [
-        SubagentCapabilityRegistry.spawnAgentToolName,
-        SubagentCapabilityRegistry.spawnModelToolName,
+        SubagentCapabilityRegistry.spawnAgentToolName
     ]
 
     /// A wave exists when two or more calls in the batch are foreground
@@ -85,6 +83,9 @@ actor SpawnWaveGate {
         /// Per-call approval arguments (the same JSON the single card shows).
         let argumentsJSON: String
         let isLocal: Bool
+        /// Which permission kind gates this member: `spawn` for a local
+        /// agent, `spawn_workspace` for a teammate's shared agent.
+        var permissionKindId: String = SubagentCapabilityRegistry.spawn.id
     }
 
     /// Verdicts a completed wave hands to its members, keyed by call id.
@@ -312,7 +313,7 @@ actor SpawnWaveGate {
                     verdicts[member.callId] = .allow
                 } else {
                     verdicts[member.callId] = .unavailable(
-                        SpawnBatchTool.fanOutLimitMessage(
+                        SpawnFanOutPolicy.fanOutLimitMessage(
                             requested: localRequested,
                             limit: limits.local,
                             kind: "local"
@@ -325,7 +326,7 @@ actor SpawnWaveGate {
                     verdicts[member.callId] = .allow
                 } else {
                     verdicts[member.callId] = .unavailable(
-                        SpawnBatchTool.fanOutLimitMessage(
+                        SpawnFanOutPolicy.fanOutLimitMessage(
                             requested: remoteRequested,
                             limit: limits.remote,
                             kind: "remote"
@@ -345,25 +346,83 @@ actor SpawnWaveGate {
         if let override = authorizeOverrideForTests {
             return await override(members, leader)
         }
-        let policy = await SpawnPermissionGate.effectivePolicy(for: leader.scope)
+        let plan = await wavePermissionPlan(for: members, scope: leader.scope)
         return await SpawnPermissionGate.authorize(
             scope: leader.scope,
-            policy: policy,
+            policy: plan.policy,
             toolName: cardToolName(for: members),
-            description: cardDescription(count: members.count),
-            argumentsJSON: cardArgumentsJSON(for: members)
+            description: plan.description,
+            argumentsJSON: cardArgumentsJSON(for: members),
+            permissionKindIds: plan.kindIds
+        )
+    }
+
+    /// What the wave's one card is about.
+    struct WavePermissionPlan: Equatable, Sendable {
+        /// Combined policy: Deny if any kind denies, Ask if any kind asks,
+        /// else Always Allow (no card).
+        let policy: SubagentPermissionPolicy
+        /// The kinds the card covers — the ones on Ask, so "Always Allow"
+        /// persists exactly those (a local part already on Always Allow is
+        /// not re-asked and not re-persisted).
+        let kindIds: Set<String>
+        let description: String
+    }
+
+    /// One card per wave even when it mixes local and workspace targets:
+    /// each member's permission kind (`spawn` / `spawn_workspace`) is read
+    /// from the launcher's settings and combined.
+    static func wavePermissionPlan(
+        for members: [Member],
+        scope: SubagentScope
+    ) async -> WavePermissionPlan {
+        let kinds = Set(members.map(\.permissionKindId))
+        var policies: [String: SubagentPermissionPolicy] = [:]
+        for kind in kinds.sorted() {
+            policies[kind] = await SpawnPermissionGate.effectivePolicy(for: scope, kindId: kind)
+        }
+        return wavePermissionPlan(memberKinds: members.map(\.permissionKindId), policies: policies)
+    }
+
+    /// Pure core of `wavePermissionPlan`: one permission kind per member and
+    /// the launcher's policy per kind (a kind missing from `policies` counts
+    /// as Ask, the safe reading). Shared by the gate and the model-free
+    /// workspace-delegation eval lane.
+    static func wavePermissionPlan(
+        memberKinds: [String],
+        policies: [String: SubagentPermissionPolicy]
+    ) -> WavePermissionPlan {
+        let kinds = Set(memberKinds)
+        var askKinds = Set<String>()
+        var combined: [SubagentPermissionPolicy] = []
+        for kind in kinds.sorted() {
+            let policy = policies[kind] ?? .ask
+            combined.append(policy)
+            if policy == .ask { askKinds.insert(kind) }
+        }
+        let workspaceCount = memberKinds.filter {
+            $0 == SubagentPermissionDefaults.workspaceSpawnKindId
+        }.count
+        return WavePermissionPlan(
+            policy: SpawnPermissionGate.combinedPolicy(combined),
+            kindIds: askKinds.isEmpty ? kinds : askKinds,
+            description: cardDescription(count: memberKinds.count, workspaceCount: workspaceCount)
         )
     }
 
     static func cardToolName(for members: [Member]) -> String {
-        let names = Set(members.map(\.toolName))
-        if names.count == 1, let only = names.first { return only }
-        return SubagentCapabilityRegistry.spawnAgentToolName
-            + " / " + SubagentCapabilityRegistry.spawnModelToolName
+        members.first?.toolName ?? SubagentCapabilityRegistry.spawnAgentToolName
     }
 
-    static func cardDescription(count: Int) -> String {
-        "Let this agent run \(count) subagents in parallel?"
+    static func cardDescription(count: Int, workspaceCount: Int = 0) -> String {
+        guard workspaceCount > 0 else {
+            return "Let this agent run \(count) subagents in parallel?"
+        }
+        let shared =
+            workspaceCount == count
+            ? "They run on teammates' Macs and spend those workspaces' pools."
+            : "\(workspaceCount) of them run on teammates' Macs and spend those workspaces' pools."
+        return "Let this agent run \(count) subagents in parallel? \(shared)"
     }
 
     /// One JSON document listing each sibling's approval arguments in model

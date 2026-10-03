@@ -98,6 +98,7 @@ struct StorageDatabaseCatalogTests {
             let labels = Set(targets.map(\.label))
             #expect(
                 labels == [
+                    "activity log",
                     "agent channels",
                     "chat history",
                     "memory",

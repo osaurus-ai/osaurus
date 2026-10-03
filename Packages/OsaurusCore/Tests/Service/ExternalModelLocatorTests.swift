@@ -37,6 +37,37 @@ struct ExternalModelLocatorTests {
         #expect(report.skipped.contains { $0.reason == .unreadableRoot && $0.path == missing.path })
     }
 
+    @Test(arguments: [false, true])
+    func symlinkedBundleDiagnosticFindsWeights(enforceContainment: Bool) throws {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let actual = root.appendingPathComponent("actual", isDirectory: true)
+        writeBundle(at: actual)
+        let link = root.appendingPathComponent("bundle-link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
+        let diagnostic = ExternalModelLocator.bundleDiagnostic(
+            at: link, root: link, enforceSymlinkContainment: enforceContainment)
+        #expect(diagnostic.isValid)
+        #expect(diagnostic.reason == nil)
+    }
+
+    @Test func symlinkedBundleStillRejectsEscapingWeight() throws {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let actual = root.appendingPathComponent("actual", isDirectory: true)
+        writeBundle(at: actual)
+        let weight = actual.appendingPathComponent("model.safetensors")
+        try FileManager.default.removeItem(at: weight)
+        let outside = root.appendingPathComponent("outside.safetensors")
+        try Data("w".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: weight, withDestinationURL: outside)
+        let link = root.appendingPathComponent("bundle-link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
+        let diagnostic = ExternalModelLocator.bundleDiagnostic(at: link, root: link)
+        #expect(!diagnostic.isValid)
+        #expect(diagnostic.reason == .symlinkEscapesRoot)
+    }
+
     // MARK: - Helpers
 
     private func makeTempDir() -> URL {

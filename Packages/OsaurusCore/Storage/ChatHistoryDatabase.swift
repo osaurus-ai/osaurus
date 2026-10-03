@@ -172,7 +172,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 16
+    static let latestSchemaVersion = 21
 
     /// Forward-compatibility invariant. Every chat-history migration is
     /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
@@ -220,7 +220,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         [
             migrateToV1, migrateToV2, migrateToV3, migrateToV4, migrateToV5, migrateToV6,
             migrateToV7, migrateToV8, migrateToV9, migrateToV10, migrateToV11, migrateToV12,
-            migrateToV13, migrateToV14, migrateToV15, migrateToV16,
+            migrateToV13, migrateToV14, migrateToV15, migrateToV16, migrateToV17,
+            migrateToV18, migrateToV19, migrateToV20, migrateToV21,
         ]
     }
 
@@ -261,7 +262,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         "tool_calls", "tool_call_id", "tool_results", "thinking", "content_hash",
         "created_at", "completed_at", "generation_token_count", "time_to_first_token",
         "tool_call_durations", "thinking_duration", "router_billing",
-        "terminal_stop_reason", "model_context_excluded",
+        "terminal_stop_reason", "model_context_excluded", "tool_call_logs",
+        "injected_context_prefix", "generation_tokens_per_second", "model_load_seconds", "last_output_at",
+        "requested_at",
     ]
 
     private func assertWritableSchema() throws {
@@ -537,6 +540,105 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             "CREATE INDEX IF NOT EXISTS idx_sessions_remote_agent ON sessions (remote_agent_address)"
         )
         try setSchemaVersion(16)
+    }
+
+    /// v17: `tool_call_logs` — JSON map of `callId -> SubagentRunLog`, the
+    /// finished Computer Use / AppleScript step log shown under the tool
+    /// row. Nullable; legacy turns have none.
+    private func migrateToV17() throws {
+        try addColumnIfMissing("turns", "tool_call_logs", "TEXT")
+        try setSchemaVersion(17)
+    }
+
+    /// v18: `injected_context_prefix` — the frozen `[Current Time]` / memory /
+    /// screen block a user turn was SENT with. `ChatTurnData` has always
+    /// documented it as persisted "so a reloaded session replays the exact
+    /// wire bytes of every past turn and the disk-backed prefix cache can
+    /// still hit", but no column carried it: after a relaunch (or reopening
+    /// a chat from History) every past user turn rendered WITHOUT its block,
+    /// the prompt diverged at the first user turn, and the whole conversation
+    /// was prefilled again — measured live, a 10.7k-token chat resumed with
+    /// a hit at the 3.5k-token system prompt only. Additive and nullable;
+    /// a sibling build that already added the column is left as found.
+    private func migrateToV18() throws {
+        try addColumnIfMissing("turns", "injected_context_prefix", "TEXT")
+        try setSchemaVersion(18)
+    }
+
+    /// v19: retain displayed generation metrics and the pre-finalization output boundary.
+    private func migrateToV19() throws {
+        try addColumnIfMissing("turns", "generation_tokens_per_second", "REAL")
+        try addColumnIfMissing("turns", "model_load_seconds", "REAL")
+        try addColumnIfMissing("turns", "last_output_at", "REAL")
+        try setSchemaVersion(19)
+    }
+
+    /// v21: when the user sent the run (before any pre-send model load), the
+    /// start of the footer's total response time.
+    private func migrateToV21() throws {
+        try addColumnIfMissing("turns", "requested_at", "REAL")
+        try setSchemaVersion(21)
+    }
+
+    /// v20: git-like file history. One `file_change_sets` row per mutating
+    /// tool call (or revert), one `file_change_entries` row per touched
+    /// path with exact before/after signatures (bytes live in the
+    /// content-addressed object store). Supersedes `sandbox_changes`,
+    /// whose rows are imported by `FileChangeJournal` on first open.
+    private func migrateToV20() throws {
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS file_change_sets (
+                    id              TEXT PRIMARY KEY,
+                    session_id      TEXT NOT NULL,
+                    tool_name       TEXT NOT NULL DEFAULT '',
+                    tool_call_id    TEXT,
+                    turn_id         TEXT,
+                    origin          TEXT NOT NULL,
+                    status          TEXT NOT NULL,
+                    reverts_set_id  TEXT,
+                    note            TEXT,
+                    created_at      REAL NOT NULL
+                )
+            """
+        )
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS file_change_entries (
+                    id           TEXT PRIMARY KEY,
+                    set_id       TEXT NOT NULL,
+                    session_id   TEXT NOT NULL,
+                    ordinal      INTEGER NOT NULL DEFAULT 0,
+                    root_kind    TEXT NOT NULL,
+                    root_id      TEXT NOT NULL,
+                    path         TEXT NOT NULL,
+                    from_path    TEXT,
+                    kind         TEXT NOT NULL,
+                    state        TEXT NOT NULL,
+                    before_type  TEXT,
+                    before_sig   TEXT,
+                    before_mode  INTEGER,
+                    before_size  INTEGER,
+                    after_type   TEXT,
+                    after_sig    TEXT,
+                    after_mode   INTEGER,
+                    after_size   INTEGER
+                )
+            """
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_file_change_sets_session ON file_change_sets (session_id, created_at)"
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_file_change_sets_tool_call ON file_change_sets (tool_call_id)"
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_file_change_entries_set ON file_change_entries (set_id)"
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_file_change_entries_session ON file_change_entries (session_id, state)"
+        )
+        try setSchemaVersion(20)
     }
 
     // MARK: - Public API: sessions
@@ -1154,14 +1256,20 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try? transactionalStep("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
             Self.bindText(stmt, index: 1, value: id.uuidString)
         }
+        try? transactionalStep("DELETE FROM file_change_entries WHERE session_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: id.uuidString)
+        }
+        try? transactionalStep("DELETE FROM file_change_sets WHERE session_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: id.uuidString)
+        }
     }
 
     // MARK: - Public API: sandbox changes
 
-    /// Insert or update one net sandbox-workspace change row. Coalescing
-    /// happens upstream in `SandboxWorkspaceChangeTracker`; here we only
-    /// guarantee at most one row per (session, agent, root, path) even when
-    /// the in-memory cache and a prior on-disk row disagree on the row id.
+    /// Insert or update one legacy net sandbox-workspace change row (read
+    /// once by `FileChangeJournal`'s import, then deleted). Guarantees at
+    /// most one row per (session, agent, root, path) even when two rows
+    /// disagree on the row id.
     public func upsertSandboxChange(_ change: SandboxWorkspaceChange) throws {
         try inTransaction { _ in
             try self.transactionalStep(
@@ -1271,6 +1379,365 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             print("[ChatHistoryDatabase] loadSandboxChanges failed: \(error)")
         }
         return changes
+    }
+
+    /// Session ids that still have legacy net-change rows (import source).
+    public func sandboxChangeSessionIds() -> [String] {
+        var ids: [String] = []
+        try? prepareAndExecute(
+            "SELECT DISTINCT session_id FROM sandbox_changes",
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    ids.append(String(cString: sqlite3_column_text(stmt, 0)))
+                }
+            }
+        )
+        return ids
+    }
+
+    // MARK: - Public API: file history
+
+    /// Insert or fully replace one change set and its entries. The set is
+    /// the unit of durability: entries never exist without their set.
+    public func upsertFileChangeSet(_ set: FileChangeSet) throws {
+        try inTransaction { _ in
+            try self.transactionalStep("DELETE FROM file_change_entries WHERE set_id = ?1") { stmt in
+                Self.bindText(stmt, index: 1, value: set.id.uuidString)
+            }
+            try self.transactionalStep("DELETE FROM file_change_sets WHERE id = ?1") { stmt in
+                Self.bindText(stmt, index: 1, value: set.id.uuidString)
+            }
+            try self.transactionalStep(
+                """
+                INSERT INTO file_change_sets
+                    (id, session_id, tool_name, tool_call_id, turn_id, origin, status,
+                     reverts_set_id, note, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                """
+            ) { stmt in
+                Self.bindText(stmt, index: 1, value: set.id.uuidString)
+                Self.bindText(stmt, index: 2, value: set.sessionId)
+                Self.bindText(stmt, index: 3, value: set.toolName)
+                Self.bindText(stmt, index: 4, value: set.toolCallId)
+                Self.bindText(stmt, index: 5, value: set.turnId?.uuidString)
+                Self.bindText(stmt, index: 6, value: set.origin.rawValue)
+                Self.bindText(stmt, index: 7, value: set.status.rawValue)
+                Self.bindText(stmt, index: 8, value: set.revertsSetId?.uuidString)
+                Self.bindText(stmt, index: 9, value: set.note)
+                sqlite3_bind_double(stmt, 10, set.createdAt.timeIntervalSince1970)
+            }
+            for entry in set.entries {
+                try self.transactionalStep(
+                    """
+                    INSERT INTO file_change_entries
+                        (id, set_id, session_id, ordinal, root_kind, root_id, path, from_path,
+                         kind, state, before_type, before_sig, before_mode, before_size,
+                         after_type, after_sig, after_mode, after_size)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                            ?15, ?16, ?17, ?18)
+                    """
+                ) { stmt in
+                    Self.bindText(stmt, index: 1, value: entry.id.uuidString)
+                    Self.bindText(stmt, index: 2, value: set.id.uuidString)
+                    Self.bindText(stmt, index: 3, value: set.sessionId)
+                    sqlite3_bind_int64(stmt, 4, Int64(entry.ordinal))
+                    Self.bindText(stmt, index: 5, value: entry.rootKind.rawValue)
+                    Self.bindText(stmt, index: 6, value: entry.rootId)
+                    Self.bindText(stmt, index: 7, value: entry.path)
+                    Self.bindText(stmt, index: 8, value: entry.fromPath)
+                    Self.bindText(stmt, index: 9, value: entry.kind.rawValue)
+                    Self.bindText(stmt, index: 10, value: entry.state.rawValue)
+                    Self.bindPathState(stmt, startIndex: 11, state: entry.before)
+                    Self.bindPathState(stmt, startIndex: 15, state: entry.after)
+                }
+            }
+        }
+    }
+
+    private static func bindPathState(_ stmt: OpaquePointer, startIndex: Int, state: FilePathState?) {
+        Self.bindText(stmt, index: startIndex, value: state?.type.rawValue)
+        Self.bindText(stmt, index: startIndex + 1, value: state?.signature)
+        Self.bindNullableInt(stmt, index: startIndex + 2, value: state?.mode)
+        Self.bindNullableInt(stmt, index: startIndex + 3, value: state.map { Int($0.size) })
+    }
+
+    private static func readPathState(_ stmt: OpaquePointer, startIndex: Int32) -> FilePathState? {
+        guard let typeText = sqlite3_column_text(stmt, startIndex),
+            let type = SandboxChangeEntryType(rawValue: String(cString: typeText)),
+            let sigText = sqlite3_column_text(stmt, startIndex + 1)
+        else { return nil }
+        let mode: Int? =
+            sqlite3_column_type(stmt, startIndex + 2) == SQLITE_NULL
+            ? nil : Int(sqlite3_column_int64(stmt, startIndex + 2))
+        return FilePathState(
+            type: type,
+            signature: String(cString: sigText),
+            mode: mode,
+            size: sqlite3_column_int64(stmt, startIndex + 3)
+        )
+    }
+
+    /// Every change set of a session (oldest first) with its entries.
+    public func loadFileChangeSets(sessionId: String) -> [FileChangeSet] {
+        var sets: [FileChangeSet] = []
+        var index: [UUID: Int] = [:]
+        do {
+            try prepareAndExecute(
+                """
+                SELECT id, session_id, tool_name, tool_call_id, turn_id, origin, status,
+                       reverts_set_id, note, created_at
+                FROM file_change_sets WHERE session_id = ?1 ORDER BY created_at ASC
+                """,
+                bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId) },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        guard
+                            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))),
+                            let origin = FileChangeOrigin(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 5))),
+                            let status = FileChangeSetStatus(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 6)))
+                        else { continue }
+                        index[id] = sets.count
+                        sets.append(
+                            FileChangeSet(
+                                id: id,
+                                sessionId: String(cString: sqlite3_column_text(stmt, 1)),
+                                toolName: String(cString: sqlite3_column_text(stmt, 2)),
+                                toolCallId: sqlite3_column_text(stmt, 3).map { String(cString: $0) },
+                                turnId: sqlite3_column_text(stmt, 4).flatMap {
+                                    UUID(uuidString: String(cString: $0))
+                                },
+                                origin: origin,
+                                status: status,
+                                revertsSetId: sqlite3_column_text(stmt, 7).flatMap {
+                                    UUID(uuidString: String(cString: $0))
+                                },
+                                note: sqlite3_column_text(stmt, 8).map { String(cString: $0) },
+                                createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 9))
+                            )
+                        )
+                    }
+                }
+            )
+            try prepareAndExecute(
+                """
+                SELECT id, set_id, session_id, ordinal, root_kind, root_id, path, from_path,
+                       kind, state, before_type, before_sig, before_mode, before_size,
+                       after_type, after_sig, after_mode, after_size
+                FROM file_change_entries WHERE session_id = ?1 ORDER BY ordinal ASC
+                """,
+                bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId) },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        guard
+                            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))),
+                            let setId = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 1))),
+                            let setIndex = index[setId],
+                            let rootKind = SandboxWorkspaceRootKind(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 4))),
+                            let kind = FileChangeEntryKind(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 8))),
+                            let state = FileChangeEntryState(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 9)))
+                        else { continue }
+                        sets[setIndex].entries.append(
+                            FileChangeEntry(
+                                id: id,
+                                setId: setId,
+                                sessionId: String(cString: sqlite3_column_text(stmt, 2)),
+                                rootKind: rootKind,
+                                rootId: String(cString: sqlite3_column_text(stmt, 5)),
+                                path: String(cString: sqlite3_column_text(stmt, 6)),
+                                fromPath: sqlite3_column_text(stmt, 7).map { String(cString: $0) },
+                                kind: kind,
+                                before: Self.readPathState(stmt, startIndex: 10),
+                                after: Self.readPathState(stmt, startIndex: 14),
+                                state: state,
+                                ordinal: Int(sqlite3_column_int64(stmt, 3))
+                            )
+                        )
+                    }
+                }
+            )
+        } catch {
+            print("[ChatHistoryDatabase] loadFileChangeSets failed: \(error)")
+        }
+        return sets
+    }
+
+    public func deleteFileChangeSets(ids: [UUID]) throws {
+        guard !ids.isEmpty else { return }
+        try inTransaction { _ in
+            for id in ids {
+                try self.transactionalStep("DELETE FROM file_change_entries WHERE set_id = ?1") { stmt in
+                    Self.bindText(stmt, index: 1, value: id.uuidString)
+                }
+                try self.transactionalStep("DELETE FROM file_change_sets WHERE id = ?1") { stmt in
+                    Self.bindText(stmt, index: 1, value: id.uuidString)
+                }
+            }
+        }
+    }
+
+    public func deleteFileChanges(sessionId: String) throws {
+        try inTransaction { _ in
+            try self.transactionalStep("DELETE FROM file_change_entries WHERE session_id = ?1") { stmt in
+                Self.bindText(stmt, index: 1, value: sessionId)
+            }
+            try self.transactionalStep("DELETE FROM file_change_sets WHERE session_id = ?1") { stmt in
+                Self.bindText(stmt, index: 1, value: sessionId)
+            }
+        }
+    }
+
+    public func fileChangeSessionId(forSetId id: String) -> String? {
+        fileChangeSessionId(where: "id", equals: id)
+    }
+
+    public func fileChangeSessionId(forToolCallId toolCallId: String) -> String? {
+        fileChangeSessionId(where: "tool_call_id", equals: toolCallId)
+    }
+
+    public func fileChangeSessionId(forTurnId turnId: String) -> String? {
+        fileChangeSessionId(where: "turn_id", equals: turnId)
+    }
+
+    private func fileChangeSessionId(where column: String, equals value: String) -> String? {
+        var found: String?
+        try? prepareAndExecute(
+            "SELECT session_id FROM file_change_sets WHERE \(column) = ?1 LIMIT 1",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: value) },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    found = String(cString: sqlite3_column_text(stmt, 0))
+                }
+            }
+        )
+        return found
+    }
+
+    /// Per-session summary for the sidebar: count of paths whose latest
+    /// recorded state differs from their state before the session first
+    /// touched them, plus the number of sets. One pass over the minimal
+    /// columns, ordered so first/last per path fall out of a linear scan.
+    public func fileChangeSessionSummaries() -> [String: FileChangeSessionSummary] {
+        struct PathNet { var first: String?; var last: String? }
+        var perSession: [String: [String: PathNet]] = [:]
+        var setCounts: [String: Int] = [:]
+        try? prepareAndExecute(
+            """
+            SELECT e.session_id, e.root_kind, e.root_id, e.path, e.before_sig, e.after_sig
+            FROM file_change_entries e JOIN file_change_sets s ON s.id = e.set_id
+            ORDER BY s.created_at ASC, e.ordinal ASC
+            """,
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let session = String(cString: sqlite3_column_text(stmt, 0))
+                    let key =
+                        String(cString: sqlite3_column_text(stmt, 1)) + "|"
+                        + String(cString: sqlite3_column_text(stmt, 2)) + "|"
+                        + String(cString: sqlite3_column_text(stmt, 3))
+                    let before = sqlite3_column_text(stmt, 4).map { String(cString: $0) }
+                    let after = sqlite3_column_text(stmt, 5).map { String(cString: $0) }
+                    if var net = perSession[session]?[key] {
+                        net.last = after
+                        perSession[session]?[key] = net
+                    } else {
+                        perSession[session, default: [:]][key] = PathNet(first: before, last: after)
+                    }
+                }
+            }
+        )
+        try? prepareAndExecute(
+            "SELECT session_id, COUNT(*) FROM file_change_sets GROUP BY session_id",
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    setCounts[String(cString: sqlite3_column_text(stmt, 0))] = Int(
+                        sqlite3_column_int64(stmt, 1))
+                }
+            }
+        )
+        var result: [String: FileChangeSessionSummary] = [:]
+        for (session, count) in setCounts {
+            let outstanding = perSession[session]?.values.filter { $0.first != $0.last }.count ?? 0
+            result[session] = FileChangeSessionSummary(outstandingFiles: outstanding, setCount: count)
+        }
+        return result
+    }
+
+    /// Every signature any entry references (object-store GC roots), with
+    /// the entry count so a caller can tell "no history" from a query that
+    /// returned nothing. Throws instead of returning a partial set: GC
+    /// treats the result as the complete root set, so an error here must
+    /// never look like an empty history.
+    public func fileChangeReferencedSignatures() throws -> (signatures: Set<String>, entryCount: Int) {
+        var sigs: Set<String> = []
+        var count = 0
+        try prepareAndExecute(
+            "SELECT before_sig, after_sig FROM file_change_entries",
+            bind: { _ in },
+            process: { stmt in
+                var rc = sqlite3_step(stmt)
+                while rc == SQLITE_ROW {
+                    count += 1
+                    if let b = sqlite3_column_text(stmt, 0) { sigs.insert(String(cString: b)) }
+                    if let a = sqlite3_column_text(stmt, 1) { sigs.insert(String(cString: a)) }
+                    rc = sqlite3_step(stmt)
+                }
+                if rc != SQLITE_DONE {
+                    throw ChatHistoryDatabaseError.failedToExecute(
+                        "file_change_entries scan stopped early (sqlite \(rc))")
+                }
+            }
+        )
+        return (sigs, count)
+    }
+
+    /// Distinct roots any remaining entry lives under (shadow pruning).
+    public func fileChangeReferencedRoots() throws -> [(kind: SandboxWorkspaceRootKind, rootId: String)] {
+        var roots: [(SandboxWorkspaceRootKind, String)] = []
+        try prepareAndExecute(
+            "SELECT DISTINCT root_kind, root_id FROM file_change_entries",
+            bind: { _ in },
+            process: { stmt in
+                var rc = sqlite3_step(stmt)
+                while rc == SQLITE_ROW {
+                    if let kind = SandboxWorkspaceRootKind(rawValue: String(cString: sqlite3_column_text(stmt, 0))) {
+                        roots.append((kind, String(cString: sqlite3_column_text(stmt, 1))))
+                    }
+                    rc = sqlite3_step(stmt)
+                }
+                if rc != SQLITE_DONE {
+                    throw ChatHistoryDatabaseError.failedToExecute("file_change_entries root scan stopped early (sqlite \(rc))")
+                }
+            }
+        )
+        return roots.map { (kind: $0.0, rootId: $0.1) }
+    }
+
+    /// All sets, oldest first (retention). Minimal columns.
+    public func fileChangeSetIndex() -> [(id: UUID, sessionId: String, createdAt: Date)] {
+        var rows: [(UUID, String, Date)] = []
+        try? prepareAndExecute(
+            "SELECT id, session_id, created_at FROM file_change_sets ORDER BY created_at ASC",
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    guard let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))
+                    else { continue }
+                    rows.append(
+                        (
+                            id, String(cString: sqlite3_column_text(stmt, 1)),
+                            Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))
+                        ))
+                }
+            }
+        )
+        return rows.map { (id: $0.0, sessionId: $0.1, createdAt: $0.2) }
     }
 
     /// Returns true when at least one turn (in any session) still
@@ -1456,8 +1923,18 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if !turn.toolCallDurations.isEmpty, let durations = try? encoder.encode(turn.toolCallDurations) {
             hasher.update(data: durations)
         }
+        // A step log lands with (or just after) its tool result; hash it so
+        // the incremental upsert writes the row that now carries it.
+        if !turn.toolCallLogs.isEmpty, let logs = try? encoder.encode(turn.toolCallLogs) {
+            hasher.update(data: logs)
+        }
         if let thinkingDuration = turn.thinkingDuration {
             hasher.update(data: Data(String(thinkingDuration).utf8))
+        }
+        // The frozen injected block is stamped at send time, which can be
+        // after the row's first save; hash it so that write is not skipped.
+        if let injected = turn.injectedContextPrefix {
+            hasher.update(data: Data(injected.utf8))
         }
         // Timing fields are part of the hash so that a turn whose
         // `completedAt` / token-count lands after the initial save still
@@ -1473,6 +1950,18 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
         if let ttft = turn.timeToFirstToken {
             hasher.update(data: Data(String(ttft).utf8))
+        }
+        if let rate = turn.generationTokensPerSecond {
+            hasher.update(data: Data("generation_rate:\(rate)".utf8))
+        }
+        if let loadSeconds = turn.modelLoadSeconds {
+            hasher.update(data: Data("model_load:\(loadSeconds)".utf8))
+        }
+        if let lastOutputAt = turn.lastOutputAt {
+            hasher.update(data: Data("last_output:\(lastOutputAt.timeIntervalSince1970)".utf8))
+        }
+        if let requestedAt = turn.requestedAt {
+            hasher.update(data: Data("requested_at:\(requestedAt.timeIntervalSince1970)".utf8))
         }
         if let stopReason = turn.terminalStopReason {
             hasher.update(data: Data(stopReason.utf8))
@@ -1593,8 +2082,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
              tool_calls, tool_call_id, tool_results, thinking, content_hash,
              created_at, completed_at, generation_token_count, time_to_first_token,
              tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-             model_context_excluded)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+             model_context_excluded, tool_call_logs, injected_context_prefix,
+             generation_tokens_per_second, model_load_seconds, last_output_at, requested_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -1615,7 +2105,13 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             thinking_duration      = excluded.thinking_duration,
             router_billing         = excluded.router_billing,
             terminal_stop_reason   = excluded.terminal_stop_reason,
-            model_context_excluded = excluded.model_context_excluded
+            model_context_excluded = excluded.model_context_excluded,
+            tool_call_logs         = excluded.tool_call_logs,
+            injected_context_prefix = excluded.injected_context_prefix,
+            generation_tokens_per_second = excluded.generation_tokens_per_second,
+            model_load_seconds = excluded.model_load_seconds,
+            last_output_at = excluded.last_output_at,
+            requested_at = excluded.requested_at
         """
 
     private static let selectTurnsSQL = """
@@ -1623,7 +2119,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                tool_calls, tool_call_id, tool_results, thinking,
                created_at, completed_at, generation_token_count, time_to_first_token,
                tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-               model_context_excluded
+               model_context_excluded, tool_call_logs, injected_context_prefix,
+               generation_tokens_per_second, model_load_seconds, last_output_at, requested_at
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -1711,6 +2208,11 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             .flatMap(decodeJSON)
         let terminalStopReason = sqlite3_column_text(stmt, 16).map { String(cString: $0) }
         let modelContextExcluded = sqlite3_column_int(stmt, 17) != 0
+        let toolCallLogs: [String: SubagentRunLog] =
+            sqlite3_column_text(stmt, 18)
+            .map { String(cString: $0) }
+            .flatMap(decodeJSON) ?? [:]
+        let injectedContextPrefix = sqlite3_column_text(stmt, 19).map { String(cString: $0) }
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
@@ -1725,11 +2227,17 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             thinking: thinking,
             createdAt: createdAt,
             completedAt: completedAt,
+            lastOutputAt: readNullableDate(stmt, index: 22),
             generationTokenCount: tokenCount,
             timeToFirstToken: timeToFirstToken,
+            generationTokensPerSecond: readNullableDouble(stmt, index: 20),
+            modelLoadSeconds: readNullableDouble(stmt, index: 21),
+            requestedAt: readNullableDate(stmt, index: 23),
             terminalStopReason: terminalStopReason,
             modelContextExcluded: modelContextExcluded,
-            routerBilling: routerBilling
+            routerBilling: routerBilling,
+            injectedContextPrefix: injectedContextPrefix,
+            toolCallLogs: toolCallLogs
         )
     }
 
@@ -1776,6 +2284,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindText(stmt, index: 19, value: turn.routerBilling.flatMap(encodeJSON))
         bindText(stmt, index: 20, value: turn.terminalStopReason)
         sqlite3_bind_int(stmt, 21, turn.modelContextExcluded ? 1 : 0)
+        bindText(stmt, index: 22, value: turn.toolCallLogs.isEmpty ? nil : encodeJSON(turn.toolCallLogs))
+        bindText(stmt, index: 23, value: turn.injectedContextPrefix)
+        bindNullableDouble(stmt, index: 24, value: turn.generationTokensPerSecond)
+        bindNullableDouble(stmt, index: 25, value: turn.modelLoadSeconds)
+        bindNullableDouble(stmt, index: 26, value: turn.lastOutputAt?.timeIntervalSince1970)
+        bindNullableDouble(stmt, index: 27, value: turn.requestedAt?.timeIntervalSince1970)
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

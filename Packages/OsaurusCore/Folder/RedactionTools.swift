@@ -244,6 +244,10 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
 
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
+
     /// Default placeholder per category, aligned with the wording users
     /// naturally ask for ("replace names with [REDACTED NAME]").
     static func defaultPlaceholder(for category: EntityCategory) -> String {
@@ -502,17 +506,8 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
         }
 
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
-        if let sid = ChatExecutionContext.currentSessionId {
-            let operation = FileOperation(
-                type: .fileEdit,
-                path: relativePath,
-                previousContent: originalContent,
-                sessionId: sid,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: rootPath.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            preview.payload["operation_id"] = operation.id.uuidString
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            preview.payload["operation_id"] = setId.uuidString
         }
         preview.payload["written"] = true
         return ToolEnvelope.success(tool: name, result: preview.payload, warnings: warnings)
@@ -566,6 +561,18 @@ enum RedactionFileAccess {
                     tool: tool
                 ))
         }
+        // Documents scan as text only after extraction: point at file_read
+        // rather than failing on the binary bytes.
+        if let rejected = WorkspaceWriteSafety.documentEditRejection(
+            path: relativePath,
+            fileExtension: fileURL.pathExtension.lowercased(),
+            toolName: tool,
+            regenerateHint:
+                "run `detect_pii` on that extracted text (write it to a `.txt`/`.md` first) and regenerate a redacted copy with `file_write` as `.docx`/`.pdf`.",
+            verb: "scan"
+        ) {
+            return .failureEnvelope(rejected)
+        }
         switch WorkspaceWriteSafety.existingText(
             at: fileURL, relativePath: relativePath, toolName: tool)
         {
@@ -598,10 +605,12 @@ enum RedactionFileAccess {
             return .failureEnvelope(
                 FolderToolHelpers.secretWriteRefusalEnvelope(relativePath: relativePath, tool: tool))
         }
-        if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
+        if let rejected = WorkspaceWriteSafety.documentEditRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
-            toolName: tool
+            toolName: tool,
+            regenerateHint:
+                "redact the extracted text and regenerate it with `file_write` as `.docx` or `.pdf` (or `.xlsx` for spreadsheets)."
         ) {
             return .failureEnvelope(rejected)
         }

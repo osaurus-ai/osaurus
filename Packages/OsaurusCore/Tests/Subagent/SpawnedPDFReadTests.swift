@@ -20,107 +20,111 @@ import Testing
 struct SpawnedPDFReadTests {
     @Test("owned registry accepts host PDF and extracts its text layer")
     func ownedRegistryExtractsTextLayerPDF() async throws {
-        let root = try Self.temporaryRoot()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let pdf = root.appendingPathComponent("article.pdf")
-        try Self.writePDF(
-            pages: ["McCullough - Jacob Boehme and the Spiritual Roots"],
-            to: pdf
-        )
+        try await DynamicToolProbeFixture.run { fixture in
+            let root = try Self.temporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let pdf = root.appendingPathComponent("article.pdf")
+            try Self.writePDF(
+                pages: ["McCullough - Jacob Boehme and the Spiritual Roots"],
+                to: pdf
+            )
 
-        let tool = SpawnedPDFReadRegistryTool(root: root)
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+            let tool = SpawnedPDFReadRegistryTool(root: root)
+            try fixture.register(tool)
 
-        let result = try await ToolRegistry.shared.execute(
-            name: tool.name,
-            argumentsJSON: #"{"path":"article.pdf"}"#,
-            permissionGateResolved: true,
-            ownsExecutionUntilTermination: true
-        )
+            let result = try await ToolRegistry.shared.execute(
+                name: tool.name,
+                argumentsJSON: #"{"path":"article.pdf"}"#,
+                permissionGateResolved: true,
+                ownsExecutionUntilTermination: true
+            )
 
-        #expect(ToolEnvelope.isSuccess(result))
-        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
-        let text = try #require(payload["text"] as? String)
-        #expect(text.contains("McCullough - Jacob Boehme"))
-        #expect(text.contains("cooperative abort-and-drain") == false)
+            #expect(ToolEnvelope.isSuccess(result))
+            let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+            let text = try #require(payload["text"] as? String)
+            #expect(text.contains("McCullough - Jacob Boehme"))
+            #expect(text.contains("cooperative abort-and-drain") == false)
+        }
     }
 
     @Test("image-only PDF fails honestly instead of passing ownership then succeeding")
     func imageOnlyPDFFailsHonestly() async throws {
-        let root = try Self.temporaryRoot()
-        defer { try? FileManager.default.removeItem(at: root) }
-        try Self.writePDF(pages: [""], to: root.appendingPathComponent("scan.pdf"))
+        try await DynamicToolProbeFixture.run { fixture in
+            let root = try Self.temporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            try Self.writePDF(pages: [""], to: root.appendingPathComponent("scan.pdf"))
 
-        let tool = SpawnedPDFReadRegistryTool(root: root)
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+            let tool = SpawnedPDFReadRegistryTool(root: root)
+            try fixture.register(tool)
 
-        let result = try await ToolRegistry.shared.execute(
-            name: tool.name,
-            argumentsJSON: #"{"path":"scan.pdf"}"#,
-            permissionGateResolved: true,
-            ownsExecutionUntilTermination: true
-        )
+            let result = try await ToolRegistry.shared.execute(
+                name: tool.name,
+                argumentsJSON: #"{"path":"scan.pdf"}"#,
+                permissionGateResolved: true,
+                ownsExecutionUntilTermination: true
+            )
 
-        #expect(ToolEnvelope.isError(result))
-        let message = ToolEnvelope.failureMessage(result)
-        #expect(message.contains("no extractable text layer"))
-        #expect(message.contains("cooperative abort-and-drain") == false)
+            #expect(ToolEnvelope.isError(result))
+            let message = ToolEnvelope.failureMessage(result)
+            #expect(message.contains("no extractable text layer"))
+            #expect(message.contains("cooperative abort-and-drain") == false)
+        }
     }
 
     @Test("other parser-backed rich documents remain rejected before execution")
     func otherRichDocumentsRemainUnsupported() async throws {
-        let root = try Self.temporaryRoot()
-        defer { try? FileManager.default.removeItem(at: root) }
-        try Data().write(to: root.appendingPathComponent("document.docx"))
-        let probe = SpawnedPDFReadProbe()
+        try await DynamicToolProbeFixture.run { fixture in
+            let root = try Self.temporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            try Data().write(to: root.appendingPathComponent("document.docx"))
+            let probe = SpawnedPDFReadProbe()
 
-        let tool = SpawnedPDFReadRegistryTool(root: root, probe: probe)
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+            let tool = SpawnedPDFReadRegistryTool(root: root, probe: probe)
+            try fixture.register(tool)
 
-        let result = try await ToolRegistry.shared.execute(
-            name: tool.name,
-            argumentsJSON: #"{"path":"document.docx"}"#,
-            permissionGateResolved: true,
-            ownsExecutionUntilTermination: true
-        )
+            let result = try await ToolRegistry.shared.execute(
+                name: tool.name,
+                argumentsJSON: #"{"path":"document.docx"}"#,
+                permissionGateResolved: true,
+                ownsExecutionUntilTermination: true
+            )
 
-        #expect(ToolEnvelope.isError(result))
-        #expect(ToolEnvelope.failureMessage(result).contains("cooperative abort-and-drain"))
-        #expect(!(await probe.started))
+            #expect(ToolEnvelope.isError(result))
+            #expect(ToolEnvelope.failureMessage(result).contains("cooperative abort-and-drain"))
+            #expect(!(await probe.started))
+        }
     }
 
     @Test("cancelling an owned PDF read drains and cannot publish success")
     func cancellationDrainsPDFRead() async throws {
-        let root = try Self.temporaryRoot()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let pages = (0 ..< 240).map { page in
-            "Page \(page) " + String(repeating: "cancellation checkpoint ", count: 10)
+        try await DynamicToolProbeFixture.run { fixture in
+            let root = try Self.temporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let pages = (0 ..< 240).map { page in
+                "Page \(page) " + String(repeating: "cancellation checkpoint ", count: 10)
+            }
+            try Self.writePDF(pages: pages, to: root.appendingPathComponent("large.pdf"))
+            let probe = SpawnedPDFReadProbe()
+
+            let tool = SpawnedPDFReadRegistryTool(root: root, probe: probe)
+            try fixture.register(tool)
+
+            let operation = OwnedSubagentOperation {
+                try await ToolRegistry.shared.execute(
+                    name: tool.name,
+                    argumentsJSON: #"{"path":"large.pdf"}"#,
+                    permissionGateResolved: true,
+                    ownsExecutionUntilTermination: true
+                )
+            }
+
+            await Self.waitUntil { await probe.started }
+            await operation.abortAndWait()
+
+            #expect(await probe.sawCancellation)
+            #expect(await probe.finished)
+            #expect(!(await probe.succeeded))
         }
-        try Self.writePDF(pages: pages, to: root.appendingPathComponent("large.pdf"))
-        let probe = SpawnedPDFReadProbe()
-
-        let tool = SpawnedPDFReadRegistryTool(root: root, probe: probe)
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
-
-        let operation = OwnedSubagentOperation {
-            try await ToolRegistry.shared.execute(
-                name: tool.name,
-                argumentsJSON: #"{"path":"large.pdf"}"#,
-                permissionGateResolved: true,
-                ownsExecutionUntilTermination: true
-            )
-        }
-
-        await Self.waitUntil { await probe.started }
-        await operation.abortAndWait()
-
-        #expect(await probe.sawCancellation)
-        #expect(await probe.finished)
-        #expect(!(await probe.succeeded))
     }
 
     private static func temporaryRoot() throws -> URL {

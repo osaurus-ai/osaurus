@@ -49,6 +49,7 @@ struct LocalToolCompletionContractTests {
         ) async throws -> AsyncThrowingStream<String, Error> {
             await capture.set(parameters.collectCompleteToolResponse)
             let events = AsyncThrowingStream<ModelRuntimeEvent, Error> { c in
+                c.yield(.inputTokenCount(257))
                 c.yield(.reasoning("Need both readings."))
                 c.yield(.tokens("Checking both zones."))
                 c.yield(.toolCallProgress("<tool_call>lookup_zone"))
@@ -108,6 +109,7 @@ struct LocalToolCompletionContractTests {
         #expect(choice.message.content == "Checking both zones.")
         #expect(choice.message.reasoning_content == "Need both readings.")
         #expect(choice.message.tool_calls?.map(\.function.arguments) == [#"{"zone":"east"}"#, #"{"zone":"west"}"#])
+        #expect(response.usage.prompt_tokens == 257)
         #expect(response.usage.completion_tokens == 59)
         #expect(response.usage.total_tokens == response.usage.prompt_tokens + 59)
         #expect(response.usage.tokens_per_second == 17.5)
@@ -118,10 +120,12 @@ struct LocalToolCompletionContractTests {
         let engine = ChatEngine(services: [Service(capture: capture)], installedModelsProvider: { [] })
         let stream = try await engine.streamChat(request: request(stream: true))
         var count: Int?
+        var inputCount: Int?
         var rate: Double?
         var callCount = 0
         do {
             for try await delta in stream {
+                inputCount = StreamingInputTokenHint.decode(delta) ?? inputCount
                 if let stats = StreamingStatsHint.decode(delta) {
                     count = stats.tokenCount
                     rate = stats.tokensPerSecond
@@ -133,26 +137,32 @@ struct LocalToolCompletionContractTests {
         }
         #expect(await capture.complete == true)
         #expect(callCount == 2)
+        #expect(inputCount == 257)
         #expect(count == 59)
         #expect(rate == 17.5)
     }
 
-    @Test func agentRequestsKeepImmediateDispatch() async throws {
+    @Test func agentRequestsKeepEveryCall() async throws {
         let capture = Capture()
         let engine = ChatEngine(services: [Service(capture: capture)], installedModelsProvider: { [] })
         let response = try await engine.completeChat(request: request(agent: true))
+        #expect(response.usage.prompt_tokens == 257)
         #expect(await capture.complete == false)
-        #expect(response.choices.first?.message.tool_calls?.count == 1)
+        #expect(response.choices.first?.message.tool_calls?.map(\.function.arguments) == [#"{"zone":"east"}"#, #"{"zone":"west"}"#])
+        #expect(response.usage.completion_tokens == 59)
+        #expect(response.usage.tokens_per_second == 17.5)
         #expect(response.choices.first?.message.content == nil)
         #expect(response.choices.first?.message.reasoning_content == nil)
     }
 
-    @Test func chatUISourceKeepsImmediateDispatchWithoutAgentMarker() async throws {
+    @Test func chatUISourceKeepsEveryCallWithoutAgentMarker() async throws {
         let capture = Capture()
         let engine = ChatEngine(services: [Service(capture: capture)], installedModelsProvider: { [] }, source: .chatUI)
         let response = try await engine.completeChat(request: request())
+        #expect(response.usage.prompt_tokens == 257)
         #expect(await capture.complete == false)
-        #expect(response.choices.first?.message.tool_calls?.count == 1)
+        #expect(response.choices.first?.message.tool_calls?.map(\.function.arguments) == [#"{"zone":"east"}"#, #"{"zone":"west"}"#])
+        #expect(response.usage.completion_tokens == 59)
         #expect(response.choices.first?.message.content == nil)
     }
 
@@ -163,6 +173,7 @@ struct LocalToolCompletionContractTests {
         #expect(response.choices.first?.finish_reason == "stop")
         #expect(response.choices.first?.message.content == "Checking both zones.")
         #expect(response.choices.first?.message.reasoning_content == "Need both readings.")
+        #expect(response.usage.prompt_tokens == 257)
         #expect(response.usage.completion_tokens == 59)
         #expect(response.usage.tokens_per_second == 17.5)
     }

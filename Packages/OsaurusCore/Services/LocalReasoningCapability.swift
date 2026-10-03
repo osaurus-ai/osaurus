@@ -46,10 +46,10 @@ enum LocalReasoningCapability {
         let preservesOmittedThinking: Bool
         /// The serving default the PUBLISHER explicitly stamped into
         /// `generation_config.json > default_chat_template_kwargs >
-        /// enable_thinking` — the same key HF transformers honors when the
-        /// caller omits the kwarg. `nil` when the bundle carries no such
-        /// declaration (template-inferred and jang_config defaults do NOT
-        /// populate this). Distinct from `defaultThinkingOn` so policy code
+        /// enable_thinking`, or JANG's supported `chat.thinking` declaration
+        /// explicitly naming that template flag. `nil` when the bundle carries
+        /// no such contract (template inference and legacy reasoning metadata
+        /// do not populate this). Distinct from `defaultThinkingOn` so policy code
         /// can tell a deliberate bundle contract (Laguna/Raptor) apart from
         /// a heuristic template read.
         let declaredDefaultThinkingOn: Bool?
@@ -81,47 +81,29 @@ enum LocalReasoningCapability {
         )
     }
 
-    private static nonisolated let lock = NSLock()
-    private static nonisolated(unsafe) var cache: [String: Capability] = [:]
-    private static nonisolated(unsafe) var inFlightBackgroundDetects: Set<String> = []
+    typealias Cache = ModelMetadataCache<Capability>
+
+    private static nonisolated let cache = Cache()
 
     static func capability(forModelId modelId: String) -> Capability {
         let key = modelId.lowercased()
-        lock.lock()
-        if let hit = cache[key] {
-            lock.unlock()
-            return hit
-        }
-        lock.unlock()
+        if let hit = cache.lookup(key) { return hit }
 
-        // A cold miss detects from on-disk config files (chat template,
-        // generation config) — an open(2) that stalls for seconds under disk
-        // pressure. The main thread reaches this from view-body recomputes
-        // (the model chip's reasoning suffix), so it never pays that read:
-        // detect on a background queue, memoize, and post
-        // `.localModelsChanged` so observing UI recomputes with the real
-        // answer. `.none` in the interim only softens presentation; dispatch
-        // paths (ChatEngine, the batch adapter) run off-main and keep the
-        // synchronous, authoritative resolution.
+        // UI reads never block on bundle I/O. Dispatch waits for authoritative
+        // detection, retrying if repair/invalidation overtakes its disk read.
         if Thread.isMainThread {
             scheduleBackgroundDetect(key: key, modelId: modelId)
             return .none
         }
-
-        let detected = detect(modelId: modelId)
-
-        // A main-thread lookup during the launch scan can miss purely
-        // because the local-models cache is still cold (see
-        // `localDirectory(forModelId:)`). Don't memoize that provisional
-        // miss — the next lookup after the scan lands gets the real answer.
-        if detected == .none, !ModelManager.isLocalModelsCacheWarm {
-            return detected
+        while true {
+            if let hit = cache.lookup(key) { return hit }
+            guard let generation = cache.begin(key, background: false) else { continue }
+            let detected = detect(modelId: modelId)
+            let provisional = detected == .none && !ModelManager.isLocalModelsCacheWarm
+            if cache.finish(key, generation: generation, value: provisional ? nil : detected, background: false) {
+                return detected
+            }
         }
-
-        lock.lock()
-        cache[key] = detected
-        lock.unlock()
-        return detected
     }
 
     /// Authoritative dispatch-time resolution that never performs model
@@ -133,9 +115,19 @@ enum LocalReasoningCapability {
         await ModelManager.awaitLocalModelsCacheReadyForDispatch()
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
+                // Effort and boolean controls form one contract. Warming only
+                // the latter still drops saved effort choices on the main actor.
+                _ = DeclaredReasoningEffort.declaration(forModelId: modelId)
                 continuation.resume(returning: capability(forModelId: modelId))
             }
         }
+    }
+
+    /// A cold UI lookup is unknown, not Off. Start nonblocking discovery but
+    /// let the view withhold its default-state indicator until it is resolved.
+    static func capabilityForPresentation(forModelId modelId: String) -> Capability? {
+        _ = capability(forModelId: modelId)
+        return cache.lookup(modelId.lowercased())
     }
 
     /// Resolve a main-thread cold miss off-main. Deduped per key so a burst
@@ -144,22 +136,13 @@ enum LocalReasoningCapability {
     /// a `.none` computed before the local-models scan finishes is not
     /// memoized (and not announced), so the next lookup retries.
     private static func scheduleBackgroundDetect(key: String, modelId: String) {
-        lock.lock()
-        let alreadyRunning = !inFlightBackgroundDetects.insert(key).inserted
-        lock.unlock()
-        if alreadyRunning { return }
-
+        guard let generation = cache.begin(key, background: true) else { return }
         DispatchQueue.global(qos: .utility).async {
             let detected = detect(modelId: modelId)
             let provisionalMiss = detected == .none && !ModelManager.isLocalModelsCacheWarm
-            lock.lock()
-            if !provisionalMiss {
-                cache[key] = detected
-            }
-            inFlightBackgroundDetects.remove(key)
-            lock.unlock()
-            // Only a real capability changes what the UI showed for the
-            // interim `.none`; skip the notification churn otherwise.
+            guard cache.finish(key, generation: generation,
+                value: provisionalMiss ? nil : detected, background: true)
+            else { return }
             if !provisionalMiss, detected != .none {
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: .localModelsChanged, object: nil)
@@ -172,9 +155,7 @@ enum LocalReasoningCapability {
     /// Also drops the declared effort-contract cache — both read the same
     /// bundles and every current call site wants them refreshed together.
     static func invalidate() {
-        lock.lock()
-        cache.removeAll()
-        lock.unlock()
+        cache.invalidate()
         DeclaredReasoningEffort.invalidate()
     }
 
@@ -200,6 +181,7 @@ enum LocalReasoningCapability {
                 declaredCapability: declaredCapability
             )
             let declared = generationConfigDeclaredThinkingOn(at: dir)
+                ?? jangThinkingDeclaredDefault(at: dir)
             if let metadataDefault = declared ?? readTemplateDefaultThinkingOn(at: dir) {
                 return Capability(
                     supportsThinking: analyzed.supportsThinking,
@@ -575,8 +557,7 @@ enum LocalReasoningCapability {
     /// from the jang_config fallback below because this one is a deliberate
     /// wire contract (HF transformers applies the same key when the caller
     /// omits `enable_thinking`) and `AgentReasoningPolicy` honors it even on
-    /// agent/tool surfaces, while jang_config defaults remain
-    /// presentation-level metadata.
+    /// agent/tool surfaces. This takes precedence over JANG metadata.
     private static func generationConfigDeclaredThinkingOn(at dir: URL) -> Bool? {
         guard
             let data = readSmallConfigFile(dir.appendingPathComponent("generation_config.json")),
@@ -585,6 +566,23 @@ enum LocalReasoningCapability {
             let enableThinking = defaults["enable_thinking"] as? Bool
         else { return nil }
         return enableThinking
+    }
+
+    /// JANG's native thinking contract identifies the actual template control,
+    /// unlike legacy reasoning metadata used only for presentation. Preserve
+    /// omission on agent requests as well as chat; explicit user choices still
+    /// win. MiMo V2.6 ships this shape with default=true and a template that
+    /// selects the direct rail only when enable_thinking is explicitly false.
+    private static func jangThinkingDeclaredDefault(at dir: URL) -> Bool? {
+        guard
+            let data = readSmallConfigFile(dir.appendingPathComponent("jang_config.json")),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let chat = root["chat"] as? [String: Any],
+            let thinking = chat["thinking"] as? [String: Any],
+            thinking["supported"] as? Bool == true,
+            thinking["template_flag"] as? String == "enable_thinking"
+        else { return nil }
+        return jangReasoningDefaultThinkingOn(thinking)
     }
 
     /// Bundle metadata can override the Jinja fallback for omitted kwargs. Laguna

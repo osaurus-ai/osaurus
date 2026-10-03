@@ -2,9 +2,9 @@
 //  ImageGenerationView.swift
 //  osaurus
 //
-//  Top-level Image Generation management view. Mirrors the Voice/Privacy
-//  pattern: a header with sub-tabs for the global image-generation Settings
-//  (default models, permission, load policy) and a Models browser for
+//  Top-level "Images" management view. Mirrors the Voice/Privacy pattern:
+//  a header with sub-tabs for the global Defaults (default models,
+//  permissions, cloud video, load policy) and an Image Models browser for
 //  downloading on-device image bundles (vMLXFlux / mflux).
 //
 
@@ -13,14 +13,26 @@ import SwiftUI
 
 // MARK: - Image Generation Tab Enum
 
+/// Raw values are stable deep-link ids (`imageGenerationSubTabRequest`,
+/// settings-search `subTab`); only the visible titles were renamed.
 enum ImageGenerationTab: String, CaseIterable, AnimatedTabItem {
     case settings = "Settings"
     case models = "Models"
 
     var title: String {
         switch self {
-        case .settings: return L("Settings")
-        case .models: return L("Models")
+        case .settings: return L("Defaults")
+        case .models: return L("Image Models")
+        }
+    }
+
+    /// Accepts the visible titles alongside the raw values.
+    static func resolved(from rawValue: String) -> ImageGenerationTab? {
+        if let tab = ImageGenerationTab(rawValue: rawValue) { return tab }
+        switch rawValue.lowercased() {
+        case "defaults": return .settings
+        case "image models": return .models
+        default: return nil
         }
     }
 }
@@ -91,7 +103,7 @@ struct ImageGenerationView: View {
 
     private var headerView: some View {
         ManagerHeaderWithTabs(
-            title: L("Media"),
+            title: L("Images"),
             subtitle: headerSubtitle
         ) {
             if selectedTab == .models {
@@ -112,8 +124,8 @@ struct ImageGenerationView: View {
 
     private var headerSubtitle: String {
         installedCount > 0
-            ? L("Generate images and videos locally or with connected providers • \(installedCount) on device")
-            : L("Generate images and videos locally or with connected providers")
+            ? L("Generate and edit images locally or with connected providers • \(installedCount) on device")
+            : L("Generate and edit images locally or with connected providers")
     }
 
     /// Number of image bundles currently downloading, for the Models tab badge.
@@ -128,7 +140,7 @@ struct ImageGenerationView: View {
 
     private func applySubTabRequestIfNeeded() {
         guard let requested = managementState.imageGenerationSubTabRequest else { return }
-        if let tab = ImageGenerationTab(rawValue: requested) {
+        if let tab = ImageGenerationTab.resolved(from: requested) {
             selectedTab = tab
         }
         managementState.imageGenerationSubTabRequest = nil
@@ -142,11 +154,12 @@ struct ImageGenerationView: View {
 
 // MARK: - Image Generation Settings Tab
 
-/// The global image-generation defaults: the fallback generation/edit models,
-/// the permission gate, and the GPU residency (load) policy for image jobs.
-/// Whether image generation is *enabled* is a per-agent toggle (Agents →
-/// Subagents), so there is no master switch here. All persist to the shared
-/// `SubagentConfiguration` store (`agent-delegation.json`).
+/// The global image defaults: the fallback generation/edit models, the
+/// permission gates, the cloud video defaults, and — under Advanced — the
+/// GPU residency (load) policy for image jobs. Whether image generation is
+/// *enabled* is a per-agent toggle (Agents → Subagents), so there is no
+/// master switch here. All persist to the shared `SubagentConfiguration`
+/// store (`agent-delegation.json`).
 private struct ImageGenerationSettingsTab: View {
     @Environment(\.theme) private var theme
 
@@ -163,129 +176,104 @@ private struct ImageGenerationSettingsTab: View {
 
     private var imageKindId: String { SubagentCapabilityRegistry.image.id }
 
+    private static let advancedAnchorIds: Set<String> = ["imageGeneration.loadPolicy"]
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                SettingsSection(title: "Default Models", icon: "photo.stack") {
-                    VStack(alignment: .leading, spacing: 16) {
-                        sectionBlurb(
-                            "The models image jobs fall back to. Each agent can override these in its own Subagents settings."
+                SettingsSection(title: "Default Models", icon: "photo.stack", anchorId: "imageGeneration.models") {
+                    sectionBlurb(
+                        "The models image jobs fall back to. Each agent can override these in its own Subagents settings."
+                    )
+
+                    controlRow("Image generation model") {
+                        targetDropdown(
+                            selection: $configuration.defaultImageGenerationTarget,
+                            candidates: pickerItems.imageGenerationDelegateCandidates
                         )
+                    }
+                    controlRow("Edit model") {
+                        modelDropdown(
+                            \.defaultImageEditModelId,
+                            candidates: pickerItems.imageEditDelegateCandidates
+                        )
+                    }
+                    if pickerItems.imageEditDelegateCandidates.isEmpty {
+                        editModelEmptyStateHint
+                    }
+                }
 
-                        controlRow("Image generation model") {
-                            targetDropdown(
-                                selection: $configuration.defaultImageGenerationTarget,
-                                candidates: pickerItems.imageGenerationDelegateCandidates
-                            )
-                        }
-                        controlRow("Edit model") {
-                            modelDropdown(
-                                \.defaultImageEditModelId,
-                                candidates: pickerItems.imageEditDelegateCandidates
-                            )
-                        }
-                        if pickerItems.imageEditDelegateCandidates.isEmpty {
-                            editModelEmptyStateHint
-                        }
+                SettingsSection(title: "Permissions", icon: "hand.raised") {
+                    SettingsPickerRow(
+                        title: "Image jobs",
+                        description: "Ask before each image job, always allow, or deny.",
+                        anchorId: "imageGeneration.permission",
+                        selection: permissionSelection,
+                        options: SubagentPermissionPolicy.allCases.map { .init($0, $0.displayName) }
+                    )
+                    SettingsPickerRow(
+                        title: "Video jobs (cloud)",
+                        description: "Ask before each quoted video job, always allow, or deny.",
+                        anchorId: "imageGeneration.videoPermission",
+                        selection: videoPermissionSelection,
+                        options: SubagentPermissionPolicy.allCases.map { .init($0, $0.displayName) }
+                    )
+                }
 
-                        SettingsDivider()
-
-                        controlRow("Text-to-video model") {
-                            targetDropdown(
-                                selection: $configuration.defaultTextToVideoTarget,
-                                candidates: videoCandidates(.textToVideo)
-                            )
-                        }
-                        controlRow("Image-to-video model") {
-                            targetDropdown(
-                                selection: $configuration.defaultImageToVideoTarget,
-                                candidates: videoCandidates(.imageToVideo)
-                            )
-                        }
-                        if pickerItems.videoGenerationDelegateCandidates.isEmpty {
-                            Text(
-                                "Connect a Venice API-key provider, or enable Osaurus Cloud when its media catalog is available.",
-                                bundle: .module
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                SettingsSection(title: "Video (cloud)", icon: "video", anchorId: "imageGeneration.video") {
+                    sectionBlurb(
+                        "Video runs on connected cloud providers and is quoted before queueing. A queued paid job keeps being recovered after Stop or relaunch because providers do not offer upstream cancellation."
+                    )
+                    controlRow("Text-to-video model") {
+                        targetDropdown(
+                            selection: $configuration.defaultTextToVideoTarget,
+                            candidates: videoCandidates(.textToVideo)
+                        )
+                    }
+                    controlRow("Image-to-video model") {
+                        targetDropdown(
+                            selection: $configuration.defaultImageToVideoTarget,
+                            candidates: videoCandidates(.imageToVideo)
+                        )
+                    }
+                    if pickerItems.videoGenerationDelegateCandidates.isEmpty {
+                        Text(
+                            "Connect a Venice API-key provider, or enable Osaurus Cloud when its media catalog is available.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    }
+                    if !videoJobs.isEmpty {
+                        SettingsSubsection(label: "Recent Jobs") {
+                            VStack(spacing: 10) {
+                                ForEach(videoJobs.prefix(10)) { job in
+                                    videoJobRow(job)
+                                }
+                            }
                         }
                     }
                 }
 
-                SettingsSection(title: "Image Jobs", icon: "wand.and.stars") {
-                    VStack(alignment: .leading, spacing: 16) {
-                        sectionBlurb(
-                            "How image jobs ask for permission and manage GPU memory between runs."
-                        )
-
-                        controlRow(
-                            "Permission",
-                            hint: "Ask before each image job, always allow, or deny."
-                        ) {
-                            Picker("", selection: permissionSelection) {
-                                ForEach(SubagentPermissionPolicy.allCases, id: \.self) { policy in
-                                    Text(LocalizedStringKey(policy.displayName), bundle: .module)
-                                        .tag(policy)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .fixedSize()
-                        }
-
-                        SettingsDivider()
-
-                        controlRow(
-                            "Load policy",
-                            hint: "Controls GPU residency after an image job runs."
-                        ) {
-                            SettingsMenuDropdown(
-                                options: SubagentImageLoadPolicy.allCases.map { value in
-                                    SettingsMenuDropdown<SubagentImageLoadPolicy>.Option(
-                                        tag: value,
-                                        label: Text(
-                                            LocalizedStringKey(value.displayName),
-                                            bundle: .module
-                                        )
+                SettingsAdvancedDisclosure(anchorIds: Self.advancedAnchorIds) {
+                    controlRow(
+                        "Image model load policy",
+                        hint: "Controls image-model cleanup after a job. The shared Swap local models for subagents setting controls whether the invoking chat model unloads. Restoring that parent always unloads the image model first."
+                    ) {
+                        SettingsMenuDropdown(
+                            options: SubagentImageLoadPolicy.visibleCases.map { value in
+                                SettingsMenuDropdown<SubagentImageLoadPolicy>.Option(
+                                    tag: value,
+                                    label: Text(
+                                        LocalizedStringKey(value.displayName),
+                                        bundle: .module
                                     )
-                                },
-                                selection: $configuration.imageJobLoadPolicy
-                            )
-                        }
-                    }
-                }
-
-                SettingsSection(title: "Video Jobs", icon: "video") {
-                    VStack(alignment: .leading, spacing: 16) {
-                        sectionBlurb(
-                            "Remote videos are quoted before queueing. A queued paid job keeps being recovered after Stop or relaunch because providers do not offer upstream cancellation."
+                                )
+                            },
+                            selection: imageCleanupSelection
                         )
-                        controlRow(
-                            "Permission",
-                            hint: "Ask before each quoted video job, always allow, or deny."
-                        ) {
-                            Picker("", selection: videoPermissionSelection) {
-                                ForEach(SubagentPermissionPolicy.allCases, id: \.self) { policy in
-                                    Text(LocalizedStringKey(policy.displayName), bundle: .module)
-                                        .tag(policy)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .fixedSize()
-                        }
-                        if videoJobs.isEmpty {
-                            Text("No remote video jobs yet.", bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                        } else {
-                            SettingsDivider()
-                            ForEach(videoJobs.prefix(10)) { job in
-                                videoJobRow(job)
-                            }
-                        }
                     }
+                    .settingsLandingAnchor("imageGeneration.loadPolicy")
                 }
             }
             .padding(.horizontal, 24)
@@ -392,7 +380,7 @@ private struct ImageGenerationSettingsTab: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.primaryText)
                 if let hint {
                     Text(LocalizedStringKey(hint), bundle: .module)
@@ -409,7 +397,7 @@ private struct ImageGenerationSettingsTab: View {
     /// Section-level descriptive copy shown above a section's control rows.
     private func sectionBlurb(_ text: String) -> some View {
         Text(LocalizedStringKey(text), bundle: .module)
-            .font(.system(size: 12))
+            .font(.system(size: 11))
             .foregroundColor(theme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -537,6 +525,13 @@ private struct ImageGenerationSettingsTab: View {
         Binding(
             get: { configuration[keyPath: keyPath] ?? "" },
             set: { configuration[keyPath: keyPath] = normalized($0) }
+        )
+    }
+
+    private var imageCleanupSelection: Binding<SubagentImageLoadPolicy> {
+        Binding(
+            get: { configuration.imageJobLoadPolicy.effectiveCleanupPolicy },
+            set: { configuration.imageJobLoadPolicy = $0 }
         )
     }
 

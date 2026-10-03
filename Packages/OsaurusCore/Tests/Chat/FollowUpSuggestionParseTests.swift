@@ -17,6 +17,22 @@ import Testing
 @Suite("Follow-up suggestion parsing")
 struct FollowUpSuggestionParseTests {
 
+    @Test("malformed arrays never fall back to clickable JSON fragments", arguments: [
+        "[\"First question?\", \"Second",
+        "[\"First question?\" \"Second question?\"]",
+        "[\"First question?\", 42]",
+        "```json\n[\"First question?\",\n\"Second",
+        "Here are suggestions:\n[\"First?\" \"Second?\"]",
+        "[",
+    ])
+    func rejectsMalformedArrays(_ raw: String) {
+        #expect(FollowUpSuggestionService.parse(raw).isEmpty)
+    }
+
+    @Test func plainQuestionWithBracketNotationRemainsUsable() {
+        #expect(FollowUpSuggestionService.parse("What does array[index] mean?") == ["What does array[index] mean?"])
+    }
+
     @Test("clean JSON array parses in order")
     func cleanJSONArray() {
         let raw = #"["What is Prop 213?", "Are there exceptions?"]"#

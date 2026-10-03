@@ -15,6 +15,8 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
     let modelOptions: [String: ModelOptionValue]?
     let enableThinking: Bool?
 
+    var reasoningEffort: String? { modelOptions?["reasoningEffort"]?.stringValue }
+
     static func capture(
         activeModelOptions: [String: ModelOptionValue]
     ) -> ChatTurnGenerationControls {
@@ -35,11 +37,11 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
         )
     }
 
-    /// Recover a persisted explicit Thinking choice when launch-time UI
+    /// Recover persisted explicit Thinking/effort choices when launch-time UI
     /// normalization raced the cold local-model capability cache. The caller
     /// supplies the already-read versioned payload and the off-main resolver,
-    /// keeping this policy deterministic in tests and preventing unrelated
-    /// provider/model options from paying a local disk scan.
+    /// keeping this policy deterministic in tests. Unrelated model options
+    /// and already-live reasoning choices do not wait for discovery.
     static func captureForSend(
         modelId: String?,
         activeModelOptions: [String: ModelOptionValue],
@@ -47,9 +49,11 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
         resolveCapability: @Sendable (String) async -> Void
     ) async -> ChatTurnGenerationControls {
         guard activeModelOptions["disableThinking"] == nil,
+            activeModelOptions["reasoningEffort"] == nil,
             let modelId,
             let storedExplicitOptions,
             storedExplicitOptions["disableThinking"]?.boolValue != nil
+                || storedExplicitOptions["reasoningEffort"]?.stringValue != nil
         else {
             return capture(activeModelOptions: activeModelOptions)
         }
@@ -59,16 +63,16 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
             for: modelId,
             persisted: storedExplicitOptions
         )
-        guard let recoveredThinking = validated["disableThinking"] else {
-            return capture(activeModelOptions: activeModelOptions)
-        }
         var merged = activeModelOptions
-        merged["disableThinking"] = recoveredThinking
+        for key in ["disableThinking", "reasoningEffort"] {
+            if let recovered = validated[key] { merged[key] = recovered }
+        }
         return capture(activeModelOptions: merged)
     }
 
     func apply(to request: inout ChatCompletionRequest) {
         request.modelOptions = modelOptions
         request.enable_thinking = enableThinking
+        request.reasoning_effort = reasoningEffort
     }
 }

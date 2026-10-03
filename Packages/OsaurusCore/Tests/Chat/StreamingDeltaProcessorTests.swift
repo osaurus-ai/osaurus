@@ -8,9 +8,132 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("Streaming delta processor")
+@Suite("Streaming delta processor", .serialized)
 @MainActor
 struct StreamingDeltaProcessorTests {
+    @Test("concurrent completion paths both finish after the same paced tail")
+    func concurrentFinalizersDoNotLoseAWaiter() async {
+        let key = "chatSmoothStreamingEnabled"
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(true, forKey: key)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+
+        let text = String(repeating: "The photo shows a city. ", count: 20)
+        let turn = ChatTurn(role: .assistant, content: "")
+        let processor = StreamingDeltaProcessor(turn: turn)
+        processor.receiveDelta(text)
+        var started = 0
+        var completed = 0
+        let first = Task { @MainActor in
+            started += 1
+            await processor.finalize()
+            completed += 1
+        }
+        let second = Task { @MainActor in
+            started += 1
+            await processor.finalize()
+            completed += 1
+        }
+        // Tasks enter finalize on the main actor and suspend on its tail.
+        // Fire the actual production timer so this also works in a test
+        // runner whose main run loop does not pump scheduled timers.
+        let deadline = Date().addingTimeInterval(3)
+        while started < 2, Date() < deadline { await Task.yield() }
+        #expect(started == 2)
+        while completed < 2, Date() < deadline {
+            processor.pacingTimer?.fire()
+            await Task.yield()
+        }
+        #expect(completed == 2, "relay and consumer must both resume")
+        #expect(turn.content == text)
+        #expect(processor.pacingTimer == nil)
+        first.cancel()
+        second.cancel()
+    }
+
+    @Test("requested repetitions survive both pacing modes and chunk boundaries")
+    func repeatedDataIsDeliveredWithoutIntervention() async {
+        let key = "chatSmoothStreamingEnabled"
+        let previous = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        let line = "The north gate remains open.\n"
+        let payloads = [
+            String(repeating: line, count: 20),
+            String(repeating: "> " + line, count: 20),
+            "~~~text\n" + String(repeating: line, count: 20) + "~~~",
+            "```text\n" + String(repeating: line, count: 20) + "```",
+            "| Status |\n| --- |\n" + String(repeating: "| unchanged |\n", count: 20),
+        ]
+        for smooth in [false, true] {
+            UserDefaults.standard.set(smooth, forKey: key)
+            for text in payloads {
+                for characterChunks in [false, true] {
+                    let turn = ChatTurn(role: .assistant, content: "")
+                    let processor = StreamingDeltaProcessor(turn: turn)
+                    let reasoning = String(repeating: "Checking the fixture.\n", count: 20)
+                    processor.receiveReasoning(reasoning)
+                    if characterChunks {
+                        for character in text { processor.receiveDelta(String(character)) }
+                    } else {
+                        processor.receiveDelta(text)
+                    }
+                    var completed = false
+                    let finalizer = Task { @MainActor in
+                        await processor.finalize()
+                        completed = true
+                    }
+                    let deadline = Date().addingTimeInterval(3)
+                    while !completed, Date() < deadline {
+                        processor.pacingTimer?.fire()
+                        await Task.yield()
+                    }
+                    #expect(completed)
+                    #expect(turn.content == text, "preserve every repeated line and fence")
+                    #expect(turn.thinking == reasoning, "keep reasoning on its own channel")
+                    #expect(processor.pacingTimer == nil)
+                    finalizer.cancel()
+                }
+            }
+        }
+    }
+
+    @Test("reset releases a finalizer waiting on the previous turn")
+    func resetReleasesPreviousTurnFinalizer() async {
+        let key = "chatSmoothStreamingEnabled"
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(true, forKey: key)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        let oldTurn = ChatTurn(role: .assistant, content: "")
+        let processor = StreamingDeltaProcessor(turn: oldTurn)
+        processor.receiveDelta(String(repeating: "tail ", count: 200))
+        var started = false
+        var completed = false
+        let finalizer = Task { @MainActor in
+            started = true
+            await processor.finalize()
+            completed = true
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while !started, Date() < deadline { await Task.yield() }
+        #expect(started)
+        let nextTurn = ChatTurn(role: .assistant, content: "")
+        processor.reset(turn: nextTurn)
+        while !completed, Date() < deadline { await Task.yield() }
+        #expect(completed)
+        #expect(nextTurn.contentIsEmpty)
+        #expect(processor.pacingTimer == nil)
+        finalizer.cancel()
+    }
+
     @Test("smooth finalize drains a small final tail without waiting for another timer tick")
     func smoothFinalizeDrainsSmallTail() async {
         let key = "chatSmoothStreamingEnabled"

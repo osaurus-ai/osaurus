@@ -180,7 +180,7 @@ struct ContentBlockDisplayTests {
         )
 
         let userText = blocks.compactMap { block -> String? in
-            guard case let .userMessage(text, _, _, _) = block.kind else { return nil }
+            guard case let .userMessage(text, _, _, _, _) = block.kind else { return nil }
             return text
         }.first
 
@@ -410,5 +410,121 @@ struct ContentBlockDisplayTests {
         )
 
         #expect(paragraphTexts(blocks).isEmpty)
+    }
+
+    // MARK: - Dispatch envelopes
+
+    private func userMessageBlock(_ blocks: [ContentBlock]) -> (text: String, envelope: DispatchEnvelope?, block: ContentBlock)? {
+        for block in blocks {
+            if case let .userMessage(text, _, _, _, envelope) = block.kind {
+                return (text, envelope, block)
+            }
+        }
+        return nil
+    }
+
+    @Test
+    func envelopedUserTurn_yieldsUserMessageWithEnvelopeAndDisplayedSearchText() throws {
+        let raw = ChannelRemoteSafetyGate.wrapUntrustedContent(
+            "Can you check ticket 4821 for me?",
+            source: "n8n connection c1, conversation demo-helpdesk, sender workflow"
+        )
+        let user = ChatTurn(role: .user, content: raw)
+        let assistant = ChatTurn(role: .assistant, content: "Looking now.")
+
+        let blocks = ContentBlock.generateBlocks(
+            from: [user, assistant],
+            streamingTurnId: nil,
+            agentName: "Assistant",
+            sessionSource: .channel
+        )
+
+        let message = try #require(userMessageBlock(blocks))
+        // Raw text stays the stored envelope; the display text is the message.
+        #expect(message.text == raw)
+        let envelope = try #require(message.envelope)
+        #expect(envelope.displayText == "Can you check ticket 4821 for me?")
+        #expect(message.block.searchableText == envelope.displayText)
+        #expect(message.block.searchableText?.contains("[Untrusted") == false)
+    }
+
+    @Test
+    func ordinaryUserTurn_hasNoEnvelope() throws {
+        let user = ChatTurn(role: .user, content: "Just a normal question")
+        let blocks = ContentBlock.generateBlocks(
+            from: [user],
+            streamingTurnId: nil,
+            agentName: "Assistant",
+            sessionSource: .channel
+        )
+        let message = try #require(userMessageBlock(blocks))
+        #expect(message.envelope == nil)
+        #expect(message.block.searchableText == "Just a normal question")
+    }
+
+    @Test
+    func envelopedUserMessage_equalityTracksEnvelope() {
+        let raw = AgentDelegationDispatcher.delegatedPrompt(input: "Do X")
+        let turnId = UUID()
+        let now = Date()
+        let envelope = DispatchEnvelope.parse(raw, sessionSource: .delegation)
+        let a = ContentBlock.userMessage(
+            turnId: turnId, text: raw, attachments: [], timestamp: now,
+            responseTurnId: nil, envelope: envelope, position: .only
+        )
+        let b = ContentBlock.userMessage(
+            turnId: turnId, text: raw, attachments: [], timestamp: now,
+            responseTurnId: nil, envelope: envelope, position: .only
+        )
+        let c = ContentBlock.userMessage(
+            turnId: turnId, text: raw, attachments: [], timestamp: now,
+            responseTurnId: nil, envelope: nil, position: .only
+        )
+        #expect(a.kind == b.kind)
+        #expect(a.kind != c.kind)
+    }
+
+    @Test
+    func findMatchTotal_matchesBlockLevelCount_forEnvelopedTurn() {
+        // "instructions" appears in the hidden delegation contract and the
+        // channel wrapper; "ticket" only in the message. The find bar must
+        // count exactly what the block paints.
+        let raw = ChannelRemoteSafetyGate.wrapUntrustedContent(
+            "Ticket 12 and ticket 13 are both open.",
+            source: "Slack workspace T1, channel C1, sender U1"
+        )
+        let user = ChatTurn(role: .user, content: raw)
+        let assistant = ChatTurn(role: .assistant, content: "Both tickets are assigned.")
+
+        let blocks = ContentBlock.generateBlocks(
+            from: [user, assistant],
+            streamingTurnId: nil,
+            agentName: "Assistant",
+            sessionSource: .channel
+        )
+        var blockCount = 0
+        for block in blocks {
+            blockCount += ChatFindMatcher.occurrenceCount(of: "ticket", in: block.searchableText ?? "")
+        }
+        let (state, _) = ChatFindMatcher.recompute(
+            query: "ticket",
+            turns: [user, assistant],
+            sessionSource: .channel,
+            previous: ChatFindState(),
+            preserveCurrentMatch: false
+        )
+        #expect(blockCount == 3)
+        #expect(state.matches.count == blockCount)
+
+        // A word that only lives in the hidden wrapper is not a match.
+        let (hidden, _) = ChatFindMatcher.recompute(
+            query: "instructions",
+            turns: [user, assistant],
+            sessionSource: .channel,
+            previous: ChatFindState(),
+            preserveCurrentMatch: false
+        )
+        #expect(raw.localizedCaseInsensitiveContains("instructions"))
+        #expect(hidden.matches.isEmpty)
     }
 }

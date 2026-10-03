@@ -48,7 +48,6 @@ struct SpawnBatchConcurrencyContractTests {
         let custom = SubagentBudgets(
             maxDelegateTokens: 1_024,
             maxDelegateTurns: 4,
-            maxToolCalls: 6,
             maxElapsedSeconds: 75,
             maxParallelSpawns: 2
         )
@@ -60,7 +59,6 @@ struct SpawnBatchConcurrencyContractTests {
 
         #expect(updated.maxDelegateTokens == 1_024)
         #expect(updated.maxDelegateTurns == 4)
-        #expect(updated.maxToolCalls == 6)
         #expect(updated.maxElapsedSeconds == 75)
         #expect(updated.maxParallelSpawns == 5)
     }
@@ -72,7 +70,6 @@ struct SpawnBatchConcurrencyContractTests {
         let custom = SubagentBudgets(
             maxDelegateTokens: 1_024,
             maxDelegateTurns: 4,
-            maxToolCalls: 6,
             maxElapsedSeconds: 75,
             maxParallelSpawns: staleMirror.budgets.maxParallelSpawns
         )
@@ -84,7 +81,6 @@ struct SpawnBatchConcurrencyContractTests {
 
         #expect(updated.maxDelegateTokens == 1_024)
         #expect(updated.maxDelegateTurns == 4)
-        #expect(updated.maxToolCalls == 6)
         #expect(updated.maxElapsedSeconds == 75)
         #expect(updated.maxParallelSpawns == 2)
         #expect(staleMirror.budgets.maxParallelSpawns == 3)

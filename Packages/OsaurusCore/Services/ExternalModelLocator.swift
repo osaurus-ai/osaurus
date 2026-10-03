@@ -147,6 +147,20 @@ enum ExternalModelLocator {
         return registryGen
     }
 
+    /// Version both the registry and the catalog exposed by the nonblocking
+    /// reader. A registry can stay unchanged while its asynchronous catalog
+    /// changes from an empty/stale snapshot to the completed build.
+    struct CatalogGeneration: Equatable {
+        let registry: UInt64
+        let snapshot: UInt64
+    }
+
+    static func catalogGeneration() -> CatalogGeneration {
+        lock.lock()
+        defer { lock.unlock() }
+        return CatalogGeneration(registry: registryGen, snapshot: modelsMemoGen)
+    }
+
     /// Test hook: override the scan roots so unit tests don't depend on a
     /// developer's real `~/.cache/huggingface`. When set, only these roots
     /// (paired with their source label) are scanned.
@@ -184,6 +198,7 @@ enum ExternalModelLocator {
     nonisolated(unsafe) private static var modelsMemo: [MLXModel]?
     nonisolated(unsafe) private static var modelsMemoGen: UInt64 = .max
     nonisolated(unsafe) private static var modelsRebuildInFlight = false
+    nonisolated(unsafe) static var beforeModelsBuildForTests: (@Sendable () -> Void)?
 
     /// Catalog entries without waiting on disk. On a cold or stale memo this
     /// returns the previous build (or []) immediately and rebuilds in the
@@ -237,6 +252,7 @@ enum ExternalModelLocator {
             return memo
         }
         lock.unlock()
+        beforeModelsBuildForTests?()
         let built = entries.map { entry in
             let bundleDirectory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
             return MLXModel(
@@ -779,6 +795,10 @@ enum ExternalModelLocator {
         enforceSymlinkContainment: Bool = true
     ) -> BundleDiagnostic {
         let fm = FileManager.default
+        // Directory enumeration can return ENOTDIR for a URL naming a symlink,
+        // even though individual config/tokenizer probes succeed through it.
+        // Resolve the bundle itself just as discovery resolves its scan root.
+        let directory = dir.resolvingSymlinksInPath().standardizedFileURL
 
         enum Probe {
             case present
@@ -787,7 +807,7 @@ enum ExternalModelLocator {
         }
 
         func probe(_ name: String) -> Probe {
-            let url = dir.appendingPathComponent(name)
+            let url = directory.appendingPathComponent(name)
             guard fm.fileExists(atPath: url.path) else { return .missing }
             // Reject symlinks that escape the scan root.
             let resolved = url.resolvingSymlinksInPath().standardizedFileURL
@@ -813,7 +833,7 @@ enum ExternalModelLocator {
         var sawSafetensors = false
         var sawGGUF = false
         var weightEscapesRoot = false
-        if let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+        if let items = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
             for item in items {
                 if item.pathExtension == "gguf" {
                     sawGGUF = true

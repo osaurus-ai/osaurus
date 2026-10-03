@@ -51,6 +51,11 @@ public struct OnboardingView: View {
     /// that identity setup is already in flight (so it doesn't start a second,
     /// racing `OsaurusIdentity.setup()` at finish).
     @State private var didPrepareManagedBrain = false
+    /// Whether the full distribution's bundled Raptor 0.6 was ready when the
+    /// Create Agent step was entered. Drives that step's CTA copy ("… and
+    /// start chatting"); the skip itself re-checks at tap time so a seed that
+    /// lands or a model deleted mid-step is honored either way.
+    @State private var bundledBrainReadyOnEntry = false
 
     @StateObject private var welcomeState = WelcomeState()
     @StateObject private var createAgentState = CreateAgentState()
@@ -169,7 +174,8 @@ public struct OnboardingView: View {
         case .createAgent:
             CreateAgentStepView(
                 state: createAgentState,
-                onContinue: { advance(to: .configureAI) }
+                isFinalStep: bundledBrainReadyOnEntry,
+                onContinue: { continueFromCreateAgent() }
             )
         case .configureAI:
             ConfigureAIStepView(
@@ -266,9 +272,33 @@ public struct OnboardingView: View {
             )
             configureAIState.refreshFreeDiskSpace()
         }
+        if step == .createAgent {
+            bundledBrainReadyOnEntry =
+                configureAIState.bundledLocalBrainReady(
+                    totalMemoryGB: SystemMonitorService.shared.totalMemoryGB
+                ) != nil
+        }
         withAnimation(reduceMotion ? .easeOut(duration: 0.3) : OnboardingMotion.gentle) {
             currentStep = step
         }
+    }
+
+    /// Create Agent's CTA. The full distribution ships Raptor 0.6 inside the
+    /// app and `BundledModelSeeder` installs it at launch, so when that model
+    /// is on disk and fits comfortably there is nothing left to choose:
+    /// commit it as the local brain and finish, skipping Configure AI. Every
+    /// other case (light build, seed still copying, model deleted, tight RAM)
+    /// proceeds to the Configure AI step unchanged.
+    private func continueFromCreateAgent() {
+        if let bundled = configureAIState.bundledLocalBrainReady(
+            totalMemoryGB: SystemMonitorService.shared.totalMemoryGB
+        ) {
+            configureAIState.commitBundledLocalBrain(bundled)
+            OnboardingTelemetry.stepSkipped(.configureAI)
+            finishOnboarding(via: .finishButton)
+            return
+        }
+        advance(to: .configureAI)
     }
 
     private func finishOnboarding(via: OnboardingTelemetry.Completion) {

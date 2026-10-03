@@ -339,11 +339,18 @@ struct OpenAICompatibleTTSClient: Sendable {
         throw OpenAICompatibleTTSError.noAudio
     }
 
-    func makeRequest(text: String) throws -> URLRequest {
+    /// Full `/v1/audio/speech` URL string for a configured endpoint (bare
+    /// host or URL already carrying the path). Used for activity-log
+    /// destination display; validity is checked in `makeRequest`.
+    static func resolvedEndpoint(_ endpoint: String) -> String {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
+        return base.hasSuffix("/v1/audio/speech") ? base : base + "/v1/audio/speech"
+    }
+
+    func makeRequest(text: String) throws -> URLRequest {
         // Accept either a bare host or a URL that already includes the path.
-        let full = base.hasSuffix("/v1/audio/speech") ? base : base + "/v1/audio/speech"
+        let full = Self.resolvedEndpoint(endpoint)
         // Newer Foundation URL parsing accepts "localhost:5050" with scheme
         // "localhost", so a nil-scheme check alone no longer catches
         // schemeless endpoints. Require an http(s) scheme and a host.

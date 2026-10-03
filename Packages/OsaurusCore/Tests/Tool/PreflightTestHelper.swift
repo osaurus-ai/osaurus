@@ -26,35 +26,21 @@ extension ToolRegistry {
     /// arguments. Returns `.ready(<dispatch-args>)` when the validator
     /// accepts the (possibly rewritten) payload, or `.rejected(<envelope>)`
     /// with the failure JSON the dispatcher would have surfaced.
+    /// Run the dispatcher's schema preflight (coerce + validate + per-tool
+    /// argument hint) for a tool's arguments. Returns `.ready(<dispatch-args>)`
+    /// when the validator accepts the (possibly rewritten) payload, or
+    /// `.rejected(<envelope>)` with the failure JSON the dispatcher would
+    /// have surfaced.
     @MainActor
     func preflightForTest(
         argumentsJSON: String,
         schema: JSONValue?,
-        toolName: String
+        toolName: String,
+        hint: ((String) -> String?)? = nil
     ) -> PreflightOutcomeForTest {
-        guard let schema,
-            let data = argumentsJSON.data(using: .utf8),
-            let parsed = try? JSONSerialization.jsonObject(with: data)
-        else { return .ready(argumentsJSON) }
-        let coerced = SchemaValidator.coerceArguments(parsed, against: schema)
-        let result = SchemaValidator.validate(arguments: coerced, against: schema)
-        if !result.isValid, let message = result.errorMessage {
-            return .rejected(
-                ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message: message,
-                    field: result.field,
-                    tool: toolName
-                )
-            )
+        switch ToolRegistry.preflight(argumentsJSON: argumentsJSON, schema: schema, toolName: toolName, hint: hint) {
+        case .ready(let args): return .ready(args)
+        case .rejected(let envelope): return .rejected(envelope)
         }
-        guard
-            let coercedData = try? JSONSerialization.data(
-                withJSONObject: coerced,
-                options: [.sortedKeys]
-            ),
-            let coercedJSON = String(data: coercedData, encoding: .utf8)
-        else { return .ready(argumentsJSON) }
-        return .ready(coercedJSON)
     }
 }

@@ -58,11 +58,62 @@ struct RegexEntityDetectorTests {
         #expect(urls.first?.original == "https://example.com/path?q=1")
     }
 
-    // MARK: - SSN
+    // MARK: - International phone
 
-    @Test func detectsValidSSN() {
+    @Test func detectsInternationalPhoneFormats() {
+        let cases: [(String, String)] = [
+            ("UK mobile +44 7911 123456 please", "+44 7911 123456"),
+            ("FR: +33 6 12 34 56 78.", "+33 6 12 34 56 78"),
+            ("DE +49 (0)30 901820 office", "+49 (0)30 901820"),
+            ("dial 0049 30 901820 from abroad", "0049 30 901820"),
+            ("IN +91-98765-43210", "+91-98765-43210"),
+            ("UK 07911 123456 mobile", "07911 123456"),
+            ("DE mobile 0151 23456789 bitte", "0151 23456789"),
+            ("FR 06 12 34 56 78 portable", "06 12 34 56 78"),
+            ("AU 0412 345 678 mobile", "0412 345 678"),
+            ("JP 03-1234-5678 desk", "03-1234-5678"),
+            ("ZA 081 234 5678 cell", "081 234 5678"),
+        ]
+        for (text, expected) in cases {
+            let phones = RegexEntityDetector.detect(in: text).filter { $0.category == .phone }
+            #expect(phones.map(\.original) == [expected], "\(text) → \(phones.map(\.original))")
+        }
+    }
+
+    @Test func internationalPhoneNegatives() {
+        let cases = [
+            "released 2024-05-17 at noon",  // ISO date
+            "version 10.15.7 shipped",  // version string
+            "pi is 0.123456789 roughly",  // decimal
+            "in 1999 and 2001",  // years
+            "C+1234567 is a type",  // + glued to a word
+            "SSN 123-45-6789 is not a phone",  // SSN shape (9 digits)
+            "Card 4111 1111 1111 1111 on file",  // card wins
+        ]
+        for text in cases {
+            let phones = RegexEntityDetector.detect(in: text).filter { $0.category == .phone }
+            #expect(phones.isEmpty, "\(text) → \(phones.map(\.original))")
+        }
+    }
+
+    // MARK: - SSN (now the `us.ssn` preset)
+
+    private func ssnRuleset() -> RegexEntityDetector.EffectiveRuleSet {
+        var config = PrivacyFilterConfiguration()
+        config.presetRules = ["us.ssn": true]
+        return .build(from: config)
+    }
+
+    @Test func ssnIsNotABuiltinAnymore() {
         let text = "SSN: 123-45-6789 for the form"
-        let ssns = RegexEntityDetector.detect(in: text).filter { $0.category == .accountNumber }
+        let hits = RegexEntityDetector.detect(in: text).filter { $0.category == .accountNumber }
+        #expect(hits.isEmpty, "SSN must only fire through the us.ssn preset")
+    }
+
+    @Test func detectsValidSSNViaPreset() {
+        let text = "SSN: 123-45-6789 for the form"
+        let ssns = RegexEntityDetector.detect(in: text, ruleset: ssnRuleset())
+            .filter { $0.category == .accountNumber }
         #expect(ssns.first?.original == "123-45-6789")
     }
 
@@ -77,10 +128,51 @@ struct RegexEntityDetectorTests {
             "123-45-0000",
         ]
         for s in cases {
-            let matches = RegexEntityDetector.detect(in: "Number is \(s).")
+            let matches = RegexEntityDetector.detect(in: "Number is \(s).", ruleset: ssnRuleset())
                 .filter { $0.category == .accountNumber && $0.original == s }
             #expect(matches.isEmpty, "should have rejected pseudo-SSN \(s)")
         }
+    }
+
+    // MARK: - Preset validators + capture groups
+
+    @Test func presetValidatorRejectsBadChecksum() {
+        var config = PrivacyFilterConfiguration()
+        config.presetRules = ["nl.bsn": true]
+        let ruleset = RegexEntityDetector.EffectiveRuleSet.build(from: config)
+        let good = RegexEntityDetector.detect(in: "BSN 111222333 ok", ruleset: ruleset)
+        let bad = RegexEntityDetector.detect(in: "BSN 123456789 nope", ruleset: ruleset)
+        #expect(good.map(\.original) == ["111222333"])
+        #expect(bad.isEmpty)
+    }
+
+    @Test func anchoredPresetRedactsOnlyTheValue() {
+        var config = PrivacyFilterConfiguration()
+        config.presetRules = ["gb.sortCode": true]
+        let ruleset = RegexEntityDetector.EffectiveRuleSet.build(from: config)
+        let hits = RegexEntityDetector.detect(in: "Sort code: 12-34-56 and account", ruleset: ruleset)
+        #expect(hits.map(\.original) == ["12-34-56"])
+    }
+
+    @Test func validatedPresetOutranksGenericOnSameSpan() {
+        // The Tier-1 Croatian OIB (bare 11 digits, ISO 7064) and the
+        // Tier-3 generic "ID number: …" fallback both land on the same
+        // 11-digit span. Exactly one match survives and it is the
+        // checksum-validated one.
+        var config = PrivacyFilterConfiguration()
+        config.builtinPatternEnabled = [.phone: false, .email: false, .url: false, .accountNumber: false]
+        config.presetRules = ["hr.oib": true, "generic.nationalID": true]
+        let ruleset = RegexEntityDetector.EffectiveRuleSet.build(from: config)
+        let hits = RegexEntityDetector.detect(in: "ID number: 69435151530", ruleset: ruleset)
+        #expect(hits.count == 1)
+        #expect(hits.first?.validated == true)
+        #expect(hits.first?.original == "69435151530")
+
+        // Sanity: the generic alone does fire on that text.
+        config.presetRules = ["generic.nationalID": true]
+        let genericOnly = RegexEntityDetector.detect(in: "ID number: 69435151530", ruleset: .build(from: config))
+        #expect(genericOnly.map(\.original) == ["69435151530"])
+        #expect(genericOnly.first?.validated == false)
     }
 
     // MARK: - Credit card (Luhn-gated)

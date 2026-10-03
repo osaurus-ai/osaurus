@@ -121,10 +121,16 @@ struct ConfigurationReadScopeFunctionalTests {
             OsaurusInspectTool(), #"{"action": "list", "scope": "agents"}"#)
         let result = try #require(dict["result"] as? [String: Any])
         let shape = try #require(result["yaml_shape"] as? String)
-        // Activation ("switch to X") writes `active_agent`, so the agents
+        // Activation ("switch to X") writes `new_chat_agent`, so the agents
         // read must teach both sections.
         #expect(shape.contains("agents:"))
-        #expect(shape.contains("active_agent:"))
+        #expect(shape.contains("new_chat_agent:"))
+        let items = try #require(result["items"] as? [[String: Any]])
+        #expect(!items.isEmpty)
+        for agent in items {
+            #expect(agent["description"] as? String != nil)
+            #expect(agent["generated_description"] as? String != nil)
+        }
     }
 
     @Test
@@ -141,11 +147,72 @@ struct ConfigurationReadScopeFunctionalTests {
         }
     }
 
+    /// The two workspace scopes answer "who can I delegate to" from a read.
+    /// The SwiftPM harness has no router session, so the rosters are empty:
+    /// the rows are empty but the envelope, the pool note and the
+    /// `shared_agents` filter must still be well-formed, and a describe by
+    /// `Name@Workspace` against an empty roster is a clean not-found.
+    @Test
+    func list_workspaceScopes_returnRowsAndPoolNote() async throws {
+        for scope in ["workspaces", "shared_agents"] {
+            let dict = try await runAsDefaultAgent(
+                OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}")
+            let result = try #require(dict["result"] as? [String: Any], "scope \(scope)")
+            #expect(result["scope"] as? String == scope)
+            #expect(result["items"] is [[String: Any]], "scope \(scope) must list rows")
+            let note = try #require(result["note"] as? String)
+            #expect(note.contains("spawn_agent"))
+            #expect(note.contains("spawnable_workspace_agents"))
+        }
+        let online = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "list", "scope": "shared_agents", "filter": "online"}"#)
+        #expect((online["result"] as? [String: Any])?["filter"] as? String == "online")
+
+        let missing = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "describe", "scope": "shared_agents", "id": "Research@Acme"}"#)
+        #expect(missing["ok"] as? Bool == false)
+        let message = try #require(missing["message"] as? String)
+        #expect(message.contains("shared_agents"), Comment(rawValue: message))
+    }
+
     @Test
     func status_doesNotEmbedAShape() async throws {
         let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "status"}"#)
         let result = try #require(dict["result"] as? [String: Any])
         #expect(result["yaml_shape"] == nil)
+    }
+
+    /// The status read names the Orchestrator's spawn pool state so an empty
+    /// pool (agents exist, none allowed → no `spawn_agent`) is visible from
+    /// the first read instead of surfacing as a `tool_not_found` later.
+    @Test
+    func status_reportsTheSpawnPoolState() async throws {
+        let lease = await acquireSubagentStoreSandbox("gap-closure-status-pool")
+        defer { lease.release() }
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "status"}"#)
+        let result = try #require(dict["result"] as? [String: Any])
+        let pool = try #require(result["spawn_pool"] as? [String: Any])
+        let state = try #require(pool["state"] as? String)
+        #expect(["ready", "empty", "no_agents"].contains(state), Comment(rawValue: state))
+        #expect(pool["local_agents"] is Int)
+        #expect(pool["custom_agents_total"] is Int)
+        #expect((pool["max_parallel_local"] as? Int ?? 0) >= 1)
+        let suggestions = result["suggestions"] as? [String] ?? []
+        let namesEmptyPool = suggestions.contains { $0.contains("Spawn pool is EMPTY") }
+        #expect(namesEmptyPool == (state == "empty"), "\(suggestions)")
+    }
+
+    /// Settings document sections read through describe carry their
+    /// `yaml_shape`, so a `delegation` read teaches the replace-list rule.
+    @Test
+    func describe_delegationSection_embedsShapeWithReplaceSemantics() async throws {
+        let dict = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "describe", "scope": "delegation"}"#)
+        let result = try #require(dict["result"] as? [String: Any])
+        #expect(result["kind"] as? String == "document_section")
+        let shape = try #require(result["yaml_shape"] as? String)
+        #expect(shape.contains("delegation:"))
+        #expect(shape.contains("REPLACES the whole pool"))
     }
 
     @Test
@@ -263,7 +330,7 @@ struct ConfigurationReadScopeFunctionalTests {
         let agent = await MainActor.run {
             AgentManager.shared.create(
                 name: "GapClosure Describe Probe",
-                description: "",
+                description: "Exercises agent configuration in this isolated test.",
                 systemPrompt: "",
                 defaultModel: nil,
                 temperature: nil,
@@ -296,7 +363,7 @@ struct ConfigurationReadScopeFunctionalTests {
         let agent = await MainActor.run {
             AgentManager.shared.create(
                 name: "GapClosure Name Probe",
-                description: "",
+                description: "Exercises agent configuration in this isolated test.",
                 systemPrompt: "",
                 defaultModel: "provider/some-model",
                 temperature: nil,

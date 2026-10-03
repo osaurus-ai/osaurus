@@ -75,6 +75,22 @@ extension CrossSelectableTextView {
             rect.offsetBy(dx: origin.x, dy: origin.y).fill()
         }
     }
+
+    /// Body for adopters' `copy(_:)` override. The context menu's Copy and
+    /// Edit > Copy reach `copy(_:)` directly, bypassing the Cmd+C key
+    /// monitor, while the native selectedRange is only the drag caret (or
+    /// the word AppKit selects on right-click), so an active cross-block
+    /// selection has to win here too (#2886).
+    func copyCrossSelectionIfActive() -> Bool {
+        ChatCrossSelection.shared.copyIfActive(window: window)
+    }
+
+    /// Keeps Copy enabled while a cross-block selection is active, even
+    /// when the native selection under a right-click is empty.
+    func crossSelectionEnablesCopy(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        item.action == #selector(NSText.copy(_:))
+            && ChatCrossSelection.shared.hasSelection(in: window)
+    }
 }
 
 @MainActor
@@ -100,6 +116,12 @@ final class ChatCrossSelection {
     private weak var selectionWindow: NSWindow?
 
     var hasSelection: Bool { !selectionString.isEmpty }
+
+    /// True when a selection exists and belongs to `window`.
+    func hasSelection(in window: NSWindow?) -> Bool {
+        guard hasSelection, let window else { return false }
+        return window === selectionWindow
+    }
 
     // MARK: - Drag gesture
 
@@ -153,7 +175,7 @@ final class ChatCrossSelection {
     /// Returns true when the copy was handled.
     @discardableResult
     func copyIfActive(window: NSWindow?) -> Bool {
-        guard hasSelection, let window, window === selectionWindow else { return false }
+        guard hasSelection(in: window) else { return false }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(selectionString, forType: .string)

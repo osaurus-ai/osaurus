@@ -17,6 +17,21 @@ import Testing
 
 @Suite
 struct SubagentScopeReasoningTests {
+    @Test func sameModelEffortIsFrozenAndDifferentModelKeepsItsOwnChoice() {
+        for effort in ["none", "low", "medium", "xhigh"] {
+            let frozen = SubagentScope(
+                sessionId: "s",
+                toolCallId: "t",
+                agentId: Agent.defaultId,
+                parentModelName: "publisher/bonsai",
+                reasoningEffort: effort
+            )
+            #expect(frozen.reasoningEffort(forDelegatedModel: "Publisher/Bonsai") == effort)
+            #expect(frozen.reasoningEffort(forDelegatedModel: "publisher/gemma") == nil)
+            #expect(frozen.reasoningEffort(forDelegatedModel: nil) == nil)
+        }
+    }
+
     private func scope(
         parentModel: String?,
         enableThinking: Bool?

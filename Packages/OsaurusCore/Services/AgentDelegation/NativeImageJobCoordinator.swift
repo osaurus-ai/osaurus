@@ -13,6 +13,13 @@ struct NativeImageJobContext: Sendable, Equatable {
     var sessionID: String?
     var assistantTurnID: UUID?
     var toolCallID: String?
+    var invocation = ModelJobInvocation(parentModelName: nil, source: nil)
+    /// Insights attribution captured on the caller's task (the job itself
+    /// runs on a detached producer where task-locals are invisible).
+    var agentID: UUID?
+    /// `.httpAPI` when the local HTTP server owns the request — the handler
+    /// writes the inbound row, so the coordinator must not add a second.
+    var requestSource: RequestSource?
 
     static let empty = NativeImageJobContext()
 
@@ -20,7 +27,10 @@ struct NativeImageJobContext: Sendable, Equatable {
         NativeImageJobContext(
             sessionID: ChatExecutionContext.currentSessionId,
             assistantTurnID: ChatExecutionContext.currentAssistantTurnId,
-            toolCallID: ChatExecutionContext.currentToolCallId
+            toolCallID: ChatExecutionContext.currentToolCallId,
+            invocation: .current(),
+            agentID: ChatExecutionContext.currentAgentId,
+            requestSource: ChatExecutionContext.currentRequestSource
         )
     }
 }
@@ -341,29 +351,37 @@ actor NativeImageJobCoordinator {
     func generate(_ request: NativeImageGenerateJobRequest) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                await self.runJob(
-                    context: request.context,
-                    kind: .imageGeneration,
-                    isEdit: false,
-                    requestedModel: request.model,
-                    configuredModel: { $0.defaultImageGenerationModelId },
-                    makeStream: { model, jobID in
-                        let params = ImageGenerationParameters(
-                            model: model,
+                await request.context.invocation.withContext {
+                    await self.runJob(
+                        context: request.context,
+                        kind: .imageGeneration,
+                        isEdit: false,
+                        activity: .init(
                             prompt: request.prompt,
-                            negativePrompt: request.negativePrompt,
-                            width: request.width,
-                            height: request.height,
-                            steps: request.steps,
-                            guidance: request.guidance,
-                            seed: request.seed,
-                            numImages: request.numImages,
-                            outputFormat: request.outputFormat
-                        )
-                        return await self.imageService.generate(params, jobID: jobID)
-                    },
-                    continuation: continuation
-                )
+                            count: request.numImages,
+                            size: Self.sizeLabel(width: request.width, height: request.height),
+                            steps: request.steps
+                        ),
+                        requestedModel: request.model,
+                        configuredModel: { $0.defaultImageGenerationModelId },
+                        makeStream: { model, jobID in
+                            let params = ImageGenerationParameters(
+                                model: model,
+                                prompt: request.prompt,
+                                negativePrompt: request.negativePrompt,
+                                width: request.width,
+                                height: request.height,
+                                steps: request.steps,
+                                guidance: request.guidance,
+                                seed: request.seed,
+                                numImages: request.numImages,
+                                outputFormat: request.outputFormat
+                            )
+                            return await self.imageService.generate(params, jobID: jobID)
+                        },
+                        continuation: continuation
+                    )
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -372,30 +390,38 @@ actor NativeImageJobCoordinator {
     func edit(_ request: NativeImageEditJobRequest) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                await self.runJob(
-                    context: request.context,
-                    kind: .imageEdit,
-                    isEdit: true,
-                    requestedModel: request.model,
-                    configuredModel: { $0.defaultImageEditModelId },
-                    makeStream: { model, jobID in
-                        let params = ImageEditParameters(
-                            model: model,
+                await request.context.invocation.withContext {
+                    await self.runJob(
+                        context: request.context,
+                        kind: .imageEdit,
+                        isEdit: true,
+                        activity: .init(
                             prompt: request.prompt,
-                            sourceImages: request.sourceImages,
-                            negativePrompt: request.negativePrompt,
-                            strength: request.strength,
-                            width: request.width,
-                            height: request.height,
-                            steps: request.steps,
-                            guidance: request.guidance,
-                            seed: request.seed,
-                            outputFormat: request.outputFormat
-                        )
-                        return await self.imageService.edit(params, jobID: jobID)
-                    },
-                    continuation: continuation
-                )
+                            count: 1,
+                            size: Self.sizeLabel(width: request.width, height: request.height),
+                            steps: request.steps
+                        ),
+                        requestedModel: request.model,
+                        configuredModel: { $0.defaultImageEditModelId },
+                        makeStream: { model, jobID in
+                            let params = ImageEditParameters(
+                                model: model,
+                                prompt: request.prompt,
+                                sourceImages: request.sourceImages,
+                                negativePrompt: request.negativePrompt,
+                                strength: request.strength,
+                                width: request.width,
+                                height: request.height,
+                                steps: request.steps,
+                                guidance: request.guidance,
+                                seed: request.seed,
+                                outputFormat: request.outputFormat
+                            )
+                            return await self.imageService.edit(params, jobID: jobID)
+                        },
+                        continuation: continuation
+                    )
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -412,10 +438,24 @@ actor NativeImageJobCoordinator {
     /// unload itself can trigger must not cascade into the engine drain and lose
     /// the image (see `ImageSubagentKind`, whose `makeHandoff()` stays the
     /// passthrough default so the coordinator remains the residency authority).
+    /// Facts the activity-log row needs that only the request knows.
+    struct ActivityFacts: Sendable {
+        var prompt: String
+        var count: Int
+        var size: String?
+        var steps: Int?
+    }
+
+    private static func sizeLabel(width: Int?, height: Int?) -> String? {
+        guard let width, let height else { return nil }
+        return "\(width)×\(height)"
+    }
+
     private func runJob(
         context: NativeImageJobContext,
         kind: SubagentModelKind,
         isEdit: Bool,
+        activity: ActivityFacts,
         requestedModel: String?,
         configuredModel: @Sendable (SubagentConfiguration) -> String?,
         makeStream:
@@ -435,6 +475,31 @@ actor NativeImageJobCoordinator {
 
         let config = SubagentConfigurationStore.snapshot()
         var chatLease = ChatResidencyLease.empty
+        var retention: ParentResidencyRetention?
+        var startedImageModel: String?
+        // Activity log: one `mediaGeneration` row per job, written when the
+        // job settles. Skipped when the local HTTP API owns the request (its
+        // handler logs the inbound row).
+        var activityRow: MediaActivityLogger.MediaJob?
+        if context.requestSource != .httpAPI {
+            activityRow = MediaActivityLogger.MediaJob(
+                kind: .image,
+                operation: isEdit ? .edit : .generate,
+                model: requestedModel ?? "",
+                prompt: activity.prompt,
+                provider: "Local (MLX)",
+                endpoint: nil,
+                requestedCount: activity.count,
+                size: activity.size,
+                steps: activity.steps,
+                durationSeconds: nil,
+                trigger: context.toolCallID != nil ? .chatTool : .imagePanel,
+                attribution: InsightsService.ActivityAttribution(
+                    agentId: context.agentID,
+                    sessionId: context.sessionID.flatMap(UUID.init(uuidString:))
+                )
+            )
+        }
         do {
             record(NativeImageJobProgress(jobID: jobID, phase: .queued))
             // Resolve the image model BEFORE any unload so the RAM-safety
@@ -447,16 +512,49 @@ actor NativeImageJobCoordinator {
                 available: models,
                 kind: kind
             )
+            let plan = try await SubagentResidency.planForLocalTarget(
+                modelName: model,
+                requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
+                config: config,
+                idleWaitSeconds: config.budgets.maxElapsedSeconds,
+                deniedMessage: "Cannot hand off the invoking model for an image job.",
+                invokingParentModelName: context.invocation.parentModelName
+            )
             try await ChatResidencyHandoff.memoryPreflight(
                 requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
-                enabled: config.ramSafetyPreflightEnabled
+                enabled: config.ramSafetyPreflightEnabled,
+                physicalCapacityOnly: true
             )
             chatLease = try await self.prepareChatResidencyIfNeeded(
+                plan: plan,
                 config: config,
+                invocation: context.invocation,
                 jobID: jobID,
                 record: record
             )
+            if plan.coexists {
+                let idle = await InferenceLoadCoordinator.shared.waitForChatIdle(
+                    timeoutMs: max(15, min(config.budgets.maxElapsedSeconds, 300)) * 1000
+                )
+                guard idle else { throw ChatResidencyHandoff.HandoffError.chatBusy }
+                retention = try await ModelRuntime.shared.retainInvokingParent(
+                    named: context.invocation.parentModelName,
+                    for: model,
+                    source: context.invocation.source?.inferenceSource
+                )
+            }
+            if config.ramSafetyPreflightEnabled {
+                _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
+                try await Task.sleep(for: .milliseconds(1_100))
+                try await ChatResidencyHandoff.memoryPreflight(
+                    requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
+                    enabled: true
+                )
+            }
             var produced: [GeneratedImage] = []
+            try Task.checkCancellation()
+            startedImageModel = model
+            activityRow = activityRow?.withModel(model)
             let stream = await makeStream(model, jobID)
             for try await event in stream {
                 switch event {
@@ -485,18 +583,23 @@ actor NativeImageJobCoordinator {
                     throw NativeImageJobCoordinatorError.cancelled
                 }
             }
+            try Task.checkCancellation()
 
-            let shouldUnload = config.imageJobLoadPolicy != .manualPanelKeepsImageLoaded
+            // The parent-swap contract wins over keeping an image graph warm:
+            // release/drain the image before restoring the invoking model.
+            let shouldUnload = config.imageJobLoadPolicy.unloadAfterJob(restoresParent: !chatLease.isEmpty)
             if shouldUnload {
                 record(NativeImageJobProgress(jobID: jobID, phase: .unloading, model: model))
-                await imageService.unload()
             }
-            let restoredChatModels = await self.restoreChatResidencyIfNeeded(
+            let restoredChatModels = await self.finishResidency(
                 lease: chatLease,
+                retention: retention,
+                unloadImage: shouldUnload,
                 jobID: jobID,
-                record: record
+                context: context
             )
             record(NativeImageJobProgress(jobID: jobID, phase: .completed, model: model))
+            activityRow?.finish(producedCount: produced.count, jobId: jobID, error: nil)
             continuation.yield(
                 NativeImageJobResult(
                     jobID: jobID,
@@ -510,32 +613,33 @@ actor NativeImageJobCoordinator {
             )
             continuation.finish()
         } catch {
-            if config.imageJobLoadPolicy != .manualPanelKeepsImageLoaded {
-                await imageService.unload()
-            }
-            if !chatLease.unloadedModelNames.isEmpty {
-                _ = await self.restoreChatResidencyIfNeeded(
-                    lease: chatLease,
-                    jobID: jobID,
-                    record: record
-                )
-            }
+            activityRow?.finish(producedCount: 0, jobId: jobID, error: error.localizedDescription)
+            _ = await self.finishResidency(
+                lease: chatLease,
+                retention: retention,
+                unloadImage: startedImageModel != nil
+                    && config.imageJobLoadPolicy.unloadAfterJob(restoresParent: !chatLease.isEmpty),
+                jobID: jobID,
+                context: context
+            )
             continuation.finish(throwing: error)
         }
     }
 
     /// Single-residency handoff for an image job, delegating to the shared
     /// `ChatResidencyHandoff` (no private residency copy). Only evicts when the
-    /// load policy calls for it. Phase events are recorded around the shared
+    /// shared parent-swap setting calls for it. Phase events are recorded around the shared
     /// calls (rather than threading the actor-isolated `record` into the
     /// nonisolated handoff) so the image job's live progress stream keeps its
     /// `waiting_for_chat_idle` / `unloading_chat_models` rows.
     private func prepareChatResidencyIfNeeded(
+        plan: ResidencyPlan,
         config: SubagentConfiguration,
+        invocation: ModelJobInvocation,
         jobID: String,
         record: (NativeImageJobProgress) -> Void
     ) async throws -> ChatResidencyLease {
-        guard config.imageJobUnloadsChatModels else { return .empty }
+        guard plan.shouldUnload else { return .empty }
         record(
             NativeImageJobProgress(
                 jobID: jobID,
@@ -546,7 +650,9 @@ actor NativeImageJobCoordinator {
         let lease: ChatResidencyLease
         do {
             lease = try await ChatResidencyHandoff.unloadResidentChatModels(
-                maxElapsedSeconds: config.budgets.maxElapsedSeconds
+                parentModelName: invocation.parentModelName,
+                maxElapsedSeconds: config.budgets.maxElapsedSeconds,
+                restoreParentWhenNotResident: true
             )
         } catch ChatResidencyHandoff.HandoffError.chatBusy {
             throw NativeImageJobCoordinatorError.requestFailed(
@@ -571,20 +677,34 @@ actor NativeImageJobCoordinator {
     /// residency and logs a persistent failure; if the orchestrator still isn't
     /// resident, the next chat turn reloads it on demand (cold load through the
     /// gated `loadContainer`). Returns the names actually restored.
-    private func restoreChatResidencyIfNeeded(
+    private func finishResidency(
         lease: ChatResidencyLease,
+        retention: ParentResidencyRetention?,
+        unloadImage: Bool,
         jobID: String,
-        record: (NativeImageJobProgress) -> Void
+        context: NativeImageJobContext
     ) async -> [String] {
-        guard !lease.unloadedModelNames.isEmpty else { return [] }
-        record(
-            NativeImageJobProgress(
-                jobID: jobID,
-                phase: .restoringChatModels,
-                message: lease.unloadedModelNames.joined(separator: ", ")
-            )
-        )
-        return await ChatResidencyHandoff.restoreBestEffort(lease)
+        let imageService = self.imageService
+        return await Task.detached(priority: .userInitiated) {
+            await imageService.waitForJobDrain(jobID: jobID)
+            // ImageGenerationService.unload awaits the non-cancellable Metal
+            // teardown owner, so cancellation cannot restore mid-producer.
+            if unloadImage { await imageService.unload() }
+            var restored: [String] = []
+            if !lease.isEmpty {
+                NativeImageJobProgressCenter.post(
+                    NativeImageJobProgress(
+                        jobID: jobID,
+                        phase: .restoringChatModels,
+                        message: lease.restoreModelNames.joined(separator: ", "),
+                        context: context
+                    )
+                )
+                restored = await ChatResidencyHandoff.restoreBestEffort(lease)
+            }
+            if let retention { await ModelRuntime.shared.releaseInvokingParent(retention) }
+            return restored
+        }.value
     }
 }
 

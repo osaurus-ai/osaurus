@@ -20,6 +20,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Wall-clock duration (seconds) each tool call took, keyed by call id.
     /// Drives the "· 1.2s" elapsed label; empty for legacy turns.
     public var toolCallDurations: [String: TimeInterval]
+    /// Finished Computer Use / AppleScript step logs, keyed by call id. UI
+    /// history only: never part of the model-facing tool result.
+    public var toolCallLogs: [String: SubagentRunLog]
     /// Seconds the model spent thinking; drives "Thought for 30s". Nil when unknown.
     public var thinkingDuration: TimeInterval?
     public var thinking: String
@@ -42,6 +45,13 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Seconds from request start to first visible token, for latency
     /// reporting. Nil when unknown.
     public var timeToFirstToken: TimeInterval?
+    /// The rate displayed during generation, preserving the provider's measurement semantics.
+    public var generationTokensPerSecond: Double?
+    /// Cold model loading inside the first-token window. Nil when unavailable.
+    public var modelLoadSeconds: TimeInterval?
+    /// When the user sent the message that opened this run (see
+    /// `ChatTurn.requestedAt`). Nil for non-first turns and legacy sessions.
+    public var requestedAt: Date?
     /// Authoritative runtime finish reason (`stop`, `length`, etc.). Nil for
     /// legacy turns and providers that do not report one.
     public var terminalStopReason: String?
@@ -86,6 +96,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         lastOutputAt: Date? = nil,
         generationTokenCount: Int? = nil,
         timeToFirstToken: TimeInterval? = nil,
+        generationTokensPerSecond: Double? = nil,
+        modelLoadSeconds: TimeInterval? = nil,
+        requestedAt: Date? = nil,
         terminalStopReason: String? = nil,
         reasoningItemId: String? = nil,
         reasoningEncrypted: String? = nil,
@@ -94,7 +107,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         cachedInputTokenCount: Int? = nil,
         modelContextExcluded: Bool = false,
         routerBilling: RouterBillingSummary? = nil,
-        injectedContextPrefix: String? = nil
+        injectedContextPrefix: String? = nil,
+        toolCallLogs: [String: SubagentRunLog] = [:]
     ) {
         self.id = id
         self.role = role
@@ -112,6 +126,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.lastOutputAt = lastOutputAt
         self.generationTokenCount = generationTokenCount
         self.timeToFirstToken = timeToFirstToken
+        self.generationTokensPerSecond = generationTokensPerSecond
+        self.modelLoadSeconds = modelLoadSeconds
+        self.requestedAt = requestedAt
         self.terminalStopReason = terminalStopReason
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
@@ -121,6 +138,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.modelContextExcluded = modelContextExcluded
         self.routerBilling = routerBilling
         self.injectedContextPrefix = injectedContextPrefix
+        self.toolCallLogs = toolCallLogs
     }
 
     // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
@@ -134,6 +152,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         toolResults = try container.decodeIfPresent([String: String].self, forKey: .toolResults) ?? [:]
         toolCallDurations =
             try container.decodeIfPresent([String: TimeInterval].self, forKey: .toolCallDurations) ?? [:]
+        toolCallLogs =
+            (try? container.decodeIfPresent([String: SubagentRunLog].self, forKey: .toolCallLogs)) ?? [:]
         thinkingDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .thinkingDuration)
         thinking = try container.decodeIfPresent(String.self, forKey: .thinking) ?? ""
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
@@ -141,6 +161,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         lastOutputAt = try container.decodeIfPresent(Date.self, forKey: .lastOutputAt)
         generationTokenCount = try container.decodeIfPresent(Int.self, forKey: .generationTokenCount)
         timeToFirstToken = try container.decodeIfPresent(TimeInterval.self, forKey: .timeToFirstToken)
+        generationTokensPerSecond = try container.decodeIfPresent(Double.self, forKey: .generationTokensPerSecond)
+        modelLoadSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .modelLoadSeconds)
+        requestedAt = try container.decodeIfPresent(Date.self, forKey: .requestedAt)
         terminalStopReason = try container.decodeIfPresent(String.self, forKey: .terminalStopReason)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
@@ -178,6 +201,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         if !toolCallDurations.isEmpty {
             try container.encode(toolCallDurations, forKey: .toolCallDurations)
         }
+        if !toolCallLogs.isEmpty {
+            try container.encode(toolCallLogs, forKey: .toolCallLogs)
+        }
         try container.encodeIfPresent(thinkingDuration, forKey: .thinkingDuration)
         try container.encode(thinking, forKey: .thinking)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
@@ -185,6 +211,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(lastOutputAt, forKey: .lastOutputAt)
         try container.encodeIfPresent(generationTokenCount, forKey: .generationTokenCount)
         try container.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
+        try container.encodeIfPresent(generationTokensPerSecond, forKey: .generationTokensPerSecond)
+        try container.encodeIfPresent(modelLoadSeconds, forKey: .modelLoadSeconds)
+        try container.encodeIfPresent(requestedAt, forKey: .requestedAt)
         try container.encodeIfPresent(terminalStopReason, forKey: .terminalStopReason)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
@@ -204,15 +233,29 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case id, role, content, attachments
         case sharedArtifacts
         case attachedImages  // legacy key for reading old sessions
-        case toolCalls, toolCallId, toolResults, toolCallDurations, thinking
+        case toolCalls, toolCallId, toolResults, toolCallDurations, toolCallLogs, thinking
         case thinkingDuration
         case createdAt, completedAt, lastOutputAt, generationTokenCount, timeToFirstToken
+        case generationTokensPerSecond, modelLoadSeconds, requestedAt
         case terminalStopReason
         case reasoningItemId, reasoningEncrypted, responsesOutputItems
         case inputTokenCount, cachedInputTokenCount
         case modelContextExcluded
         case routerBilling
         case injectedContextPrefix
+    }
+}
+
+// MARK: - Display content
+
+extension ChatTurnData {
+    /// The text the chat presents for this turn — the human-authored text
+    /// inside a dispatch envelope when one wraps the content, else the raw
+    /// content. Unmemoized mirror of `ChatTurn.displayContent(sessionSource:)`
+    /// for the rare persistence-side callers (title derivation).
+    public func displayContent(sessionSource: SessionSource) -> String {
+        guard role == .user, !content.isEmpty else { return content }
+        return DispatchEnvelope.parse(content, sessionSource: sessionSource)?.displayText ?? content
     }
 }
 
@@ -231,6 +274,7 @@ extension ChatTurnData {
         self.toolCallId = turn.toolCallId
         self.toolResults = turn.toolResults
         self.toolCallDurations = turn.toolCallDurations
+        self.toolCallLogs = turn.toolCallLogs
         self.thinkingDuration = turn.thinkingDuration
         self.thinking = turn.thinking
         self.createdAt = turn.createdAt
@@ -238,6 +282,9 @@ extension ChatTurnData {
         self.lastOutputAt = turn.lastOutputAt
         self.generationTokenCount = turn.generationTokenCount
         self.timeToFirstToken = turn.timeToFirstToken
+        self.generationTokensPerSecond = turn.generationTokensPerSecond
+        self.modelLoadSeconds = turn.modelLoadSeconds
+        self.requestedAt = turn.requestedAt
         self.terminalStopReason = turn.terminalStopReason
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
@@ -265,12 +312,19 @@ extension ChatTurn {
         self.toolCallId = data.toolCallId
         self.toolResults = data.toolResults
         self.toolCallDurations = data.toolCallDurations
+        self.toolCallLogs = data.toolCallLogs
+        for (callId, log) in data.toolCallLogs {
+            SubagentRunLogArchive.shared.store(log, for: callId)
+        }
         self.thinkingDuration = data.thinkingDuration
         self.thinking = data.thinking
         self.completedAt = data.completedAt
         self.lastOutputAt = data.lastOutputAt
         self.generationTokenCount = data.generationTokenCount
         self.timeToFirstToken = data.timeToFirstToken
+        self.generationTokensPerSecond = data.generationTokensPerSecond
+        self.modelLoadSeconds = data.modelLoadSeconds
+        self.requestedAt = data.requestedAt
         self.terminalStopReason = data.terminalStopReason
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted

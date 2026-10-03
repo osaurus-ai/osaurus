@@ -270,6 +270,8 @@ Combine `/chat/completions` (your harness's own tool loop) with `/mcp/tools` + `
 
 Folder write and shell tools are **denied to external surfaces by default** — neither `/mcp/call` nor the `/agents/{id}/run` loop will execute `file_write`, `file_edit`, `file_undo`, `shell_run`, or `git_commit`, even while a working folder is open in the app and those tools are registered process-wide. `/mcp/call` returns `403` with `{"error": "tool_not_exposable"}`, the agent loop hands the model a structured `rejected` envelope, and the denied names are hidden from `GET /mcp/tools` listings. Rationale: loopback connections skip Bearer auth, so an external caller could otherwise rewrite the user's files or run arbitrary shell commands through the open folder session. Write access from outside the app otherwise goes through the sandbox (`sandbox_*` tools on sandboxed agents), which is isolated by construction.
 
+The same deny list covers the knowledge/skill mutation tools (`write_knowledge`, `edit_knowledge`, `delete_knowledge`, `update_skill`), every `agent_channel_*` tool, and every built-in Apple app tool (`calendar_*`, `reminders_*`, `contacts_*`, `notes_*`, `mail_*`, `messages_*`, `location_*`, `maps_*`, `music_*`, `shortcuts_*`). The Apple tools are per-agent, approval-gated, and backed by the user's TCC grants, none of which an external caller can be shown; drive them through an agent in the app instead. See [APPLE_APPS.md](APPLE_APPS.md).
+
 **One narrow exception — per-agent host workspace.** When an **authenticated remote** caller (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped key — never loopback, plaintext, `/mcp/call`, or a cross-agent key) drives an agent that has a **working folder** (Agent → Configure → Features → Working Folder, or picked with the chat Folder chip), the `/agents/{id}/run` loop may execute `file_write` and `file_edit`, confined to that folder by the folder tools' own root. `file_read` is always permitted; `shell_run`, `git_commit`, and `file_undo` stay denied even then. The folder root is bound (as a task-local) only after the secure-transport, built-in, and agent-scope gates pass, so the relaxation is unreachable from any untrusted surface.
 
 ### Session Grouping (`session_id`)
@@ -663,6 +665,30 @@ Example response:
 ```
 
 `supports_vision` reflects whether the agent's effective model is a VLM, so clients can show or hide image-attach UI without round-tripping the model registry.
+
+---
+
+## Credits API
+
+### Credit Balance — `GET /credits/balance` (also available at `GET /v1/credits/balance`)
+
+Read-only Osaurus Router credit balance for local tools. Requires a valid master access key (`Authorization: Bearer <key>`), or "Allow local API access without a key" enabled on the Credits screen. Agent-scoped keys are refused, and requests with an `Origin` header (browsers) always need a key.
+
+```bash
+curl http://127.0.0.1:1337/v1/credits/balance -H "Authorization: Bearer $OSAURUS_KEY"
+```
+
+```json
+{
+  "balance_credits": "72500.00",
+  "balance_micro": "7250000",
+  "frozen": false,
+  "fetched_at": "2026-09-21T10:00:00Z",
+  "stale": false
+}
+```
+
+The balance is cached for 30 seconds and always reflects a value fetched from the Router. `stale: true` means the refresh failed and the last known value was returned. Errors: `403 credits_access_not_authorized`, `409 router_disabled`, `409 no_account`, `503 router_unavailable`, `502 router_error`.
 
 ---
 

@@ -1,0 +1,41 @@
+{
+  "id": "agent_loop.edit-whitespace-drift-recovers",
+  "domain": "agent_loop",
+  "label": "agent loop • surgical edit inside a tab-indented block; indentation drift must not stall the loop",
+  "query": "In server.py, change the default port inside the run() function from 8080 to 9090. Change nothing else — keep the file's indentation exactly as it is.",
+  "notes": "The file is tab-indented (a common source of file_edit misses when the model retypes the block with spaces). FileEditMatcher's whitespace_normalized tier applies the edit when the match stays unique and keeps the file's own tabs, so the loop must finish with at most one executed file_edit error and without falling back to file_write. The checker verifies the single changed line and that every other line — tabs included — is byte-identical. A verification shell_run (e.g. py_compile) after the edit is acceptable; only the file_write rewrite path is forbidden.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "server.py",
+        "contents": "import socket\n\n\ndef make_socket(host, port):\n\tsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n\tsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n\tsock.bind((host, port))\n\treturn sock\n\n\ndef run(host=\"127.0.0.1\", port=8080, backlog=16):\n\tsock = make_socket(host, port)\n\tsock.listen(backlog)\n\ttry:\n\t\twhile True:\n\t\t\tconn, _ = sock.accept()\n\t\t\twith conn:\n\t\t\t\tconn.sendall(b\"ok\\n\")\n\tfinally:\n\t\tsock.close()\n\n\nif __name__ == \"__main__\":\n\trun()\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "maxToolCalls": 6,
+      "mustCallTools": [
+        "file_edit"
+      ],
+      "mustNotCallTools": [
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 3,
+          "maxErrors": 1
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c \"src = open('server.py', 'rb').read().decode(); lines = src.split('\\n'); assert 'def run(host=\\\"127.0.0.1\\\", port=9090, backlog=16):' in lines, lines; assert '8080' not in src; assert src.count('\\t') == 23, src.count('\\t'); assert '    ' not in src, 'spaces introduced'; assert len(lines) == 25, len(lines)\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

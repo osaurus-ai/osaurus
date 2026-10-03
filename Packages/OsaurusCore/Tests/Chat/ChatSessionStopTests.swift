@@ -8,6 +8,62 @@ import Testing
 struct ChatSessionStopTests {
     private static let asyncTimeout: Duration = .seconds(10)
 
+    @Test
+    func preparedInputMetadataNeverBecomesTextOrStartsOutputTiming() async throws {
+        try await ChatHistoryTestStorage.run {
+            enableDefaultAgentTools(warmModelsOnLoad: false)
+            let session = ChatSession()
+            session.toolsDisabledForTestingOverride = true
+            session.forceChatEngineRouteForTests = true
+            session.selectedModel = "input-metadata-ui-test"
+            let engine = InputMetadataChatEngine()
+            session.chatEngineFactory = { _ in engine }
+
+            for index in 0 ..< 2 {
+                session.send(index == 0 ? "Describe the image." : "Explain that answer.")
+                try await waitUntil(timeout: Self.asyncTimeout) {
+                    session.turns.last?.role == .assistant && session.turns.last?.inputTokenCount == 2072
+                }
+                let pending = try #require(session.turns.last)
+                #expect(pending.contentIsEmpty)
+                #expect(pending.thinkingIsBlank)
+                #expect(pending.timeToFirstToken == nil)
+                #expect(pending.generationTokenCount == nil)
+                await engine.finishAnswer()
+                try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
+                let finished = try #require(session.turns.last)
+                #expect(finished.content == "The image contains a red square.")
+                #expect(finished.inputTokenCount == 2072, "terminal stats without input usage must preserve prepared usage")
+                #expect(finished.generationTokenCount == 9)
+                #expect(finished.terminalStopReason == "stop")
+            }
+            let history = await engine.requestText
+            #expect(history.count == 2)
+            #expect(history.last?.contains("The image contains a red square.") == true)
+            #expect(history.allSatisfy { !$0.contains("\u{FFFE}") && !$0.contains("input_tokens:") })
+        }
+    }
+
+    @Test
+    func stopAfterPreparedInputDoesNotRetainMetadataAsAnAnswer() async throws {
+        try await ChatHistoryTestStorage.run {
+            enableDefaultAgentTools(warmModelsOnLoad: false)
+            let session = ChatSession()
+            session.toolsDisabledForTestingOverride = true
+            session.forceChatEngineRouteForTests = true
+            session.selectedModel = "input-metadata-ui-test"
+            let engine = InputMetadataChatEngine()
+            session.chatEngineFactory = { _ in engine }
+            session.send("Describe the image.")
+            try await waitUntil(timeout: Self.asyncTimeout) { session.turns.last?.inputTokenCount == 2072 }
+            session.stop()
+            await engine.finishAnswer()
+            try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
+            #expect(session.turns.filter { $0.role == .assistant }.allSatisfy { $0.contentIsEmpty })
+            #expect(session.turns.allSatisfy { !$0.content.contains("\u{FFFE}") })
+        }
+    }
+
     private func enableDefaultAgentTools(warmModelsOnLoad: Bool) {
         var chatConfig = ChatConfigurationStore.load()
         chatConfig.warmModelsOnLoad = warmModelsOnLoad
@@ -410,6 +466,32 @@ struct ChatSessionStopTests {
             #expect(session.lastCompletedAssistantTurnId == completed.id)
             #expect(session.isSendActiveForComposer == false)
         }
+    }
+}
+
+private actor InputMetadataChatEngine: ChatEngineProtocol {
+    private var continuation: AsyncThrowingStream<String, Error>.Continuation?
+    private(set) var requestText: [String] = []
+
+    func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        requestText.append(request.messages.compactMap(\.content).joined(separator: "\n"))
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        self.continuation = continuation
+        continuation.yield("\u{FFFE}future_metric:42")
+        continuation.yield("\u{FFFE}input_tokens:-1")
+        continuation.yield(StreamingInputTokenHint.encode(2072))
+        return stream
+    }
+
+    func finishAnswer() {
+        continuation?.yield("The image contains a red square.")
+        continuation?.yield(StreamingStatsHint.encode(tokenCount: 9, tokensPerSecond: 18, stopReason: "stop"))
+        continuation?.finish()
+        continuation = nil
+    }
+
+    func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        throw NSError(domain: "InputMetadataChatEngine", code: 1)
     }
 }
 

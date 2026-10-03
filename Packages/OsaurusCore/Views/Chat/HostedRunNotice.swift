@@ -23,6 +23,9 @@ struct HostedRunNotice: View {
     let callerName: String?
     let agentName: String
     let isWorkspace: Bool
+    /// The owner's own chat from the paired iPhone, which runs through the
+    /// shared-agent path: named as the iPhone's, not a teammate's.
+    var isFromPairedPhone = false
 
     @Environment(\.theme) private var theme
     @ObservedObject private var taskManager = BackgroundTaskManager.shared
@@ -70,7 +73,7 @@ struct HostedRunNotice: View {
             }
         } else {
             noticeRow(tint: theme.secondaryText) {
-                Image(systemName: isWorkspace ? "rectangle.3.group.fill" : "person.2.fill")
+                Image(systemName: isFromPairedPhone ? "iphone" : isWorkspace ? "rectangle.3.group.fill" : "person.2.fill")
                     .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
                     .foregroundColor(theme.secondaryText)
                 Text(readOnlyText)
@@ -83,12 +86,18 @@ struct HostedRunNotice: View {
     }
 
     private func liveText(step: String?) -> String {
-        let base = String(format: L("%@ is using %@"), caller, agentName)
+        let base =
+            isFromPairedPhone
+            ? String(format: L("Your iPhone is using %@"), agentName)
+            : String(format: L("%@ is using %@"), caller, agentName)
         if let step, !step.isEmpty { return "\(base) · \(step)" }
         return base
     }
 
     private var readOnlyText: String {
+        if isFromPairedPhone {
+            return L("This chat is from your iPhone. Continue it there.")
+        }
         if isWorkspace {
             return String(
                 format: L("This is %@'s conversation with %@ through your workspace — read-only here."),

@@ -1118,6 +1118,16 @@ private struct WatcherAgentPicker: View {
         return selectedAgent?.name ?? "Default"
     }
 
+    private var selectedAgentDescription: String? {
+        if let option = selectedWorkspaceOption {
+            let purpose = AgentDescriptionPolicy.normalized(option.description ?? "")
+            return purpose.isEmpty ? option.subtitle : "\(option.subtitle) — \(purpose)"
+        }
+        guard let agent = selectedAgent else { return L("Uses the default system behavior") }
+        let purpose = agent.routingDescription
+        return purpose.isEmpty ? nil : purpose
+    }
+
     private func agentColor(for name: String) -> Color {
         let hue = Double(abs(name.hashValue % 360)) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
@@ -1148,11 +1158,11 @@ private struct WatcherAgentPicker: View {
                     Text(selectedAgentName)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
-                    if let option = selectedWorkspaceOption {
-                        Text(String(format: L("Workspace agent · %@"), option.subtitle))
+                    if let selectedAgentDescription {
+                        Text(selectedAgentDescription)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
+                            .lineLimit(2)
                     }
                 }
 
@@ -1237,7 +1247,7 @@ private struct WatcherAgentPicker: View {
                 }
             }
             .padding(8)
-            .frame(minWidth: 320)
+            .frame(width: 360)
             .background(theme.cardBackground)
         }
     }
@@ -1264,7 +1274,8 @@ private struct WatcherAgentOptionRow: View {
             return workspaceOption.description.map { "\(workspaceOption.subtitle) — \($0)" }
                 ?? workspaceOption.subtitle
         }
-        return agent?.description ?? L("Uses the default system behavior")
+        guard let agent else { return L("Uses the default system behavior") }
+        return agent.routingDescription
     }
 
     var body: some View {

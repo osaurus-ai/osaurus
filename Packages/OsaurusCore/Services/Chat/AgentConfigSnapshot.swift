@@ -27,10 +27,7 @@ import Foundation
 /// settings editor saves while context composition is suspended.
 public struct AgentSpawnConfigSnapshot: Sendable, Equatable {
     let agentIDs: [UUID]
-    let modelNames: [String]
-    let modelNotes: [String: String]
     let budgets: SubagentBudgets
-    let toolAccess: SpawnToolAccess
     let launcherModelOverride: String?
     /// Allow-listed shared workspace agents (durable refs; presence is
     /// deliberately NOT part of this snapshot so the composed prompt never
@@ -39,18 +36,12 @@ public struct AgentSpawnConfigSnapshot: Sendable, Equatable {
 
     init(
         agentIDs: [UUID],
-        modelNames: [String],
-        modelNotes: [String: String],
         budgets: SubagentBudgets,
-        toolAccess: SpawnToolAccess,
         launcherModelOverride: String?,
         workspaceAgents: [WorkspaceAgentRef] = []
     ) {
         self.agentIDs = agentIDs
-        self.modelNames = modelNames
-        self.modelNotes = modelNotes
         self.budgets = budgets
-        self.toolAccess = toolAccess
         self.launcherModelOverride = launcherModelOverride
         self.workspaceAgents = workspaceAgents
     }
@@ -178,13 +169,6 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// Transitional legacy payload. It must be resolved uniquely against the
     /// live descriptor catalog before use and is never itself an auth key.
     let legacySpawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model`. Drives the
-    /// "is there anything to spawn?" half of the `spawn_model` visibility gate
-    /// for custom agents.
-    public let spawnableModelNames: [String]
-    /// Optional "when/how to use" note per spawnable model id, surfaced in the
-    /// spawn guidance descriptor (gate stays on `spawnableModelNames`).
-    public let spawnableModelNotes: [String: String]
     /// Shared workspace agents this agent may delegate to via `spawn_agent`
     /// (per-agent allow-list; the Default agent uses the global pool).
     public let spawnableWorkspaceAgents: [WorkspaceAgentRef]
@@ -213,6 +197,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `agent_channel_*` catalog stays deferred behind capability loading.
     public let hasChannelPublishDestinations: Bool
 
+    /// Built-in Apple app families enabled for this agent. Enforced
+    /// authoritatively in `resolveTools`: every `AppleApp.toolNames` entry for
+    /// an app NOT in this set is stripped in both auto and manual mode, and
+    /// the Default agent never receives any Apple tool (its allowlist wins).
+    public let enabledAppleApps: Set<AppleApp>
+
     public init(
         agentId: UUID,
         toolsDisabled: Bool,
@@ -238,15 +228,14 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         appleScriptEnabled: Bool = false,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
         spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
         spawnConfiguration: AgentSpawnConfigSnapshot? = nil,
         knowledgeEnabled: Bool = false,
         knowledgeCuratorEnabled: Bool = false,
         knowledgeCollections: [KnowledgeGrantDescriptor] = [],
         hasChannelPublishDestinations: Bool = false,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        enabledAppleApps: Set<AppleApp> = []
     ) {
         self.agentId = agentId
         self.projectId = projectId
@@ -273,14 +262,13 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.spawnableModelNames = spawnableModelNames
-        self.spawnableModelNotes = spawnableModelNotes
         self.spawnableWorkspaceAgents = spawnableWorkspaceAgents
         self.spawnConfiguration = spawnConfiguration
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.knowledgeCollections = knowledgeCollections
         self.hasChannelPublishDestinations = hasChannelPublishDestinations
+        self.enabledAppleApps = enabledAppleApps
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -328,26 +316,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
                 perAgentEnabled: caps.spawnDelegationEnabled,
                 perAgentTargets: caps.spawnableAgentIDs
             ).filter { $0 != agentId },
-            modelNames: SubagentToolVisibility.effectiveSpawnableModels(
-                isDefault: isDefault,
-                config: subagentConfig,
-                perAgentEnabled: caps.spawnDelegationEnabled,
-                perAgentModelTargets: caps.spawnableModelNames
-            ),
-            modelNotes:
-                isDefault
-                ? subagentConfig.spawnableModelNotes
-                : caps.spawnableModelNotes,
             budgets: SubagentToolVisibility.effectiveBudgets(
                 isDefault: isDefault,
                 config: subagentConfig,
                 settings: settings,
                 sharedParallelLimit: sharedParallelLimit
-            ),
-            toolAccess: SubagentToolVisibility.effectiveSpawnToolAccess(
-                isDefault: isDefault,
-                config: subagentConfig,
-                settings: settings
             ),
             launcherModelOverride: SubagentToolVisibility.effectiveSubagentModel(
                 capabilityId: SubagentCapabilityRegistry.spawn.id,
@@ -387,8 +360,6 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             appleScriptEnabled: caps.appleScriptEnabled,
             spawnableAgentIDs: caps.spawnableAgentIDs,
             spawnableAgentNames: caps.legacySpawnableAgentNames,
-            spawnableModelNames: caps.spawnableModelNames,
-            spawnableModelNotes: caps.spawnableModelNotes,
             spawnableWorkspaceAgents: caps.spawnableWorkspaceAgents,
             spawnConfiguration: spawnConfiguration,
             // Pre-fold the "anything to search?" half of the gate, like the
@@ -420,7 +391,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
                     source: ChatExecutionContext.currentSessionSource
                 )
                 .isEmpty,
-            projectId: projectId
+            projectId: projectId,
+            enabledAppleApps: caps.enabledAppleApps
         )
     }
 }

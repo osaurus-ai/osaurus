@@ -104,6 +104,7 @@ enum ModelCompatibilityDiagnostics {
         }
 
         enum ReasonCode: String {
+            case modelManifestBlocked
             case catalogReady
             case localBundleReady
             case externalBundleUnproven
@@ -345,6 +346,16 @@ enum ModelCompatibilityDiagnostics {
         localBundle: LocalBundleStatus,
         config: ConfigSummary?
     ) -> RuntimeStatus {
+        if let path = localBundle.path,
+            let failure = ModelManifest.loadFailure(at: URL(fileURLWithPath: path))
+        {
+            return RuntimeStatus(
+                kind: .blocked,
+                reason: .modelManifestBlocked,
+                title: L("Model version compatibility"),
+                detail: failure.localizedDescription
+            )
+        }
         if let blocker = unsupportedFamilyStatus(
             modelId: modelId,
             modelName: modelName,

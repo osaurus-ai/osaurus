@@ -55,6 +55,7 @@ enum AgentCapabilitiesPayload {
             "self_scheduling_enabled": agent.settings.selfSchedulingEnabled,
             "computer_use_enabled": agent.settings.computerUseEnabled,
             "browser_use_enabled": agent.settings.browserUseEnabled,
+            "apple_apps": AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue),
             "speak_enabled": agent.settings.speakEnabled,
             "render_chart_enabled": agent.settings.renderChartEnabled,
             "theme_id": agent.themeId?.uuidString ?? "",
@@ -268,6 +269,13 @@ enum ConfigurationReadNextStep {
         case "commands": return [.commands]
         case "channels": return [.channels]
         case "search": return [.searchProviders]
+        // Settings document sections read through `documentSectionRead`:
+        // the same inspect → apply short-circuit, so a `delegation` read
+        // carries the replace-list semantics of `spawnable_agents` with it.
+        case "memory": return [.memory]
+        case "default_agent": return [.defaultAgent]
+        case "tools": return [.tools]
+        case "delegation": return [.delegation]
         default: return nil
         }
     }
@@ -348,11 +356,13 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
         + "needs `scope` + `id`; providers/mcp include runtime connected/last_error; skills, "
         + "knowledge, commands, themes also match by name). "
         + "`scope` ∈ {agents, models, providers, mcp, plugins, schedules, skills, watchers, "
-        + "knowledge, themes, commands, channels, search}. "
+        + "knowledge, themes, commands, channels, search, workspaces, shared_agents}. "
+        + "shared_agents = teammates' agents you can delegate to (name, owner, workspace, "
+        + "presence, `target` for spawn_agent; describe by Name@Workspace). "
         + "Optional `filter` (list only): models: installed|downloading|recommended|all; "
         + "providers/mcp: enabled|disabled|connected|all; plugins: installed|available|failed; "
         + "schedules/watchers/knowledge/channels: enabled|disabled; "
-        + "skills/commands: builtin|custom|plugin."
+        + "skills/commands: builtin|custom|plugin; shared_agents: online|in_pool."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -379,16 +389,17 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     .string("mcp"), .string("plugins"), .string("schedules"),
                     .string("skills"), .string("watchers"), .string("knowledge"),
                     .string("themes"), .string("commands"), .string("channels"),
-                    .string("search"),
+                    .string("search"), .string("workspaces"), .string("shared_agents"),
                     .string("mcp_servers"), .string("knowledge_collections"),
                     .string("search_providers"),
                     .string("server"), .string("chat"), .string("app"),
                     .string("memory"), .string("default_agent"),
-                    .string("active_agent"), .string("tools"), .string("delegation"),
+                    .string("new_chat_agent"), .string("active_agent"), .string("tools"),
+                    .string("delegation"),
                 ]),
                 "description": .string(
                     "Configuration scope. Required for list and describe. memory, "
-                        + "default_agent, active_agent, tools, and delegation are settings "
+                        + "default_agent, new_chat_agent (alias active_agent), tools, and delegation are settings "
                         + "document sections — list/describe returns the section's current "
                         + "values (change them with osaurus_config apply). server, chat, and "
                         + "app are Settings-UI-only."),
@@ -452,6 +463,8 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
         let envelope: String = await MainActor.run {
             let activeAgentId = AgentManager.shared.activeAgentId
             let activeAgent = AgentManager.shared.agent(for: activeAgentId)
+            let newChatAgentId = AgentManager.shared.newChatAgentId
+            let newChatAgent = AgentManager.shared.agent(for: newChatAgentId)
             let defaultConfig = DefaultAgentConfigurationStore.load()
 
             let visibleProviders = ConfigurationProviderReadVisibility.visibleProviders()
@@ -525,11 +538,52 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     "\(downloadingModels.count) model(s) downloading — poll osaurus_inspect({action: 'status'}) again.")
             }
 
+            // The Orchestrator's spawn pool. An empty pool is the one state
+            // in which the Orchestrator has no `spawn_agent` at all — the
+            // status read must say so instead of letting it pass as "no
+            // agents", and name the repair (a `delegation.spawnable_agents`
+            // apply, or Settings → Orchestrator → Add all agents).
+            let delegation = SubagentConfigurationStore.snapshot()
+            let customAgents = AgentManager.shared.agents.filter { !$0.isBuiltIn }
+            let poolMembers = delegation.spawnableAgentIDs.filter { id in
+                customAgents.contains { $0.id == id }
+            }
+            let poolState: String
+            if !poolMembers.isEmpty || !delegation.spawnableWorkspaceAgents.isEmpty {
+                poolState = "ready"
+            } else if customAgents.isEmpty {
+                poolState = "no_agents"
+            } else {
+                poolState = "empty"
+            }
+            if poolState == "empty" {
+                suggestions.append(
+                    "Spawn pool is EMPTY although \(customAgents.count) custom agent(s) exist — the "
+                        + "Orchestrator has no spawn_agent tool. Restore delegation with "
+                        + "osaurus_config apply `delegation: {spawnable_agents: [<names to allow>]}` "
+                        + "(the list replaces the pool) or Settings → Orchestrator → Add all agents.")
+            }
+
             let snapshot: [String: Any] = [
+                "spawn_pool": [
+                    "state": poolState,
+                    "local_agents": poolMembers.count,
+                    "workspace_agents": delegation.spawnableWorkspaceAgents.count,
+                    "custom_agents_total": customAgents.count,
+                    "max_parallel_local": SpawnBatchConcurrencyContract.configuredLimit(
+                        for: ServerRuntimeSettingsStore.snapshot()),
+                ],
                 "active_agent": [
                     "id": activeAgentId.uuidString,
                     "name": activeAgent?.displayName ?? "Default",
                     "is_built_in": activeAgent?.isBuiltIn ?? true,
+                ],
+                // The `new_chat_agent` section value: which agent NEW chats
+                // open with (the Orchestrator unless applied otherwise).
+                "new_chat_agent": [
+                    "id": newChatAgentId.uuidString,
+                    "name": newChatAgent?.displayName ?? "Default",
+                    "is_built_in": newChatAgent?.isBuiltIn ?? true,
                 ],
                 "default_agent": [
                     "model": defaultConfig.defaultModel ?? "",
@@ -751,11 +805,20 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             let payload: [String: Any]
             switch scope {
             case "agents":
+                // Capability flags ride along on the list rows so the model
+                // can pick the right agent (or see that none has Mail on)
+                // without a `describe` round-trip per agent.
                 let agents = AgentManager.shared.agents.map { agent -> [String: Any] in
                     return [
                         "id": agent.id.uuidString,
                         "name": agent.name,
+                        "description": agent.description,
+                        "generated_description": agent.generatedDescription ?? "",
                         "is_built_in": agent.isBuiltIn,
+                        "tools_enabled": agent.toolsEnabled,
+                        "computer_use_enabled": agent.settings.computerUseEnabled,
+                        "browser_use_enabled": agent.settings.browserUseEnabled,
+                        "apple_apps": AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue),
                     ]
                 }
                 payload = ["scope": "agents", "items": agents]
@@ -935,6 +998,25 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     "scope": "channels", "filter": filter,
                     "items": Self.filterByEnabledConnected(connections, filter: filter),
                 ]
+            case WorkspaceInspectPayload.workspacesScope:
+                payload = [
+                    "scope": scope,
+                    "items": WorkspaceInspectPayload.workspaces(),
+                    "note": WorkspaceInspectPayload.poolNote,
+                ]
+            case WorkspaceInspectPayload.sharedAgentsScope:
+                let rows = WorkspaceInspectPayload.sharedAgents()
+                let filtered: [[String: Any]]
+                switch filter {
+                case "online": filtered = rows.filter { ($0["presence"] as? String) == "online" }
+                case "in_pool": filtered = rows.filter { ($0["in_orchestrator_pool"] as? Bool) == true }
+                default: filtered = rows
+                }
+                payload = [
+                    "scope": scope, "filter": filter,
+                    "items": filtered,
+                    "note": WorkspaceInspectPayload.poolNote,
+                ]
             case "search":
                 let manager = SearchProviderManager.shared
                 let configured = manager.configuredProviderIds
@@ -981,7 +1063,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
     /// to the attempt cap. Reading the section is what the call meant.
     /// Returns nil for anything that is not a document section.
     static func documentSectionRead(scope: String, tool: String) async -> String? {
-        guard let section = ConfigSectionID(rawValue: scope.lowercased()),
+        guard let section = ConfigSectionID.parse(scope),
             !settingsUIOnlyScopes.contains(scope.lowercased())
         else { return nil }
         let document = await MainActor.run { ConfigExporter.export(sections: [section]) }
@@ -1119,7 +1201,8 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
         case "find":
             let queryReq = requireString(args, "query", expected: "setting query", tool: name)
             guard case .value(let query) = queryReq else { return queryReq.failureEnvelope ?? "" }
-            let hits = SettingsSearchIndex.search(query).prefix(8).map { entry -> [String: Any] in
+            let lookup = Self.findSettings(query)
+            let hits = lookup.entries.prefix(8).map { entry -> [String: Any] in
                 var row: [String: Any] = [
                     "id": entry.id,
                     "title": entry.title,
@@ -1134,23 +1217,57 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
                 }
                 return row
             }
-            return ConfigurationReadNextStep.success(
-                tool: name,
-                result: [
-                    "query": query,
-                    "matches": Array(hits),
-                    "note": hits.isEmpty
-                        ? "No catalog match. Try another name, or action 'topics' then 'read'. "
-                            + "Do not spawn an agent or use Computer Use to hunt Settings. "
-                            + "Do not claim you changed a Settings-UI-only control."
-                        : "Quote the `path` breadcrumb. Settings-UI-only rows cannot be changed "
-                            + "with osaurus_config — tell the user to open that Management path. "
-                            + "Never spawn an agent or use Computer Use to find a setting.",
-                ]
-            )
+            var result: [String: Any] = [
+                "query": query,
+                "matches": Array(hits),
+                "note": hits.isEmpty
+                    ? "No catalog match. Try another name, or action 'topics' then 'read'. "
+                        + "Do not spawn an agent or use Computer Use to hunt Settings. "
+                        + "Do not claim you changed a Settings-UI-only control."
+                    : "Quote the `path` breadcrumb. Settings-UI-only rows cannot be changed "
+                        + "with osaurus_config — tell the user to open that Management path. "
+                        + "Never spawn an agent or use Computer Use to find a setting.",
+            ]
+            if let relaxed = lookup.relaxedQuery {
+                result["relaxed_query"] = relaxed
+            }
+            return ConfigurationReadNextStep.success(tool: name, result: result)
         default:
             return actionReq.failureEnvelope ?? ""
         }
+    }
+
+    /// Words a user (or the model relaying the user) wraps around a setting
+    /// name that never appear in a catalog title or keyword: intent verbs,
+    /// on/off state, and filler. Stripped only for the second, relaxed pass.
+    static let findIntentWords: Set<String> = [
+        "turn", "on", "off", "the", "a", "an", "my", "setting", "settings", "option",
+        "toggle", "switch", "where", "is", "are", "how", "to", "do", "i", "change",
+        "set", "find", "for", "in", "of", "can", "you", "please", "enable", "disable",
+        "enabled", "disabled", "stop", "start", "make", "it", "me", "up", "get",
+    ]
+
+    /// Catalog lookup for `osaurus_help find`. The catalog matcher requires
+    /// every query token inside ONE title/section/keyword, so a natural ask
+    /// like "turn off memory" misses the `Enable Memory` row (no keyword
+    /// carries "turn", "off" and "memory" together) even though the row is
+    /// exactly what the user means. When the strict pass is empty, retry
+    /// with intent/state words removed and report the query that matched so
+    /// the model can see what was searched. Management search (the UI) is
+    /// unchanged: it matches what the user typed.
+    static func findSettings(_ query: String) -> (entries: [SettingsSearchEntry], relaxedQuery: String?) {
+        let strict = SettingsSearchIndex.search(query)
+        if !strict.isEmpty { return (strict, nil) }
+        let kept =
+            query.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { !findIntentWords.contains($0) }
+        guard !kept.isEmpty else { return ([], nil) }
+        let relaxed = kept.joined(separator: " ")
+        guard relaxed != query.lowercased() else { return ([], nil) }
+        let hits = SettingsSearchIndex.search(relaxed)
+        return (hits, hits.isEmpty ? nil : relaxed)
     }
 }
 
@@ -1240,6 +1357,7 @@ extension OsaurusInspectTool {
                         "id": agent.id.uuidString,
                         "name": agent.name,
                         "description": agent.description,
+                        "generated_description": agent.generatedDescription ?? "",
                         "system_prompt": agent.systemPrompt,
                         "model": agent.defaultModel ?? "",
                         "temperature": agent.temperature ?? 0,
@@ -1455,6 +1573,31 @@ extension OsaurusInspectTool {
                 } else {
                     payload = nil
                 }
+            case WorkspaceInspectPayload.workspacesScope:
+                payload = WorkspaceInspectPayload.describeWorkspace(idStr)
+            case WorkspaceInspectPayload.sharedAgentsScope:
+                switch WorkspaceInspectPayload.describeSharedAgent(idStr) {
+                case .found(let row):
+                    payload = row
+                case .notFound:
+                    payload = nil
+                case .local(let localName):
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`\(idStr)` is one of this Osaurus's own agents (`\(localName)`), not a "
+                            + "teammate's shared agent. Use {action: \"describe\", scope: \"agents\"}.",
+                        field: "id",
+                        tool: name
+                    )
+                case .ambiguous(let forms):
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`\(idStr)` matches more than one shared agent. Use one of: "
+                            + forms.map { "`\($0)`" }.joined(separator: ", ") + ".",
+                        field: "id",
+                        tool: name
+                    )
+                }
             case "search":
                 let manager = SearchProviderManager.shared
                 if let entry = manager.rankedProviders.enumerated().first(where: {
@@ -1516,7 +1659,7 @@ extension OsaurusInspectTool {
     static let knownReadScopes: Set<String> = [
         "agents", "models", "providers", "mcp", "mcp_providers", "plugins",
         "schedules", "skills", "watchers", "knowledge", "themes", "commands",
-        "channels", "search",
+        "channels", "search", "workspaces", "shared_agents",
     ]
 
     /// Declarative entity-section ids that double as natural scope guesses.
@@ -1552,15 +1695,15 @@ extension OsaurusInspectTool {
             switch scope.lowercased() {
             case "server":
                 path =
-                    "Management ⌘⇧M → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
+                    "Settings… (⌘,) → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
                     + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             case "chat":
                 path =
-                    "Management ⌘⇧M → Chat (compaction, clipboard, streaming). "
-                    + "Context Window Cap is Server → Settings → Cache, not Chat."
+                    "Settings… (⌘,) → Conversation (streaming, clipboard; compaction under Advanced). "
+                    + "Context Window Cap is Server → Settings → Cache, not Conversation."
             default:
                 path =
-                    "Management ⌘⇧M → General (login, dock icon, hotkey, toasts). "
+                    "Settings… (⌘,) → General (login, dock icon, hotkey, notifications). "
                     + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             }
             return ToolEnvelope.failure(
@@ -1573,7 +1716,7 @@ extension OsaurusInspectTool {
                 tool: tool
             )
         }
-        if let section = ConfigSectionID(rawValue: scope.lowercased()) {
+        if let section = ConfigSectionID.parse(scope) {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:

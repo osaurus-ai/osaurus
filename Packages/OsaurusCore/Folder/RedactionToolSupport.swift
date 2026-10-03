@@ -85,11 +85,15 @@ enum RedactionToolSupport {
         return ParsedRules(rules: rules, rejected: rejected)
     }
 
-    /// Ephemeral ruleset: all built-ins + the parsed ad-hoc rules.
-    /// Constructed via a throwaway configuration value; the persisted
-    /// store is never read or written.
+    /// Ephemeral ruleset: the default safety net (built-ins + the
+    /// fresh-install presets for this Mac's locale, so US SSN and the
+    /// like are still covered) + the parsed ad-hoc rules. Constructed
+    /// via a throwaway configuration value; the persisted store is
+    /// never read or written.
     static func ruleset(customRules: [PrivacyRule]) -> RegexEntityDetector.EffectiveRuleSet {
-        .build(from: PrivacyFilterConfiguration(customRules: customRules))
+        var config = PrivacyFilterConfiguration.freshInstall()
+        config.customRules = customRules
+        return .build(from: config)
     }
 
     // MARK: - Backend resolution

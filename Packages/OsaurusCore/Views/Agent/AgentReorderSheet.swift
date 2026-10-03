@@ -93,8 +93,8 @@ struct AgentReorderSheet: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
-                if !agent.description.isEmpty {
-                    Text(agent.description)
+                if !agent.displayDescription.isEmpty {
+                    Text(agent.displayDescription)
                         .font(.system(size: 11))
                         .foregroundColor(theme.secondaryText)
                         .lineLimit(1)

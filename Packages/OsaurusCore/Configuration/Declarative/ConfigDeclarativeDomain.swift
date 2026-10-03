@@ -20,7 +20,7 @@ enum ConfigDeclarativeDomain {
             + "models, plugins, MCP, providers, search, schedules, watchers, tools, "
             + "delegation, commands, knowledge, channels.",
         menuHint:
-            "export / plan / apply a declarative YAML config (schema first, plan before apply)",
+            "apply a small declarative YAML config change (schema documents the format; plan previews big or destructive changes)",
         // Hand-written user-language phrases, plus every section/key name
         // from the manifest (humanized) so new declarative keys rank
         // discovery without editing this list. Server/chat/app phrases were

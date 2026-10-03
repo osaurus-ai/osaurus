@@ -210,11 +210,14 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             if isPluginNotification {
                 ManagementStateManager.shared.pendingToolsSubTab = ToolsTab.nativePlugins.rawValue
             }
-            AppDelegate.shared?.showManagementWindow(
-                initialTab: isPluginNotification ? .tools : .models,
-                deeplinkModelId: modelId,
-                deeplinkFile: nil
-            )
+            // Model links ride shared state (see `pendingModelDeepLink`)
+            // instead of the hosting-controller rebuild that
+            // `showManagementWindow(deeplinkModelId:)` performs on a live
+            // window, which orphans an open SwiftUI sheet.
+            AppDelegate.shared?.showManagementWindow(initialTab: isPluginNotification ? .tools : .models)
+            if let modelId, !isPluginNotification {
+                ManagementStateManager.shared.pendingModelDeepLink = .init(modelId: modelId, file: nil)
+            }
         }
     }
 }

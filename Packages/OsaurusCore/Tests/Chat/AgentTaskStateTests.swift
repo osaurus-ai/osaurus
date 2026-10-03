@@ -295,6 +295,35 @@ struct AgentTaskStateTests {
         )
     }
 
+    /// Raptor-0.6-4B puts `path` inside every `edits` entry (or sends
+    /// `edits` as a JSON string). `FileEditTool` hoists it before validation
+    /// and the edit lands; the state machine sees the raw call and must
+    /// invalidate the same file, or the verify-read replays pre-edit content
+    /// (post4 `edit-pptx-in-place`: "repeated reads continue to show the
+    /// original content").
+    @Test func dedupe_perEntryPathEditInvalidatesRead() {
+        for editArgs in [
+            #"{"dry_run":"false","edits":[{"old_string":"a","new_string":"b","path":"deck.pptx"},{"old_string":"c","new_string":"d","path":"./deck.pptx"}]}"#,
+            #"{"edits":"[{\"old_string\": \"a\", \"new_string\": \"b\", \"path\": \"deck.pptx\"}]"}"#,
+            #"{"edits":[{"op":"fill_form","fields":{"Name":"Ada"},"path":"deck.pptx"}]}"#,
+        ] {
+            let state = AgentTaskState()
+            state.record(
+                name: "file_read", argsJSON: #"{"mode":"content","path":"deck.pptx"}"#,
+                result: fileContentEnvelope(path: "deck.pptx", text: "before"))
+            #expect(state.isDuplicate(name: "file_read", argsJSON: #"{"mode":"content","path":"deck.pptx"}"#))
+            state.record(name: "file_edit", argsJSON: editArgs, result: ToolEnvelope.success(tool: "file_edit", text: "edited"))
+            #expect(
+                state.heldResult(name: "file_read", argsJSON: #"{"mode":"content","path":"deck.pptx"}"#) == nil,
+                "the verify-read after \(editArgs) must re-execute")
+        }
+        // Entries naming different files resolve to no single target.
+        #expect(
+            AgentTaskState.sharedEntryPath(["edits": [["path": "a.txt", "old_string": "x", "new_string": "y"], ["path": "b.txt", "old_string": "x", "new_string": "y"]]])
+                == nil)
+        #expect(AgentTaskState.sharedEntryPath(["edits": [["old_string": "x", "new_string": "y"]]]) == nil)
+    }
+
     @Test func replay_isVerbatimNotCollapsed() {
         let state = AgentTaskState()
         // A long listing whose ContextBudget summary would be much shorter.

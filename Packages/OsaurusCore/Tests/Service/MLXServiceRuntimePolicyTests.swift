@@ -16,6 +16,35 @@ import Testing
 @Suite("MLXService runtime policy gates")
 struct MLXServiceRuntimePolicyTests {
 
+    @Test func toolMetadataDistinguishesUnknownFormatFromExplicitlyUnsupported() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-tool-metadata-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try #"{"model_type":"mimo_v2"}"#.write(
+            to: root.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+        let metadata = [
+            #"{"capabilities":{"tool_parser":"xml_function","supports_tools":true},"tool_calling":{"dialect":"xml_function","format":"<tool_call><function=NAME><parameter=ARG>VALUE</parameter></function></tool_call>"}}"#,
+            #"{"tool_calling":{"dialect":"xml_function","format":"<tool_call><function=NAME>...</function></tool_call>"}}"#,
+            #"{"tool_calling":{"parser":"future_parser","format":"example wire payload"}}"#,
+            #"{"tool_calling":{"format":"xml_function"}}"#,
+        ]
+        for json in metadata {
+            try json.write(to: root.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+            #expect(MLXService.supportsLocalToolCalling(
+                modelName: "mimo-v2.6-flash-rl-jang_2l", modelId: "local/bundle", modelDirectory: root))
+            try MLXService.validateRuntimePolicy(
+                modelName: "mimo-v2.6-flash-rl-jang_2l", modelId: "local/bundle",
+                messages: [ChatMessage(role: "user", content: "Count the lines with line_count.")],
+                parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+                tools: [Self.lineCountTool()], runtime: VMLXServerRuntimeSettings(), modelDirectory: root)
+        }
+        try #"{"capabilities":{"supports_tools":false,"tool_parser":"xml_function"}}"#.write(
+            to: root.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+        #expect(!MLXService.supportsLocalToolCalling(
+            modelName: "local-model", modelId: "local/bundle", modelDirectory: root))
+    }
+
     @Test func serverSettingRejectsVideoWhenDisabled() throws {
         let bundle = try VisionBundleFixture.make(type: "qwen3_vl")
         defer { try? FileManager.default.removeItem(at: bundle) }

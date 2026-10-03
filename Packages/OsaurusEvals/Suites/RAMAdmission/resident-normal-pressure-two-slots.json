@@ -1,0 +1,72 @@
+{
+  "id": "ram_admission.resident-normal-pressure-two-slots",
+  "domain": "subagent",
+  "label": "resident-normal-pressure-two-slots",
+  "query": "Replay explicit host facts through production planner, recovery and one persistent reservation actor.",
+  "notes": "Explicit host pressure and memory facts replayed through production planner/recovery/reservation actor.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "ram_admission",
+      "ramAdmission": {
+        "scenario": {
+          "localJobs": 3,
+          "remoteJobs": 0,
+          "agentLimit": 3,
+          "engineLimit": 3,
+          "batching": true,
+          "ramSafety": true,
+          "steps": [
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2548549873,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2548549873,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "reclaimSucceeds": true
+            }
+          ]
+        },
+        "expected": [
+          {
+            "capacity": 2,
+            "width": 2,
+            "weightCharge": 0,
+            "limitingFactors": [
+              "memoryCapacity"
+            ],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              2,
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          }
+        ]
+      }
+    }
+  }
+}

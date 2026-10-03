@@ -12,6 +12,19 @@ import UniformTypeIdentifiers
 
 @MainActor
 enum ChatSessionExportCoordinator {
+    /// History lists and restored tabs hold metadata with empty turns. Resolve
+    /// availability before the chooser treats those rows as having no metrics.
+    static func hasTimingData(
+        metadataSession: ChatSessionData,
+        load: @MainActor (UUID) async -> ChatSessionData? = { id in
+            await ChatSessionStore.loadAsync(id: id)
+                ?? ChatSessionsManager.shared.session(for: id)
+        }
+    ) async -> Bool {
+        if metadataSession.hasAnyTimingData { return true }
+        return await load(metadataSession.id)?.hasAnyTimingData ?? false
+    }
+
     static func run(
         metadataSession: ChatSessionData,
         format: ChatSessionSidebar.ExportFormat,

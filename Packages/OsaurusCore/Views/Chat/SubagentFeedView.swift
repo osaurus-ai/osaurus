@@ -190,10 +190,15 @@ struct SubagentFeedView: View {
                 Text(kindLabel)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.primaryText)
+                // A failed run's reason is the one thing the user needs from
+                // this header, so it gets warning color and room to wrap
+                // instead of a single truncated grey line.
                 Text(headerSubtitle)
                     .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
+                    .foregroundColor(runFailed ? theme.warningColor : theme.tertiaryText)
+                    .lineLimit(runFailed ? 3 : 1)
+                    .textSelection(.enabled)
+                    .help(headerSubtitle)
             }
             Spacer()
             elapsedLabel
@@ -271,6 +276,11 @@ struct SubagentFeedView: View {
                 .font(.system(size: 13))
                 .foregroundColor(success ? theme.successColor : theme.warningColor)
         }
+    }
+
+    private var runFailed: Bool {
+        if case .finished(false, _) = observer.status { return true }
+        return false
     }
 
     private var headerSubtitle: String {

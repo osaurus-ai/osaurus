@@ -113,12 +113,14 @@ enum RedactionHighlighter {
         on storage: NSTextStorage,
         highlights: [String: RedactionHighlight],
         accentColor: NSColor,
+        underlineStyle: NSUnderlineStyle = [.single, .patternDot],
         a11yLabelBuilder: (RedactionHighlight) -> String
     ) -> [AppliedRedactionRange] {
         return applyInternal(
             on: storage,
             highlights: highlights,
             accentColor: accentColor,
+            underlineStyle: underlineStyle,
             a11yLabelBuilder: a11yLabelBuilder,
             scanRange: NSRange(location: 0, length: storage.length),
             seedFromExistingAttributes: false
@@ -162,6 +164,7 @@ enum RedactionHighlighter {
             on: storage,
             highlights: highlights,
             accentColor: accentColor,
+            underlineStyle: [.single, .patternDot],
             a11yLabelBuilder: a11yLabelBuilder,
             scanRange: NSRange(location: start, length: length),
             seedFromExistingAttributes: true
@@ -172,6 +175,7 @@ enum RedactionHighlighter {
         on storage: NSTextStorage,
         highlights: [String: RedactionHighlight],
         accentColor: NSColor,
+        underlineStyle: NSUnderlineStyle,
         a11yLabelBuilder: (RedactionHighlight) -> String,
         scanRange: NSRange,
         seedFromExistingAttributes: Bool
@@ -218,11 +222,14 @@ enum RedactionHighlighter {
                 let overlaps = paintedIndices.intersects(
                     in: NSRange(location: candidate.location, length: candidate.length)
                 )
-                if !overlaps {
+                // Display only: the wire scrub stays substring-based (a
+                // partial miss would ship PII), but a highlight inside a
+                // longer word ("y" in "ready") is noise, not a redaction
+                // the user would recognise.
+                if !overlaps, !isInsideWord(candidate, in: storageString) {
                     let attributes: [NSAttributedString.Key: Any] = [
                         .foregroundColor: accentColor,
-                        .underlineStyle: NSUnderlineStyle.single.rawValue
-                            | NSUnderlineStyle.patternDot.rawValue,
+                        .underlineStyle: underlineStyle.rawValue,
                         .underlineColor: underlineColor,
                         .redactionPlaceholder: highlight.placeholderToken,
                         .redactionDirection: highlight.direction.rawValue,
@@ -244,5 +251,30 @@ enum RedactionHighlighter {
         }
         storage.endEditing()
         return applied
+    }
+
+    /// True when `range` starts or ends in the middle of a word in a
+    /// space-delimited script: a letter/digit edge touching another
+    /// letter/digit outside the range. Scripts without spaces (CJK,
+    /// Thai) have no boundary to test and are never treated as inside.
+    static func isInsideWord(_ range: NSRange, in string: NSString) -> Bool {
+        guard range.length > 0 else { return false }
+        func character(at utf16Index: Int) -> Character? {
+            guard utf16Index >= 0, utf16Index < string.length else { return nil }
+            let composed = string.rangeOfComposedCharacterSequence(at: utf16Index)
+            return string.substring(with: composed).first
+        }
+        func isWord(_ c: Character?) -> Bool {
+            guard let c, c.isLetter || c.isNumber else { return false }
+            return !c.unicodeScalars.contains { $0.properties.generalCategory == .otherLetter }
+        }
+        if isWord(character(at: range.location)), isWord(character(at: range.location - 1)) {
+            return true
+        }
+        let lastIndex = range.location + range.length - 1
+        if isWord(character(at: lastIndex)), isWord(character(at: range.location + range.length)) {
+            return true
+        }
+        return false
     }
 }

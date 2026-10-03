@@ -4,6 +4,24 @@ import Testing
 @testable import OsaurusCore
 
 struct StringCleaningTests {
+    @Test(arguments: [
+        #"{"name":"no_args","arguments":null}"#, #"{"name":"no_args"}"#,
+        #"{"name":"no_args","arguments":"{}"}"#, #"{"name":"nested","arguments":{"payload":{}}}"#,
+    ])
+    func stripsCompleteInlineToolEnvelope(body: String) {
+        let input = "Before\n<tool_call>\(body)</tool_call>\nAfter"
+        #expect(StringCleaning.stripLeakedActionJSON(input) == "Before\n\nAfter")
+    }
+
+    @Test func preservesOrdinaryXMLAndNameOnlyJSON() {
+        for input in [
+            #"{"name":"Ada"}"#, "<tool_call>explanation</tool_call>",
+            #"<tool_call>{"result":42}</tool_call>"#,
+        ] {
+            #expect(StringCleaning.stripLeakedActionJSON(input) == input)
+        }
+    }
+
     @Test
     func stripGeminiDisplayMetadata_removesGeminiSignatureMarkers() {
         let input = "\u{200B}ts:CiQabcDEF123+/=_\u{200B}Dependencies installed."

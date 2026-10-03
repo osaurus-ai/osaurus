@@ -1,0 +1,82 @@
+{
+  "id": "workspace_delegation.artifacts-back-within-caps",
+  "domain": "subagent",
+  "label": "Workspace delegation • small shared files come back, large ones and folders are listed as omitted",
+  "query": "A shared agent's run shared four artifacts; the relay returns the small files and lists the rest.",
+  "notes": "Model-free. `RemoteRunArtifactRelay.payload` sends bytes for files within the 4 MiB / 16-item caps and lists a 5 MB file as `too_large` and a directory as `directory` — the rows the requester turns into cards and the worker's delivery contract describes.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "workspace",
+      "workspaceDelegation": {
+        "scenario": {
+          "localAgents": [],
+          "sharedAgents": [
+            {
+              "name": "Analyst",
+              "workspaceId": "ws-acme",
+              "workspaceName": "Acme",
+              "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+              "online": true,
+              "lastSeenSecondsAgo": null
+            }
+          ],
+          "localPolicy": "always_allow",
+          "workspacePolicy": "ask",
+          "steps": [
+            {
+              "targets": [
+                "Analyst@Acme"
+              ],
+              "artifacts": [
+                {
+                  "name": "report.md",
+                  "sizeBytes": 1200,
+                  "isDirectory": null
+                },
+                {
+                  "name": "notes.txt",
+                  "sizeBytes": 300,
+                  "isDirectory": null
+                },
+                {
+                  "name": "dataset.bin",
+                  "sizeBytes": 5000000,
+                  "isDirectory": null
+                },
+                {
+                  "name": "out",
+                  "sizeBytes": 0,
+                  "isDirectory": true
+                }
+              ]
+            }
+          ]
+        },
+        "expected": [
+          {
+            "resolutions": [
+              "workspace:Analyst@Acme"
+            ],
+            "refusals": [
+              ""
+            ],
+            "policy": "ask",
+            "cardKinds": [
+              "spawn_workspace"
+            ],
+            "cardDescription": "Let this agent run 1 subagents in parallel? They run on teammates' Macs and spend those workspaces' pools.",
+            "returnedArtifacts": [
+              "report.md",
+              "notes.txt"
+            ],
+            "omittedArtifacts": [
+              "dataset.bin:too_large",
+              "out:directory"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

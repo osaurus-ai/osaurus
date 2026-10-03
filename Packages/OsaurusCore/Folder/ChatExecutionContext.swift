@@ -33,7 +33,7 @@ final class AgentTodoRunScope: @unchecked Sendable {
     /// Loop-control tools. Calling these is bookkeeping, never task progress,
     /// so they must not count as work toward a newly checked item.
     static let loopControlToolNames: Set<String> = [
-        "todo", "complete", "clarify", "share_artifact",
+        "todo", "complete", "clarify", "share_artifact", PromptWorkingFolderTool.toolName,
     ]
 
     var hasCurrentRunTodo: Bool {
@@ -102,7 +102,7 @@ final class WeakChatSessionBox: @unchecked Sendable {
 /// them picks up the right scope without an explicit parameter.
 public enum ChatExecutionContext {
     /// The current chat session id whose tool calls are running. Tools that
-    /// need per-conversation state (todo store, file-op undo log, method
+    /// need per-conversation state (todo store, file history, method
     /// telemetry) key off this.
     @TaskLocal public static var currentSessionId: String?
 
@@ -126,6 +126,12 @@ public enum ChatExecutionContext {
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
 
+    /// Insights attribution: which surface owns the current unit of work.
+    /// Bound by `HTTPHandler` around media / embedding / transcription
+    /// handlers so the in-process emitters (`MediaActivityLogger`) skip
+    /// their own row and let the inbound HTTP row stand alone.
+    @TaskLocal static var currentRequestSource: RequestSource?
+
     /// Workspace billing for the current execution, bound by the HTTP agent-run
     /// surface when the inbound caller authenticated with a workspace-minted
     /// access key (Workspaces shared-agent handshake). Takes precedence over the
@@ -139,6 +145,16 @@ public enum ChatExecutionContext {
     /// chat-owned resident in the process as the invoking orchestrator.
     @TaskLocal public static var currentModelName: String?
 
+    /// Whether the surface driving this tool call can deliver image bytes
+    /// from a tool result to the model (the tool turn becomes a multimodal
+    /// message and the active model accepts images). `file_read` uses it
+    /// to decide between returning an image attachment and running OCR so
+    /// text-only models — and text-only surfaces such as the HTTP API or
+    /// plugin hosts — still "read" the picture. Bound by the chat loop
+    /// (`selectedModelSupportsImages`) and the spawned-agent runner; false
+    /// everywhere else.
+    @TaskLocal public static var toolResultImagesEnabled: Bool = false
+
     /// Explicit Thinking choice frozen for the logical parent turn. Nested
     /// Computer Use, AppleScript, Browser Use, and spawn loops reconstruct their
     /// own requests, so they read this value through `SubagentScope` instead of
@@ -146,6 +162,9 @@ public enum ChatExecutionContext {
     /// `nil` means the user made no explicit choice and the target bundle keeps
     /// ownership of its own template/config default.
     @TaskLocal public static var currentEnableThinking: Bool?
+
+    /// Explicit effort frozen alongside the toggle; nil keeps bundle defaults.
+    @TaskLocal public static var currentReasoningEffort: String?
 
     /// Exact user text that owns the scope of the current logical turn. A
     /// parent model may choose and parameterize a tool, but it may not silently
@@ -161,6 +180,11 @@ public enum ChatExecutionContext {
     /// Specific tool invocation id. Used by `speak` so the inline card
     /// can swap its check for a spinner while its audio plays
     @TaskLocal public static var currentToolCallId: String?
+
+    /// File history change set recording the executing tool call (bound by
+    /// the registry's journal capture). Tools report it as `operation_id`
+    /// so `file_undo` can target exactly this call.
+    @TaskLocal public static var currentChangeSetId: UUID?
 
     /// What this request is allowed to EXECUTE, as opposed to what it merely exposed.
     ///
@@ -358,6 +382,17 @@ public enum ChatExecutionContext {
     /// is unaffected. Module-internal so out-of-module callers cannot bind
     /// it.
     @TaskLocal static var isUnattendedDispatch: Bool = false
+
+    /// True when the run was started by the user's own paired phone, which
+    /// polls for and answers the cards this Mac would otherwise have no way
+    /// to show: the Privacy Filter's redaction review (§19) and `.ask` tool
+    /// approvals, which then queue for `GET /approvals` instead of being
+    /// refused as an external surface (§16). The external deny list still
+    /// applies. Bound by `handleAgentRunEndpoint` only for an owner caller on
+    /// the Secure Channel — a workspace peer, a plain HTTP client or a bare
+    /// loopback script still fails closed. Module-internal so
+    /// out-of-module callers cannot bind it.
+    @TaskLocal static var hasRemoteReviewer: Bool = false
 
     /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
     /// curator role against. A spawned worker keeps `currentAgentId` inherited

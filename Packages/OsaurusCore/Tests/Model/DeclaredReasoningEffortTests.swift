@@ -18,6 +18,71 @@ import Testing
 @Suite(.serialized)
 struct DeclaredReasoningEffortTests {
 
+    @Test("late effort discovery preserves an explicit legacy Off choice")
+    func lateEffortDiscoveryPreservesOff() {
+        let model = "proof/Qwen3.8-reasoning-cold"
+        withOverride(
+            .init(control: .levels(["low", "medium", "xhigh"], defaultLevel: "xhigh"), preserveThinking: nil),
+            forModelId: model
+        ) {
+            for oldOptions: [String: ModelOptionValue] in [
+                ["disableThinking": .bool(true)],
+                ["disableThinking": .bool(true), "reasoningEffort": .string("xhigh")],
+            ] {
+                let normalized = ModelProfileRegistry.normalizedOptions(for: model, persisted: oldOptions)
+                #expect(normalized["reasoningEffort"] == .string("none"))
+                #expect(ModelProfileRegistry.inlineReasoningSuffixLabel(for: model, values: oldOptions) == "None")
+                let context = MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(temperature: nil, maxTokens: 256, modelOptions: normalized),
+                    modelName: model
+                )
+                #expect(context["enable_thinking"] as? Bool == false)
+                #expect(context["reasoning_effort"] == nil)
+            }
+        }
+    }
+
+    @Test("cold first send recovers saved effort Off without synthesizing a default")
+    func coldSendRecoversEffortOff() async {
+        let model = "proof/Qwen3.8-reasoning-cold-send"
+        DeclaredReasoningEffort.testDeclarationOverride = { id in
+            id == model
+                ? .init(control: .levels(["low", "medium", "xhigh"], defaultLevel: "xhigh"), preserveThinking: nil)
+                : nil
+        }
+        defer { DeclaredReasoningEffort.testDeclarationOverride = nil }
+        for effort in ["none", "low", "medium", "xhigh"] {
+            let controls = await ChatTurnGenerationControls.captureForSend(
+                modelId: model,
+                activeModelOptions: [:],
+                storedExplicitOptions: ["reasoningEffort": .string(effort)],
+                resolveCapability: { _ in }
+            )
+            #expect(controls.reasoningEffort == effort)
+            #expect(controls.modelOptions?["reasoningEffort"] == .string(effort))
+        }
+        let unspecified = await ChatTurnGenerationControls.captureForSend(
+            modelId: model,
+            activeModelOptions: [:],
+            storedExplicitOptions: nil,
+            resolveCapability: { _ in }
+        )
+        #expect(unspecified.modelOptions == nil)
+        #expect(unspecified.enableThinking == nil)
+    }
+
+    @Test("a live effort selection wins over an older saved toggle during recovery")
+    func liveEffortWinsOverSavedToggle() async {
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: "proof/Qwen3.8-reasoning-cold-send",
+            activeModelOptions: ["reasoningEffort": .string("low")],
+            storedExplicitOptions: ["disableThinking": .bool(true)],
+            resolveCapability: { _ in Issue.record("A live choice must not trigger cold recovery") }
+        )
+        #expect(controls.reasoningEffort == "low")
+        #expect(controls.enableThinking == nil)
+    }
+
     private func withOverride<T>(
         _ declaration: DeclaredReasoningEffort.Declaration?,
         forModelId targetId: String,

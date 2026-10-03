@@ -58,7 +58,11 @@ enum ConfigSchemaReference {
         connections/per-room routes, WhatsApp/iMessage pairing, hotkeys,
         endpoint changes on existing providers (create-only), skills, custom
         search definitions. Per-agent capability toggles (including
-        computer_use_enabled and browser_use_enabled) stay under
-        `agents[].capabilities`.
+        computer_use_enabled, browser_use_enabled and the built-in Apple app
+        tools under `apple_apps`) stay under `agents[].capabilities`. Apple
+        app access (Calendar, Reminders, Contacts, Notes, Mail, Messages,
+        Maps, Music, Shortcuts) is a custom-agent capability: the
+        Orchestrator never calls those tools itself — it enables them on an
+        agent (or creates one with them) and dispatches that work there.
         """
 }

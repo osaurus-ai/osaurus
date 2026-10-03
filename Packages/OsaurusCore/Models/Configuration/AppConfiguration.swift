@@ -6,10 +6,14 @@
 //  refreshes only when config changes. Eliminates repeated file I/O in views.
 //
 
+import AppKit
 import Foundation
 
 extension Notification.Name {
     static let appConfigurationChanged = Notification.Name("appConfigurationChanged")
+    /// Posted (main queue) when `AppConfiguration.foundationModelAvailable`
+    /// flips, so catalogs that list the `foundation` entry can rebuild.
+    static let foundationModelAvailabilityChanged = Notification.Name("foundationModelAvailabilityChanged")
 }
 
 /// Central cache for configuration - loads from disk once, provides cached access
@@ -27,6 +31,19 @@ public final class AppConfiguration: ObservableObject {
         // thread during launch — probe off-main and publish the result.
         self.foundationModelAvailable = false
         refreshFoundationModelAvailable()
+        // Apple Intelligence can be toggled in System Settings (and the model
+        // finishes downloading) while Osaurus is running. Re-probe whenever
+        // the user comes back so the model picker, the "Use Foundation"
+        // affordances, and the Core Model picker's unavailable hint track
+        // the real state without a relaunch. The runtime router already
+        // reads availability live per request.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in
+                AppConfiguration.shared.refreshFoundationModelAvailable()
+            }
+        }
     }
 
     // MARK: - Public API
@@ -46,7 +63,12 @@ public final class AppConfiguration: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let available = FoundationModelService.isDefaultModelAvailable()
             await MainActor.run {
+                // Only publish a change; the activation observer fires on
+                // every app switch and must not re-render subscribers for
+                // an unchanged value.
+                guard AppConfiguration.shared.foundationModelAvailable != available else { return }
                 AppConfiguration.shared.foundationModelAvailable = available
+                NotificationCenter.default.post(name: .foundationModelAvailabilityChanged, object: nil)
             }
         }
     }
@@ -60,6 +82,25 @@ public final class AppConfiguration: ObservableObject {
     private enum LegacyKey {
         static let provider = "coreModelProvider"
         static let name = "coreModelName"
+    }
+
+    /// An explicit chat-model fallback must survive the legacy migration.
+    /// Delegate all fields to the normal encoder, adding only the otherwise
+    /// omitted nil choice so it differs from an old, never-configured file.
+    private struct PersistedChatConfiguration: Encodable {
+        let config: ChatConfiguration
+
+        private enum CodingKeys: String, CodingKey {
+            case coreModelName
+        }
+
+        func encode(to encoder: Encoder) throws {
+            try config.encode(to: encoder)
+            if config.coreModelName == nil {
+                var values = encoder.container(keyedBy: CodingKeys.self)
+                try values.encodeNil(forKey: .coreModelName)
+            }
+        }
     }
 
     // MARK: - Load / save
@@ -179,6 +220,9 @@ public final class AppConfiguration: ObservableObject {
     /// (2026-04 user report → `migrateCoreModelFromMemoryConfig`).
     private static func chatJsonNeedsLegacyMigration(_ data: Data) -> Bool {
         guard let json = loadJSONObject(from: data) else { return false }
+        // A saved null means the user chose "Use chat model". Missing keys
+        // still allow migration from the older memory.json configuration.
+        if json[LegacyKey.name] is NSNull { return false }
         return (json[LegacyKey.name] as? String)?.isEmpty != false
     }
 
@@ -191,7 +235,7 @@ public final class AppConfiguration: ObservableObject {
             }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(config)
+            let data = try encoder.encode(PersistedChatConfiguration(config: config))
             // Persist off the main thread; the `@Published chatConfig` cache is
             // already updated, so in-process reads see the new value at once.
             // Tests run against an override root and write synchronously.

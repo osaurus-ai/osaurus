@@ -361,8 +361,17 @@ extension ModelPickerItem {
             description:
                 "Chat compatibility is unknown because OpenAI /v1/models does not publish endpoint capabilities.",
             contextLength: officialOpenAIContextWindow(forModelId: modelId),
-            reasoningCapabilities: isPublicGPT56ModelId(modelId) ? .officialOpenAIGPT56 : nil
+            reasoningCapabilities: officialOpenAIReasoningCapabilities(forModelId: modelId)
         )
+    }
+
+    /// Documented public-API reasoning contract for the official host, keyed
+    /// by model family. Nil for families without a documented profile (they
+    /// fall through to the static `ModelProfile` registry).
+    static func officialOpenAIReasoningCapabilities(forModelId modelId: String) -> ModelReasoningCapabilities? {
+        if isPublicGPT6ModelId(modelId) { return .officialOpenAIGPT6Astra }
+        if isPublicGPT56ModelId(modelId) { return .officialOpenAIGPT56 }
+        return nil
     }
 
     /// Context window (tokens) for known `api.openai.com` model families,
@@ -375,6 +384,7 @@ extension ModelPickerItem {
     /// a new family. Scoped to the official host only — never applied to
     /// OpenAI-compatible proxies, whose `id` values aren't OpenAI's to trust.
     private static let officialOpenAIContextWindows: [(prefix: String, tokens: Int)] = [
+        ("gpt-6", 1_050_000),
         ("gpt-5.6", 1_050_000),
         ("gpt-5.5", 1_050_000),
         ("gpt-5.4", 1_050_000),
@@ -400,6 +410,16 @@ extension ModelPickerItem {
     static func isPublicGPT56ModelId(_ id: String) -> Bool {
         let bare = id.split(separator: "/").last.map(String.init) ?? id
         return bare.lowercased().hasPrefix("gpt-5.6")
+    }
+
+    /// Whether a (possibly provider-prefixed) id names a GPT-6 model
+    /// (`gpt-6-astra` and any dated snapshot of it) covered by the documented
+    /// public API reasoning contract.
+    static func isPublicGPT6ModelId(_ id: String) -> Bool {
+        let bare = (id.split(separator: "/").last.map(String.init) ?? id).lowercased()
+        guard bare.hasPrefix("gpt-6") else { return false }
+        let rest = bare.dropFirst("gpt-6".count)
+        return rest.isEmpty || rest.hasPrefix("-") || rest.hasPrefix(".")
     }
 
     /// Create an Osaurus Router model picker item enriched with the router's

@@ -410,6 +410,19 @@ struct HTTPHandlerEndpointTests {
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             #expect(obj?["id"] as? String == hostAgentId.uuidString)
             #expect(obj?["default_model"] as? String == "fake-metadata-model")
+            #expect(obj?["description"] as? String == "")
+            // A blank description is not an error state.
+            #expect(obj?["description_required"] == nil)
+            #expect(obj?["description_validation"] == nil)
+            let (listData, listResponse) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)/agents")!)
+            #expect((listResponse as? HTTPURLResponse)?.statusCode == 200)
+            let list = try JSONSerialization.jsonObject(with: listData) as? [String: Any]
+            let rows = list?["agents"] as? [[String: Any]]
+            let listed = rows?.first { $0["id"] as? String == hostAgentId.uuidString }
+            #expect(listed != nil)
+            #expect(listed?["description_required"] == nil)
+
 
             // An address with no registry mapping still fails closed.
             let unknown = "0xdead000000000000000000000000000000000000"
@@ -440,6 +453,7 @@ struct HTTPHandlerEndpointTests {
             let agent = Agent(
                 id: hostAgentId,
                 name: "Action Bar Peer",
+                description: "Explains and summarizes documents.",
                 defaultModel: "fake-metadata-model",
                 chatQuickActions: actions,
                 isBuiltIn: false,
@@ -462,6 +476,9 @@ struct HTTPHandlerEndpointTests {
             )
             #expect((resp as? HTTPURLResponse)?.statusCode == 200)
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            #expect(obj?["description"] as? String == "Explains and summarizes documents.")
+            #expect(obj?["description_required"] == nil)
+            #expect(obj?["description_validation"] == nil)
             let wireActions = obj?["chat_quick_actions"] as? [[String: Any]]
             #expect(wireActions?.count == 2)
             #expect(wireActions?.first?["text"] as? String == "Explain")
@@ -474,6 +491,21 @@ struct HTTPHandlerEndpointTests {
 
             _ = await AgentManager.shared.delete(id: hostAgentId)
         }
+    }
+
+    /// A client only knows the chat defaults, so the Orchestrator's own
+    /// configure-oriented ones go over the wire; other agents keep nil.
+    @Test func clientQuickActions_sendsTheOrchestratorsDefaults() {
+        let orchestrator = HTTPHandler.clientQuickActions(for: .default)
+        #expect(orchestrator == AgentQuickAction.defaultConfigurationQuickActions)
+        #expect(orchestrator?.isEmpty == false)
+
+        let plain = Agent(id: UUID(), name: "Plain", description: "", isBuiltIn: false)
+        #expect(HTTPHandler.clientQuickActions(for: plain) == nil)
+
+        var hidden = Agent.default
+        hidden.chatQuickActions = []
+        #expect(HTTPHandler.clientQuickActions(for: hidden)?.isEmpty == true)
     }
 
     // MARK: - Test Server Bootstrap
@@ -572,16 +604,19 @@ struct HTTPHandlerEndpointTests {
     @MainActor
     private func withOverriddenRuntimeSettingsDirectory(
         _ dir: URL,
-        _ body: () async throws -> Void
+        _ body: @MainActor @Sendable () async throws -> Void
     ) async throws {
-        let previous = ServerRuntimeSettingsStore.overrideDirectory
-        ServerRuntimeSettingsStore.overrideDirectory = dir
-        ServerRuntimeSettingsStore.invalidateSnapshot()
-        defer {
-            ServerRuntimeSettingsStore.overrideDirectory = previous
+        try await ServerConfigStoreTestLock.shared.run {
+            let previous = ServerRuntimeSettingsStore.overrideDirectory
+            ServerRuntimeSettingsStore.overrideDirectory = dir
             ServerRuntimeSettingsStore.invalidateSnapshot()
-            try? FileManager.default.removeItem(at: dir)
+            defer {
+                ServerRuntimeSettingsStore.overrideDirectory = previous
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+                try? FileManager.default.removeItem(at: dir)
+            }
+            try await body()
+
         }
-        try await body()
     }
 }

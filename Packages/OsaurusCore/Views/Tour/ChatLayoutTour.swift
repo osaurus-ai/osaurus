@@ -61,8 +61,10 @@ extension ChatTourStop {
             ChatTourStop(
                 id: "history",
                 anchor: .historyButton,
-                title: L("Your chat history"),
-                body: L("View and search past chats with this agent.")
+                title: L("Past chats and file changes"),
+                body: L(
+                    "Open the inspector to search past chats with this agent and review, or undo, every file a chat changed."
+                )
             ),
         ]
     }
@@ -116,7 +118,7 @@ public final class ChatLayoutTour: ObservableObject {
     /// launch, and never again once finished or dismissed.
     ///
     /// The start is deferred while any first-run dialog is on screen or
-    /// still queued (post-onboarding import prompt, launch campaign,
+    /// still queued (post-onboarding import prompt, router announcement,
     /// consent) so the coachmarks never fight a modal for the same window.
     func autoStartIfEligible(windowId: UUID) {
         guard !didAutoCheckThisLaunch else { return }

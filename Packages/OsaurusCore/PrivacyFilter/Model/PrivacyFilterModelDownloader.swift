@@ -254,6 +254,11 @@ public final class PrivacyFilterModelDownloader: NSObject, ObservableObject {
         }
 
         await verifyAndFinalize(at: directory)
+        // Fresh install only (not `reverify`): the user just chose this
+        // model, so the AI layer turns on without a second step.
+        if case .ready = state {
+            PrivacyFilterStore.enableAIDetectionAfterInstall()
+        }
     }
 
     private func cleanupSession() {

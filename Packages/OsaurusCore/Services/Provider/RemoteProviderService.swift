@@ -36,6 +36,10 @@ public enum RemoteProviderServiceError: LocalizedError {
     /// into the API provider form. Typed so the edit sheet can offer a
     /// redirect to Tools > Connections instead of a dead-end failure badge.
     case mcpEndpointDetected
+    /// The provider was reconnected or disconnected (its URLSession torn
+    /// down) while this request waited, e.g. on a privacy review. Typed so
+    /// the person sees what happened instead of a bare CancellationError.
+    case sessionReplaced
 
     public var errorDescription: String? {
         switch self {
@@ -72,6 +76,8 @@ public enum RemoteProviderServiceError: LocalizedError {
             return L("\(message)")
         case .mcpEndpointDetected:
             return RemoteProviderMCPDetection.guidance()
+        case .sessionReplaced:
+            return L("The model provider reconnected while this message was waiting. Send it again.")
         }
     }
 
@@ -98,7 +104,7 @@ public enum RemoteProviderServiceError: LocalizedError {
         case .requestFailedWithDiagnostics:
             return self
         case .invalidURL, .notConnected, .streamingError, .noModelsAvailable, .rateLimited,
-            .unsupportedParameter, .mcpEndpointDetected:
+            .unsupportedParameter, .mcpEndpointDetected, .sessionReplaced:
             return self
         }
     }
@@ -203,7 +209,7 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Open a task-creation window on the session. Returns `false` when
     /// invalidation has been requested — the caller must throw
-    /// `CancellationError` instead of touching the session. Every successful
+    /// `RemoteProviderServiceError.sessionReplaced` instead of touching the session. Every successful
     /// `begin` MUST be paired with exactly one `endSessionRequest()`.
     nonisolated func beginSessionRequest() -> Bool {
         sessionLifecycle.withLock { state in
@@ -345,7 +351,7 @@ public actor RemoteProviderService: ToolCapableService {
     ///
     /// Marks the session invalidated BEFORE any teardown so concurrent
     /// producers observe it (`isSessionInvalidated` / a refused
-    /// `beginSessionRequest()`) and bail out with a Swift `CancellationError`
+    /// `beginSessionRequest()`) and bail out with `.sessionReplaced`
     /// instead of calling `bytes(for:)` on an invalidated session and
     /// triggering the uncatchable Obj-C `NSException` abort. When a
     /// task-creation window is currently open, the actual
@@ -358,6 +364,9 @@ public actor RemoteProviderService: ToolCapableService {
         let invalidateNow: Bool = sessionLifecycle.withLock { state in
             guard !state.invalidationRequested else { return false }
             state.invalidationRequested = true
+            print(
+                "[Osaurus] Remote Provider '\(self.provider.name)': session invalidated with \(state.inFlightRequests) request(s) in flight; requests that have not started will fail with sessionReplaced"
+            )
             if state.inFlightRequests == 0 { return true }
             state.deferredInvalidation = currentSession
             return false
@@ -372,7 +381,7 @@ public actor RemoteProviderService: ToolCapableService {
     /// under the task-creation call (uncatchable Obj-C exception — see
     /// `SessionLifecycle`).
     private func trackedData(for request: URLRequest) async throws -> (Data, URLResponse) {
-        guard beginSessionRequest() else { throw CancellationError() }
+        guard beginSessionRequest() else { throw RemoteProviderServiceError.sessionReplaced }
         defer { endSessionRequest() }
         return try await session.data(for: request)
     }
@@ -515,13 +524,27 @@ public actor RemoteProviderService: ToolCapableService {
                 messages: messages,
                 sessionId: parameters.sessionId,
                 providerId: provider.id,
-                requestSource: parameters.requestSource
+                requestSource: parameters.requestSource,
+                reviewMode: parameters.privacyReviewMode
             )
             // Every remote request funnels through here, so this is the one
             // place attached images get sized for the wire (oversized Retina
             // captures → relay/provider 413, mislabeled containers → 400).
             // The local model path never enters this service and keeps
             // full-resolution input.
+            //
+            // Tell the Insights wire probe (when one is attached) whether
+            // the filter ran and how many distinct items it redacted, so
+            // the activity row can say "privacy filter: N redacted" next
+            // to the bytes that left the Mac.
+            if let probe = WireTransportProbe.current {
+                if let map = scrubbed.map {
+                    let redacted = await map.snapshot().count
+                    probe.recordPrivacyFilter(applied: true, redactedCount: redacted)
+                } else {
+                    probe.recordPrivacyFilter(applied: false, redactedCount: 0)
+                }
+            }
             return (RemoteImagePayloadPolicy.prepared(scrubbed.messages), scrubbed.map)
         } catch PrivacyFilterPipelineError.reviewCanceled {
             throw CancellationError()
@@ -1220,6 +1243,7 @@ public actor RemoteProviderService: ToolCapableService {
         var toolHintDeltas: Int = 0
         var billingHintDeltas: Int = 0
         var prefillHintDeltas: Int = 0
+        var artifactHintDeltas: Int = 0
         var toolCallFinishes: Int = 0
         var errorFinishes: Int = 0
         var finishMarker: String?
@@ -1310,6 +1334,8 @@ public actor RemoteProviderService: ToolCapableService {
                 billingHintDeltas += 1
             } else if StreamingPrefillProgressHint.decode(delta) != nil {
                 prefillHintDeltas += 1
+            } else if StreamingArtifactHint.decode(delta) != nil {
+                artifactHintDeltas += 1
             } else if StreamingReasoningHint.decode(delta) != nil {
                 reasoningDeltas += 1
             } else if StreamingToolHint.isSentinel(delta) {
@@ -1666,6 +1692,21 @@ public actor RemoteProviderService: ToolCapableService {
                     endRun: (trace["end_run"] as? Bool) ?? false
                 )
             )
+            state.routerDiagnostics?.recordYield(hint)
+            continuation.yield(hint)
+            return false
+        }
+
+        // Artifacts a teammate's host shared during a Mode 2 run
+        // (`osaurus_artifacts`, one chunk before finish). Carried as a
+        // sentinel so `ChatSession` can import the files into the session's
+        // store; never visible text.
+        if providerType == .osaurus,
+            dataContent.contains("\"osaurus_artifacts\""),
+            let chunk = try? state.decoder.decode(RemoteRunArtifactsChunk.self, from: jsonData),
+            let artifacts = chunk.osaurus_artifacts, !artifacts.isEmpty
+        {
+            let hint = StreamingArtifactHint.encode(artifacts)
             state.routerDiagnostics?.recordYield(hint)
             continuation.yield(hint)
             return false
@@ -2811,10 +2852,10 @@ public actor RemoteProviderService: ToolCapableService {
                     // Bracket the task-creation window (secure handshake +
                     // connect) with the session-lifecycle guard: a concurrent
                     // `invalidateSession()` either refuses this `begin` (we
-                    // bail with CancellationError) or defers its
+                    // bail with `.sessionReplaced`) or defers its
                     // `invalidateAndCancel()` until the matching `end`, so
                     // the session can never be invalidated mid-`bytes(for:)`.
-                    guard self.beginSessionRequest() else { throw CancellationError() }
+                    guard self.beginSessionRequest() else { throw RemoteProviderServiceError.sessionReplaced }
                     let bytes: URLSession.AsyncBytes
                     let response: URLResponse
                     var secureOpener: SecureResponseOpener? = nil
@@ -3558,7 +3599,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         let producerTask = Task {
             do {
-                guard self.beginSessionRequest() else { throw CancellationError() }
+                guard self.beginSessionRequest() else { throw RemoteProviderServiceError.sessionReplaced }
                 let data: Data
                 let response: URLResponse
                 do {
@@ -3854,19 +3895,21 @@ public actor RemoteProviderService: ToolCapableService {
         // tool-heavy payloads) for zero wire benefit.
         let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: false)
 
-        let bodyData: Data
+        var bodyData: Data
         switch requestProviderType {
         case .anthropic:
             try Self.rejectDroppedMediaInputs(in: request.messages, wireName: "Anthropic")
             let anthropicRequest = request.toAnthropicRequest()
             bodyData = try encoder.encode(anthropicRequest)
         case .openResponses:
-            let openResponsesRequest = try request.toOpenResponsesRequest()
+            var outbound = request
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
+            let openResponsesRequest = try outbound.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
         case .openAICodex:
             var outbound = request
             outbound.messages = codexMessagesForCurrentCapabilities(
-                outbound.messages,
+                ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages),
                 modelId: outbound.model
             )
             bodyData = try outbound.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
@@ -3875,13 +3918,20 @@ public actor RemoteProviderService: ToolCapableService {
             )
         case .gemini:
             try Self.rejectDroppedMediaInputs(in: request.messages, wireName: "Gemini")
-            let geminiRequest = request.toGeminiRequest()
+            var outbound = request
+            // functionResponse parts are text-only; tool images ride in a
+            // following user turn as inline data.
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
+            let geminiRequest = outbound.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
         case .openaiLegacy, .azureOpenAI, .osaurus, .osaurusRouter:
             // OpenAI-compat wire. RemoteReasoningPolicy decides how prior-turn
             // reasoning is re-sent: strip (default), keep `reasoning_content`
             // (DeepSeek), or fold it back into `<think>` content (MiniMax).
             var outbound = request
+            // Chat Completions rejects image parts on the tool role: hoist
+            // tool-result images into a following user message.
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
             outbound.messages = RemoteReasoningPolicy.resolve(
                 providerType: requestProviderType,
                 host: provider.host,
@@ -3907,6 +3957,10 @@ public actor RemoteProviderService: ToolCapableService {
             }
             bodyData = try encoder.encode(outbound)
         }
+        // Authored `properties` order for tools that declare one (the
+        // canonical encoder alphabetized them); still deterministic, and it
+        // runs before the router signer hashes the body.
+        bodyData = ToolWirePropertyOrder.apply(to: bodyData)
         urlRequest.httpBody = bodyData
         if provider.providerType == .osaurusRouter {
             // The signer hashes `bodyData`, so the `idempotency_key` embedded
@@ -4974,12 +5028,24 @@ struct RemoteChatRequest: Encodable {
                 // a non-whitespace marker for an empty result.
                 if let toolCallId = msg.tool_call_id {
                     let resultText = RemoteProviderService.toolResultText(msg.content)
+                    // Tool results that carry images (`file_read` on a
+                    // picture) become `[text, image...]` blocks — the
+                    // Messages API accepts image blocks inside tool_result.
+                    let imageBlocks: [AnthropicContentBlock] = msg.imageUrls.compactMap { url in
+                        RemoteProviderService.anthropicImageBlock(fromImageUrl: url).map { .image($0) }
+                    }
+                    let content: AnthropicToolResultContent
+                    if imageBlocks.isEmpty {
+                        content = .text(resultText)
+                    } else {
+                        content = .blocks([.text(AnthropicTextBlock(text: resultText))] + imageBlocks)
+                    }
                     pendingToolResults.append(
                         .toolResult(
                             AnthropicToolResultBlock(
                                 type: "tool_result",
                                 tool_use_id: toolCallId,
-                                content: .text(resultText),
+                                content: content,
                                 is_error: nil
                             )
                         )
@@ -5002,7 +5068,7 @@ struct RemoteChatRequest: Encodable {
                 AnthropicTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    input_schema: tool.function.parameters ?? emptySchema,
+                    input_schema: tool.function.parameters?.withEmptyPropertiesIfMissing ?? emptySchema,
                     // GA Anthropic contract: stream large parameter values as
                     // generated so file-write calls do not sit entirely in an
                     // upstream buffer until the value closes.
@@ -5043,6 +5109,12 @@ struct RemoteChatRequest: Encodable {
             // Observed live 2026-07-09 (req_011CcscQwssbYSF8ZBJ8Awdp): HTTP 400
             // "`temperature` is deprecated for this model." on claude-sonnet-5.
             "claude-sonnet-5",
+            // claude-opus-5 (released 2026-07-24) is an adaptive-thinking
+            // model of the same generation as sonnet-5 / fable-5 and shares
+            // their sampler-knob deprecation. Added from the documented
+            // model contract; confirm with a live HTTP 400 trace when an
+            // Anthropic key is available.
+            "claude-opus-5",
         ]
         let deprecatesSamplerKnobs = knobDeprecatingClaudePrefixes.contains {
             bareModel.hasPrefix($0)
@@ -6640,6 +6712,8 @@ extension RemoteProviderService {
         /// The agent's live display name (may differ from the name captured at
         /// pair time if the owner renamed it).
         public let name: String?
+        /// nil means an older peer omitted the field; an explicit empty
+        /// string clears a previously cached purpose and requires repair.
         public let description: String?
         /// Mascot avatar id (e.g. "green"); nil = monogram fallback.
         public let avatar: String?
@@ -6697,7 +6771,7 @@ extension RemoteProviderService {
         return RemoteAgentMetadata(
             effectiveModel: model,
             name: (trimmedName?.isEmpty == false) ? trimmedName : nil,
-            description: (trimmedDescription?.isEmpty == false) ? trimmedDescription : nil,
+            description: trimmedDescription,
             avatar: (trimmedAvatar?.isEmpty == false) ? trimmedAvatar : nil,
             quickActions: parseQuickActions(from: data)
         )

@@ -302,6 +302,7 @@ struct AgentsView: View {
             // tab. Coming back rebuilds this view, so the publisher has
             // already fired by now and the value has to be read directly.
             resumeParkedSetupIfNeeded()
+            routeSettingsLanding(highlightCoordinator.pending)
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
@@ -327,14 +328,7 @@ struct AgentsView: View {
             isCreating = true
         }
         .onChange(of: highlightCoordinator.pending) { _, pending in
-            // Settings-search landings target the grid (header / agent
-            // cards); pop any open detail so the anchored control is
-            // actually on screen to glow.
-            guard let pending, pending.hasPrefix("agents.") else { return }
-            withAnimation(Self.navTransition) {
-                selectedAgent = nil
-                selectedRemoteAgentId = nil
-            }
+            routeSettingsLanding(pending)
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
@@ -361,6 +355,74 @@ struct AgentsView: View {
                 selectedAgent = target
             }
         }
+    }
+
+    /// Settings-search landing router. Also invoked from `onAppear`: the
+    /// coordinator publishes the id BEFORE the Management tab switches, so a
+    /// cold-mounted Agents tab never sees the `onChange`.
+    private func routeSettingsLanding(_ pending: String?) {
+        guard let pending, pending.hasPrefix("agents.") else { return }
+        if pending == "agents.description",
+            let target = detailAgent ?? customAgents.first
+        {
+            selectedRemoteAgentId = nil
+            deeplinkTab = (target.id, "configure")
+            selectedAgent = target
+            NotificationCenter.default.post(
+                name: .agentDetailDeeplink, object: nil,
+                userInfo: ["agentId": target.id, "tab": "configure"]
+            )
+            return
+        }
+        if pending.hasPrefix("agents.appleApps") {
+            // The Apple app groups live inside a custom agent's
+            // Abilities → Tools picker, not on the grid: route into the
+            // first custom agent's Tools tab (or keep the currently open
+            // custom agent) so the anchored group can scroll and glow.
+            // With no custom agent yet there is nothing to land on; the
+            // grid's onboarding CTA is the right place to be.
+            guard let target = Self.appleAppsLandingAgent(open: detailAgent, all: agentManager.agents) else {
+                withAnimation(Self.navTransition) {
+                    selectedAgent = nil
+                    selectedRemoteAgentId = nil
+                }
+                return
+            }
+            deeplinkTab = (target.id, Self.appleAppsLandingTabRaw)
+            if detailAgent?.id == target.id {
+                // Already mounted: the detail view flips its own tab via
+                // the deeplink notification, same as the What's New CTA.
+                NotificationCenter.default.post(
+                    name: .agentDetailDeeplink, object: nil,
+                    userInfo: ["agentId": target.id, "tab": Self.appleAppsLandingTabRaw]
+                )
+            } else {
+                withAnimation(Self.navTransition) {
+                    selectedRemoteAgentId = nil
+                    selectedAgent = target
+                }
+            }
+            return
+        }
+        // Other settings-search landings target the grid (header /
+        // agent cards); pop any open detail so the anchored control is
+        // actually on screen to glow.
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            selectedRemoteAgentId = nil
+        }
+    }
+
+    /// Detail tab raw value the `agents.appleApps*` landings open.
+    static let appleAppsLandingTabRaw = "capabilities"
+
+    /// Which custom agent an `agents.appleApps*` settings-search landing
+    /// should open: the custom agent already on screen, else the first
+    /// custom (non-built-in) agent in display order. `nil` when there is no
+    /// custom agent (the Default agent has no Apple app groups).
+    static func appleAppsLandingAgent(open: Agent?, all: [Agent]) -> Agent? {
+        if let open, !open.isBuiltIn { return open }
+        return all.first { !$0.isBuiltIn }
     }
 
     // MARK: - Grid Content
@@ -843,13 +905,13 @@ private struct AgentCard: View {
                         // Always render the description line so card heights line
                         // up across the grid — placeholder when the agent has none.
                         Text(
-                            agent.description.isEmpty
+                            agent.routingDescription.isEmpty
                                 ? L("No description")
-                                : agent.description
+                                : agent.routingDescription
                         )
                         .font(.system(size: 11))
                         .foregroundColor(
-                            agent.description.isEmpty ? theme.tertiaryText : theme.secondaryText
+                            agent.routingDescription.isEmpty ? theme.tertiaryText : theme.secondaryText
                         )
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1457,13 +1519,6 @@ struct AgentDetailView: View {
     /// Per-agent shared workspace agents this agent may delegate to. Mirrored
     /// from / into `AgentSettings.spawnableWorkspaceAgents`.
     @State private var spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
-    /// Per-agent `spawn_model` allow-list (raw model ids this agent may spawn).
-    /// Mirrored from / into `AgentSettings.spawnableModelNames`; empty hides the
-    /// `spawn_model` tool.
-    @State private var spawnableModelNames: [String] = []
-    /// Per-agent "when/how to use" notes keyed by spawnable model id. Mirrored
-    /// from / into `AgentSettings.spawnableModelNotes`; pruned to the pool on save.
-    @State private var spawnableModelNotes: [String: String] = [:]
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
@@ -1497,7 +1552,6 @@ struct AgentDetailView: View {
     @State private var loadedSubagentPermissions: SubagentPermissionDefaults =
         SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
-    @State private var spawnToolAccess: SpawnToolAccess = .none
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
     /// spawn). Empty/absent = inherit the kind's default model.
     /// Mirrored from / into `AgentSettings.subagentModelOverrides`.
@@ -1559,6 +1613,8 @@ struct AgentDetailView: View {
     @State private var abilityContextDeltaDismissTask: Task<Void, Never>?
     @State private var abilityPreviewToolMode: ToolSelectionMode?
     @State private var abilityPreviewToolNames: Set<String>?
+    @State private var abilityPreviewAppleApps: Set<AppleApp>?
+    @Environment(\.settingsLandingPending) private var settingsLandingPending
     @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
     @State private var abilityPreviewRegistryRevision = 0
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
@@ -1751,6 +1807,17 @@ struct AgentDetailView: View {
         return hasConfig || hasInstructions || hasSecrets
     }
 
+    /// The Tools picker hosts every Apple app group, so it is the landing
+    /// target for the group row and for each per-app catalog row. One anchor
+    /// id at a time (stacked `.id()`s would shadow each other): whichever
+    /// `agents.appleApps*` id is pending, else the group id.
+    private var appleAppsLandingAnchorId: String {
+        if let pending = settingsLandingPending, pending.hasPrefix("agents.appleApps") {
+            return pending
+        }
+        return "agents.appleApps"
+    }
+
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
@@ -1758,12 +1825,16 @@ struct AgentDetailView: View {
             AgentCapabilityManagerView(
                 agentId: agent.id,
                 onDismiss: nil,
-                onSelectionChanged: { mode, names in
+                onSelectionChanged: { mode, names, appleApps in
                     abilityPreviewToolMode = mode
                     abilityPreviewToolNames = names
+                    abilityPreviewAppleApps = appleApps
                 }
             )
                 .environment(\.theme, themeManager.currentTheme)
+                // Built-in Apple apps live in this picker (one group per
+                // app); the `agents.appleApps[.<app>]` catalog rows land here.
+                .settingsLandingAnchor(appleAppsLandingAnchorId)
                 .id(selectedTab)
         case .builtIn(.database):
             DatabaseWorkspaceView(
@@ -2509,6 +2580,19 @@ struct AgentDetailView: View {
         }
     }
 
+    /// The background-generated routing summary, shown as the description
+    /// field's placeholder while the user has not written their own. Read
+    /// from the live record so a summary that lands while this pane is open
+    /// appears without reopening it.
+    private var generatedDescriptionPlaceholder: String? {
+        guard AgentDescriptionPolicy.normalized(description).isEmpty,
+            let live = agentManager.agent(for: agent.id),
+            AgentDescriptionPolicy.normalized(live.description).isEmpty
+        else { return nil }
+        let generated = AgentDescriptionPolicy.normalized(live.generatedDescription ?? "")
+        return generated.isEmpty ? nil : generated
+    }
+
     /// Editable identity card — name, description, and "Created" footer. Lives at
     /// the top of the Configure tab now that the title bar's avatar/dropdown is
     /// dedicated to switching between agents.
@@ -2522,10 +2606,17 @@ struct AgentDetailView: View {
                 )
 
                 StyledTextField(
-                    placeholder: L("Brief description (optional)"),
+                    placeholder: generatedDescriptionPlaceholder ?? L("Brief description (optional)"),
                     text: $description,
                     icon: "text.alignleft"
                 )
+                .accessibilityIdentifier("agent.description")
+                .settingsLandingAnchor("agents.description")
+                if generatedDescriptionPlaceholder != nil {
+                    Text("Auto-generated from the system prompt; type to override.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
 
                 HStack(spacing: 6) {
                     Image(systemName: "calendar")
@@ -3305,7 +3396,7 @@ struct AgentDetailView: View {
                 }
 
                 Text(
-                    "Generates this agent's follow-up questions on a separate, usually cheaper or faster model, so the chat model is never interrupted. Applies only while Suggest Follow-Up Questions is on in Chat settings.",
+                    "Generates this agent's follow-up questions on a separate, usually cheaper or faster model, so the chat model is never interrupted. Applies only while Suggest Follow-Up Questions is on in Conversation settings.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -3531,6 +3622,12 @@ struct AgentDetailView: View {
         let toolNames =
             abilityPreviewToolNames
             ?? Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        // Apple apps are written by the Tools picker straight through
+        // `AgentManager` (like `manualToolNames`); mirror the picker's
+        // in-flight value first, then the persisted set.
+        let enabledAppleApps =
+            agent.id == Agent.defaultId
+            ? [] : (abilityPreviewAppleApps ?? currentAgent.settings.enabledAppleApps)
         let autonomous =
             abilityPreviewAutonomousConfig
             ?? agentManager.effectiveAutonomousExec(for: agent.id)
@@ -3541,13 +3638,10 @@ struct AgentDetailView: View {
             .map(\.grantDescriptor)
         let spawnConfiguration = AgentSpawnConfigSnapshot(
             agentIDs: spawnableAgentIDs.filter { $0 != agent.id },
-            modelNames: spawnableModelNames,
-            modelNotes: spawnableModelNotes,
             budgets: SpawnBatchConcurrencyContract.applyingSharedLimit(
                 from: globalSubagentConfig,
                 to: subagentBudgets
             ),
-            toolAccess: spawnToolAccess,
             launcherModelOverride:
                 subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
             workspaceAgents: spawnableWorkspaceAgents
@@ -3575,9 +3669,8 @@ struct AgentDetailView: View {
             videoEnabled: videoEnabled,
             appleScriptEnabled: appleScriptEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
-            spawnableModelNames: spawnableModelNames,
-            spawnableModelNotes: spawnableModelNotes,
             spawnConfiguration: spawnConfiguration,
+            enabledAppleApps: enabledAppleApps,
             autonomousConfig: autonomous,
             knowledgeCollections: collections,
             registryRevision: abilityPreviewRegistryRevision
@@ -3616,6 +3709,9 @@ struct AgentDetailView: View {
 
     /// On/off values behind the hero's "N of M abilities on" counter, in
     /// card order. Working Folder counts as on when the agent has a folder.
+    /// Apple apps are deliberately NOT counted: they have no Overview card
+    /// (they are groups in the Tools tab), so counting them made the
+    /// denominator disagree with the cards on screen.
     private var abilityFlagValues: [Bool] {
         var flags = [toolsEnabled]
         if agent.id != Agent.defaultId {
@@ -4458,23 +4554,18 @@ struct AgentDetailView: View {
         if flag == .spawn {
             let configuredAgentIDs = spawnableAgentIDs.filter { $0 != agent.id }
             configuredSpawnTargetCount =
-                configuredAgentIDs.count + spawnableModelNames.count
-                + spawnableWorkspaceAgents.count
+                configuredAgentIDs.count + spawnableWorkspaceAgents.count
             let availability = SpawnDescriptors.resolveForPreview(
                 agentIDs: configuredAgentIDs,
-                modelNames: spawnableModelNames,
-                modelNotes: spawnableModelNotes,
                 launcherModelOverride:
                     subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
                 workspaceAgents: spawnableWorkspaceAgents
             )
             runnableSpawnTargetCount =
                 availability.runnableAgentIDs.count
-                + availability.runnableModelIds.count
                 + availability.runnableWorkspaceAgents.count
             checkingSpawnTargets =
                 availability.agentTargets.contains { $0.state == .checking }
-                || availability.modelTargets.contains { $0.state == .checking }
         }
 
         let permissionKindId: String = {
@@ -4730,15 +4821,12 @@ struct AgentDetailView: View {
                 modelOverride: spawnModelOverrideBinding,
                 spawnableAgentIDs: $spawnableAgentIDs,
                 spawnableWorkspaceAgents: $spawnableWorkspaceAgents,
-                spawnableModelNames: $spawnableModelNames,
-                spawnableModelNotes: $spawnableModelNotes,
                 permissionDefaults: $subagentPermissions,
                 budgets: sharedSpawnBudgetsBinding,
-                toolAccess: $spawnToolAccess,
                 onChange: debouncedSave
             )
             subagentFootnote(
-                "Local model swapping and memory checks for subagents are system settings in Settings → Subagents."
+                "Local model swapping and memory checks for subagents are system settings in Settings → Orchestrator."
             )
         case .image:
             imageModelPickerRows
@@ -7179,8 +7267,6 @@ struct AgentDetailView: View {
         screenContextEnabled = agent.settings.screenContextEnabled
         spawnableAgentIDs = agent.settings.spawnableAgentIDs
         spawnableWorkspaceAgents = agent.settings.spawnableWorkspaceAgents
-        spawnableModelNames = agent.settings.spawnableModelNames
-        spawnableModelNotes = agent.settings.spawnableModelNotes
         imageGenerationTarget = agent.settings.imageGenerationTarget
         imageEditModelId = agent.settings.imageEditModelId
         textToVideoTarget = agent.settings.textToVideoTarget
@@ -7194,7 +7280,6 @@ struct AgentDetailView: View {
             to: agent.settings.subagentBudgets
         )
         subagentModelOverrides = agent.settings.subagentModelOverrides
-        spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = globalSpawnConfiguration
         workingFolderPath = agent.workingFolderPath
@@ -7346,11 +7431,20 @@ struct AgentDetailView: View {
         // pass through `current.*` values rather than this view's local mirrors,
         // which only get refreshed via `loadAgentData()`. Otherwise the debounced
         // save could lose a picker change made between load and save.
+        let trimmedPrompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The background summary lives on the live record, not in this form;
+        // carry it through so a save does not discard it and force a
+        // regeneration. A summary of a different prompt is stale routing
+        // metadata, so drop it and let `AgentDescriptionBackfill` redo it.
+        let promptUnchanged =
+            current.generatedDescriptionPromptHash == AgentDescriptionPolicy.promptHash(trimmedPrompt)
         let updated = Agent(
             id: agent.id,
             name: trimmedName,
-            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
-            systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: AgentDescriptionPolicy.normalized(description),
+            generatedDescription: promptUnchanged ? current.generatedDescription : nil,
+            generatedDescriptionPromptHash: promptUnchanged ? current.generatedDescriptionPromptHash : nil,
+            systemPrompt: trimmedPrompt,
             themeId: selectedThemeId,
             defaultModel: selectedModel,
             temperature: Float(temperature),
@@ -7408,20 +7502,11 @@ struct AgentDetailView: View {
                 appleScriptEnabled: appleScriptEnabled,
                 appleScriptModelId: appleScriptModelId,
                 appleScriptExecutionMode: appleScriptExecutionMode,
-                // Persist the configured pools even while Spawn is off. The
-                // capability flag still hides/refuses the tools, while a later
-                // re-enable restores the user's deliberate agents, models, and
-                // routing notes instead of silently destroying them.
+                // Persist the configured pool even while Spawn is off. The
+                // capability flag still hides/refuses the tool, while a later
+                // re-enable restores the user's deliberate agents instead of
+                // silently destroying them.
                 spawnableAgentIDs: spawnableAgentIDs,
-                spawnableModelNames: SubagentConfiguration.normalizedSpawnableModelNames(
-                    spawnableModelNames
-                ),
-                spawnableModelNotes: SubagentConfiguration.normalizedSpawnableModelNotes(
-                    spawnableModelNotes,
-                    names: SubagentConfiguration.normalizedSpawnableModelNames(
-                        spawnableModelNames
-                    )
-                ),
                 // Image models / permissions / budgets persist unconditionally —
                 // a stored model id is ignored while the capability is off, so a
                 // toggle round-trip keeps the user's choices (unlike the spawn
@@ -7440,8 +7525,12 @@ struct AgentDetailView: View {
                 knowledgeEnabled: knowledgeEnabled,
                 knowledgeCollectionIds: knowledgeCollectionIds,
                 knowledgeCuratorEnabled: knowledgeCuratorEnabled,
-                spawnToolAccess: spawnToolAccess,
-                spawnableWorkspaceAgents: spawnableWorkspaceAgents
+                spawnableWorkspaceAgents: spawnableWorkspaceAgents,
+                // Apple app families are written by the Tools picker through
+                // `AgentManager.updateEnabledAppleApps` (instant save, like
+                // `manualToolNames`), so pass the persisted value through.
+                // The Default agent never carries any.
+                enabledAppleApps: agent.id == Agent.defaultId ? [] : current.settings.enabledAppleApps
             ),
             order: current.order
         )
@@ -8379,6 +8468,7 @@ private struct AgentEditorSheet: View {
     @State private var selectedModel: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
+    @State private var showAddModelWarning: Bool = false
     @State private var hasAppeared: Bool = false
     /// Inline guidance in the footer when Create cannot proceed yet. Shown
     /// next to the button, never as a toast, so the cause and the fix stay
@@ -8403,6 +8493,11 @@ private struct AgentEditorSheet: View {
     @State private var draftMode: ToolSelectionMode = .auto
     @State private var draftToolNames: Set<String> = []
     @State private var draftSeeded: Bool = false
+    /// Optional Apple app families to provision at creation, picked in the
+    /// same Customize… tool picker (one group per app; Abilities → Tools
+    /// after the fact). Empty by default — macOS is asked for permission
+    /// only once an app is on and the agent exists.
+    @State private var draftAppleApps: Set<AppleApp> = []
 
     @FocusState private var nameFocused: Bool
 
@@ -8466,6 +8561,47 @@ private struct AgentEditorSheet: View {
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
+        .themedAlert(
+            L("Leave without creating this agent?"),
+            isPresented: $showAddModelWarning,
+            message: L(
+                "Adding a model switches to the Models tab and closes this window. Create the agent first to keep what you entered."
+            ),
+            buttons: [
+                .cancel(L("Keep Editing")),
+                .destructive(L("Discard and Add Model")) { openModelsTab() },
+            ],
+            width: 380,
+            presentationStyle: .contained
+        )
+    }
+
+    /// True once the user has put anything into the form that closing the
+    /// sheet would throw away.
+    private var hasUnsavedDraft: Bool {
+        nameUserEdited
+            || !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || selectedTemplate != .blank
+            || selectedAvatar != nil
+    }
+
+    /// "Add Model" in the picker switches the Management window to the Models
+    /// tab, which tears down `AgentsView` and this sheet with it. Warn first
+    /// when there is a draft to lose.
+    private func handleAddModel() {
+        showModelPicker = false
+        Task { @MainActor in
+            try? await Task.sleepForPopoverDismiss()
+            if hasUnsavedDraft {
+                showAddModelWarning = true
+            } else {
+                openModelsTab()
+            }
+        }
+    }
+
+    private func openModelsTab() {
+        AppDelegate.shared?.showManagementWindow(initialTab: .models)
     }
 
     /// Embedded picker pane shown when the user clicks "Customize…". Operates
@@ -8478,6 +8614,7 @@ private struct AgentEditorSheet: View {
         AgentCapabilityManagerView(
             draftMode: $draftMode,
             draftTools: $draftToolNames,
+            draftAppleApps: $draftAppleApps,
             onDismiss: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                     inlineCustomize = false
@@ -8714,7 +8851,8 @@ private struct AgentEditorSheet: View {
                     options: pickerItems,
                     selectedModel: $selectedModel,
                     agentId: nil,
-                    onDismiss: { showModelPicker = false }
+                    onDismiss: { showModelPicker = false },
+                    onAddModel: handleAddModel
                 )
             }
         }
@@ -8829,7 +8967,11 @@ private struct AgentEditorSheet: View {
             ? L("Loaded on demand from your assigned set.")
             : L("All assigned tools are sent every turn.")
         let countLabel = toolCount == 1 ? L("1 tool assigned") : L("\(toolCount) tools assigned")
-        return "\(countLabel) · \(modeBlurb)"
+        if draftAppleApps.isEmpty {
+            return "\(countLabel) · \(modeBlurb)"
+        }
+        let apps = AppleApp.sorted(draftAppleApps).map(\.displayName).joined(separator: ", ")
+        return "\(countLabel) · \(L("Apple apps: \(apps)")) · \(modeBlurb)"
     }
 
     private var promptField: some View {
@@ -8968,14 +9110,14 @@ private struct AgentEditorSheet: View {
                 icon: "square.on.square.dashed",
                 title: "Create Agent from Template",
                 subtitleText: seed.subtitle,
-                onClose: onCancel
+                onClose: cancelCreation
             )
         } else {
             AgentSheetHeader(
                 icon: "person.crop.circle.badge.plus",
                 title: "Create Agent",
                 subtitle: "Pick a starter, name it, write a prompt",
-                onClose: onCancel
+                onClose: cancelCreation
             )
         }
     }
@@ -8989,7 +9131,7 @@ private struct AgentEditorSheet: View {
             ),
             secondary: AgentSheetFooter.Action(
                 label: "Cancel",
-                handler: onCancel
+                handler: cancelCreation
             ),
             hint: "+ Enter to create",
             warning: footerWarning
@@ -9029,6 +9171,10 @@ private struct AgentEditorSheet: View {
         }
     }
 
+    private func cancelCreation() {
+        onCancel()
+    }
+
     @MainActor
     private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -9046,7 +9192,8 @@ private struct AgentEditorSheet: View {
         // Bake the (possibly user-edited) draft sets directly into the new
         // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first
         // Capabilities-tab open. The auto-grow path keeps these sets fresh
-        // when new plugins are installed later.
+        // when new plugins are installed later. The description stays blank
+        // here; `AgentDescriptionBackfill` summarizes the prompt afterwards.
         var agent: Agent
         if let seed {
             // Keep everything the template carried (sandbox, subagents,
@@ -9068,6 +9215,7 @@ private struct AgentEditorSheet: View {
         agent.toolSelectionMode = draftMode
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar
+        agent.settings.enabledAppleApps = draftAppleApps
 
         onSave(agent)
     }

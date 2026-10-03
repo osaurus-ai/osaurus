@@ -37,16 +37,17 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
     // The first sentence must stay ≤180 chars: the Default agent's compact
     // bootstrap schema keeps only that sentence.
     public let description =
-        "Configure Osaurus with one declarative YAML document: export current config, "
-        + "plan a diff, and apply it (agents, models, plugins, MCP, providers, schedules, "
-        + "watchers, tools, memory, delegation, commands, knowledge, channels). "
-        + "`action`: schema (the YAML reference — read it before writing a document), "
+        "Configure Osaurus by applying a declarative YAML document: agents, models, "
+        + "plugins, MCP, providers, schedules, watchers, tools, memory, delegation, commands, "
+        + "knowledge, channels. "
+        + "`action`: schema (the YAML reference — read it when unsure of a key), "
         + "export (current state as YAML; optional `sections` filter and `save_as` template name), "
-        + "plan (dry-run diff of `yaml` or `template` against current state; ALWAYS plan before apply "
-        + "and show the user the summary), "
-        + "apply (validate + plan + execute; same inputs as plan, plus optional `prune` to delete "
-        + "entries not listed in the document's declared sections — destructive, use only when the "
-        + "user wants an exact mirror), "
+        + "apply (validate + plan + execute in one step, gated by the native one-tap approval "
+        + "card — the normal way to make a change; plus optional `prune` to delete entries not "
+        + "listed in the document's declared sections — destructive, use only when the user wants "
+        + "an exact mirror), "
+        + "plan (dry-run diff of `yaml` or `template` against current state; changes nothing — "
+        + "use it to preview a big or destructive change, then apply), "
         + "templates (list saved templates in ~/.osaurus/templates — both whole-config YAML templates "
         + "and AGENT templates from the Templates tab). "
         + "To create an agent from an agent template, pass its name as `template` with optional "
@@ -190,7 +191,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         }
         var resolved = Set<ConfigSectionID>()
         for candidate in names {
-            guard let id = ConfigSectionID(rawValue: candidate.lowercased()) else {
+            guard let id = ConfigSectionID.parse(candidate) else {
                 var message = "Unknown section `\(candidate)`."
                 if let suggestion = Self.closestSectionName(to: candidate) {
                     message += " Did you mean `\(suggestion)`?"
@@ -342,7 +343,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         }
 
         do {
-            let plan = try await MainActor.run {
+            let plan = try await MainActor.run { [document] in
                 var plan = try ConfigPlanner.plan(document: document, prune: prune)
                 Self.annotate(&plan, basedOn: basedOn)
                 return plan
@@ -395,7 +396,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
 
         let plan: ConfigPlan
         do {
-            plan = try await MainActor.run {
+            plan = try await MainActor.run { [document] in
                 var plan = try ConfigPlanner.plan(document: document, prune: prune)
                 Self.annotate(&plan, basedOn: basedOn)
                 return plan
@@ -427,14 +428,32 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         // auto-approves, external/headless surfaces and unattended
         // schedule/watcher dispatches auto-deny (never park a card nobody
         // can answer, and never let an unattended run reconfigure the app).
+        // The owner's paired phone is attended: its runs park the plan for
+        // the phone to answer (`GET /config/approvals`, MOBILE_PROTOCOL
+        // §16.3), with longer to read it than the Mac's card gives.
         let approval: ConfigApprovalOutcome
         if ChatExecutionContext.autoApproveToolPrompts {
             approval = .approved
         } else if ChatExecutionContext.denyUnapprovedToolPrompts
-            || ChatExecutionContext.isExternalSurface
             || ChatExecutionContext.isUnattendedDispatch
+            || (ChatExecutionContext.isExternalSurface && !ChatExecutionContext.hasRemoteReviewer)
         {
-            approval = .denied
+            // Nobody was asked, so the model must not be told the user said
+            // no: that reads as a decision and ends the setup it was doing.
+            return ToolEnvelope.failure(
+                kind: .permissionDenied,
+                message: "Configuration changes need the user's approval in the Osaurus app, "
+                    + "and this run has no way to show it. Nothing was applied.",
+                tool: name,
+                retryable: false
+            )
+        } else if ChatExecutionContext.hasRemoteReviewer {
+            approval = await ConfigApprovalQueue.shared.requestApproval(
+                plan: plan,
+                prune: prune,
+                fromPairedPhone: true,
+                timeout: .seconds(300)
+            )
         } else {
             approval = await ConfigApprovalService.requestApproval(plan: plan, prune: prune)
         }
@@ -573,7 +592,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         // are not listed at all, so the model cannot discover them by name.
         // `AgentTemplate` is Sendable; the `[String: Any]` rows are built
         // outside the actor hop.
-        let visible: [AgentTemplate] = await MainActor.run {
+        let visible: [AgentTemplate] = await MainActor.run { [document] in
             AgentTemplateStore.shared.reload()
             return AgentTemplateStore.shared.orchestratorVisible
         }
@@ -709,7 +728,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
             switch ConfigTemplateStore.load(name: templateName) {
             case .success(let contents): yaml = contents
             case .failure(let message):
-                let agentNames = await MainActor.run {
+                let agentNames = await MainActor.run { [document] in
                     AgentTemplateStore.shared.orchestratorVisible.map(\.name)
                 }
                 let hint = agentNames.isEmpty

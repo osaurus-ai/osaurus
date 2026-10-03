@@ -146,7 +146,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
         #expect(mapped.count == 1)
         #expect(mapped[0].videos.count == 1)
         // Video came in as an `https:` URL — it should propagate as
@@ -177,7 +177,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
         #expect(mapped.count == 1)
         #expect(mapped[0].audios.count == 1)
         guard case .url(let u) = mapped[0].audios[0] else {
@@ -211,7 +211,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
 
         #expect(mapped.count == 1)
         #expect(mapped[0].audios.count == 1)
@@ -244,7 +244,7 @@ struct MultimodalContentPartTests {
             videos: []
         )
 
-        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX([message])
 
         #expect(mapped[0].audios.count == 2)
         guard case .samples(let samples, let sampleRate) = mapped[0].audios[1] else {
@@ -288,7 +288,7 @@ struct MultimodalContentPartTests {
             videos: []
         )
 
-        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX([message])
 
         guard case .preEncoded(let mappedSamples, let sampleRate, let mappedEmbedding) = mapped[0].audios[0] else {
             Issue.record("fresh live audio embedding should be forwarded as preEncoded")
@@ -331,7 +331,7 @@ struct MultimodalContentPartTests {
             videos: []
         )
 
-        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX([message])
 
         guard case .samples(let mappedSamples, let sampleRate) = mapped[0].audios[0] else {
             Issue.record("stale live audio embedding should fall back to samples")
@@ -368,7 +368,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
         #expect(mapped.count == 1)
         #expect(mapped[0].videos.count == 1)
         #expect(mapped[0].audios.count == 1)
@@ -419,7 +419,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
         #expect(mapped.count == 4)
         // Only the user message should have audio, but every role-branch
         // must compile against the new `audios:` parameter — that's what

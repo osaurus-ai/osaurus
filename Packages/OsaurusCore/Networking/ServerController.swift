@@ -203,6 +203,9 @@ final class ServerController: ObservableObject {
                 configuration.exposeToNetwork ? self.getLocalIPAddress() : "127.0.0.1"
 
             print("[Osaurus] Starting NIO server on \(bindHost):\(configuration.port)")
+            MobileConnectLog.write(
+                "server: starting on \(bindHost):\(configuration.port) exposeToNetwork=\(configuration.exposeToNetwork) lan=\(localNetworkAddress)"
+            )
 
             // Ensure any previous instance is shut down
             try await stopServerIfNeeded()
@@ -219,6 +222,7 @@ final class ServerController: ObservableObject {
             serverHealth = .running
             lastErrorMessage = nil
             FeatureTelemetry.serverStarted()
+            MobileConnectLog.write("server: listening on \(bindHost):\(configuration.port)")
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
             // One-line record of the effective inference policy so any
             // benchmark or bug report can state exactly which knobs were in
@@ -238,8 +242,11 @@ final class ServerController: ObservableObject {
 
             if configuration.exposeToNetwork {
                 BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
+                MobileConnectAdvertiser.shared.startAdvertising(port: configuration.port)
             } else {
+                MobileConnectLog.write("server: not exposed to the network, so nothing is advertised for pairing")
                 BonjourAdvertiser.shared.stopAdvertising()
+                MobileConnectAdvertiser.shared.stopAdvertising()
             }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
@@ -271,6 +278,7 @@ final class ServerController: ObservableObject {
 
         RelayTunnelManager.shared.disconnectAll()
         BonjourAdvertiser.shared.stopAdvertising()
+        MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
 
         // Stop the actor-backed server if present. The event-loop group is
@@ -298,6 +306,7 @@ final class ServerController: ObservableObject {
         // `ensureShutdown` is the only teardown the AppDelegate calls, so
         // without this an advertised service could linger past quit.
         BonjourAdvertiser.shared.stopAdvertising()
+        MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
         serverHealth = .stopping
 
@@ -349,6 +358,7 @@ final class ServerController: ObservableObject {
                     self.runtimeSettings = latest
                 }
                 self.synchronizeSpawnBatchLimit(from: latest)
+                await ModelRuntime.shared.refreshDiskCacheCaps()
             }
         }
         if let existingRuntimeSettings {
@@ -461,7 +471,11 @@ final class ServerController: ObservableObject {
 
     /// Saves the current configuration to disk
     func saveConfiguration() {
+        let previousIdlePolicy = ServerConfigurationStore.load()?.modelIdleResidencyPolicy
         ServerConfigurationStore.save(configuration)
+        if previousIdlePolicy != configuration.modelIdleResidencyPolicy {
+            Task { await ModelRuntime.shared.refreshIdleResidencyPolicy() }
+        }
     }
 
     /// Persists the supplied vmlx runtime settings, projects the
@@ -532,6 +546,8 @@ final class ServerController: ObservableObject {
             : 0
         if loadedModelRefreshNeeded {
             await ModelRuntime.shared.clearAll()
+        } else {
+            await ModelRuntime.shared.refreshDiskCacheCaps()
         }
         if restartWasRequested {
             await restartServer()
@@ -553,7 +569,7 @@ final class ServerController: ObservableObject {
         previous: VMLXServerRuntimeSettings,
         next: VMLXServerRuntimeSettings
     ) -> Bool {
-        previous.cache != next.cache
+        previous.cache.requiresModelReload(comparedTo: next.cache)
             || previous.multimodal != next.multimodal
             // Only the MTP fields that change what gets LOADED force a reload.
             // Comparing the whole `mtp` struct meant changing the draft-token
@@ -612,6 +628,7 @@ final class ServerController: ObservableObject {
     /// Handles server startup errors
     private func handleServerError(_ error: Error) {
         print("[Osaurus] Failed to start server: \(error)")
+        MobileConnectLog.write("server: FAILED to start on port \(configuration.port): \(error)")
         isRunning = false
         let desc = error.localizedDescription.lowercased()
         if desc.contains("address already in use") || desc.contains("eaddrinuse") {

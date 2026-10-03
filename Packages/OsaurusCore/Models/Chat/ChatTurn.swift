@@ -54,12 +54,42 @@ final class ChatTurn: ObservableObject, Identifiable {
             contentChunks = newValue.isEmpty ? [] : [newValue]
             _cachedContent = newValue
             _contentLength = newValue.count
+            _cachedEnvelope = nil
             objectWillChange.send()
         }
     }
 
     /// Cached content length - O(1) access without forcing lazy join
     var contentLength: Int { _contentLength }
+
+    // MARK: - Dispatch envelope (memoized)
+
+    /// Memoized `DispatchEnvelope.parse` result for this turn, keyed by the
+    /// session source it was parsed under. Invalidated whenever `content`
+    /// changes. Read from block generation, the find bar, the minimap, copy
+    /// and title derivation — all on the streaming path — so the parse runs
+    /// once per turn per session load, not once per consumer per tick.
+    private var _cachedEnvelope: (source: SessionSource, value: DispatchEnvelope?)?
+
+    /// The machine-generated dispatch envelope wrapping this user turn's
+    /// content, if any. Nil for non-user turns and ordinary typed messages.
+    func dispatchEnvelope(sessionSource: SessionSource) -> DispatchEnvelope? {
+        guard role == .user, !contentIsEmpty else { return nil }
+        if let cached = _cachedEnvelope, cached.source == sessionSource {
+            return cached.value
+        }
+        let parsed = DispatchEnvelope.parse(content, sessionSource: sessionSource)
+        _cachedEnvelope = (sessionSource, parsed)
+        return parsed
+    }
+
+    /// The text the chat should present for this turn: the envelope's
+    /// human-authored text when one wraps the content, else the raw content.
+    /// Every user-facing consumer (bubble, find bar, minimap, copy, title)
+    /// reads this so what is counted and copied matches what is painted.
+    func displayContent(sessionSource: SessionSource) -> String {
+        dispatchEnvelope(sessionSource: sessionSource)?.displayText ?? content
+    }
 
     /// Whether content is empty - O(1) access without forcing lazy join
     var contentIsEmpty: Bool { _contentLength == 0 }
@@ -80,6 +110,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         contentChunks.append(s)
         _contentLength += s.count
         _cachedContent = nil  // Invalidate cache
+        _cachedEnvelope = nil
     }
 
     /// Append content and immediately notify observers (triggers UI update)
@@ -102,6 +133,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             contentChunks = cleanedContent.isEmpty ? [] : [cleanedContent]
             _contentLength = cleanedContent.count
             _cachedContent = cleanedContent
+            _cachedEnvelope = nil
         }
     }
 
@@ -269,6 +301,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// id. Recorded by `setToolResult(_:for:)` and persisted so a reloaded chat
     /// still shows "· 1.2s" next to the tool title.
     @Published var toolCallDurations: [String: TimeInterval] = [:]
+    /// Finished Computer Use / AppleScript step logs by call id, captured
+    /// when the result lands (the live feed is dropped seconds later).
+    var toolCallLogs: [String: SubagentRunLog] = [:]
 
     // MARK: - Remote-agent (Mode 2) tool activity — display only
 
@@ -355,10 +390,14 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// time-to-first-token window, or nil when the model was already resident
     /// (the overwhelmingly common case, and the one that must look unchanged).
     var modelLoadSeconds: TimeInterval?
+    /// When the user pressed Enter (or Regenerate / Save & Regenerate) for the
+    /// run this turn opened. Earlier than `createdAt` by the pre-send warm-up
+    /// (model load) and setup awaits. Set only on a run's first assistant turn;
+    /// anchors the footer's total response time.
+    var requestedAt: Date?
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
-    /// remote APIs). Ephemeral — not persisted. The exporter recomputes
-    /// it from token count and stream duration when needed, which
-    /// avoids storing a number whose precision varies by provider.
+    /// remote APIs). Persisted as displayed; do not recompute it from a
+    /// wall-clock interval that includes prefill or cache finalization.
     var generationTokensPerSecond: Double?
     /// Total tokens generated in this turn. Persisted with the turn.
     var generationTokenCount: Int?
@@ -376,12 +415,6 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// The agent loop uses it to avoid treating a reasoning-only `length`
     /// completion as a successful final response.
     var terminalStopReason: String?
-    /// Set when the stream consumer cut this turn short because the model
-    /// collapsed into a phrase-repetition loop; carries the repeated phrase
-    /// for the model-facing notice. Nil for every normally-completed turn.
-    /// Transient run state — not persisted, like `unclosedReasoning`.
-    var repetitionLoopPhrase: String?
-
     /// Osaurus Router billing snapshot captured from the in-stream summary
     /// frame (cost, token counts, status). Persisted so a reloaded chat still
     /// shows a billed-but-empty turn (and its "you were charged" notice)
@@ -426,6 +459,14 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Use this instead of assigning `toolResults` directly so durations persist.
     func setToolResult(_ result: String, for callId: String) {
         toolResults[callId] = result
+        // The run has finished by the time its result lands, and the feed
+        // registry keeps it for a short grace window. Keep the log.
+        if toolCallLogs[callId] == nil,
+            let log = SubagentFeedRegistry.shared.feed(for: callId)?.finishedRunLog()
+        {
+            toolCallLogs[callId] = log
+            SubagentRunLogArchive.shared.store(log, for: callId)
+        }
         guard toolCallDurations[callId] == nil, let start = toolCallStartedAt[callId] else { return }
         let elapsed = Date().timeIntervalSince(start)
         if elapsed >= Self.minDisplayableToolDuration {

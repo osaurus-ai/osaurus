@@ -173,7 +173,7 @@ struct ConfigurationReadScopeTests {
     private static let expectedScopes: Set<String> = [
         "agents", "models", "providers", "mcp", "plugins", "schedules",
         "skills", "watchers", "knowledge", "themes", "commands", "channels",
-        "search",
+        "search", "workspaces", "shared_agents",
     ]
 
     /// Document sections (export/apply redirect) plus the removed
@@ -181,7 +181,7 @@ struct ConfigurationReadScopeTests {
     /// the enum so the SchemaValidator lets them through to
     /// `unknownScopeFailure` instead of a generic rejection.
     private static let settingsSections: Set<String> = [
-        "server", "chat", "app", "memory", "default_agent", "active_agent",
+        "server", "chat", "app", "memory", "default_agent", "new_chat_agent", "active_agent",
         "tools", "delegation",
     ]
 

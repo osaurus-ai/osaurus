@@ -1000,6 +1000,7 @@ final class PluginHostContext: @unchecked Sendable {
         // the session (KV-cache reuse). Without this, every
         // `prepareInference` recomposed fresh and any drifting section
         // forced a full re-prefill.
+        await PluginManager.shared.ensurePromptCatalogReady()
         var cachedSession: SessionToolState?
         if let sid = sessionId {
             let liveFp = SessionToolState.fingerprint(
@@ -1011,9 +1012,12 @@ final class PluginHostContext: @unchecked Sendable {
                 sid,
                 liveFingerprint: liveFp
             )
+            let toolGrants = await MainActor.run {
+                ToolRegistry.shared.toolGrantSnapshot(agentId: agentId)
+            }
+            await SessionToolStateStore.shared.reconcileToolGrants(sid, current: toolGrants)
             cachedSession = await SessionToolStateStore.shared.get(sid)
         }
-        await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentId,
             executionMode: execMode,
@@ -2577,7 +2581,9 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             do {
-                let vectors = try await EmbeddingService.shared.embed(texts: texts)
+                let vectors = try await MediaActivityLogger.$embeddingPurpose.withValue("plugin_embed") {
+                    try await EmbeddingService.shared.embed(texts: texts)
+                }
                 var embeddings: [[String: Any]] = []
                 for (i, vec) in vectors.enumerated() {
                     embeddings.append([

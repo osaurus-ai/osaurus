@@ -124,7 +124,16 @@ enum ModelFamilyNames {
     /// runtime names (`DSV4-...`, `deepseekv4-...`) while avoiding
     /// DeepSeek-V3 / R1 / generic DeepSeek matches.
     static func isDSV4Family(_ modelId: String) -> Bool {
-        matches(#"(^|/|[\-_])(dsv4|deepseek[\-_]?v4|deepseekv4)($|[\-_/\.])"#, in: modelId.lowercased())
+        let lower = modelId.lowercased()
+        if matches(#"(^|/|[\-_])(dsv4|deepseek[\-_]?v4|deepseekv4)($|[\-_/\.])"#, in: lower) {
+            return true
+        }
+        // DeepSeek's hosted API renamed V4.1-Flash to the versionless
+        // `deepseek-flash` (2026-09-10; `deepseek-v4-flash` is a retired
+        // alias). Same DSV4 reasoning contract — thinking toggle plus
+        // low/high/max efforts — so it must keep the DSV4 profile and the
+        // `thinking.disabled` translation on the remote path.
+        return matches(#"(^|/)deepseek[\-_]flash($|[\-_/\.])"#, in: lower)
     }
 
     /// Nemotron Omni bundles. Match both the long public `Nemotron-3-Nano-Omni`

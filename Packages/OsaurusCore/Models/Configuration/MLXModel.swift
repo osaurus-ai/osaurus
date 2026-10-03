@@ -579,6 +579,12 @@ struct MLXModel: Identifiable, Codable {
         ModelMediaCapabilities.from(directory: localDirectory, modelId: id)
     }
 
+    /// Never reads the bundle on the calling thread. nil while the evidence
+    /// is loading; `LocalVisionEvidence.evidenceReady` fires when it lands.
+    var mediaCapabilitiesSnapshot: ModelMediaCapabilities.Capabilities? {
+        ModelMediaCapabilities.cachedFrom(directory: localDirectory)
+    }
+
     /// Direct (uncached) VLM detection used by `isVLM`.
     func computeIsVLM() -> Bool {
         if isDownloaded { return VLMDetection.isVLM(at: localDirectory) }

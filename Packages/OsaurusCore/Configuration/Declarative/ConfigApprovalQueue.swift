@@ -26,11 +26,16 @@ public struct ConfigApprovalRequest: Identifiable, Sendable, Equatable {
     /// Whether the apply runs with prune semantics (deletes entries not
     /// listed in the document) — surfaced prominently on the card.
     public let prune: Bool
+    /// Raised by a run from the owner's paired phone: listed on
+    /// `GET /config/approvals` for the phone to answer (MOBILE_PROTOCOL
+    /// §16.3). Plans raised in a Mac chat never leave the Mac.
+    public let fromPairedPhone: Bool
 
-    public init(id: UUID = UUID(), plan: ConfigPlan, prune: Bool) {
+    public init(id: UUID = UUID(), plan: ConfigPlan, prune: Bool, fromPairedPhone: Bool = false) {
         self.id = id
         self.plan = plan
         self.prune = prune
+        self.fromPairedPhone = fromPairedPhone
     }
 }
 
@@ -76,9 +81,10 @@ public final class ConfigApprovalQueue: ObservableObject {
     public func requestApproval(
         plan: ConfigPlan,
         prune: Bool,
+        fromPairedPhone: Bool = false,
         timeout: Duration = .seconds(120)
     ) async -> ConfigApprovalOutcome {
-        let request = ConfigApprovalRequest(plan: plan, prune: prune)
+        let request = ConfigApprovalRequest(plan: plan, prune: prune, fromPairedPhone: fromPairedPhone)
         return await withTaskCancellationHandler {
             await withCheckedContinuation {
                 (continuation: CheckedContinuation<ConfigApprovalOutcome, Never>) in
@@ -108,6 +114,27 @@ public final class ConfigApprovalQueue: ObservableObject {
         timeoutTasks.removeValue(forKey: id)?.cancel()
         guard let continuation = continuations.removeValue(forKey: id) else { return }
         continuation.resume(returning: outcome)
+    }
+
+    /// Answers a plan from the paired phone. False when the id is not a
+    /// pending phone plan: already answered, timed out, or never the phone's.
+    public func resolveFromPairedPhone(id: UUID, apply: Bool) -> Bool {
+        guard pending.contains(where: { $0.id == id && $0.fromPairedPhone }) else { return false }
+        resolve(id: id, outcome: apply ? .approved : .denied)
+        return true
+    }
+
+    /// The phone's pending plans as `GET /config/approvals` JSON.
+    public func pairedPhoneListJSON() -> Data {
+        let rows: [[String: Any]] = pending.filter(\.fromPairedPhone).map { request in
+            var row = request.plan.payload()
+            row["id"] = request.id.uuidString
+            row["prune"] = request.prune
+            row["summary"] = request.plan.summaryText()
+            return row
+        }
+        return (try? JSONSerialization.data(withJSONObject: ["approvals": rows], options: [.sortedKeys]))
+            ?? Data(#"{"approvals":[]}"#.utf8)
     }
 
     /// Deny + clear every pending approval (chat teardown, Stop).

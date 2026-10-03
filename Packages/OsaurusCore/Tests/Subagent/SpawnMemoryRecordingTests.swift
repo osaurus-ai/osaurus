@@ -58,42 +58,6 @@ private final class RecorderProbe: @unchecked Sendable {
 }
 
 @Suite
-struct SpawnChildToolAccessTests {
-
-    @Test("agent target drops the launcher grant to .none")
-    func agentTargetDropsGrant() {
-        #expect(
-            TextSubagentKind.childSpawnToolAccess(
-                resolvedAgentId: UUID(),
-                granted: .readOnly
-            ) == SpawnToolAccess.none
-        )
-        #expect(
-            TextSubagentKind.childSpawnToolAccess(
-                resolvedAgentId: UUID(),
-                granted: SpawnToolAccess.none
-            ) == SpawnToolAccess.none
-        )
-    }
-
-    @Test("bare-model target passes the launcher grant through")
-    func modelTargetPassesGrantThrough() {
-        #expect(
-            TextSubagentKind.childSpawnToolAccess(
-                resolvedAgentId: nil,
-                granted: .readOnly
-            ) == .readOnly
-        )
-        #expect(
-            TextSubagentKind.childSpawnToolAccess(
-                resolvedAgentId: nil,
-                granted: SpawnToolAccess.none
-            ) == SpawnToolAccess.none
-        )
-    }
-}
-
-@Suite
 struct SpawnMemoryRecordingTests {
 
     @Test("clean agent run records exactly one turn under the target id")

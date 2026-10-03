@@ -1,0 +1,61 @@
+{
+  "id": "agent_loop.route-by-agent-description",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 select an opaque-name worker by its description",
+  "query": "Delegate a separate arithmetic check of 17 plus 25 to one appropriate available worker, then report its result. Address the chosen worker by its UUID.",
+  "notes": "Names are deliberately opaque. The selected worker must follow the model-visible description; target identity and successful continuation are scored deterministically. Native model defaults remain unchanged.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE002-0000-4000-8000-000000000001",
+          "name": "Agent A",
+          "description": "Reviews code changes for bugs. Use for software review tasks.",
+          "systemPrompt": "Review supplied code for bugs. Be concise."
+        },
+        {
+          "id": "A11CE002-0000-4000-8000-000000000002",
+          "name": "Agent B",
+          "description": "Checks arithmetic calculations. Use when a separate numerical check is requested.",
+          "systemPrompt": "Check the supplied arithmetic and explain the result concisely."
+        },
+        {
+          "id": "A11CE002-0000-4000-8000-000000000003",
+          "name": "Agent C",
+          "description": "Explains Osaurus settings. Use for app configuration questions.",
+          "systemPrompt": "Explain app configuration questions using supplied information."
+        }
+      ],
+      "maxParallelSpawns": 1
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxModelSteps": 4,
+      "mustCallTools": [
+        "spawn_agent"
+      ],
+      "maxToolCalls": 1,
+      "noDuplicateExecutedCalls": true,
+      "noToolErrors": true,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "42"
+      ],
+      "spawnWave": {
+        "exactCallCount": 1,
+        "expectedTargets": [
+          "A11CE002-0000-4000-8000-000000000002"
+        ],
+        "expectedSucceeded": 1,
+        "expectedFailed": 0,
+        "expectedWaveSizes": [
+          1
+        ]
+      }
+    }
+  }
+}

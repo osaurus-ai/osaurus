@@ -104,14 +104,16 @@ public enum FrameScrubber {
         return ScrubbedFrame(image: encoded, report: report)
     }
 
-    /// Back-compat core scrub over a `CGImage` (all built-ins, regex only, no
+    /// Back-compat core scrub over a `CGImage` (default safety net —
+    /// built-ins plus the fresh-install presets — regex only, no
     /// model). Kept for callers/tests that hold pixels and want the
     /// deterministic, engine-free behaviour.
     public static func scrub(
         cgImage: CGImage,
         mode: ScrubMode = .pii
     ) async -> (CGImage, ScrubReport)? {
-        await scrub(cgImage: cgImage, mode: mode, ruleset: .allBuiltins(), useModelDetection: false)
+        await scrub(
+            cgImage: cgImage, mode: mode, ruleset: .defaultSafetyNet(), useModelDetection: false)
     }
 
     /// Core scrub over a `CGImage` with an explicit regex ruleset and optional
@@ -149,11 +151,12 @@ public enum FrameScrubber {
     }
 
     /// The regex ruleset to run over OCR'd text: the user's configured set when
-    /// `honorUserRules`, else every built-in.
+    /// `honorUserRules`, else the default safety net (built-ins + the
+    /// fresh-install presets, so national IDs such as US SSN stay covered).
     private static func effectiveRuleset(
         honorUserRules: Bool
     ) -> RegexEntityDetector.EffectiveRuleSet {
-        honorUserRules ? .build(from: PrivacyFilterStore.snapshot()) : .allBuiltins()
+        honorUserRules ? .build(from: PrivacyFilterStore.snapshot()) : .defaultSafetyNet()
     }
 
     // MARK: - Vision OCR

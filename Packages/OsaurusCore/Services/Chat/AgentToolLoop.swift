@@ -175,11 +175,6 @@ enum AgentLoopModelStep {
     /// and because the announcement is a preamble rather than an answer, the
     /// retry's tool call reads as the natural continuation of it.
     case announcedToolCall
-    /// The stream consumer cut the turn short because the model collapsed
-    /// into a phrase-repetition loop. Recoverable once: the repeat is a
-    /// decoding failure, not an answer, so ending here would present a wall
-    /// of the same sentence as the response.
-    case repetitionLoop(phrase: String?)
     /// The turn ended by asking the user for permission to carry on ("would
     /// you like me to continue?") instead of carrying on. Only a stall when
     /// tracked work is still pending — the driver checks that before
@@ -218,16 +213,8 @@ enum AgentLoopModelStep {
         unclosedReasoning: Bool = false,
         requiresVisibleFinalResponse: Bool,
         toolsWereOffered: Bool = false,
-        content: String? = nil,
-        repetitionLoopPhrase: String? = nil
+        content: String? = nil
     ) -> Self {
-        // Checked before `stopReason`: the consumer stopped reading, so the
-        // reported terminal reason describes a stream nobody finished. A
-        // repeated sentence is never a usable answer regardless of how the
-        // generation would otherwise have ended.
-        if let repetitionLoopPhrase {
-            return .repetitionLoop(phrase: repetitionLoopPhrase.isEmpty ? nil : repetitionLoopPhrase)
-        }
         if stopReason == "length" {
             return .lengthExhausted
         }
@@ -1168,8 +1155,8 @@ enum AgentToolLoop {
         /// A streamed tool envelope repeatedly hit the model output ceiling
         /// before becoming executable.
         case truncatedToolCallExhausted
-        /// The model degenerated into a phrase-repetition loop and the bounded
-        /// retry did not recover it.
+        /// Legacy diagnostic value retained for existing consumers. Content
+        /// repetition no longer cancels generation or starts a recovery retry.
         case repetitionLoopExhausted
         /// Bounded recovery could not turn reasoning-only/unclosed output into
         /// a user-visible final answer.
@@ -1220,6 +1207,7 @@ enum AgentToolLoop {
         var emptyTurn: Int = 0
         var announcedToolCall: Int = 0
         var continuationRequest: Int = 0
+        /// Legacy telemetry field; no content-repetition recovery is emitted.
         var repetitionLoop: Int = 0
         var incompleteReasoning: Int = 0
 
@@ -1345,9 +1333,18 @@ enum AgentToolLoop {
         if !recovery.workspaceBlocked.isEmpty {
             text += " " + recovery.workspaceBlocked.sorted().joined(separator: ", ")
                 + " need a workspace attached to THIS chat and there is none, so no call can write, read or run "
-                + "files here; do not announce that again. Tell the user to attach a folder via the Folder chip "
-                + "(or enable Autonomous execution) and give them the content directly in your answer"
-                + (recovery.exposed.contains("share_artifact") ? " (share_artifact can carry it)." : ".")
+                + "files here; do not announce that again. "
+            // The picker-backed ask is the one actionable step when it is in
+            // the schema; otherwise the user has to reach for the chip.
+            if recovery.exposed.contains(PromptWorkingFolderTool.toolName) {
+                text += "Call prompt_working_folder now to open a folder picker for the user — the run "
+                    + "continues with the file tools once they pick; if they cancel, the turn ends "
+                    + "with a notice and the content can go directly in your next answer"
+            } else {
+                text += "Tell the user to attach a folder via the Folder chip "
+                    + "(or enable Autonomous execution) and give them the content directly in your answer"
+            }
+            text += recovery.exposed.contains("share_artifact") ? " (share_artifact can carry it)." : "."
         }
         text += " If what you described needs a tool in none of these groups, say plainly that you cannot do it "
             + "in this chat and give the user the result you have."
@@ -1373,26 +1370,6 @@ enum AgentToolLoop {
             + "something only the user can decide, call `clarify` with the specific question "
             + "instead of asking in prose."
     }
-
-    /// One retry. A model that degenerated once usually degenerates again,
-    /// and each attempt costs the user real wall-clock time.
-    static let maxRepetitionLoopRetries = 1
-
-    static func repetitionLoopNotice(phrase: String?) -> String {
-        let quoted = phrase.map { " (\"\($0)\")" } ?? ""
-        return
-            "[System Notice] Your previous turn repeated the same sentence\(quoted) over and over "
-            + "and was stopped. Repeating a plan is not progress. Do exactly ONE concrete thing "
-            + "now: emit a single tool call, or state plainly what is blocking you. Do not restate "
-            + "what you are about to do."
-    }
-
-    /// Shown when the retry degenerates too. Honest about what happened
-    /// rather than leaving a wall of repeated text as the answer.
-    static let repetitionLoopFallback =
-        "The model got stuck repeating itself and the response was stopped. "
-        + "This usually means the task is too large for one turn — try narrowing it to a single "
-        + "step, or switch to a different model."
 
     static let emptyToolTaskFallback =
         "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
@@ -1474,7 +1451,7 @@ enum AgentToolLoop {
     /// unfinished at the hard agent-step cap. This is driven by typed Todo
     /// state, never by classifying the model's prose.
     static func unfinishedTodoCapFallback(pending: Int) -> String {
-        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Agent Steps in Chat settings."
+        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Tool Attempts under Settings → Conversation → Advanced."
     }
 
     /// The iteration-budget warning staged when the remaining budget
@@ -1650,7 +1627,7 @@ enum AgentToolLoop {
         switch kind {
         case .invalidArgs, .notFound, .unavailable:
             return false
-        case .rejected, .timeout, .executionError, .toolNotFound, .userDenied:
+        case .rejected, .timeout, .executionError, .toolNotFound, .userDenied, .permissionDenied:
             return true
         }
     }
@@ -1833,8 +1810,8 @@ enum AgentToolLoop {
             }
         }
 
-        // One batch id for the whole wave so multi-file operations group
-        // in the file-operation undo log (`FileOperation.batchId`).
+        // One batch id for the whole wave so its tool calls can be
+        // correlated downstream.
         let indexed: [(Int, AgentLoopToolExecution)] = await ChatExecutionContext.$currentBatchId
             .withValue(UUID()) {
                 await ChatExecutionContext.$spawnWave.withValue(spawnWave) {
@@ -1869,7 +1846,7 @@ enum AgentToolLoop {
     ///   assistant `tool_use` never dangles).
     /// - Phase 2 — the approved set executes in parallel with the registry
     ///   gate pre-resolved (`permissionGateResolved: true`). Tools whose
-    ///   approval lives in their own body (`spawn_agent` / `spawn_model`,
+    ///   approval lives in their own body (`spawn_agent`,
     ///   image/video billing, config fallback) still prompt here — the
     ///   prompt service serialises those cards through one FIFO queue, and
     ///   sibling spawn calls collapse into one wave card (`SpawnWaveGate`).
@@ -1953,12 +1930,16 @@ enum AgentToolLoop {
     /// serial model-order execution — running siblings in parallel would
     /// let calls AFTER the intercept execute and land in history, where
     /// the serial path stops immediately.
-    static let interceptToolNames: Set<String> = ["complete", "clarify"]
+    static let interceptToolNames: Set<String> = [
+        "complete", "clarify", PromptWorkingFolderTool.toolName,
+    ]
 
     /// Agent-loop control calls are not user-task actions and therefore do
     /// not consume the structural tracking threshold. `share_artifact` is an
     /// action because it performs the requested delivery.
-    static let taskTrackingControlToolNames: Set<String> = ["todo", "complete", "clarify"]
+    static let taskTrackingControlToolNames: Set<String> = [
+        "todo", "complete", "clarify", PromptWorkingFolderTool.toolName,
+    ]
 
     static let taskTrackingRequiredReason = "task_tracking_required"
     static let todoProgressUpdateRequiredReason = "todo_progress_update_required"
@@ -2446,8 +2427,6 @@ enum AgentToolLoop {
         // Consecutive announce-only turns (visible "let me…" preamble, no
         // call). Reset by any productive turn, for the same reason.
         var consecutiveAnnouncedToolCalls = 0
-        // Total repetition-loop recoveries this run.
-        var repetitionLoopRetries = 0
         // Consecutive "shall I continue?" hand-backs this run.
         var consecutiveContinuationRequests = 0
         // Total (not merely consecutive) reasoning-only recovery attempts.
@@ -2477,7 +2456,6 @@ enum AgentToolLoop {
                         emptyTurn: totalEmptyTurnRetries,
                         announcedToolCall: totalAnnouncedToolCallRetries,
                         continuationRequest: totalContinuationRequestRetries,
-                        repetitionLoop: repetitionLoopRetries,
                         incompleteReasoning: incompleteReasoningRetries)))
         }
 
@@ -2810,17 +2788,6 @@ enum AgentToolLoop {
                 // on once we have tried twice.
                 await recordExit(.finalResponse, .continuationRequestRecoveryExhausted)
                 return RunResult(exit: .finalResponse, iterations: iteration)
-
-            case .repetitionLoop(let phrase):
-                repetitionLoopRetries += 1
-                if repetitionLoopRetries <= Self.maxRepetitionLoopRetries {
-                    replaceStateNotice(Self.repetitionLoopNotice(phrase: phrase))
-                    // Not charged against the tool-iteration budget.
-                    iteration -= 1
-                    continue
-                }
-                await hooks.emitFallbackText?(Self.repetitionLoopFallback)
-                return RunResult(exit: .repetitionLoopExhausted, iterations: iteration)
 
             case .lengthExhausted:
                 // `stop=length` is authoritative. Do not mislabel a

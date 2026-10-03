@@ -25,6 +25,11 @@ import Testing
 
 @testable import OsaurusEvalsKit
 
+// These scenarios snapshot and restore the process-wide delegation settings.
+// Running scenarios together can invalidate another scenario's authorization
+// between preparation and execution. Each wave test still runs its own
+// children concurrently and asserts their actual overlap.
+@Suite(.serialized)
 struct SubagentEvalTests {
 
     private typealias Sub = EvalCase.SubagentExpectations
@@ -162,12 +167,13 @@ struct SubagentEvalTests {
         #expect(report.outcome == .errored, "notes: \(report.notes)")
     }
 
-    // MARK: - Parallel batch (batch-race + remote fan-out lanes)
+    // MARK: - Parallel wave (wave-race + remote fan-out lanes)
 
-    /// Two children targeting the SAME local model share one residency
-    /// handoff and batch concurrently. Different local identities serialize
-    /// in the heterogeneous fixture below.
-    @Test func parallelSameModelBatchFansOutAndCompletes() async {
+    /// Two local-handoff children issued in one wave hold the exclusive GPU
+    /// lease one at a time: peak overlap is exactly 1 and BOTH still
+    /// complete (the queued run is admitted rather than refused). Remote
+    /// fan-out overlaps in the fixture below.
+    @Test func parallelLocalHandoffWaveSerializesAndCompletes() async {
         let report = await scoreScripted(
             Sub(
                 lane: "scripted",
@@ -176,13 +182,12 @@ struct SubagentEvalTests {
                 phases: ["running"],
                 parallel: 2,
                 runDelayMs: 120,
-                rendezvous: true,
                 expectSuccess: true,
-                expectMaxConcurrent: 2,
+                expectMaxConcurrent: 1,
                 expectRunsCompleted: 2,
                 expectRunsSettled: 2,
                 expectRunEnvelopeKinds: ["success", "success"],
-                expectBatchAggregateStatus: "succeeded"
+                expectWaveAggregateStatus: "succeeded"
             )
         )
         #expect(report.outcome == .passed, "notes: \(report.notes)")
@@ -190,7 +195,7 @@ struct SubagentEvalTests {
 
     /// Two concurrent REMOTE runs must actually overlap (peak concurrency 2)
     /// — the parallel fan-out policy, observed via the rendezvous knob.
-    @Test func parallelRemoteBatchFansOut() async {
+    @Test func parallelRemoteWaveFansOut() async {
         let report = await scoreScripted(
             Sub(
                 lane: "scripted",
@@ -208,12 +213,12 @@ struct SubagentEvalTests {
         #expect(report.outcome == .passed, "notes: \(report.notes)")
     }
 
-    @Test func scriptedBatchUsesProductionAggregationAndOrderedPayloads() async {
+    @Test func scriptedWaveUsesProductionAggregationAndOrderedPayloads() async {
         let report = await scoreScripted(
             Sub(
                 lane: "scripted",
                 decision: "allow",
-                scriptedBatch: [
+                scriptedWave: [
                     .init(
                         id: "a",
                         target: "scripted-remote",
@@ -235,15 +240,15 @@ struct SubagentEvalTests {
                 ],
                 expectSuccess: true,
                 expectEnvelopeKind: "success",
-                expectResultKind: "spawn_batch_result",
+                expectResultKind: "spawn_wave_result",
                 expectMaxConcurrent: 2,
                 expectRunsCompleted: 2,
                 expectRunsSettled: 2,
                 expectRunEnvelopeKinds: ["success", "success"],
-                expectBatchAggregateStatus: "succeeded",
-                expectBatchJobIDs: ["a", "b"],
-                expectBatchSummaries: ["A complete", "B complete"],
-                expectBatchPayloadFields: [
+                expectWaveAggregateStatus: "succeeded",
+                expectWaveJobIDs: ["a", "b"],
+                expectWaveSummaries: ["A complete", "B complete"],
+                expectWavePayloadFields: [
                     [
                         "kind": "a_result",
                         "model": "scripted-remote",
@@ -260,12 +265,12 @@ struct SubagentEvalTests {
         #expect(report.outcome == .passed, "notes: \(report.notes)")
     }
 
-    @Test func scriptedBatchFailureSettlesSiblingsInCallerOrder() async {
+    @Test func scriptedWaveFailureSettlesSiblingsInCallerOrder() async {
         let report = await scoreScripted(
             Sub(
                 lane: "scripted",
                 decision: "allow",
-                scriptedBatch: [
+                scriptedWave: [
                     .init(
                         id: "ok-a",
                         target: "scripted-remote",
@@ -293,15 +298,15 @@ struct SubagentEvalTests {
                 ],
                 expectSuccess: true,
                 expectEnvelopeKind: "success",
-                expectResultKind: "spawn_batch_result",
+                expectResultKind: "spawn_wave_result",
                 expectRunsCompleted: 2,
                 expectRunsSettled: 3,
                 expectRunEnvelopeKinds: [
                     "success", "execution_error", "success"
                 ],
-                expectBatchAggregateStatus: "partial_failure",
-                expectBatchJobIDs: ["ok-a", "failed", "ok-b"],
-                expectBatchSummaries: [
+                expectWaveAggregateStatus: "partial_failure",
+                expectWaveJobIDs: ["ok-a", "failed", "ok-b"],
+                expectWaveSummaries: [
                     "A complete",
                     "scripted execution failure (run)",
                     "B complete",
@@ -311,12 +316,12 @@ struct SubagentEvalTests {
         #expect(report.outcome == .passed, "notes: \(report.notes)")
     }
 
-    @Test func scriptedBatchUserStopAfterRunEntrySettlesEveryRow() async {
+    @Test func scriptedWaveUserStopAfterRunEntrySettlesEveryRow() async {
         let report = await scoreScripted(
             Sub(
                 lane: "scripted",
                 decision: "allow",
-                scriptedBatch: [
+                scriptedWave: [
                     .init(
                         id: "slow-a",
                         target: "scripted-remote",
@@ -335,12 +340,12 @@ struct SubagentEvalTests {
                 interruptAfterMs: 100,
                 expectSuccess: false,
                 expectEnvelopeKind: "user_denied",
-                expectResultKind: "spawn_batch_result",
+                expectResultKind: "spawn_wave_result",
                 expectRunsCompleted: 0,
                 expectRunsSettled: 2,
                 expectRunEnvelopeKinds: ["user_denied", "user_denied"],
-                expectBatchAggregateStatus: "all_cancelled",
-                expectBatchJobIDs: ["slow-a", "slow-b"]
+                expectWaveAggregateStatus: "all_cancelled",
+                expectWaveJobIDs: ["slow-a", "slow-b"]
             )
         )
         #expect(report.outcome == .passed, "notes: \(report.notes)")
@@ -491,25 +496,24 @@ struct SubagentEvalTests {
         #expect(t.handoffWrapped == true)
     }
 
-    @Test func facadeSameModelLocalBatchFansOutAndAggregates() async {
-        let t = await SubagentJobEvaluator.runScriptedParallelBatch(
+    @Test func facadeLocalHandoffWaveSerializesAndAggregates() async {
+        let t = await SubagentJobEvaluator.runScriptedParallelWave(
             ScriptedSubagentSpec(
                 needsHandoff: true,
-                runDelayMs: 80,
-                rendezvousArrivals: 2
+                runDelayMs: 80
             ),
             count: 2
         )
         #expect(t.succeeded)
-        #expect(t.maxConcurrent == 2)
+        #expect(t.maxConcurrent == 1)
         #expect(t.runsCompleted == 2)
         #expect(t.runsSettled == 2)
         #expect(t.runEnvelopeKinds == ["success", "success"])
-        #expect(t.batchAggregateStatus == "succeeded")
+        #expect(t.waveAggregateStatus == "succeeded")
     }
 
-    @Test func facadeMixedBatchUsesLocalSerializationAndRemoteOverlap() async {
-        let t = await SubagentJobEvaluator.runScriptedParallelBatch([
+    @Test func facadeMixedWaveUsesLocalSerializationAndRemoteOverlap() async {
+        let t = await SubagentJobEvaluator.runScriptedParallelWave([
             ScriptedSubagentSpec(
                 kindId: "local-a",
                 needsHandoff: true,
@@ -535,11 +539,11 @@ struct SubagentEvalTests {
         #expect(t.runsCompleted == 3)
         #expect(t.runsSettled == 3)
         #expect(t.runEnvelopeKinds == ["success", "success", "success"])
-        #expect(t.batchAggregateStatus == "succeeded")
+        #expect(t.waveAggregateStatus == "succeeded")
     }
 
     @Test func facadeFailedChildStillSettlesSiblingsAndReturnsAggregate() async {
-        let t = await SubagentJobEvaluator.runScriptedParallelBatch([
+        let t = await SubagentJobEvaluator.runScriptedParallelWave([
             ScriptedSubagentSpec(
                 kindId: "ok-a",
                 remote: true,
@@ -564,12 +568,12 @@ struct SubagentEvalTests {
         // seam: one child failure did not strand either sibling or the caller.
         #expect(t.succeeded)
         #expect(t.envelopeKind == "success")
-        #expect(t.resultKind == "spawn_batch_result")
+        #expect(t.resultKind == "spawn_wave_result")
         #expect(t.maxConcurrent == 3)
         #expect(t.runsCompleted == 2)
         #expect(t.runsSettled == 3)
         #expect(t.runEnvelopeKinds == ["success", "execution_error", "success"])
-        #expect(t.batchAggregateStatus == "partial_failure")
+        #expect(t.waveAggregateStatus == "partial_failure")
     }
 
     @Test func facadeUsageAccountingTranscript() async {
@@ -674,9 +678,9 @@ struct SubagentEvalTests {
         )
         #expect(
             suite.cases.contains {
-                $0.id == "subagent.scripted-batch-user-stop-all-cancelled"
+                $0.id == "subagent.scripted-wave-user-stop-all-cancelled"
             },
-            "Missing deterministic all-cancelled batch fixture"
+            "Missing deterministic all-cancelled wave fixture"
         )
 
         // Every model-free scenario must pass deterministically: the `scripted`

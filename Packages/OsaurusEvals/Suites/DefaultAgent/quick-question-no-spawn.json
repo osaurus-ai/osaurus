@@ -1,0 +1,29 @@
+{
+  "id": "default_agent.quick-question-no-spawn",
+  "domain": "default_agent",
+  "label": "default agent • quick knowledge question answered inline, no spawn",
+  "query": "What's the difference between TCP and UDP, in two sentences?",
+  "notes": "Inline-vs-delegate policy row: a short knowledge question fits in a few sentences from what the Orchestrator already knows, so it is answered directly — no `spawn_agent`, no agent creation via `osaurus_config`, no `osaurus_help` (not an Osaurus question), no web tools. Tool-free expectation keeps this runnable on tiny-window models where the tool schema is stripped.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustNotCallTools": [
+        "spawn_agent",
+        "osaurus_config",
+        "osaurus_help",
+        "osaurus_inspect",
+        "web_search",
+        "search_and_extract",
+        "computer_use",
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "rubric": [
+        "Answers the question directly in the reply (TCP is connection-oriented/reliable/ordered; UDP is connectionless/best-effort/lower latency).",
+        "Does NOT delegate, create an agent, or say the question is out of scope.",
+        "Stays brief — about two sentences, no option menus or follow-up questions."
+      ],
+      "maxIterations": 3
+    }
+  }
+}

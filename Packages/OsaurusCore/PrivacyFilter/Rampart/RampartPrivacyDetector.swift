@@ -88,7 +88,51 @@ actor RampartPrivacyDetector {
             }
         }
         await MetalGate.shared.exitPIIDetection()
-        return Self.coalesce(raw, in: text)
+        return Self.dropWordFragments(Self.coalesce(raw, in: text), in: text)
+    }
+
+    /// Drop spans that start or end inside a word. Rampart classifies
+    /// wordpieces, so on identifier-heavy text (tool results, JSON, model
+    /// ids) it can tag a fragment like "Ter" or "y" out of "Ternary" as a
+    /// name. Substitution is substring-based by design (a partial miss
+    /// would ship PII), so a one-letter fragment would then be redacted
+    /// inside every word that contains it. A real entity is never a slice
+    /// of a longer alphanumeric run.
+    static func dropWordFragments(
+        _ spans: [(category: EntityCategory, range: Range<String.Index>)],
+        in text: String
+    ) -> [(category: EntityCategory, range: Range<String.Index>)] {
+        spans.filter { span in
+            guard !span.range.isEmpty else { return false }
+            let first = text[span.range.lowerBound]
+            let last = text[text.index(before: span.range.upperBound)]
+            if span.range.lowerBound > text.startIndex,
+                isWordCharacter(first),
+                isWordCharacter(text[text.index(before: span.range.lowerBound)])
+            {
+                return false
+            }
+            if span.range.upperBound < text.endIndex,
+                isWordCharacter(last),
+                isWordCharacter(text[span.range.upperBound])
+            {
+                return false
+            }
+            return true
+        }
+    }
+
+    /// Letters and digits in space-delimited scripts. Scripts written
+    /// without spaces (CJK, Thai) have no word boundary to test, so a
+    /// name adjacent to other characters there is kept.
+    private static func isWordCharacter(_ c: Character) -> Bool {
+        guard c.isLetter || c.isNumber else { return false }
+        return !c.unicodeScalars.contains { scalar in
+            switch scalar.properties.generalCategory {
+            case .otherLetter: return true  // CJK, Thai, Kana, Hangul syllables
+            default: return false
+            }
+        }
     }
 
     /// Split `text` into line-aligned windows of at most ~`cap` characters

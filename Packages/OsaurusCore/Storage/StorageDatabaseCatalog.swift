@@ -51,6 +51,10 @@ public enum StorageDatabaseCatalog {
             // shared storage key, so it must be rekeyed alongside the core
             // databases on rotation and included in plaintext export.
             .init(label: "router billing", path: OsaurusPaths.billingLedgerDatabaseFile().path),
+            // Insights activity / audit log. Opened through the shared
+            // opener, so it must follow the key on rotation and be part of
+            // plaintext export like the other core stores.
+            .init(label: "activity log", path: OsaurusPaths.activityLogDatabaseFile().path),
         ]
         // Plugin DBs — one per installed plugin. We can discover them
         // by walking `Tools/<pluginId>/data/data.db`.

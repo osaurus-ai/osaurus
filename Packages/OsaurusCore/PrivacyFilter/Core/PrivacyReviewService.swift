@@ -107,7 +107,8 @@ final class PrivacyReviewService {
     func review(
         detections: [DetectedEntity],
         sessionId: String,
-        allowInteractive: Bool = true
+        allowInteractive: Bool = true,
+        allowRemote: Bool = false
     ) async -> PrivacyReviewOutcome {
         // Short circuit: nothing to review.
         if detections.isEmpty {
@@ -130,13 +131,22 @@ final class PrivacyReviewService {
             // fine-grained version that's preserved across review
             // sheets in the same conversation.
             if configSnapshot.alwaysApproveByDefault {
+                print("[PrivacyReview] auto-approved \(detections.count) item(s): global always-approve is on")
                 return .approved(detections)
             }
 
             // Honor per-session auto-approve.
             if await SessionRedactionStore.shared.isAutoApproveEnabled(sessionId) {
+                print("[PrivacyReview] auto-approved \(detections.count) item(s): session \(sessionId) has always-approve on")
                 return .approved(detections)
             }
+        }
+
+        // The owner's paired phone is a real pair of eyes, just not this
+        // window: hand it the review instead of failing closed (§19).
+        if !allowInteractive, allowRemote {
+            print("[PrivacyReview] handing \(detections.count) item(s) to the paired phone for session \(sessionId)")
+            return await reviewRemotely(detections: detections, sessionId: sessionId)
         }
 
         guard allowInteractive, let presenter = current?.closure else {
@@ -166,6 +176,7 @@ final class PrivacyReviewService {
                 )
                 return .blockedNonInteractive
             }
+            print("[PrivacyReview] auto-approved \(detections.count) item(s): no reviewer and non-interactive review is not required")
             return .approved(detections)
         }
 
@@ -180,6 +191,7 @@ final class PrivacyReviewService {
         state.alwaysApprove = await SessionRedactionStore.shared.isAutoApproveEnabled(sessionId)
         let stateId = state.id
         openStates[stateId] = state
+        print("[PrivacyReview] showing the Mac review sheet \(stateId) for \(detections.count) item(s)")
 
         // `withTaskCancellationHandler` lets us forward `Task.cancel()`
         // (e.g. the Stop button) into a `.canceled` resolution. Without
@@ -206,6 +218,122 @@ final class PrivacyReviewService {
                 PrivacyReviewService.shared.cancelOpenState(id: stateId)
             }
         }
+    }
+
+
+    // MARK: - Remote review (Osaurus Connect)
+
+    /// One review a paired phone can answer (docs/MOBILE_PROTOCOL.md §19).
+    struct RemoteReview: Sendable {
+        let id: UUID
+        let sessionId: String
+        let items: [Item]
+
+        struct Item: Sendable {
+            let id: UUID
+            /// `person | email | phone | address | url | date | accountNumber | secret`
+            let category: String
+            /// The detected text. It goes to the user's own phone inside the
+            /// Secure Channel — the point of the review is that the user sees
+            /// exactly what would otherwise reach the provider.
+            let original: String
+            /// What replaces it if approved, e.g. `[PERSON_1]`.
+            let placeholder: String
+        }
+    }
+
+    /// Reviews waiting on a remote answer, oldest first.
+    private var remoteStates: [UUID: RedactionReviewState] = [:]
+
+    var remoteReviews: [RemoteReview] {
+        remoteStates.values
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+            .map { state in
+                RemoteReview(
+                    id: state.id,
+                    sessionId: state.sessionId,
+                    items: state.entities.map { entity in
+                        RemoteReview.Item(
+                            id: entity.id,
+                            category: entity.category.rawValue,
+                            original: entity.original,
+                            placeholder: entity.placeholder.token
+                        )
+                    }
+                )
+            }
+    }
+
+    /// Answers a review from a paired phone. `redactedIds` are the items to
+    /// replace with placeholders; anything omitted is sent as-is, exactly as
+    /// unticking a row in the Mac's sheet does. Returns false when the id is
+    /// unknown — already answered, or the run ended.
+    @discardableResult
+    func resolveRemotely(id: UUID, redactedIds: Set<UUID>) -> Bool {
+        guard let state = remoteStates[id] else {
+            print("[PrivacyReview] phone answered review \(id), but it is no longer pending")
+            return false
+        }
+        print("[PrivacyReview] phone answered review \(id): redact \(redactedIds.intersection(Set(state.entities.map(\.id))).count) of \(state.entities.count)")
+        remoteStates.removeValue(forKey: id)
+        for entity in state.entities {
+            state.setApproval(entity, to: redactedIds.contains(entity.id))
+        }
+        state.confirm()
+        return true
+    }
+
+    /// Cancels a review from a paired phone: the send is aborted, nothing
+    /// reaches the provider.
+    @discardableResult
+    func cancelRemotely(id: UUID) -> Bool {
+        guard let state = remoteStates[id] else {
+            print("[PrivacyReview] phone cancelled review \(id), but it is no longer pending")
+            return false
+        }
+        print("[PrivacyReview] phone cancelled review \(id)")
+        remoteStates.removeValue(forKey: id)
+        state.cancel()
+        return true
+    }
+
+    /// Suspends until the paired phone answers, the way the chat window's
+    /// sheet suspends until the user presses a button. Used only when the
+    /// request came from the owner's own phone (`allowRemote`), so a random
+    /// HTTP caller still fails closed.
+    private func reviewRemotely(
+        detections: [DetectedEntity],
+        sessionId: String
+    ) async -> PrivacyReviewOutcome {
+        let state = RedactionReviewState(detections: detections, sessionId: sessionId)
+        let stateId = state.id
+        remoteStates[stateId] = state
+        print("[PrivacyReview] remote review \(stateId) parked for session \(sessionId): \(detections.count) item(s), waiting on the phone")
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<PrivacyReviewOutcome, Never>) in
+                state.onResolve = { outcome in
+                    Task { @MainActor in
+                        PrivacyReviewService.shared.clearRemoteState(id: stateId)
+                    }
+                    cont.resume(returning: outcome)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                PrivacyReviewService.shared.cancelRemoteState(id: stateId)
+            }
+        }
+    }
+
+    private func cancelRemoteState(id: UUID) {
+        if remoteStates[id] != nil {
+            print("[PrivacyReview] remote review \(id) cancelled: its run was cancelled (client hung up or the run was stopped)")
+        }
+        remoteStates[id]?.cancel()
+    }
+
+    private func clearRemoteState(id: UUID) {
+        remoteStates.removeValue(forKey: id)
     }
 
     /// Resolve a still-open review state as `.canceled`. Invoked from

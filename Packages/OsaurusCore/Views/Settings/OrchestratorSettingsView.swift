@@ -62,8 +62,12 @@ struct OrchestratorSettingsView: View {
 
                             generationSection
 
+                            OrchestratorWorkingFolderSection()
+
                             SubagentSettingsSection(configuration: $subagentConfiguration)
                                 .settingsLandingAnchor("settings.orchestrator.delegation")
+
+                            OrchestratorDelegationsSection()
                         }
                         .padding(.horizontal, 24)
                         .padding(.vertical, 24)
@@ -191,12 +195,12 @@ struct OrchestratorSettingsView: View {
             capabilityTile(
                 icon: "point.3.connected.trianglepath.dotted",
                 title: "Delegates work",
-                caption: "Hands tasks to the agents and models you approve under Delegation."
+                caption: "Hands real tasks to the agents listed under Subagents; each runs with its own tools."
             )
             capabilityTile(
-                icon: "person.text.rectangle",
-                title: "Yours to shape",
-                caption: "Rename it and give it a persona under Identity."
+                icon: "folder",
+                title: "Works in a folder",
+                caption: "Reads its Working Folder to brief subagents; subagents write deliverables there."
             )
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -291,8 +295,12 @@ struct OrchestratorSettingsView: View {
     // MARK: - Generation Section
 
     @ViewBuilder private var generationSection: some View {
-        SettingsSection(title: "Generation", icon: "slider.horizontal.3") {
+        SettingsSection(title: "Model & Generation", icon: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: 20) {
+                SettingsSubsection(label: "Model readiness") {
+                    OrchestratorModelReadinessRow()
+                }
+
                 SettingsSliderField(
                     label: "Temperature",
                     help: "Randomness (0–2). Higher = more creative",

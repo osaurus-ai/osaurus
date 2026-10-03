@@ -196,8 +196,22 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     /// Display name of the agent
     public var name: String
-    /// Brief description of what this agent does
+    /// Brief, optional, user-authored description of what this agent does.
     public var description: String
+    /// Routing summary generated in the background from `systemPrompt` when
+    /// `description` is blank. Never shown as the user's own text; see
+    /// `AgentDescriptionBackfill`.
+    public var generatedDescription: String?
+    /// `AgentDescriptionPolicy.promptHash` of the system prompt that
+    /// `generatedDescription` was produced from, so a prompt edit invalidates it.
+    public var generatedDescriptionPromptHash: String?
+    /// What the orchestrator and every agent picker see: the user's text when
+    /// present, otherwise the background-generated summary, otherwise "".
+    public var routingDescription: String {
+        let manual = AgentDescriptionPolicy.normalized(description)
+        if !manual.isEmpty { return manual }
+        return AgentDescriptionPolicy.normalized(generatedDescription ?? "")
+    }
     /// System prompt prepended to all chat sessions with this agent
     public var systemPrompt: String
     /// Optional custom theme ID to apply when this agent is active
@@ -309,6 +323,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         id: UUID = UUID(),
         name: String,
         description: String = "",
+        generatedDescription: String? = nil,
+        generatedDescriptionPromptHash: String? = nil,
         systemPrompt: String = "",
         themeId: UUID? = nil,
         defaultModel: String? = nil,
@@ -344,6 +360,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.id = id
         self.name = name
         self.description = description
+        self.generatedDescription = generatedDescription
+        self.generatedDescriptionPromptHash = generatedDescriptionPromptHash
         self.systemPrompt = systemPrompt
         self.themeId = themeId
         self.defaultModel = defaultModel
@@ -423,10 +441,11 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         isBuiltIn ? LCached(name) : name
     }
 
-    /// Display description for UI rendering. Same rules as `displayName`.
+    /// Display purpose without turning a generated summary into authored text.
+    /// Built-in authored descriptions follow the same localization as `displayName`.
     public var displayDescription: String {
-        guard isBuiltIn, !description.isEmpty else { return description }
-        return LCached(description)
+        if AgentDescriptionPolicy.normalized(description).isEmpty { return routingDescription }
+        return isBuiltIn ? LCached(description) : description
     }
 
     // MARK: - Built-in Agents
@@ -461,7 +480,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         Agent(
             id: defaultId,
             name: defaultAgentNameOverride ?? "Osaurus",
-            description: L("Configures Osaurus and delegates work to your agents"),
+            description: L("Configures Osaurus settings and manages agents. Use for app setup; general tasks can stay in the current chat."),
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,
@@ -501,7 +520,10 @@ extension Agent {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
-        description = try c.decode(String.self, forKey: .description)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        generatedDescription = try c.decodeIfPresent(String.self, forKey: .generatedDescription)
+        generatedDescriptionPromptHash = try c.decodeIfPresent(
+            String.self, forKey: .generatedDescriptionPromptHash)
         systemPrompt = try c.decode(String.self, forKey: .systemPrompt)
         themeId = try c.decodeIfPresent(UUID.self, forKey: .themeId)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
@@ -721,6 +743,16 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
 /// consumed by `AgentConfigSnapshot` so every gate reads one struct
 /// instead of calling a handful of `effective*` accessors.
 public struct AgentCapabilities: Sendable, Equatable {
+    /// Canonical tool-facing projection of the shared capability value.
+    /// Memory injection and ambient screen capture do not grant tools; changing
+    /// either must not discard the session's frozen tool catalog.
+    var toolExposureIdentity: Self {
+        var identity = self
+        identity.memoryEnabled = false
+        identity.screenContextEnabled = false
+        return identity
+    }
+
     /// Tools / preflight context are available to the model.
     public var toolsEnabled: Bool
     /// Memory is injected into prompts and recorded (per-agent AND global).
@@ -770,13 +802,6 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Transitional in-memory payload for callers constructing a capability
     /// snapshot from legacy settings. It is never an authorization key.
     var legacySpawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model` (no agent).
-    /// Empty → the `spawn_model` tool stays hidden. The Default agent ignores
-    /// this and uses the global `SubagentConfiguration.spawnableModelNames` pool.
-    public var spawnableModelNames: [String]
-    /// Optional "when/how to use" note per spawnable model id, surfaced in the
-    /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
-    public var spawnableModelNotes: [String: String]
     /// Shared workspace agents this agent may delegate to via `spawn_agent`.
     /// Empty → no workspace targets. The Default agent ignores this and uses
     /// the global `SubagentConfiguration.spawnableWorkspaceAgents` pool.
@@ -793,6 +818,11 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// the proposal architecture. Kept so existing agent JSON still decodes;
     /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
+    /// Built-in Apple app tool families (Calendar, Reminders, Mail, …) this
+    /// agent may use. Custom agents opt in per app; the Default agent is
+    /// always empty (it configures these on other agents via `osaurus_config`
+    /// rather than calling them itself).
+    public var enabledAppleApps: Set<AppleApp>
 
     public init(
         toolsEnabled: Bool,
@@ -812,12 +842,11 @@ public struct AgentCapabilities: Sendable, Equatable {
         appleScriptEnabled: Bool = false,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
         spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
-        knowledgeCuratorEnabled: Bool = false
+        knowledgeCuratorEnabled: Bool = false,
+        enabledAppleApps: Set<AppleApp> = []
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -836,12 +865,11 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.spawnableModelNames = spawnableModelNames
-        self.spawnableModelNotes = spawnableModelNotes
         self.spawnableWorkspaceAgents = spawnableWorkspaceAgents
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
+        self.enabledAppleApps = enabledAppleApps
     }
 }
 
@@ -1140,14 +1168,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Decode-only compatibility payload for pre-UUID agent JSON. Runtime
     /// authorization never matches this list directly.
     var legacySpawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model` (no agent;
-    /// per-agent allow-list). Empty → the `spawn_model` tool stays hidden. The
-    /// Default agent ignores this and uses the global
-    /// `SubagentConfiguration.spawnableModelNames` pool.
-    public var spawnableModelNames: [String]
-    /// Optional "when/how to use" note per spawnable model id, surfaced in the
-    /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
-    public var spawnableModelNotes: [String: String]
     /// Teammates' shared workspace agents this agent may delegate to over the
     /// relay via `spawn_agent` (per-agent allow-list, by durable
     /// `(workspaceId, agentAddress)`). Opt-in, empty by default. The Default
@@ -1181,10 +1201,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Per-agent budgets for `spawn` jobs (token / turn / wall-clock caps). The
     /// Default agent uses the global `SubagentConfiguration.budgets` instead.
     public var subagentBudgets: SubagentBudgets
-    /// What tools this agent's spawned workers may reach (`none` = text-only,
-    /// `readOnly` = curated read-only set). Default `.none`; the Default agent
-    /// uses the global `SubagentConfiguration.spawnToolAccess` instead.
-    public var spawnToolAccess: SpawnToolAccess
     /// Per-agent model override for subagent kinds, keyed by capability id
     /// (`"computer_use"`, `"spawn"`). An entry supersedes the
     /// kind's default model source (the parent agent's model for computer_use;
@@ -1207,6 +1223,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// the proposal architecture. Kept so existing agent JSON still decodes;
     /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
+    /// Per-agent opt-in for the built-in Apple app tools (Calendar,
+    /// Reminders, Contacts, Notes, Mail, Messages, Maps, Music,
+    /// Shortcuts). Empty by default; each enabled app gates its
+    /// `AppleApp.toolNames` into the model-visible schema. The Default agent
+    /// ignores this (it never calls Apple tools directly).
+    public var enabledAppleApps: Set<AppleApp>
 
     public init(
         dbEnabled: Bool,
@@ -1230,8 +1252,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         appleScriptExecutionMode: AppleScriptExecutionMode = .default,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
         imageGenerationModelId: String? = nil,
         imageGenerationTarget: MediaModelTarget? = nil,
         imageEditModelId: String? = nil,
@@ -1243,8 +1263,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
         knowledgeCuratorEnabled: Bool = false,
-        spawnToolAccess: SpawnToolAccess = .none,
-        spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
+        enabledAppleApps: Set<AppleApp> = []
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -1267,8 +1287,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.appleScriptExecutionMode = appleScriptExecutionMode
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.spawnableModelNames = spawnableModelNames
-        self.spawnableModelNotes = spawnableModelNotes
         self.imageGenerationTarget =
             imageGenerationTarget.flatMap { $0.isValid ? $0 : nil }
             ?? imageGenerationModelId.map {
@@ -1283,8 +1301,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
-        self.spawnToolAccess = spawnToolAccess
         self.spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(spawnableWorkspaceAgents)
+        self.enabledAppleApps = enabledAppleApps
     }
 
     public init(from decoder: Decoder) throws {
@@ -1334,12 +1352,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             (try? c.decodeIfPresent([UUID].self, forKey: .spawnableAgentIDs)) ?? []
         legacySpawnableAgentNames =
             (try? c.decodeIfPresent([String].self, forKey: .spawnableAgentNames)) ?? []
-        // Raw model ids for `spawn_model` + their notes. Lenient (`try?`) so a
-        // malformed pool/notes map never discards the rest of the settings.
-        spawnableModelNames =
-            (try? c.decodeIfPresent([String].self, forKey: .spawnableModelNames)) ?? []
-        spawnableModelNotes =
-            (try? c.decodeIfPresent([String: String].self, forKey: .spawnableModelNotes)) ?? [:]
         // Optional; absent means no ceiling (user policy applies as-is).
         computerUseCeiling = try c.decodeIfPresent(
             AutonomyCeiling.self,
@@ -1364,9 +1376,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentPermissions =
             (try? c.decodeIfPresent(SubagentPermissionDefaults.self, forKey: .subagentPermissions))
             ?? SubagentPermissionDefaults()
+        // Stored budgets equal to the pre-2026 defaults (2048 / 2 / 120) are
+        // upgraded to the current defaults once, so existing agents stop
+        // "ending too fast" (see `SubagentBudgets.migratingLegacyDefaults`).
         subagentBudgets =
-            (try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
-            ?? SubagentBudgets()
+            ((try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
+            ?? SubagentBudgets()).migratingLegacyDefaults
         // Normalize on decode (trim values, drop blanks) so the per-agent stored
         // shape matches the global `SubagentConfiguration.subagentModelOverrides`
         // — a cleared picker round-trips as "no override", never an empty-string
@@ -1382,15 +1397,16 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             (try? c.decodeIfPresent([UUID].self, forKey: .knowledgeCollectionIds)) ?? []
         knowledgeCuratorEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .knowledgeCuratorEnabled) ?? false
-        // Lenient enum decode: an invalid/renamed raw value falls back to the
-        // safe text-only default instead of failing the whole agent decode.
-        spawnToolAccess =
-            (try? c.decodeIfPresent(SpawnToolAccess.self, forKey: .spawnToolAccess)) ?? .none
         // Absent for every agent written before workspace spawn targets
         // existed; lenient so a malformed ref never discards the settings.
         spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(
             (try? c.decodeIfPresent([WorkspaceAgentRef].self, forKey: .spawnableWorkspaceAgents)) ?? []
         )
+        // Built-in Apple apps: absent for every agent written before they
+        // shipped → empty (off). Unknown names (a removed app) are dropped
+        // rather than failing the decode.
+        let rawAppleApps = (try? c.decodeIfPresent([String].self, forKey: .enabledAppleApps)) ?? []
+        enabledAppleApps = Set(rawAppleApps.compactMap(AppleApp.init(rawValue:)))
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1442,8 +1458,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case spawnableAgentIDs
         /// Legacy decode-only key.
         case spawnableAgentNames
-        case spawnableModelNames
-        case spawnableModelNotes
         case imageGenerationTarget
         /// Legacy decode-only key.
         case imageGenerationModelId
@@ -1456,8 +1470,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case knowledgeEnabled
         case knowledgeCollectionIds
         case knowledgeCuratorEnabled
-        case spawnToolAccess
         case spawnableWorkspaceAgents
+        case enabledAppleApps
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -1485,8 +1499,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs),
             forKey: .spawnableAgentIDs
         )
-        try c.encode(spawnableModelNames, forKey: .spawnableModelNames)
-        try c.encode(spawnableModelNotes, forKey: .spawnableModelNotes)
         try c.encodeIfPresent(imageGenerationTarget, forKey: .imageGenerationTarget)
         try c.encodeIfPresent(imageEditModelId, forKey: .imageEditModelId)
         try c.encodeIfPresent(textToVideoTarget, forKey: .textToVideoTarget)
@@ -1497,10 +1509,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(knowledgeEnabled, forKey: .knowledgeEnabled)
         try c.encode(knowledgeCollectionIds, forKey: .knowledgeCollectionIds)
         try c.encode(knowledgeCuratorEnabled, forKey: .knowledgeCuratorEnabled)
-        try c.encode(spawnToolAccess, forKey: .spawnToolAccess)
         if !spawnableWorkspaceAgents.isEmpty {
             try c.encode(spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)
         }
+        // Sorted for a stable on-disk shape.
+        try c.encode(AppleApp.sorted(enabledAppleApps).map(\.rawValue), forKey: .enabledAppleApps)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

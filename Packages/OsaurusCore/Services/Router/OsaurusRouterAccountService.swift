@@ -35,25 +35,98 @@ final class OsaurusRouterAccountService: ObservableObject {
     /// when the balance rises or a hosted request succeeds again.
     @Published private(set) var webSearchNeedsTopUp = false
 
+    /// Bumped (debounced) whenever a billed Router stream settled, so a usage
+    /// list that is on screen can refetch `/credits/usage` while hidden
+    /// surfaces fetch nothing. Replaces the old per-summary usage fetch,
+    /// which issued one signed request per tool round of an agent loop even
+    /// with no Credits UI open.
+    @Published private(set) var usageRevision = 0
+
     private let client: OsaurusRouterAPIClient
     // Retained for the lifetime of the singleton so balance refreshes when the
-    // user returns from Stripe Checkout or another app.
+    // user returns from Stripe Checkout.
     private var activationObserver: NSObjectProtocol?
     /// Set when a Checkout session is created; cleared once an observed balance
-    /// increase confirms it. Gates `balance_topup_succeeded` so it fires for a
-    /// real top-up rather than any incidental balance refresh.
-    private var awaitingTopUpConfirmation = false
+    /// increase confirms it (or after `maxTopUpConfirmationPolls` fruitless
+    /// activation polls — the tab was abandoned). Gates both the
+    /// activation-driven balance poll and `balance_topup_succeeded`, so the
+    /// Router is only asked on activation while a top-up is actually pending.
+    private(set) var awaitingTopUpConfirmation = false
+    private var topUpConfirmationPolls = 0
+    nonisolated static let maxTopUpConfirmationPolls = 10
 
-    init(client: OsaurusRouterAPIClient = .shared) {
+    /// Last successful `/credits/balance` fetch (monotonic clock, so sleep
+    /// and wall-clock corrections cannot make an old value look fresh) and
+    /// the in-flight refresh every concurrent caller shares.
+    private var balanceFetchedAt: ContinuousClock.Instant?
+    private var balanceRefreshTask: Task<Void, Never>?
+
+    /// Debounce before `usageRevision` moves after a billed stream, so a
+    /// tool-heavy turn's burst of summaries becomes one refetch. Injectable
+    /// for tests.
+    private let usageRevisionDebounce: TimeInterval
+    private var usageRevisionTask: Task<Void, Never>?
+    nonisolated static let defaultUsageRevisionDebounce: TimeInterval = 5
+
+    // State for `balanceForLocalAPI`. Ages use `ContinuousClock` so wall-clock
+    // corrections and system sleep cannot make an old value look fresh.
+    private static let localAPIBalanceTimeout: TimeInterval = 8
+    private var localAPIBalanceCache:
+        (balance: OsaurusRouterBalanceResponse, fetchedAt: Date, at: ContinuousClock.Instant)?
+    private var localAPIBalanceFailure: (result: LocalCreditsBalanceResult, at: ContinuousClock.Instant)?
+    private var localAPIBalanceRefresh: Task<Void, Never>?
+    private var localAPIBalanceGeneration = 0
+    private var identityObserver: NSObjectProtocol?
+
+    /// Eventually-consistent identity gate for the balance path (see
+    /// `refreshBalance`). Injectable so tests can run the request contract
+    /// without a keychain.
+    private let identityExists: () -> Bool
+
+    init(
+        client: OsaurusRouterAPIClient = .shared,
+        usageRevisionDebounce: TimeInterval = OsaurusRouterAccountService.defaultUsageRevisionDebounce,
+        observesNotifications: Bool = true,
+        identityExists: @escaping () -> Bool = { OsaurusIdentity.existsCached() }
+    ) {
         self.client = client
+        self.usageRevisionDebounce = usageRevisionDebounce
+        self.identityExists = identityExists
+        guard observesNotifications else { return }
+        // A deleted or restored identity is a different account: never serve
+        // the previous account's balance from the local API cache.
+        identityObserver = NotificationCenter.default.addObserver(
+            forName: .osaurusIdentityChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.clearLocalAPIBalance()
+                self?.balanceFetchedAt = nil
+            }
+        }
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.refreshBalance()
+                await self?.handleAppActivation()
             }
+        }
+    }
+
+    /// App regained focus. The only reason to ask the Router here is a
+    /// pending Stripe top-up: the redirect grants nothing, the webhook does,
+    /// so poll the balance until the increase is visible — bounded, because
+    /// an abandoned Checkout tab would otherwise poll on every activation
+    /// forever. Every other surface fetches when it is opened.
+    func handleAppActivation() async {
+        guard OsaurusRouter.isEnabled, awaitingTopUpConfirmation else { return }
+        topUpConfirmationPolls += 1
+        await refreshBalance()
+        if awaitingTopUpConfirmation, topUpConfirmationPolls >= Self.maxTopUpConfirmationPolls {
+            awaitingTopUpConfirmation = false
         }
     }
 
@@ -95,6 +168,9 @@ final class OsaurusRouterAccountService: ObservableObject {
     /// from `RemoteProviderManager.setOsaurusRouterEnabled(false)` so the Credits
     /// UI doesn't show a stale balance/activity while server polling is stopped.
     func clearForDisabledRouter() {
+        clearLocalAPIBalance()
+        balanceFetchedAt = nil
+        awaitingTopUpConfirmation = false
         balance = nil
         usage = []
         nextUsageCursor = nil
@@ -108,26 +184,50 @@ final class OsaurusRouterAccountService: ObservableObject {
         webSearchNeedsTopUp = false
     }
 
-    func refreshBalance() async {
+    /// Fetch `/credits/balance`. With `ifOlderThan`, a balance fetched more
+    /// recently than that is kept (passive chrome such as the composer chip
+    /// uses this; user-opened surfaces refresh unconditionally). Concurrent
+    /// callers share one in-flight request, so N chips mounting at once is
+    /// one signed request, not N.
+    func refreshBalance(ifOlderThan maxAge: TimeInterval? = nil) async {
         // Master switch off: never hit `/credits/balance`. This also neutralizes
-        // the `didBecomeActive` observer below, which calls straight in here.
+        // the activation path, which calls straight in here.
         guard OsaurusRouter.isEnabled else { return }
         // Eventually-consistent gate: `exists()` issues a synchronous keychain
         // query that blocks the main actor for seconds. The memo is updated
         // in-process on identity install/delete, so the balance refresh never
         // needs a per-call `SecItemCopyMatching` here.
-        guard OsaurusIdentity.existsCached() else {
+        guard identityExists() else {
             balance = nil
             lastError = OsaurusRouterAPIError.noIdentity.localizedDescription
             return
         }
+        if let maxAge, balance != nil, let fetchedAt = balanceFetchedAt,
+            fetchedAt.duration(to: .now) < .seconds(maxAge)
+        {
+            return
+        }
+        if let inFlight = balanceRefreshTask {
+            await inFlight.value
+            return
+        }
+        let task = Task<Void, Never> { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performBalanceRefresh()
+        }
+        balanceRefreshTask = task
+        await task.value
+        if balanceRefreshTask == task { balanceRefreshTask = nil }
+    }
 
+    private func performBalanceRefresh() async {
         isLoadingBalance = true
         defer { isLoadingBalance = false }
         do {
             let previousMicro = balanceMicroValue
             let newBalance = try await client.balance()
             balance = newBalance
+            balanceFetchedAt = .now
             lastError = nil
             // Best-effort top-up confirmation: a balance increase after we
             // initiated a Checkout (and returned to the app) means the funds
@@ -147,6 +247,92 @@ final class OsaurusRouterAccountService: ObservableObject {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    // MARK: Local HTTP API balance
+
+    /// Balance for the local `GET /credits/balance` endpoint. Deliberately
+    /// separate from the `@Published` Credits state: an external poller must
+    /// never drive the UI's spinner or error banner, and the UI's optimistic
+    /// post-request deductions must never be served as a Router-fetched value.
+    ///
+    /// Fresh for `maxAge`; after a failed refresh the Router is not retried
+    /// for `failureBackoff`, and concurrent callers share one in-flight
+    /// request, so polling never becomes one signed Router request per poll.
+    /// The last fetched balance is returned flagged stale when a refresh fails.
+    func balanceForLocalAPI(
+        maxAge: TimeInterval = 30,
+        failureBackoff: TimeInterval = 10
+    ) async -> LocalCreditsBalanceResult {
+        if let blocked = localAPIBalancePrecondition() { return blocked }
+        if let fresh = freshLocalAPIBalance(maxAge: maxAge) { return fresh }
+        if let failure = localAPIBalanceFailure,
+            failure.at.duration(to: .now) < .seconds(failureBackoff)
+        {
+            return staleLocalAPIBalance(or: failure.result)
+        }
+
+        let refresh = localAPIBalanceRefresh ?? startLocalAPIBalanceRefresh()
+        await refresh.value
+
+        // The Router switch or identity may have changed during the await.
+        if let blocked = localAPIBalancePrecondition() { return blocked }
+        if let fresh = freshLocalAPIBalance(maxAge: maxAge) { return fresh }
+        return staleLocalAPIBalance(
+            or: localAPIBalanceFailure?.result ?? .unavailable("The Osaurus Router could not be reached.")
+        )
+    }
+
+    private func localAPIBalancePrecondition() -> LocalCreditsBalanceResult? {
+        guard OsaurusRouter.isEnabled else { return .routerDisabled }
+        guard OsaurusIdentity.existsCached() else { return .noIdentity }
+        return nil
+    }
+
+    private func freshLocalAPIBalance(maxAge: TimeInterval) -> LocalCreditsBalanceResult? {
+        guard let cache = localAPIBalanceCache, cache.at.duration(to: .now) < .seconds(maxAge) else {
+            return nil
+        }
+        return .balance(cache.balance, fetchedAt: cache.fetchedAt, stale: false)
+    }
+
+    private func staleLocalAPIBalance(or fallback: LocalCreditsBalanceResult) -> LocalCreditsBalanceResult {
+        guard let cache = localAPIBalanceCache else { return fallback }
+        return .balance(cache.balance, fetchedAt: cache.fetchedAt, stale: true)
+    }
+
+    private func startLocalAPIBalanceRefresh() -> Task<Void, Never> {
+        let generation = localAPIBalanceGeneration
+        let client = client
+        let task = Task { [weak self] in
+            let outcome: Result<OsaurusRouterBalanceResponse, Error>
+            do {
+                outcome = .success(try await client.balance(timeout: Self.localAPIBalanceTimeout))
+            } catch {
+                outcome = .failure(error)
+            }
+            // A bumped generation means the Router was turned off or the
+            // identity changed mid-flight: this result belongs to old state.
+            guard let self, self.localAPIBalanceGeneration == generation else { return }
+            self.localAPIBalanceRefresh = nil
+            switch outcome {
+            case .success(let balance):
+                self.localAPIBalanceCache = (balance, Date(), .now)
+                self.localAPIBalanceFailure = nil
+            case .failure(let error):
+                self.localAPIBalanceFailure = (LocalCreditsBalance.result(forRefreshError: error), .now)
+            }
+        }
+        localAPIBalanceRefresh = task
+        return task
+    }
+
+    private func clearLocalAPIBalance() {
+        localAPIBalanceGeneration += 1
+        localAPIBalanceRefresh?.cancel()
+        localAPIBalanceRefresh = nil
+        localAPIBalanceCache = nil
+        localAPIBalanceFailure = nil
     }
 
     func refreshUsage(reset: Bool = true) async {
@@ -225,16 +411,22 @@ final class OsaurusRouterAccountService: ObservableObject {
                 throw OsaurusRouterAPIError.invalidResponse
             }
             lastError = nil
-            // A Checkout session exists and is about to open. Arm the
-            // confirmation watcher so the next balance increase counts as a
-            // completed top-up.
-            awaitingTopUpConfirmation = true
+            armTopUpConfirmation()
             FeatureTelemetry.balanceTopUpInitiated()
             return url
         } catch {
             lastError = error.localizedDescription
             return nil
         }
+    }
+
+    /// A Checkout session exists and is about to open. Arm the confirmation
+    /// watcher so activation polls the balance until the increase lands (and
+    /// that increase counts as a completed top-up). Internal so tests can
+    /// exercise the bounded poll without a Stripe round-trip.
+    func armTopUpConfirmation() {
+        awaitingTopUpConfirmation = true
+        topUpConfirmationPolls = 0
     }
 
     func noteRouterSummary(_ summary: OsaurusRouterSummaryEvent.Summary) {
@@ -245,6 +437,9 @@ final class OsaurusRouterAccountService: ObservableObject {
             WorkspacesService.shared.noteWorkspaceBilled(workspaceId: workspaceId)
             return
         }
+        // The usage list, when one is on screen, refetches on the (debounced)
+        // revision bump rather than after every summary frame.
+        scheduleUsageRevisionBump()
         guard let current = balance, let currentMicro = Int64(current.balanceMicro),
             let costMicro = Int64(summary.costMicro)
         else {
@@ -253,7 +448,19 @@ final class OsaurusRouterAccountService: ObservableObject {
         }
         let updated = max(0, currentMicro - costMicro)
         balance = OsaurusRouterBalanceResponse(balanceMicro: String(updated), frozen: current.frozen)
-        Task { await refreshUsage(reset: true) }
+    }
+
+    /// Coalesce a burst of billed summaries (one per tool round) into a
+    /// single `usageRevision` increment shortly after the last. Surfaces
+    /// showing usage observe the revision; nothing is fetched here.
+    private func scheduleUsageRevisionBump() {
+        guard usageRevisionTask == nil else { return }
+        usageRevisionTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(self?.usageRevisionDebounce ?? 0))
+            guard let self, !Task.isCancelled else { return }
+            self.usageRevisionTask = nil
+            self.usageRevision &+= 1
+        }
     }
 
     // MARK: - Hosted web search
@@ -387,10 +594,12 @@ final class OsaurusRouterAccountService: ObservableObject {
     /// summary frame (mid-stream error, user cancel, truncation). The server
     /// may still have charged for the partial generation, and the optimistic
     /// local decrement (`noteRouterSummary`) never ran — so the cached
-    /// balance/usage can drift from server truth. Schedule a debounced
-    /// balance + usage refresh as reconciliation; the server is authoritative.
+    /// balance can drift from server truth. Schedule a debounced balance
+    /// refresh as reconciliation (the server is authoritative) and bump the
+    /// usage revision so an open usage list catches up too.
     func reconcileAfterStreamWithoutSummary() {
         guard OsaurusRouter.isEnabled else { return }
+        scheduleUsageRevisionBump()
         missingSummaryReconcileTask?.cancel()
         missingSummaryReconcileTask = Task { [weak self] in
             try? await Task.sleep(
@@ -398,7 +607,6 @@ final class OsaurusRouterAccountService: ObservableObject {
             )
             guard !Task.isCancelled else { return }
             await self?.refreshBalance()
-            await self?.refreshUsage(reset: true)
         }
     }
 }

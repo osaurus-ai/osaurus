@@ -105,8 +105,6 @@ struct PerChatFolderIsolationTests {
             contentsOf: rootB.appendingPathComponent("out.txt"), encoding: .utf8)
         #expect(contentA == "from-A")
         #expect(contentB == "from-B")
-
-        await FileOperationLog.shared.clearAll()
     }
 
     /// With no folder bound anywhere in scope, a canonical folder tool
@@ -121,11 +119,12 @@ struct PerChatFolderIsolationTests {
 
     // MARK: - Per-operation undo roots
 
-    /// Undo resolves against the root recorded ON THE OPERATION, so a
+    /// Undo resolves against the root recorded ON THE CHANGE SET, so a
     /// session can undo a write made under root A even while a different
     /// root (another chat's folder) is currently bound.
     @Test func undoUsesRootRecordedOnOperation() async throws {
-        await FileOperationLog.shared.clearAll()
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let rootA = try makeRoot("undo-a")
         let rootB = try makeRoot("undo-b")
         defer {
@@ -136,28 +135,21 @@ struct PerChatFolderIsolationTests {
         try "original".write(to: file, atomically: true, encoding: .utf8)
 
         let sessionId = "undo-\(UUID().uuidString)"
-        let write = FileWriteTool()
-        let opId: String = try await ChatExecutionContext.$currentFolderRoot.withValue(rootA) {
-            try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                let result = try await write.execute(
-                    argumentsJSON: #"{"path": "undo.txt", "content": "clobbered"}"#)
-                return try #require(
-                    EnvelopeAssertions.successPayload(result)?["operation_id"] as? String)
-            }
+        let written = try await ChatExecutionContext.$currentFolderRoot.withValue(rootA) {
+            try await env.run(
+                FileWriteTool(), #"{"path": "undo.txt", "content": "clobbered"}"#,
+                sessionId: sessionId, folder: rootA)
         }
+        let opId = try #require(EnvelopeAssertions.successPayload(written)?["operation_id"] as? String)
 
-        // Undo while a DIFFERENT root is bound — the operation's own root wins.
-        let undo = FileUndoTool()
+        // Undo while a DIFFERENT root is bound — the change set's own root wins.
+        let undo = FileUndoTool(journal: env.journal)
         let result = try await ChatExecutionContext.$currentFolderRoot.withValue(rootB) {
-            try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                try await undo.execute(argumentsJSON: #"{"operation_id": "\#(opId)"}"#)
-            }
+            try await env.call(undo, #"{"operation_id": "\#(opId)"}"#, sessionId: sessionId)
         }
         #expect(ToolEnvelope.isSuccess(result), "got: \(result)")
         let after = try String(contentsOf: file, encoding: .utf8)
         #expect(after == "original")
-
-        await FileOperationLog.shared.clearAll()
     }
 
     // MARK: - Session tool-state fingerprint

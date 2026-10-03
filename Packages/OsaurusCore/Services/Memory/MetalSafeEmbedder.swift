@@ -27,26 +27,49 @@ public actor MetalSafeEmbedder: VecturaEmbedder {
         // Throws CancellationError if cancelled while waiting; no gate is
         // held on that path, so the exit pairing below is untouched.
         try await MetalGate.shared.enterEmbedding()
+        let started = Date()
         do {
             let result = try await inner.embed(texts: texts)
             await MetalGate.shared.exitEmbedding()
+            logActivity(texts: texts, dimensions: result.first?.count, started: started, error: nil)
             return result
         } catch {
             await MetalGate.shared.exitEmbedding()
+            logActivity(texts: texts, dimensions: nil, started: started, error: error)
             throw error
         }
     }
 
     public func embed(text: String) async throws -> [Float] {
         try await MetalGate.shared.enterEmbedding()
+        let started = Date()
         do {
             let result = try await inner.embed(text: text)
             await MetalGate.shared.exitEmbedding()
+            logActivity(texts: [text], dimensions: result.count, started: started, error: nil)
             return result
         } catch {
             await MetalGate.shared.exitEmbedding()
+            logActivity(texts: [text], dimensions: nil, started: started, error: error)
             throw error
         }
+    }
+
+    /// One Insights `embedding` row per batch (metadata only — never the
+    /// texts). Every local embedding — memory recall, tool/skill index,
+    /// `/v1/embeddings` — funnels through this actor, so this is the single
+    /// place that sees all of them. HTTP requests are skipped: that handler
+    /// logs its own row.
+    private func logActivity(texts: [String], dimensions: Int?, started: Date, error: Error?) {
+        MediaActivityLogger.logEmbedding(
+            model: EmbeddingService.modelName,
+            textCount: texts.count,
+            totalChars: texts.reduce(0) { $0 + $1.count },
+            dimensions: dimensions,
+            purpose: MediaActivityLogger.embeddingPurpose,
+            durationMs: Date().timeIntervalSince(started) * 1000,
+            error: error?.localizedDescription
+        )
     }
 }
 

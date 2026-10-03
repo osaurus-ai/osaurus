@@ -226,11 +226,11 @@ struct WorkspaceTargetStoredModelTests {
         // A malformed entry never discards the whole delegation config.
         let malformed = """
             {"spawnableWorkspaceAgents":[{"workspace_id":"ws","agent_address":42}],
-             "spawnableModelNames":["m"]}
+             "ramSafetyPreflightEnabled":false}
             """
         let lenient = try decode(SubagentConfiguration.self, malformed)
         #expect(lenient.spawnableWorkspaceAgents.isEmpty)
-        #expect(lenient.spawnableModelNames == ["m"])
+        #expect(lenient.ramSafetyPreflightEnabled == false)
 
         var settings = Agent(name: "Launcher").settings
         settings.spawnDelegationEnabled = true
@@ -399,6 +399,18 @@ struct WorkspaceDispatchFunnelTests {
         SubagentConfigurationStore.save(SubagentConfiguration(spawnableWorkspaceAgents: [wsRef]))
 
         try await WorkspaceRosterTestLock.shared.run {
+            let workspace = try decode(OsaurusRouterWorkspaceSummary.self, """
+                {"id":"ws-target","name":"Probe workspace","role":"member","source":"subscription",
+                 "active":true,"members_active":2,"agents_shared":1,"created_at":"2026-01-01T00:00:00Z"}
+                """)
+            let agent = try decode(OsaurusRouterWorkspaceAgent.self, """
+                {"agent_address":"\(wsAddress)","display_name":"Research Agent",
+                 "description":"Finds papers for a separately requested research task.",
+                 "owner":{"account_id":"acct-probe","wallet_address":"0xowner","display_name":"Owner"},
+                 "relay_url":"wss://relay.example","online":true,"last_seen":null,
+                 "shared_at":"2026-01-01T00:00:00Z"}
+                """)
+            WorkspaceRosterStore.shared.apply(rosters: [.init(workspace: workspace, agents: [agent])])
             let kind = TextSubagentKind(workspaceAgent: wsRef, input: "x")
             let scope = SubagentScope(sessionId: "s", toolCallId: "t", agentId: Agent.defaultId)
             let resolved = try await kind.resolveModel(scope)

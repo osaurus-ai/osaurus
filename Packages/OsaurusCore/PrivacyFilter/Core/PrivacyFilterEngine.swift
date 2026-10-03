@@ -210,30 +210,41 @@ public final class PrivacyFilterEngine {
         // the classifier-only categories (person / address / date /
         // secret) then rely on regex/preset/custom rules.
         var modelPending: [PendingMatch] = []
+        // Per-layer counts for the one-line diagnostic below.
+        var modelRawCount = 0
         if useModel {
             switch backend {
             case .openai:
                 guard let kit else { throw PrivacyFilterEngineError.notLoaded }
-                let entities: [Entity]
-                do {
-                    entities = try await kit.extractEntities(from: scanText)
-                } catch {
-                    throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
-                }
-                for entity in entities {
-                    guard let category = EntityCategory(entity.type) else { continue }
-                    modelPending.append(
-                        PendingMatch(
-                            category: category,
-                            original: entity.text,
-                            range: entity.range,
-                            source: .model,
-                            label: nil
+                // One pass per piece: the user's words apart from each
+                // injected block (see `InjectedContextSpans.modelPieces`).
+                for piece in InjectedContextSpans.modelPieces(in: scanText) {
+                    let pieceText = String(scanText[piece])
+                    let entities: [Entity]
+                    do {
+                        entities = try await kit.extractEntities(from: pieceText)
+                    } catch {
+                        throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
+                    }
+                    modelRawCount += entities.count
+                    for entity in entities {
+                        guard let category = EntityCategory(entity.type),
+                            let range = Self.rebase(entity.range, from: pieceText, onto: piece, in: scanText)
+                        else { continue }
+                        modelPending.append(
+                            PendingMatch(
+                                category: category,
+                                original: entity.text,
+                                range: range,
+                                source: .model,
+                                label: nil
+                            )
                         )
-                    )
+                    }
                 }
             case .rampart:
                 let spans = await RampartModelManager.shared.modelSpans(in: scanText)
+                modelRawCount = spans.count
                 for span in spans {
                     modelPending.append(
                         PendingMatch(
@@ -273,16 +284,33 @@ public final class PrivacyFilterEngine {
         let resolved = Self.mergeMatches(pending)
 
         // First pass: drop matches whose range maps back through the
-        // code-block mask to a `nil` (entirely masked) and collect
-        // the survivors. We do this BEFORE interning so we don't pay
-        // for placeholders we're about to throw away.
+        // code-block mask to a `nil` (entirely masked) or that sit
+        // inside an app-injected context block (the `[Current Time]`
+        // prefix is not user text), and collect the survivors. We do
+        // this BEFORE interning so we don't pay for placeholders we're
+        // about to throw away.
+        let injected = InjectedContextSpans.ranges(in: scanText)
+        var droppedInjected = 0
+        var droppedMasked = 0
         var surviving: [(category: EntityCategory, original: String, range: Range<String.Index>, label: String?)] =
             []
         surviving.reserveCapacity(resolved.count)
         for match in resolved {
-            guard let restored = restore(match.range) else { continue }
+            if InjectedContextSpans.overlaps(match.range, injected) {
+                droppedInjected += 1
+                continue
+            }
+            guard let restored = restore(match.range) else {
+                droppedMasked += 1
+                continue
+            }
             surviving.append((match.category, match.original, restored, match.label))
         }
+        // Counts only, never text: enough to tell "the model saw nothing"
+        // from "it was dropped" when a send goes out with no review.
+        print(
+            "[PrivacyFilter] Segment: \(scanText.count) chars, model[\(useModel ? backend.rawValue : "off")] \(modelRawCount) raw / \(modelPending.count) mapped, regex \(regexMatches.count), merged \(resolved.count), dropped \(droppedInjected) injected-context + \(droppedMasked) code-masked, kept \(surviving.count); injected-context spans \(injected.count)"
+        )
 
         // Second pass: batch-intern in a single actor hop. Previous
         // implementation awaited `map.intern(…)` per match — a 30-hit
@@ -307,6 +335,27 @@ public final class PrivacyFilterEngine {
         return out
     }
 
+    /// Moves `range`, an index range into `piece` (a copy of `pieceRange`
+    /// of `whole`), onto the same characters of `whole`. Nil when the
+    /// result would not land on character boundaries.
+    private static func rebase(
+        _ range: Range<String.Index>,
+        from piece: String,
+        onto pieceRange: Range<String.Index>,
+        in whole: String
+    ) -> Range<String.Index>? {
+        let base = whole.utf8.distance(from: whole.startIndex, to: pieceRange.lowerBound)
+        let lower = piece.utf8.distance(from: piece.startIndex, to: range.lowerBound)
+        let upper = piece.utf8.distance(from: piece.startIndex, to: range.upperBound)
+        let utf8 = whole.utf8
+        guard let start = utf8.index(utf8.startIndex, offsetBy: base + lower, limitedBy: utf8.endIndex),
+            let end = utf8.index(utf8.startIndex, offsetBy: base + upper, limitedBy: utf8.endIndex),
+            let startIndex = start.samePosition(in: whole),
+            let endIndex = end.samePosition(in: whole)
+        else { return nil }
+        return startIndex ..< endIndex
+    }
+
     /// Model-only NER spans (`person` / `address` / `date` / `secret`, plus
     /// any other category the on-device classifier emits) for a single text,
     /// with NO regex layer and NO `RedactionMap` interning. Returns `[]` when
@@ -324,9 +373,14 @@ public final class PrivacyFilterEngine {
     {
         guard !text.isEmpty else { return [] }
 
-        // Honor the configured backend so a screenshot scrub masks the
-        // same model categories the text pipeline would.
-        if PrivacyFilterStore.snapshot().aiDetectionBackend == .rampart {
+        // Resolve the backend the same way the text pipeline does (the
+        // user's default if installed, else whatever is) so a screenshot
+        // scrub masks the same model categories an outbound send would.
+        let config = PrivacyFilterStore.snapshot()
+        let backend =
+            config.resolvedAIBackend(isInstalled: PrivacyAIBackend.isBundleInstalled)
+            ?? config.aiDetectionBackend
+        if backend == .rampart {
             return await RampartModelManager.shared.modelSpans(in: text)
         }
 

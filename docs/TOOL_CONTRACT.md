@@ -268,6 +268,177 @@ no usable wall-clock budget — a `cargo build` legitimately runs for
 
 Other tools keep the 120 s safety net unchanged.
 
+### `file_edit` matching contract
+
+`file_edit` (and the sandbox writer it routes `/workspace/...` paths
+through) matches `old_string` with a fixed cascade and applies the first
+tier that yields a match:
+
+1. `exact` — byte-for-byte.
+2. `whitespace_normalized` — whole lines compared with edge whitespace
+   trimmed and inner whitespace runs collapsed (tabs vs spaces,
+   indentation depth).
+3. `blank_lines_collapsed` — as above, ignoring blank lines between the
+   non-blank lines.
+4. `unicode_normalized` — as above, folding curly quotes, dashes,
+   ellipses and non-breaking spaces to their ASCII forms.
+
+A relaxed tier is applied only when it matches exactly once (or
+`replace_all` is set); otherwise the failure names the tier and count and
+carries `metadata.retry_with = {"replace_all": true}`. Unchanged lines are
+always copied from the FILE (never from `old_string`), so the file's
+indentation, blank lines, BOM and line endings survive; inserted lines
+are re-indented to the file's indent unit.
+
+The success payload reports `replacements`, `match_strategy` (the most
+relaxed tier any edit needed), `matched_lines` (`"12"` / `"12-15"` per
+block), and for `edits` batches `edits_applied` / `edit_strategies` per
+entry. Every relaxed match adds a `warnings` entry quoting the verbatim
+file text that was matched, so the model learns what the file really
+looked like. `dry_run` returns the same payload plus a `PREVIEW ONLY`
+warning and writes nothing.
+
+Document routes (`.docx`/`.pptx` `replace_text`) use a two-tier
+cascade (`exact`, then punctuation/whitespace `normalized`); the
+operation summary says when the normalized tier was used, multi-match
+errors name the part (body / header / slide N), and a multi-line
+`old_string` on `.docx` matches consecutive paragraphs. When a match
+misses and `old_string` carries Markdown syntax — list markers (`•`,
+`-`, `*`, `1.`, `1)` + space/tab: what `file_read` renders for list
+paragraphs and what a Markdown-drafted brief contains), ATX heading
+hashes (`## Scope`), or inline emphasis (`**Kickoff: April 7**`,
+`_x_`, `` `x` ``, `~~x~~`; underscores inside words are left alone) —
+the match is retried without the syntax and it is dropped from a
+single-line `new_string` too, since Word and PowerPoint store all of it
+as paragraph and run styling, not text. The summary names the rescue.
+Raptor no-think drafted `- **Kickoff: April 7**` and `## Scope and
+Timeline` and missed on both before this.
+
+`file_write` for `.docx`/`.pdf` turns lines that start with a typographic
+bullet (`•`, `◦`, `▪`, `■` + space/tab, outside fenced code) into
+Markdown list items before parsing. CommonMark reads those glyphs as
+prose, so a model that redrafted from a `file_read` rendering had a whole
+section soft-wrap into one paragraph ("Goal • Migrate … • Ensure …") that
+no later `old_string` could address. `.pptx` accepts the same glyphs
+(space or tab) as bullet markers.
+
+On `.docx`, newlines in `new_string` are paragraph boundaries, never soft
+line breaks (a `<w:br/>` reads back as one run-on line that no later
+`old_string` can address). A single-line match with a multi-line
+replacement keeps the first line in the matched paragraph (head text and
+runs intact), moves any tail after the match into a clone that takes the
+last line, and builds the lines between as new paragraphs. New lines are
+read as block Markdown the way `file_write` renders it: `## Title` takes
+the document's `Heading2` style (bold text when the style is missing),
+`- item` / `1. item` / `•\titem` clone the nearest list paragraph's
+formatting (then `ListBullet`, then a literal bullet), everything else
+clones the nearest unstyled body paragraph. Lines written into existing
+paragraphs drop the prefix and keep that paragraph's style; a heading or
+list line landing on a paragraph of another kind is rebuilt with the
+matching style. The drafting eval (`frontier.document-drafting-revisions`,
+grok-4.3) went from 16 tool calls with 7 `file_edit` errors to 4 calls
+with none on this change.
+
+Rendered drafts store list items as literal `•\t…` / `1.\t…` text (a
+`<w:tab/>` inside the paragraph). In a multi-line `old_string` that prefix
+counts as blank on the leading side, so once the Markdown rescue has
+stripped `- ` from the model's lines, each middle/last line still
+addresses the whole item; the bullet stays in the paragraph and the
+replacement is written after it (never across the tab). Collapsing two
+items into one keeps one bullet. Raptor no-think sent a 3-line
+`- Kickoff …` / `- Phase 1 …` / `- Set the schedule …` `old_string`
+against such a draft and missed on the last two lines before this. When
+the stripped retry matches but cannot be applied, that error is the one
+reported, not the original miss.
+
+An empty `old_string` with a `new_string` on `.docx`/`.pptx` is an
+insert, which `replace_text` cannot anchor; the rejection names the
+operations that add text (`append_markdown`, `insert_paragraph` with
+`after: N`; `set_slide_text` / `duplicate_slide` on `.pptx`).
+
+Three Raptor no-think `file_edit` shapes are repaired before schema
+validation (`FileEditTool.normalizeArgumentsBeforeValidation`); the
+public schema stays strict and nothing else about the payload changes:
+
+- `edits` / `operations` sent as a JSON **string** (`"edits": "[{…}]"`,
+  `edit-docx-in-place`) is decoded.
+- A missing top-level `path` that every entry carries identically
+  (`{"edits": [{"path": "memo.docx", …}, {"path": "memo.docx", …}]}`;
+  `edit-docx-in-place` ×3, `fill-pdf-form-in-place` ×2 in one run) is
+  hoisted. Entries that disagree, or a call with no `path` anywhere, still
+  get "Missing required property: path". The agent loop's dedupe/mutation
+  bookkeeping (`AgentTaskState`) sees the raw call and resolves the same
+  shared entry path (`sharedEntryPath`), so a verify-read after such an
+  edit re-executes instead of replaying pre-edit content (observed on
+  `edit-pptx-in-place`: "repeated reads continue to show the original
+  content").
+- Document operations under `edits` (`{"edits": [{"op": "set_cells", …}]}`,
+  `edit-xlsx-in-place`, `document-drafting-revisions`) move to
+  `operations`, which `edits.items` (requires `old_string`) would otherwise
+  reject and start a shape-guessing loop. Only an array in which at least
+  one entry carries a known document `op` moves (text-file batches never
+  do); `{old_string, new_string}` entries in the same array become
+  `replace_text` (top-level `replace_all` carries over), and a real
+  `operations` array always wins.
+
+Content-free fillers under `edits` / `operations` (`[]`, `null`, `""`,
+`{}`, and containers holding only such values — `[{}]`, `[{"op": ""}]`)
+next to a real edit form are dropped before dispatch, on both the host
+and sandbox routes. Constrained decoders emit the unused optional
+collection as an empty array (`"operations": []` beside a real `edits`
+batch, 5/5 on grok-4.3) and, once the array is open, sometimes pad it
+with an empty object (grok-4.3 `edit-batch-edits-single-call`, one run in
+ten); the filler carries no intent and must not turn a text-file batch
+into an "operations on a text file" error. A request that carries only a
+filler still gets the pointed non-empty-array error; numbers and booleans
+are content, so `[{"index": 0}]` is never dropped.
+
+`file_write` on a document path refuses `content` that parses as a
+`file_edit` operations array (`[{"op": "fill_form", …}]`, or wrapped as
+`{"operations": [...]}`, every element carrying a known `op`). Rendering it
+would replace the document with one line of JSON text — Raptor no-think
+did exactly that to a PDF form, twice in one run. The rejection names the
+ops, states the file was not changed, and carries the exact `file_edit`
+call in `metadata.retry_with` (`retry_with_tool: "file_edit"`). A bare
+array of rows for `.xlsx` is not an operations payload and still renders.
+
+`.xlsx` JSON rows may be positional arrays or records (`{"Item": "Rent",
+"Amount": 1200}`) at every level (`sheets[].rows`, top-level `rows`, or
+the bare top-level array). Records produce a header row from the sorted
+union of keys plus one row per record; a record whose values echo its keys
+(a header spelled as a record) is dropped so the header is written once.
+
+### Schema shape on the provider wire (constrained decoders)
+
+Two wire facts, both measured against xAI `grok-4.3` (deterministic,
+5/5 runs each) and matching how JSON-schema grammars (llama.cpp-style)
+constrain output:
+
+1. **Optional properties are only reachable in declared order.** Once
+   the model has emitted a later-declared key, earlier ones are gone.
+   Osaurus encodes bodies with `.sortedKeys` for prompt-cache
+   determinism, which alphabetizes `properties`; `new_string` then sat
+   before `old_string` and arrived missing every time
+   (`{"path","old_string","replace_all":false}`). Tools that care declare
+   `parameterOrder`; `ToolRegistry` records it and
+   [`ToolWirePropertyOrder`](../Packages/OsaurusCore/Tools/ToolWirePropertyOrder.swift)
+   rewrites the encoded body just before send so those tools'
+   `properties` (top level and nested `items`/branches) follow the
+   authored order while everything else stays sorted. The rewrite is
+   deterministic, so the cache contract still holds. Put the key the
+   model writes first, first: `path`, then `old_string`, then
+   `new_string`.
+2. **Do not enumerate per-variant keys on a polymorphic array item.**
+   `file_edit.operations.items` is a free-form object whose keys are
+   documented in the `operations` description. With `properties`
+   declared, the model emitted `op` first and every key sorting before
+   it (`cells`, `fields`, `index`, `new_string`, `old_string`) became
+   unreachable, arriving as `{"op":"replace_text","slide":1,"text":…}`;
+   with the original `{op}`-only declaration the call arrived as
+   `{"op":"replace_text"}`. The free-form shape produced correct
+   arguments 3/3. Each editor validates its own keys with
+   entry-numbered errors that list the keys the entry did carry.
+
 ### Pipefail by default
 
 `sandbox_exec` and `shell_run` wrap the model's command in

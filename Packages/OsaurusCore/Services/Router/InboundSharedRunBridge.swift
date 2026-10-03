@@ -102,10 +102,17 @@ final class InboundSharedRunBridge {
         requestMessages: [ChatMessage],
         stop: @escaping @Sendable () -> Void
     ) -> Handle {
-        let agentName = AgentManager.shared.agent(for: agentId)?.name ?? "Shared agent"
-        let callerName = context.callerLabel ?? "Teammate"
-        let title = "\(callerName) → \(agentName)"
         let turns = ChatHistoryWriter.turns(from: requestMessages)
+        // The owner's own phone chats are titled from what was asked, like
+        // any chat; "caller → agent" names a teammate's conversation, and on
+        // every phone chat it left History with rows that all read the same.
+        let title: String
+        if RemoteSessionContinuation.isFromPairedPhone(context) {
+            title = ChatSessionData.generateTitle(from: turns)
+        } else {
+            let agentName = AgentManager.shared.agent(for: agentId)?.name ?? "Shared agent"
+            title = "\(context.callerLabel ?? "Teammate") → \(agentName)"
+        }
 
         let (taskId, session) = resolveHostedSession(
             agentId: agentId,
@@ -122,6 +129,9 @@ final class InboundSharedRunBridge {
         runsByTask[taskId, default: []].insert(runKey)
         if let sessionId = session.sessionId {
             monitor.reportSession(sessionId, status: .working)
+            if RemoteSessionContinuation.isFromPairedPhone(context) {
+                PhoneChatHandoff.shared.notePhoneActivity(sessionId: sessionId)
+            }
         }
         return handle
     }
@@ -152,11 +162,29 @@ final class InboundSharedRunBridge {
             return observed.map { Self.isUnchangedPrefix($0.turns, of: turns) } ?? false
         }
         let existingRowId = candidate?.id
+        if candidate == nil {
+            // Why no row was reused: same-key rows whose history isn't a
+            // prefix of this request (a caller sending only its new message).
+            let sameKey = sessions.sessions.filter { $0.externalSessionKey == externalKey }
+            MobileConnectLog.hostedRun(
+                "no reusable row (incoming turns=\(turns.count), rows with this key=\(sameKey.count): "
+                    + sameKey.map { row in
+                        let stored =
+                            manager.taskState(for: row.id)?.chatSession?.turns.count
+                            ?? ChatSessionStore.load(id: row.id)?.turns.count ?? -1
+                        return "\(row.id) turns=\(stored) busy=\(runsByTask[row.id]?.isEmpty == false)"
+                    }.joined(separator: ", ") + ")"
+            )
+        }
         if let rowId = existingRowId, let task = manager.taskState(for: rowId), task.isInboundRun,
             let session = manager.reviveInboundRun(task.id)
         {
             session.appendHostedTurns(Array(turns.dropFirst(session.turns.count)))
             session.save()
+            MobileConnectLog.hostedRun(
+                "reused live task \(task.id) (session turns=\(session.turns.count), "
+                    + "shown in a window=\(ChatWindowManager.shared.session(forSessionId: rowId) === session))"
+            )
             return (task.id, session)
         }
 
@@ -167,7 +195,13 @@ final class InboundSharedRunBridge {
         var data: ChatSessionData
         if let rowId = existingRowId, let stored = ChatSessionStore.load(id: rowId) {
             data = stored
-            data.title = stored.title == "New Chat" ? title : stored.title
+            // A phone chat still titled the old way ("Osaurus Connect → …")
+            // takes its real title on its next run.
+            let staleTitle =
+                stored.title == "New Chat"
+                || (RemoteSessionContinuation.isFromPairedPhone(context)
+                    && stored.title.hasPrefix("\(MobilePairingService.legacyKeyLabel) → "))
+            data.title = staleTitle ? title : stored.title
         } else {
             data = ChatSessionData(
                 id: UUID(),
@@ -188,12 +222,17 @@ final class InboundSharedRunBridge {
         data.capabilities = SessionCapability.derive(from: turns)
 
         let executionContext: ExecutionContext
-        if let shown = ChatWindowManager.shared.session(forSessionId: data.id) {
+        let shownInWindow = ChatWindowManager.shared.session(forSessionId: data.id)
+        if let shown = shownInWindow {
             shown.load(from: data)
             executionContext = ExecutionContext(adopting: shown)
         } else {
             executionContext = ExecutionContext(reattaching: data)
         }
+        MobileConnectLog.hostedRun(
+            "\(existingRowId == nil ? "new row" : "reattached row") \(data.id) "
+                + "(turns=\(data.turns.count), adopted a window's session=\(shownInWindow != nil))"
+        )
         let session = executionContext.chatSession
         // The session id must equal the task id for retained-tab hydration.
         session.sessionId = data.id
@@ -229,6 +268,9 @@ final class InboundSharedRunBridge {
 
     private var streamingTurns: [String: UUID] = [:]
     private var lastStreamSave: [String: Date] = [:]
+    private var lastStreamRender: [String: Date] = [:]
+    /// Runs with a trailing redraw scheduled (see `renderStreamed`).
+    private var pendingStreamRender: Set<String> = []
 
     /// Awaited by the request loop: content is visible immediately and partial
     /// output is checkpointed throughout generation, including reasoning.
@@ -240,6 +282,12 @@ final class InboundSharedRunBridge {
             let turn = ChatTurnData(role: .assistant, content: "", createdAt: Date())
             streamingTurns[handle.runKey] = turn.id
             session.appendHostedTurns([turn])
+            let shown = session.sessionId.flatMap { ChatWindowManager.shared.session(forSessionId: $0) }
+            MobileConnectLog.hostedRun(
+                "first delta of run \(handle.runKey) into session \(session.sessionId?.uuidString ?? "nil") "
+                    + "(task \(handle.taskId)); a window shows this chat=\(shown != nil), "
+                    + "same object as the stream=\(shown === session)"
+            )
         }
         guard let turn = session.turns.first(where: { $0.id == streamingTurns[handle.runKey] }) else { return }
         turn.appendContent(content)
@@ -247,9 +295,35 @@ final class InboundSharedRunBridge {
         turn.lastOutputAt = Date()
         turn.notifyContentChanged()
         session.markHostedTranscriptChanged()
+        renderStreamed(handle, session)
         if Date().timeIntervalSince(lastStreamSave[handle.runKey] ?? .distantPast) >= 0.25 {
             session.save()
             lastStreamSave[handle.runKey] = Date()
+        }
+    }
+
+    /// Redraws the window's blocks for streamed text. Blocks hold a copy of
+    /// the text, so the Mac's own streaming rebuilds them as text lands;
+    /// without this the reply stayed an empty header. At most ten times a
+    /// second, and never dropping the tail: a delta inside the window schedules
+    /// one redraw at its end, or the last words of a reply (often one quick
+    /// burst before the provider's closing pause) went undrawn.
+    private func renderStreamed(_ handle: Handle, _ session: ChatSession) {
+        let interval: TimeInterval = 0.1
+        let since = Date().timeIntervalSince(lastStreamRender[handle.runKey] ?? .distantPast)
+        if since >= interval {
+            session.rebuildVisibleBlocks()
+            lastStreamRender[handle.runKey] = Date()
+            return
+        }
+        guard !pendingStreamRender.contains(handle.runKey) else { return }
+        pendingStreamRender.insert(handle.runKey)
+        let wait = interval - since
+        Task { @MainActor [weak self, weak session] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self, self.pendingStreamRender.remove(handle.runKey) != nil, let session else { return }
+            session.rebuildVisibleBlocks()
+            self.lastStreamRender[handle.runKey] = Date()
         }
     }
 
@@ -298,9 +372,14 @@ final class InboundSharedRunBridge {
             streamed.notifyContentChanged()
             streamingTurns.removeValue(forKey: handle.runKey)
             lastStreamSave.removeValue(forKey: handle.runKey)
+            lastStreamRender.removeValue(forKey: handle.runKey)
+            pendingStreamRender.remove(handle.runKey)
         }
         session.appendHostedTurns(turns)
         session.markHostedTranscriptChanged()
+        // The completed step, drawn whole: `appendHostedTurns` draws nothing
+        // when the step's text was all streamed and there is no turn to add.
+        session.rebuildVisibleBlocks()
         session.save()
     }
 
@@ -308,10 +387,23 @@ final class InboundSharedRunBridge {
     /// its last live run ends; a run stopped from the tab finishing later is
     /// a no-op on the (already cancelled) task.
     func finish(_ handle: Handle, success: Bool, summary: String) {
-        guard live.removeValue(forKey: handle.runKey) != nil else { return }
-        manager.taskState(for: handle.taskId)?.chatSession?.save()
+        guard let ended = live.removeValue(forKey: handle.runKey) else { return }
+        MobileConnectLog.hostedRun(
+            "finished run \(handle.runKey) success=\(success) "
+                + "(session turns=\(manager.taskState(for: handle.taskId)?.chatSession?.turns.count ?? -1))"
+        )
+        let session = manager.taskState(for: handle.taskId)?.chatSession
+        session?.save()
+        // A long phone run may end after the user left the Mac.
+        if let sessionId = session?.sessionId, RemoteSessionContinuation.isFromPairedPhone(ended.context) {
+            PhoneChatHandoff.shared.notePhoneActivity(sessionId: sessionId)
+        }
+        // Whatever streamed since the last redraw, drawn before the run ends.
+        session?.rebuildVisibleBlocks()
         streamingTurns.removeValue(forKey: handle.runKey)
         lastStreamSave.removeValue(forKey: handle.runKey)
+        lastStreamRender.removeValue(forKey: handle.runKey)
+        pendingStreamRender.remove(handle.runKey)
         SubagentInterruptCenter.shared.unregister(handle.runKey)
         var remaining = runsByTask[handle.taskId] ?? []
         remaining.remove(handle.runKey)

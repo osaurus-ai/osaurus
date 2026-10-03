@@ -51,7 +51,7 @@ public enum OsaurusPaths {
         if let override = overrideRoot {
             return override
         }
-        if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
+        if let envRoot = ProcessEnvironment.value("OSAURUS_TEST_ROOT"),
             !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return URL(fileURLWithPath: envRoot, isDirectory: true)
@@ -385,6 +385,11 @@ public enum OsaurusPaths {
         root().appendingPathComponent("billing", isDirectory: true)
     }
 
+    /// Persisted Insights activity / audit log directory (`~/.osaurus/activity/`).
+    public static func activity() -> URL {
+        root().appendingPathComponent("activity", isDirectory: true)
+    }
+
     /// Tool index data directory
     public static func toolIndex() -> URL {
         root().appendingPathComponent("tool-index", isDirectory: true)
@@ -540,6 +545,10 @@ public enum OsaurusPaths {
     public static func browserConfigFile() -> URL {
         config().appendingPathComponent("browser.json")
     }
+    /// Built-in Apple app tools state (one-time plugin → native migration marker).
+    public static func appleAppsConfigFile() -> URL {
+        config().appendingPathComponent("apple-apps.json")
+    }
     /// Persistent catalog of native browser sessions (agent id → WebKit
     /// profile UUID + last-known page + observed auth status). The WebKit
     /// on-disk store itself is owned by `WKWebsiteDataStore(forIdentifier:)`.
@@ -583,6 +592,12 @@ public enum OsaurusPaths {
     public static func methodsDatabaseFile() -> URL { methods().appendingPathComponent("methods.sqlite") }
     /// Encrypted on-device Osaurus Router billing ledger: `~/.osaurus/billing/ledger.sqlite`.
     public static func billingLedgerDatabaseFile() -> URL { billing().appendingPathComponent("ledger.sqlite") }
+    /// Hash-chained Insights activity log: `~/.osaurus/activity/activity.sqlite`
+    /// plus an `activity.head` sidecar holding the last `seq:hash`.
+    public static func activityLogDatabaseFile() -> URL { activity().appendingPathComponent("activity.sqlite") }
+    public static func activityLogHeadFile() -> URL { activity().appendingPathComponent("activity.head") }
+    /// Activity log retention / content policy: `~/.osaurus/config/activity-log.json`.
+    public static func activityLogConfigFile() -> URL { config().appendingPathComponent("activity-log.json") }
     public static func toolIndexDatabaseFile() -> URL { toolIndex().appendingPathComponent("tool_index.sqlite") }
     public static func memoryConfigFile() -> URL { config().appendingPathComponent("memory.json") }
     public static func relayConfigFile() -> URL { config().appendingPathComponent("relay.json") }

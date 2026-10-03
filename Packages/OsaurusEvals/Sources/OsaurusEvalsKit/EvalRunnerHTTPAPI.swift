@@ -966,6 +966,15 @@ extension EvalRunner {
         historyBody["messages"] = history
         let (statusHB, jsonHB, rawHB) = try await httpJSON(port: port, path: "/v1/chat/completions", body: historyBody)
         validate("changed image after history", statusHB, jsonHB, rawHB, "blue")
+        // A later text-only question must still refer to the most recent
+        // attachment, not the first image retained in the conversation.
+        // Keep actual answers in history, including any earlier failure.
+        history.append(["role": "assistant", "content": chatContent(jsonHB)])
+        history.append(["role": "user", "content": "What color is the background in the most recent image I attached? Answer with one word."])
+        historyBody["messages"] = history
+        let (statusLatest, jsonLatest, rawLatest) = try await httpJSON(
+            port: port, path: "/v1/chat/completions", body: historyBody)
+        validate("latest image recall after history", statusLatest, jsonLatest, rawLatest, "blue")
         let (_, _, finalCache) = try await httpJSON(port: port, path: "/admin/cache-stats", method: "GET")
         note("cache after media history: \(finalCache)")
         return nil

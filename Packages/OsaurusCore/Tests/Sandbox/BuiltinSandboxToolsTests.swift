@@ -18,6 +18,15 @@ private func failurePayload(_ raw: String) throws -> [String: Any] {
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
 
+/// The whole envelope (success or failure) as a dictionary — for
+/// top-level fields like `warnings`.
+private func parseEnvelope(_ raw: String) -> [String: Any] {
+    guard let data = raw.data(using: .utf8),
+        let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return [:] }
+    return dict
+}
+
 @Suite(.serialized)
 struct BuiltinSandboxToolsTests {
     @Test @MainActor
@@ -1034,42 +1043,81 @@ struct BuiltinSandboxToolsTests {
         #expect(!commands.contains { $0.contains("python3 -c") })
     }
 
+    /// `.docx`/`.xlsx`/`.pdf` are generated host-side into the VirtioFS
+    /// share: a real package lands under the agent's host home and the
+    /// text bridge (shell `printf`) is never used for the bytes.
     @Test @MainActor
-    func sandboxWriteFile_rejectsTextWrittenToBinaryDocumentExtension() async throws {
+    func sandboxWriteFile_generatesDocumentHostSideWithoutShellWrite() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("sandbox-doc-write-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+            DocumentAdaptersBootstrap.registerBuiltIns()
+
+            let output = try await withRegisteredSandboxTools(runner: runner) {
+                try await ToolRegistry.shared.execute(
+                    name: "sandbox_write_file",
+                    argumentsJSON: ##"{"path":"report.docx","content":"# Report\n\nQuarterly total: 42."}"##
+                )
+            }
+
+            let payload = try successPayload(output)
+            #expect(payload["kind"] as? String == "document_write_result")
+            #expect(payload["format"] as? String == "docx")
+            #expect(payload["path"] as? String == "/workspace/agents/test-agent/report.docx")
+            let written = OsaurusPaths.containerAgentDir("test-agent").appendingPathComponent("report.docx")
+            let bytes = try Data(contentsOf: written)
+            #expect(bytes.prefix(2) == Data([0x50, 0x4B]), "expected an OOXML zip package")
+            let calls = await runner.calls
+            #expect(calls.isEmpty, "document bytes must not travel through the shell bridge")
+        }
+    }
+
+    /// Formats with no writer at all (`.key`) are refused with a pivot that
+    /// names what the tool does produce, before any shell command runs.
+    @Test @MainActor
+    func sandboxWriteFile_rejectsUnsupportedDocumentExtension() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_write_file",
-                argumentsJSON: #"{"path":"report.docx","content":"not a real package"}"#
+                argumentsJSON: #"{"path":"deck.key","content":"not a real package"}"#
             )
         }
 
         let payload = try failurePayload(output)
         #expect(payload["kind"] as? String == "rejected")
         #expect(payload["field"] as? String == "path")
-        #expect((payload["message"] as? String)?.contains("only writes UTF-8 text") == true)
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("presentation format"))
+        #expect(message.contains(".pptx"))
         let calls = await runner.calls
         #expect(calls.isEmpty)
     }
 
     /// `sandbox_write_file` with `old_string` selects the in-place edit
     /// path — the presence of the argument decides edit-vs-write, with no
-    /// separate `sandbox_edit_file` tool. It runs the exact-match Python
-    /// replace and returns a `summary`.
+    /// separate `sandbox_edit_file` tool. The file is read back, the edit
+    /// is applied host-side with the shared `file_edit` matcher, and the
+    /// whole result is staged to a temp file then spliced into the target.
     @Test @MainActor
     func sandboxWriteFile_oldStringRoutesToInPlaceEdit() async throws {
         let runner = MockSandboxToolCommandRunner(
             rootResults: [],
             agentResults: [
-                // Diff capture reads the file before and after the edit; the
-                // reads emit a `1`/`0` existence marker line then the contents.
-                .init(stdout: "1\nold()", stderr: "", exitCode: 0),  // readForDiff (before)
-                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir tmp
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf old
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf new
-                .init(stdout: "replaced 1 line(s) with 1 line(s)", stderr: "", exitCode: 0),  // python
-                .init(stdout: "1\nnew()", stderr: "", exitCode: 0),  // readForDiff (after)
+                // The read emits a `1`/`0` existence marker line then the contents.
+                .init(stdout: "1\ndef f():\n    old()\n", stderr: "", exitCode: 0),  // read
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf chunk > tmp
+                .init(stdout: "", stderr: "", exitCode: 0),  // cat tmp > target
             ]
         )
 
@@ -1082,15 +1130,118 @@ struct BuiltinSandboxToolsTests {
         }
 
         let payload = try successPayload(output)
-        #expect((payload["summary"] as? String)?.contains("replaced") == true)
+        #expect((payload["summary"] as? String)?.contains("applied 1 edit") == true, "\(payload)")
+        #expect(payload["replacements"] as? Int == 1)
+        #expect(payload["match_strategy"] as? String == "exact")
+        #expect(payload["matched_lines"] as? [String] == ["2"])
+        #expect((payload["diff"] as? String)?.contains("+    new()") == true, "\(payload)")
 
         let calls = await runner.calls
         let commands = calls.compactMap { call -> String? in
             if case .agent(_, let c) = call { return c }
             return nil
         }
-        // The edit path runs the exact-match Python replace, not a plain write.
-        #expect(commands.contains { $0.contains("python3 -c") })
+        #expect(commands.count == 3, "\(commands)")
+        // No Python in the loop any more: the matcher runs on the host.
+        #expect(!commands.contains { $0.contains("python3") })
+        // The staged content is the complete edited file, written with
+        // printf (no heredoc / echo quoting hazards) into a sibling temp file.
+        #expect(commands[1].hasPrefix("printf '%s' 'def f():\n    new()\n' > '/workspace/agents/test-agent/app.py.osaurus-edit-"), "\(commands[1])")
+        #expect(commands[2].hasPrefix("cat '/workspace/agents/test-agent/app.py.osaurus-edit-"), "\(commands[2])")
+        #expect(commands[2].contains("> '/workspace/agents/test-agent/app.py'; EC=$?; rm -f"), "\(commands[2])")
+    }
+
+    /// The sandbox edit branch shares `file_edit`'s contract: atomic
+    /// `edits` batches, `replace_all`, the tolerance cascade (with
+    /// `match_strategy` reported), and `dry_run` previews that never write.
+    @Test @MainActor
+    func sandboxWriteFile_editsBatchReplaceAllToleranceAndDryRun() async throws {
+        let file = "1\n\tfoo = 1\n\tbar = 2\n\tbaz = foo + bar\n"
+        // Batch: tab-indented file, model sends 4-space indentation for one
+        // edit and an exact match for the other. Both land; the file's tabs
+        // are kept for the unchanged text.
+        let batchRunner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: file, stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+            ]
+        )
+        let batch = try await withRegisteredSandboxTools(runner: batchRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON:
+                    #"{"path":"calc.py","edits":[{"old_string":"    foo = 1","new_string":"    foo = 10"},{"old_string":"\tbaz = foo + bar","new_string":"\tbaz = foo * bar"}]}"#
+            )
+        }
+        let batchPayload = try successPayload(batch)
+        #expect(batchPayload["edits_applied"] as? [Int] == [1, 1], "\(batchPayload)")
+        #expect(batchPayload["edit_strategies"] as? [String] == ["whitespace_normalized", "exact"], "\(batchPayload)")
+        #expect(batchPayload["match_strategy"] as? String == "whitespace_normalized")
+        let batchCommands = await batchRunner.calls.compactMap { call -> String? in
+            if case .agent(_, let c) = call { return c }
+            return nil
+        }
+        #expect(batchCommands[1].contains("'\tfoo = 10\n\tbar = 2\n\tbaz = foo * bar\n'"), "\(batchCommands[1])")
+        let batchWarnings = (parseEnvelope(batch)["warnings"] as? [String]) ?? []
+        #expect(batchWarnings.contains { $0.contains("did not match the file byte-for-byte") }, "\(batchWarnings)")
+
+        // replace_all: every occurrence goes in one write.
+        let allRunner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "1\na b a\na\n", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+            ]
+        )
+        let all = try await withRegisteredSandboxTools(runner: allRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"n.txt","old_string":"a","new_string":"z","replace_all":true}"#
+            )
+        }
+        #expect(try successPayload(all)["replacements"] as? Int == 3, "\(all)")
+
+        // Ambiguous without replace_all: refused, nothing written, retry hint.
+        let ambiguousRunner = MockSandboxToolCommandRunner(
+            rootResults: [], agentResults: [.init(stdout: "1\na b a\n", stderr: "", exitCode: 0)])
+        let ambiguous = try await withRegisteredSandboxTools(runner: ambiguousRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"n.txt","old_string":"a","new_string":"z"}"#
+            )
+        }
+        #expect(ToolEnvelope.isError(ambiguous))
+        #expect((try failurePayload(ambiguous)["message"] as? String)?.contains("Found 2 matches") == true, "\(ambiguous)")
+        #expect(await ambiguousRunner.calls.count == 1, "no write after a refused edit")
+
+        // dry_run: diff and PREVIEW warning, no write commands at all.
+        let dryRunner = MockSandboxToolCommandRunner(
+            rootResults: [], agentResults: [.init(stdout: "1\nhello\n", stderr: "", exitCode: 0)])
+        let dry = try await withRegisteredSandboxTools(runner: dryRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"h.txt","old_string":"hello","new_string":"bye","dry_run":true}"#
+            )
+        }
+        let dryPayload = try successPayload(dry)
+        #expect(dryPayload["dry_run"] as? Bool == true)
+        #expect((dryPayload["diff"] as? String)?.contains("+bye") == true, "\(dryPayload)")
+        #expect(((parseEnvelope(dry)["warnings"] as? [String]) ?? []).contains { $0.contains("PREVIEW ONLY") })
+        #expect(await dryRunner.calls.count == 1, "dry_run must not write")
+
+        // Missing file: a pointed not_found, not a Python traceback.
+        let missingRunner = MockSandboxToolCommandRunner(
+            rootResults: [], agentResults: [.init(stdout: "0\n", stderr: "", exitCode: 0)])
+        let missing = try await withRegisteredSandboxTools(runner: missingRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"nope.txt","old_string":"a","new_string":"b"}"#
+            )
+        }
+        #expect(try failurePayload(missing)["kind"] as? String == "not_found", "\(missing)")
     }
 
     /// `old_string` without `new_string` is the merge's only new
@@ -1185,8 +1336,10 @@ struct BuiltinSandboxToolsTests {
     }
 
     /// osaurus#2680: a raw sandbox read of a PDF decoded to nothing and the
-    /// model abandoned the document. The read must be refused before any
-    /// exec, with a pointer to `read_knowledge` / `sandbox_exec` extraction.
+    /// model abandoned the document. When the host share cannot serve the
+    /// file (no share root in this harness) the read must be refused before
+    /// any exec, naming the `/workspace` share, `read_knowledge`, and shell
+    /// extraction as the working paths.
     @Test @MainActor
     func sandboxReadFile_refusesBinaryDocumentWithExtractionHint() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
@@ -1203,8 +1356,9 @@ struct BuiltinSandboxToolsTests {
         #expect(payload["kind"] as? String == "invalid_args")
         let message = payload["message"] as? String ?? ""
         #expect(message.contains("PDF"))
+        #expect(message.contains("/workspace/"))
         #expect(message.contains("read_knowledge"))
-        #expect(message.contains("sandbox_exec"))
+        #expect(message.contains("pdftotext"))
 
         let calls = await runner.calls
         #expect(calls.isEmpty, "no read call should be made for a binary document")
@@ -1558,12 +1712,9 @@ struct BuiltinSandboxToolsTests {
         let runner = MockSandboxToolCommandRunner(
             rootResults: [],
             agentResults: [
-                .init(stdout: "1\nold text\n", stderr: "", exitCode: 0),  // readForDiff
-                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir tmp
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf old
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf new
-                .init(stdout: "replaced 1 line(s) with 1 line(s)\n", stderr: "", exitCode: 0),  // python replace
-                .init(stdout: "1\nnew text\n", stderr: "", exitCode: 0),  // post-edit readForDiff (if any)
+                .init(stdout: "1\nold text\n", stderr: "", exitCode: 0),  // read
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf chunk > tmp
+                .init(stdout: "", stderr: "", exitCode: 0),  // cat tmp > target
             ]
         )
         let bridge = SandboxReadBridge(
@@ -1583,13 +1734,65 @@ struct BuiltinSandboxToolsTests {
 
         #expect(!ToolEnvelope.isError(output), "edit route should succeed: \(output)")
         #expect(output.contains(#""tool":"file_edit""#) || output.contains(#""tool" : "file_edit""#))
+        let payload = try successPayload(output)
+        #expect(payload["match_strategy"] as? String == "exact", "\(payload)")
+        #expect(payload["matched_lines"] as? [String] == ["1"], "\(payload)")
 
-        let calls = await runner.calls
-        let issuedPython = calls.contains { call in
-            guard case .agent(_, let cmd) = call else { return false }
-            return cmd.contains("python3")
+        let commands = await runner.calls.compactMap { call -> String? in
+            if case .agent(_, let cmd) = call { return cmd }
+            return nil
         }
-        #expect(issuedPython, "the sandbox edit branch runs the python replace script")
+        #expect(commands.count == 3, "\(commands)")
+        #expect(commands[1].contains("printf '%s' 'new text\n' >"), "\(commands[1])")
+        #expect(commands[2].contains("> '/workspace/agents/test-agent/app.py'"), "\(commands[2])")
+    }
+
+    /// WRITABLE combined mode: `file_edit`'s batch, `replace_all` and
+    /// `dry_run` forms reach the sandbox route intact — one contract on
+    /// both routes, no "not supported for /workspace paths" refusals.
+    @Test @MainActor
+    func combinedMode_fileEdit_workspacePathSupportsBatchReplaceAllAndDryRun() async throws {
+        let bridge = SandboxReadBridge(agentName: "test-agent", home: "/workspace/agents/test-agent")
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-edit-\(UUID().uuidString)")
+
+        let batchRunner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "1\nalpha\nbeta\nalpha\n", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+            ]
+        )
+        let batch = try await withRegisteredSandboxTools(runner: batchRunner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileEditTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/w.txt","edits":[{"old_string":"alpha","new_string":"A"},{"old_string":"beta","new_string":"B"}],"replace_all":true}"#
+                )
+            }
+        }
+        let batchPayload = try successPayload(batch)
+        #expect(batchPayload["edits_applied"] as? [Int] == [2, 1], "\(batch)")
+        let batchCommands = await batchRunner.calls.compactMap { call -> String? in
+            if case .agent(_, let cmd) = call { return cmd }
+            return nil
+        }
+        #expect(batchCommands.count == 3, "\(batchCommands)")
+        #expect(batchCommands[1].contains("'A\nB\nA\n'"), "\(batchCommands[1])")
+
+        let dryRunner = MockSandboxToolCommandRunner(
+            rootResults: [], agentResults: [.init(stdout: "1\nalpha\n", stderr: "", exitCode: 0)])
+        let dry = try await withRegisteredSandboxTools(runner: dryRunner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileEditTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/w.txt","old_string":"alpha","new_string":"A","dry_run":true}"#
+                )
+            }
+        }
+        #expect(!ToolEnvelope.isError(dry), "\(dry)")
+        #expect(dry.contains("PREVIEW ONLY"), "\(dry)")
+        #expect(await dryRunner.calls.count == 1, "dry_run reads but never writes")
     }
 
     /// A bound VM bridge is authoritative. A relative public write resolves

@@ -222,6 +222,31 @@ unless one of these holds:
 
 App-internal sources (chat UI, plugins, P2P) are not affected by this gate.
 
+### Local read-only balance
+
+`GET /credits/balance` (also `/v1/credits/balance`) on the local HTTP API lets
+local tools such as usage dashboards read the remaining balance. Osaurus signs
+the hosted `/credits/balance` request itself, so the caller never touches the
+wallet key. Access is stricter than the loopback spend gate above
+(403 `credits_access_not_authorized` otherwise):
+
+- a valid **master-scoped** access key, on loopback too. Agent-scoped and
+  workspace-minted keys are refused even though loopback trust skips the
+  global scope confinement, or
+- "Allow local API access without a key", but only for requests without an
+  `Origin` header. Loopback responses carry `Access-Control-Allow-Origin: *`,
+  so browser requests always need a key.
+
+The endpoint keeps its own cache, separate from the Credits screen state: only
+Router-fetched values are served (never the UI's optimistic post-request
+deductions), and polling never touches the UI's loading or error state. Values
+are fresh for 30 seconds, concurrent callers share one in-flight request with
+an 8 second timeout, and after a failure the Router is not retried for 10
+seconds. `stale: true` marks a last known value returned after a failed
+refresh. The cache is dropped when the Router is turned off or the identity
+changes. Non-success states: `409 router_disabled`, `409 no_account`,
+`503 router_unavailable` (unreachable), `502 router_error` (Router refused).
+
 ## On-Device Billing Ledger
 
 Router charges are also persisted to a local ledger so support can
@@ -274,6 +299,74 @@ unavailable without prompting. It must not include prompts, assistant replies,
 tool arguments, tool results, private keys, bearer tokens, cookies, or raw
 wallet signatures. Wallet signatures are replaced with `<redacted>` and only a
 SHA-256 fingerprint of the signature is retained for local/server correlation.
+
+## Announcements
+
+Community announcements (launches, events, heads-ups) are served by the router
+instead of being hard-coded in the app, so copy and schedules change — or get
+pulled — without a release. `AnnouncementsService` owns the client side:
+
+- Endpoint: `GET /announcements?app_version=<CFBundleShortVersionString>`,
+  unauthenticated (no wallet headers), IP rate-limited, 60s cacheable. The
+  router already filtered on status and schedule against its own clock; the
+  app never re-evaluates the window locally. The call is not logged to
+  Insights (no account data leaves the Mac).
+- Triggers: ~2s after a non-silent launch and on foreground activation. The
+  service enforces a 60s floor between any two fetches and throttles
+  activation fetches to one per 30 minutes; a `429` is honored via
+  `retry-after`. The router counts each feed response as a delivery, so there
+  is no timer and no view-reporting call.
+- Eligibility: the first announcement in server order whose
+  `body_format == "markdown"` and whose `slug` has not been dismissed.
+  Dismissal is persisted as `ai.osaurus.announcement.<slug>.seen` the moment
+  the dialog is presented; operators re-show by publishing a new slug.
+- Presentation: `AppDelegate.presentAnnouncementIfEligible()` applies the
+  same "don't stack" deferrals as the other first-run dialogs (onboarding,
+  telemetry consent, modal sheets, active streaming, layout tour) and hosts
+  a `ThemedAlertCenter` dialog whose body is `AnnouncementDialogContent`
+  (optional `https://` image + `MarkdownDocument`). CTAs: `external_url`
+  (`https://` only) opens in the browser; `deeplink` (`osaurus://` only)
+  routes through `handleOsaurusDeepLink`. Anything else is dropped; at most
+  three buttons plus the app's own Close.
+- Failure handling: network errors, non-200s and malformed bodies mean "no
+  announcements"; the previous in-memory list is kept and nothing is shown
+  to the user.
+- Telemetry: `announcement_shown` / `announcement_clicked`, keyed by `slug`.
+- DEBUG: Dock menu → "Reset Announcements & Fetch" clears the seen flags of
+  the cached slugs, bypasses the throttles and runs the production presenter
+  (point `ai.osaurus.router.baseURL` at staging to test a draft campaign).
+
+## Control-Plane Request Budget
+
+Every signed control-plane call shows up as a `routerControl` row in Insights,
+so the app treats them as a budget: the Router is asked when the user does
+something or opens a surface, not on a schedule.
+
+- App activation (Cmd-Tab back in) asks for nothing by default. The only
+  activation-driven requests are the bounded Stripe return polls: the
+  personal `/credits/balance` while a top-up Checkout is pending
+  (`OsaurusRouterAccountService.handleAppActivation`, cleared by the first
+  observed increase or after 10 fruitless activations) and the workspace
+  `pendingConfirmation` poll in `WorkspacesService.handleAppActivation`.
+- Billed-stream summaries never fetch `/credits/usage`. They deduct locally
+  and bump the debounced `usageRevision`; only a mounted usage list (Credits
+  tab, wallet popover, Account Usage Center) refetches on that change.
+- Passive balance chrome (composer credits chip) calls
+  `refreshBalance(ifOlderThan: 300)`; concurrent callers share one request.
+  User-opened surfaces still force a refresh.
+- `/workspaces/sync` runs only for an account known to belong to at least one
+  workspace (`ai.osaurus.workspaces.hasMembership`, set from every
+  authoritative list or snapshot). A fresh install issues one `GET
+  /workspaces` probe per launch and stays off until a workspace appears.
+  While the stream is unverified the fallback poll backs off 10 s → 5 min and
+  fetches only the roster list and the selected workspace (no billing or
+  prices). Prices are fetched once per session.
+- `WorkspaceRosterStore.refresh(reason: .activation)` is skipped while the
+  stream is verified and otherwise throttled to 15 minutes; its fetched list
+  is handed to `WorkspacesService.applyWorkspaceList` so the Settings tab
+  never fetches a second copy. The detail view's 30 s presence poll and the
+  connect service's auto-connect sweep both read the roster the stream
+  already delivered instead of fetching their own.
 
 ## Empty Stream Diagnostics
 

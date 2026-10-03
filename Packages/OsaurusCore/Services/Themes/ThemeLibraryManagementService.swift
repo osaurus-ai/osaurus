@@ -356,6 +356,7 @@ public enum ThemeLibraryManagementService {
         validateRange(typography.titleSize, 8 ... 72, field: "typography.titleSize", issues: &issues)
         validateRange(typography.headingSize, 8 ... 64, field: "typography.headingSize", issues: &issues)
         validateRange(typography.bodySize, 8 ... 36, field: "typography.bodySize", issues: &issues)
+        validateRange(typography.smallBodySize, 8 ... 36, field: "typography.smallBodySize", issues: &issues)
         validateRange(typography.captionSize, 8 ... 28, field: "typography.captionSize", issues: &issues)
         validateRange(typography.codeSize, 8 ... 36, field: "typography.codeSize", issues: &issues)
     }

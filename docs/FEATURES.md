@@ -26,19 +26,21 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Projects                         | Stable    | "Key Features"     | PROJECTS.md                   | Models/Project/Project.swift, Managers/ProjectManager.swift, Views/Chat/ProjectDetailView.swift, Managers/Chat/ChatSessionsManager.swift, Services/Chat/SystemPromptComposer.swift, Services/Memory/MemoryService.swift |
 | Privacy Filter                   | Experimental | "Key Features"  | PRIVACY_FILTER.md             | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
+| Apple Apps (built-in, per-agent) | Stable    | "Tools & Plugins"  | APPLE_APPS.md                 | AppleApps/, Tools/ToolRegistry.swift, Services/Chat/SystemPromptComposer.swift, Views/Agent/AgentCapabilityManagerView.swift |
 | Orchestrator (default agent)     | Stable    | "Orchestrator"     | ORCHESTRATOR.md               | Models/Agent/DefaultAgentConfiguration.swift, Services/Chat/DefaultAgentSystemPromptBuilder.swift, Views/Settings/OrchestratorSettingsView.swift |
 | Agent DB & Self-Scheduling       | Stable    | "Agents"           | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Managers/NextRunScheduler.swift, Tools/Database/, Views/Agent/AgentDBTabViews.swift, Views/Agent/NextRunPanelView.swift |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
 | Agent Loop & Folder Context      | Stable    | "Agent Loop"       | AGENT_LOOP.md                 | Services/Chat/AgentToolLoop.swift, Services/Chat/AgentTaskState.swift, Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
 | Agent Channels (Slack / Discord / Telegram) | Beta | -           | AGENT_CHANNELS.md             | Services/AgentChannel/, Models/AgentChannel/, Tools/AgentChannelTools.swift, Storage/AgentChannelMessageStore.swift, Views/Settings/AgentChannelConnectionCenterView.swift, Views/Settings/AgentChannelDestinationViews.swift |
-| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Insights/InsightsView.swift, Managers/InsightsService.swift                              |
+| Insights / Activity Log          | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md, ACTIVITY_LOG.md | Views/Insights/, Managers/InsightsService.swift, Storage/ActivityLogStore.swift, Services/Insights/, Models/Chat/RequestLog.swift, Models/Insights/ |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
 | Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/Inference/FoundationModelService.swift                                                 |
 | Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/Chat/ChatView.swift, Views/ChatOverlayView.swift                                     |
 | Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/Chat/ChatSessionsManager.swift, Models/Chat/ChatSessionData.swift                      |
 | Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/Theme/ThemesView.swift, Views/Theme/ThemeEditorView.swift                        |
 | Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/Model/ModelDownloadView.swift, Services/HuggingFaceService.swift                      |
+| Chat model picker | Beta | - | Guide: guide-chat.md | Views/Model/ChatModelPickerCard.swift, Views/Model/CloudModelBrowserDialog.swift |
 | Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                             |
 | OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/API/OpenAIAPI.swift                                  |
 | Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/API/AnthropicAPI.swift                               |
@@ -369,19 +371,24 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 **Purpose:** Built-in debugging and development utilities.
 
-#### Insights
+#### Insights / Activity Log
 
 **Components:**
 
-- `Managers/InsightsService.swift` — Request/response logging
-- `Views/Insights/InsightsView.swift` — Insights UI
+- `Managers/InsightsService.swift` — Hot cache, emitter entry points (`logRequest` / `logEgress` / `logInference`), credential redaction, write-behind persistence, Verify / prune / Clear / settings actions
+- `Storage/ActivityLogStore.swift` — SHA-256 hash-chained SQLite store (`~/.osaurus/activity/activity.sqlite` + `activity.head`), anchor-based retention, chain-of-custody `system` rows
+- `Models/Chat/RequestLog.swift` — Record model, `ActivityCategory`, `DataLocality`, `EgressInfo`, titles and plain-language summaries
+- `Models/Insights/ActivityFilter.swift`, `ActivityLogSettings.swift` — Filters, verification result, retention / content policy
+- `Services/Insights/` — Category emitters (`MediaActivityLogger`, `ChannelActivityLogger`, `SearchActivityLogger`, `MCPActivityLogger`) and export (`ActivityExportService`, `ActivityExportCoordinator`)
+- `Views/Insights/InsightsView.swift`, `InsightsDetailPane.swift` — Dashboard and detail pane
 
 **Features:**
 
-- Real-time request logging
-- Filter by method (GET/POST) and source (Chat UI/HTTP API)
-- Aggregate stats: requests, success rate, avg latency, errors
-- Inference metrics: tokens, speed, model, finish reason
+- One row per interaction, marked **Local** or **Cloud**: inference (incl. hidden `/internal/*` one-shots), compaction, web search, URL fetch, MCP tool, channel delivery (publish + auto-reply), Router, inbound API, plugin call / log, embedding, transcription, speech synthesis, media generation
+- Tamper-evident chain (Verify), anchor-based retention and audited Clear; prune / verify / export / settings-change / head-recovery events are themselves chained `system` rows
+- Export as JSONL (+ manifest with hash recipe, offline re-verifiable), CSV, Markdown; with or without message content
+- Privacy → Activity Log: *Keep Activity History*, *Store Prompts and Responses*
+- Spec: [ACTIVITY_LOG.md](ACTIVITY_LOG.md)
 
 #### Server Explorer
 
@@ -493,6 +500,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - **Custom System Prompts** — Define unique instructions for each agent
 - **Automated Capabilities** — Tools, skills, and methods are automatically selected via RAG search based on the task
 - **Per-Agent Feature Gates** — Configure → Features groups every capability by purpose and keeps extra ones off by default to keep the tool list lean (see below)
+- **Apple Apps** — Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps & Location, Music, and Shortcuts are built-in tool families toggled per app under Abilities → Tools; enabling asks for the macOS grant, sends and deletes always ask for approval, and the Orchestrator provisions them via `capabilities.apple_apps` (see [APPLE_APPS.md](APPLE_APPS.md))
 - **Visual Themes** — Assign a custom theme that activates with the agent
 - **Generation Settings** — Configure default model, temperature, and max tokens
 - **Import/Export** — Share agents as JSON files for backup or sharing
@@ -510,6 +518,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 | Memory & Recall | `searchMemoryEnabled` | Memory Recall | off | `search_memory` |
 | Autonomy | `selfSchedulingEnabled` | Self-scheduling | off | `schedule_next_run` / `cancel_next_run` / `notify` + scheduling UI |
 | Autonomy | `computerUseEnabled` | Computer Use | off | `computer_use` entry tool (custom agents only; plus per-agent autonomy ceiling) |
+| Apple Apps | `enabledAppleApps` | one picker group per app under Abilities → Tools | off (all) | That app's `calendar_*` / `reminders_*` / `contacts_*` / `notes_*` / `mail_*` / `messages_*` / `location_*` + `maps_*` / `music_*` / `shortcuts_*` tools — stripped in auto **and** manual mode, refused at execution, never discoverable (see [APPLE_APPS.md](APPLE_APPS.md)) |
 | Data | `dbEnabled` | Database | off | `db_*` tools + DB tabs |
 | Code Execution | sandbox settings | Autonomous Execution / Plugin Creation / Sandbox Network / Read Secret Files | off | Sandbox capabilities (visible but disabled when the container isn't running) |
 
@@ -1390,7 +1399,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 - `~/.osaurus/config/privacy-filter.json` — User configuration (plaintext, atomic write)
 - `~/.osaurus/aux-models/openai-privacy-filter-bf16-v1/` — Model bundle + locally-generated `osaurus-manifest.json` for SHA-256 re-verify
 
-**Verification surface:** Open **Insights** (`⌘ Shift I`) → pick a request → **Request** / **Response** tabs. The **Server Request** / **Server Response** sub-sections show the exact bytes captured by `WireTransportProbe` (post-scrub on the way out, pre-unscrub on the way in) so users can confirm at a glance that placeholders actually made it onto the wire.
+**Verification surface:** Open Settings… (`⌘ ,`) → **Insights** → pick a request → **Request** / **Response** tabs. The **Server Request** / **Server Response** sub-sections show the exact bytes captured by `WireTransportProbe` (post-scrub on the way out, pre-unscrub on the way in) so users can confirm at a glance that placeholders actually made it onto the wire.
 
 ---
 
@@ -1454,6 +1463,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
+| [ACTIVITY_LOG.md](ACTIVITY_LOG.md)                             | Activity log reviewer spec: schema, hash chain, limits, threat model |
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, FluidAudio, and VAD mode guide       |
 | [SKILLS.md](SKILLS.md)                                         | Skills, methods, and context management guide    |
 | [CLAUDE_PLUGINS.md](CLAUDE_PLUGINS.md)                         | Importing Claude plugins from GitHub             |

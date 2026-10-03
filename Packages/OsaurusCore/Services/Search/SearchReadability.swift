@@ -74,14 +74,37 @@ enum SearchReadability {
         timeout: TimeInterval,
         configuration: URLSessionConfiguration = .ephemeral
     ) async -> Extraction {
+        // Every direct page fetch is an interaction with an outside host, so
+        // it gets its own activity-log row (destination = the page's host).
+        // Attribution is read here, on the tool's task, before the fetch.
+        let attribution = InsightsService.ActivityAttribution.current()
+        let started = Date()
+        let (extraction, bytes) = await fetchAndExtract(url: url, timeout: timeout, configuration: configuration)
+        SearchActivityLogger.logDirectExtract(
+            url: url,
+            extraction: extraction,
+            bytesReceived: bytes,
+            durationMs: Date().timeIntervalSince(started) * 1000,
+            attribution: attribution
+        )
+        return extraction
+    }
+
+    /// The fetch + extract without the activity-log row. Returns the number
+    /// of body bytes received (nil when the request never reached a body).
+    private static func fetchAndExtract(
+        url: String,
+        timeout: TimeInterval,
+        configuration: URLSessionConfiguration
+    ) async -> (Extraction, Int?) {
         // Best-effort preflight for obvious unsafe targets. URLSession still
         // resolves the hostname at connect time, so DNS-rebinding protection
         // requires a future pinned-address transport.
         if let blocked = SearchHTML.resolvedUnsafeExtractionURLReason(url) {
-            return failure(status: .blocked, message: blocked)
+            return (failure(status: .blocked, message: blocked), nil)
         }
         guard let requestURL = URL(string: url) else {
-            return failure(status: .blocked, message: "invalid URL is blocked")
+            return (failure(status: .blocked, message: "invalid URL is blocked"), nil)
         }
 
         var request = URLRequest(
@@ -110,7 +133,7 @@ enum SearchReadability {
         do {
             let (bytes, response) = try await session.bytes(for: request)
             if let blocked = delegate.blockedReason {
-                return failure(status: .blocked, message: blocked)
+                return (failure(status: .blocked, message: blocked), nil)
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard (200 ... 299).contains(status) else {
@@ -120,13 +143,15 @@ enum SearchReadability {
                 // invited the agent to request the same blocked page forever.
                 let retryableHTTPStatus = status == 408 || status == 425 || status == 429
                     || (500 ... 599).contains(status)
-                return failure(
-                    status: retryableHTTPStatus ? .fetchFailed : .blocked,
-                    message: "HTTP status \(status)"
+                return (
+                    failure(
+                        status: retryableHTTPStatus ? .fetchFailed : .blocked,
+                        message: "HTTP status \(status)"
+                    ), nil
                 )
             }
             if response.expectedContentLength > Int64(maxHTMLBytes) {
-                return failure(status: .tooLarge, message: "response exceeds \(maxHTMLBytes) bytes")
+                return (failure(status: .tooLarge, message: "response exceeds \(maxHTMLBytes) bytes"), nil)
             }
             var data = Data()
             data.reserveCapacity(
@@ -136,29 +161,29 @@ enum SearchReadability {
             )
             for try await byte in bytes {
                 if data.count >= maxHTMLBytes {
-                    return failure(status: .tooLarge, message: "response exceeds \(maxHTMLBytes) bytes")
+                    return (failure(status: .tooLarge, message: "response exceeds \(maxHTMLBytes) bytes"), nil)
                 }
                 data.append(byte)
                 try Task.checkCancellation()
             }
             guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
-                return failure(status: .empty, message: "empty response")
+                return (failure(status: .empty, message: "empty response"), nil)
             }
             let contentType = (response as? HTTPURLResponse)?
                 .value(forHTTPHeaderField: "Content-Type")
-            return extract(responseText: text, contentType: contentType, sourceURL: requestURL)
+            return (extract(responseText: text, contentType: contentType, sourceURL: requestURL), data.count)
         } catch is CancellationError {
-            return failure(status: .cancelled, message: "cancelled")
+            return (failure(status: .cancelled, message: "cancelled"), nil)
         } catch let error as URLError {
             if error.code == .cancelled {
-                return failure(status: .cancelled, message: "cancelled")
+                return (failure(status: .cancelled, message: "cancelled"), nil)
             }
             if error.code == .timedOut {
-                return failure(status: .timeout, message: "timed out")
+                return (failure(status: .timeout, message: "timed out"), nil)
             }
-            return failure(status: .fetchFailed, message: SearchDiagnostics.redact(error.localizedDescription))
+            return (failure(status: .fetchFailed, message: SearchDiagnostics.redact(error.localizedDescription)), nil)
         } catch {
-            return failure(status: .fetchFailed, message: SearchDiagnostics.redact(error.localizedDescription))
+            return (failure(status: .fetchFailed, message: SearchDiagnostics.redact(error.localizedDescription)), nil)
         }
     }
 

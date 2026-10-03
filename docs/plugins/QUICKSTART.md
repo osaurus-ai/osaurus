@@ -6,7 +6,7 @@ Get a working plugin running in **under 5 minutes**. By the end you'll have a pl
 
 - macOS 15 (Sequoia) or later
 - Osaurus installed and running
-- The `osaurus` CLI on your `PATH`. From the Osaurus app menu, choose **Settings → Developer → Install CLI**.
+- The `osaurus` CLI on your `PATH`. From the Osaurus app menu, choose **Settings… (⌘,) → General → Command Line Tool → Install CLI**.
 - Either:
   - **Swift** toolchain (Xcode 16 or `swift --version` >= 6.0), or
   - **Rust** toolchain (`cargo` and `rustc` >= 1.75)

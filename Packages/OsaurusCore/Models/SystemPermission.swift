@@ -2,12 +2,12 @@
 //  SystemPermission.swift
 //  osaurus
 //
-//  Defines system-level permissions that plugins can require.
+//  Defines system-level permissions that built-in tools and plugins can require.
 //
 
 import Foundation
 
-/// System-level macOS permissions that plugins can declare as requirements.
+/// System-level macOS permissions that built-in tools and plugins can declare as requirements.
 /// These are checked at the OS level, not per-tool grants.
 enum SystemPermission: String, CaseIterable, Codable, Sendable {
     /// AppleScript / Apple Events automation permission (System Events)
@@ -18,6 +18,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     case automationMail = "automation_mail"
     /// AppleScript automation permission for Messages.app
     case automationMessages = "automation_messages"
+    /// AppleScript automation permission for Music.app
+    case automationMusic = "automation_music"
     /// EventKit Calendar access permission
     case calendar
     /// EventKit Reminders access permission
@@ -50,6 +52,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return L("Automation (Mail)")
         case .automationMessages:
             return L("Automation (Messages)")
+        case .automationMusic:
+            return L("Automation (Music)")
         case .calendar:
             return L("Calendar")
         case .reminders:
@@ -77,29 +81,31 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     var description: String {
         switch self {
         case .automation:
-            return L("Allows plugins to control other applications using AppleScript and Apple Events.")
+            return L("Allows Osaurus to control other applications using AppleScript and Apple Events.")
         case .automationCalendar:
-            return L("Allows plugins to read and create events in Calendar.app via AppleScript.")
+            return L("Allows Osaurus to read and create events in Calendar.app via AppleScript.")
         case .automationMail:
-            return L("Allows plugins to read and send emails in Mail.app via AppleScript.")
+            return L("Allows the Mail tools to read, search, and send email through Mail.app via Apple Events.")
         case .automationMessages:
             return L("Allows Osaurus to send messages through Messages.app via Apple Events.")
+        case .automationMusic:
+            return L("Allows the Music tools to control playback and browse your library in Music.app via Apple Events.")
         case .calendar:
-            return L("Allows plugins to access your calendar to read and create events directly.")
+            return L("Allows the Calendar tools to read, create, and update events directly.")
         case .reminders:
-            return L("Allows plugins to access your reminders to read and create tasks.")
+            return L("Allows the Reminders tools to read, create, and complete reminders.")
         case .location:
-            return L("Allows plugins to access your current location.")
+            return L("Allows the Maps & Location tools to use your current location.")
         case .notes:
-            return L("Allows plugins to read and create notes in the Notes app via AppleScript.")
+            return L("Allows the Notes tools to read and create notes in the Notes app via Apple Events.")
         case .maps:
-            return L("Allows plugins to control Maps app via AppleScript.")
+            return L("Allows Osaurus to control the Maps app via Apple Events.")
         case .accessibility:
-            return L("Allows plugins to interact with UI elements, simulate input, and control the computer.")
+            return L("Allows Osaurus to interact with UI elements, simulate input, and control the computer.")
         case .contacts:
-            return L("Allows plugins to access and search contacts.")
+            return L("Allows the Contacts tools to look up, create, and update contacts.")
         case .disk:
-            return L("Allows plugins to access protected files like the Messages database and other app data.")
+            return L("Allows Osaurus to read protected files such as the Messages database and other app data.")
         case .microphone:
             return L("Allows voice transcription using the microphone for speech-to-text.")
         case .screenRecording:
@@ -118,6 +124,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "envelope"
         case .automationMessages:
             return "message"
+        case .automationMusic:
+            return "music.note"
         case .calendar:
             return "calendar.badge.plus"
         case .reminders:
@@ -152,6 +160,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "envelope.fill"
         case .automationMessages:
             return "message.fill"
+        case .automationMusic:
+            return "music.note"
         case .calendar:
             return "calendar"
         case .reminders:
@@ -179,7 +189,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     /// These permissions are skipped during periodic refresh to avoid launching apps.
     var isAutomationBased: Bool {
         switch self {
-        case .automation, .automationCalendar, .automationMail, .automationMessages, .notes, .maps:
+        case .automation, .automationCalendar, .automationMail, .automationMessages, .automationMusic, .notes,
+            .maps:
             return true
         default:
             return false
@@ -200,6 +211,9 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
         case .automationMessages:
             // Opens Privacy & Security > Automation (Messages is listed under the app)
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
+        case .automationMusic:
+            // Opens Privacy & Security > Automation (Music is listed under the app)
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
         case .calendar:
             // Opens Privacy & Security > Calendars

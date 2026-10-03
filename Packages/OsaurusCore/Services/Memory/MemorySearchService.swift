@@ -251,7 +251,7 @@ public actor MemorySearchService {
         else { return }
         guard let id = UUID(uuidString: fact.id) else { return }
         do {
-            _ = try await db.addDocument(text: fact.content, id: id)
+            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: fact.content, id: id) }
         } catch {
             MemoryLogger.search.error("indexPinnedFact failed for \(fact.id): \(error)")
             recordIndexFailure("indexPinnedFact")
@@ -265,7 +265,7 @@ public actor MemorySearchService {
         let id = TextSimilarity.deterministicUUID(from: "episode:\(episode.id)")
         do {
             let text = episode.summary + " — " + episode.topicsCSV
-            _ = try await db.addDocument(text: text, id: id)
+            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: text, id: id) }
             episodeKeyMap[id.uuidString] = episode.id
         } catch {
             MemoryLogger.search.error("indexEpisode failed for #\(episode.id): \(error)")
@@ -279,7 +279,7 @@ public actor MemorySearchService {
         else { return }
         let id = TextSimilarity.deterministicUUID(from: "transcript:\(turn.conversationId):\(turn.chunkIndex)")
         do {
-            _ = try await db.addDocument(text: turn.content, id: id)
+            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: turn.content, id: id) }
             transcriptKeyMap[id.uuidString] = (turn.conversationId, turn.chunkIndex)
         } catch {
             MemoryLogger.search.error("indexTranscriptTurn failed: \(error)")
@@ -341,11 +341,13 @@ public actor MemorySearchService {
         {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
-                let results = try await db.search(
-                    query: .text(query),
-                    numResults: fetchCount,
-                    threshold: Self.defaultSearchThreshold
-                )
+                let results = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_search") {
+                    try await db.search(
+                        query: .text(query),
+                        numResults: fetchCount,
+                        threshold: Self.defaultSearchThreshold
+                    )
+                }
                 let scoreMap = Dictionary(
                     results.map { ($0.id.uuidString, Double($0.score)) },
                     uniquingKeysWith: { first, _ in first }
@@ -383,11 +385,13 @@ public actor MemorySearchService {
         {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
-                let results = try await db.search(
-                    query: .text(query),
-                    numResults: fetchCount,
-                    threshold: Self.defaultSearchThreshold
-                )
+                let results = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_search") {
+                    try await db.search(
+                        query: .text(query),
+                        numResults: fetchCount,
+                        threshold: Self.defaultSearchThreshold
+                    )
+                }
 
                 var matchedIds: [Int] = []
                 var scores: [Int: Double] = [:]
@@ -448,11 +452,13 @@ public actor MemorySearchService {
         {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
-                let results = try await db.search(
-                    query: .text(query),
-                    numResults: fetchCount,
-                    threshold: Self.defaultTranscriptThreshold
-                )
+                let results = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_search") {
+                    try await db.search(
+                        query: .text(query),
+                        numResults: fetchCount,
+                        threshold: Self.defaultTranscriptThreshold
+                    )
+                }
 
                 var hits: [(conversationId: String, chunkIndex: Int, score: Double)] = []
                 for r in results {
@@ -600,14 +606,14 @@ public actor MemorySearchService {
             guard let id = UUID(uuidString: fact.id),
                 let db = await ensureVectorDB(for: fact.agentId)
             else { continue }
-            _ = try? await db.addDocument(text: fact.content, id: id)
+            _ = try? await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: fact.content, id: id) }
         }
 
         let allEpisodes = (try? MemoryDatabase.shared.loadEpisodes(limit: 5000)) ?? []
         for ep in allEpisodes {
             guard let db = await ensureVectorDB(for: ep.agentId) else { continue }
             let id = TextSimilarity.deterministicUUID(from: "episode:\(ep.id)")
-            _ = try? await db.addDocument(text: ep.summary + " — " + ep.topicsCSV, id: id)
+            _ = try? await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: ep.summary + " — " + ep.topicsCSV, id: id) }
             episodeKeyMap[id.uuidString] = ep.id
         }
 
@@ -615,7 +621,7 @@ public actor MemorySearchService {
         for turn in allTranscripts {
             guard let db = await ensureVectorDB(for: turn.agentId) else { continue }
             let id = TextSimilarity.deterministicUUID(from: "transcript:\(turn.conversationId):\(turn.chunkIndex)")
-            _ = try? await db.addDocument(text: turn.content, id: id)
+            _ = try? await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: turn.content, id: id) }
             transcriptKeyMap[id.uuidString] = (turn.conversationId, turn.chunkIndex)
         }
 

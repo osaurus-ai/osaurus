@@ -69,9 +69,7 @@ enum DeclaredReasoningEffort {
 
     // MARK: - Cached per-model resolution
 
-    private static nonisolated let lock = NSLock()
-    private static nonisolated(unsafe) var cache: [String: Declaration?] = [:]
-    private static nonisolated(unsafe) var inFlightBackgroundResolves: Set<String> = []
+    private static nonisolated let cache = ModelMetadataCache<Declaration?>()
 
     /// Test seam: when set, resolution consults this instead of disk so unit
     /// tests can exercise adapter/registry behavior without installing model
@@ -83,38 +81,21 @@ enum DeclaredReasoningEffort {
             return override(modelId)
         }
         let key = modelId.lowercased()
-        lock.lock()
-        if let hit = cache[key] {
-            lock.unlock()
-            return hit
-        }
-        lock.unlock()
-
-        // Same main-thread rule as `LocalReasoningCapability.capability`:
-        // a cold miss reads jang/generation config files from disk, and the
-        // main thread reaches this from picker/suffix recomputes. Resolve on
-        // a background queue and report "no declaration" until it lands; the
-        // posted `.localModelsChanged` recomputes the observing UI, and
-        // off-main dispatch callers keep the synchronous resolution.
+        if let hit = cache.lookup(key) { return hit }
         if Thread.isMainThread {
             scheduleBackgroundResolve(key: key, modelId: modelId)
             return nil
         }
-
-        let resolved = resolve(modelId: modelId)
-
-        // Same cold-cache rule as `LocalReasoningCapability`: a main-thread
-        // lookup during the launch scan can miss purely because the
-        // local-models cache is still warming. Never memoize that
-        // provisional nil — the next lookup gets the real answer.
-        if resolved == nil, !ModelManager.isLocalModelsCacheWarm {
-            return nil
+        while true {
+            if let hit = cache.lookup(key) { return hit }
+            guard let generation = cache.begin(key, background: false) else { continue }
+            let resolved = resolve(modelId: modelId)
+            let provisional = resolved == nil && !ModelManager.isLocalModelsCacheWarm
+            if cache.finish(key, generation: generation,
+                value: provisional ? nil : .some(resolved), background: false) {
+                return resolved
+            }
         }
-
-        lock.lock()
-        cache[key] = resolved
-        lock.unlock()
-        return resolved
     }
 
     static func control(forModelId modelId: String) -> Control? {
@@ -130,20 +111,13 @@ enum DeclaredReasoningEffort {
     /// the never-memoize-a-provisional-miss rule while the local-models scan
     /// is still warming.
     private static func scheduleBackgroundResolve(key: String, modelId: String) {
-        lock.lock()
-        let alreadyRunning = !inFlightBackgroundResolves.insert(key).inserted
-        lock.unlock()
-        if alreadyRunning { return }
-
+        guard let generation = cache.begin(key, background: true) else { return }
         DispatchQueue.global(qos: .utility).async {
             let resolved = resolve(modelId: modelId)
             let provisionalMiss = resolved == nil && !ModelManager.isLocalModelsCacheWarm
-            lock.lock()
-            if !provisionalMiss {
-                cache[key] = resolved
-            }
-            inFlightBackgroundResolves.remove(key)
-            lock.unlock()
+            guard cache.finish(key, generation: generation,
+                value: provisionalMiss ? nil : .some(resolved), background: true)
+            else { return }
             if !provisionalMiss, resolved != nil {
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: .localModelsChanged, object: nil)
@@ -154,9 +128,7 @@ enum DeclaredReasoningEffort {
 
     /// Call when models are added/removed so the next lookup re-reads stamps.
     static func invalidate() {
-        lock.lock()
-        cache.removeAll()
-        lock.unlock()
+        cache.invalidate()
     }
 
     private static func resolve(modelId: String) -> Declaration? {

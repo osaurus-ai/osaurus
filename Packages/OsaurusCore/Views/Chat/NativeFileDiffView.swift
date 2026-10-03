@@ -105,6 +105,12 @@ final class NativeFileDiffView: NSView {
     private let previewBadge = NSTextField(labelWithString: "")
     private let copyButton = NSButton()
     private let collapseButton = NSButton()
+    /// File-history controls: status badge ("Reverted"), View (opens the
+    /// File Changes inspector on this write) and Revert / Undo.
+    private let historyStack = NSStackView()
+    private let historyBadge = NSTextField(labelWithString: "")
+    private let viewButton = NSButton()
+    private let revertButton = NSButton()
     private var diffBackground: DiffBackgroundView?
     private var diffTextView: CodeNSTextView?
     private var bodyHeightConstraint: NSLayoutConstraint?
@@ -123,6 +129,13 @@ final class NativeFileDiffView: NSView {
     private var lastThemeId = ""
     private var isCollapsed = false
     private var copyResetTask: Task<Void, Never>?
+    private var lastTheme: (any ThemeProtocol)?
+    private var historySetId: UUID?
+    private var historySessionId: String?
+    private var historyStatus: FileChangeSetStatus?
+    private var historyUndoSetId: UUID?
+    private var historyBusy = false
+    nonisolated(unsafe) private var historyObserver: NSObjectProtocol?
 
     // MARK: Init
 
@@ -132,6 +145,10 @@ final class NativeFileDiffView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        if let historyObserver { NotificationCenter.default.removeObserver(historyObserver) }
+    }
 
     // MARK: Configure
 
@@ -148,8 +165,19 @@ final class NativeFileDiffView: NSView {
         lastWidth = width
         lastThemeId = themeId
         isCollapsed = collapsed
+        lastTheme = theme
+
+        let setId = diff.isPreview || diff.isStreamingPreview ? nil : diff.operationId
+        if setId != historySetId {
+            historySetId = setId
+            historySessionId = nil
+            historyStatus = nil
+            historyUndoSetId = nil
+            refreshHistoryState()
+        }
 
         applyHeaderStyling(diff: diff, theme: theme)
+        applyHistoryControls(theme: theme)
         updateCollapseChevron(theme: theme)
 
         let tv = ensureTextView(theme: theme)
@@ -235,6 +263,33 @@ final class NativeFileDiffView: NSView {
         collapseButton.alphaValue = 0.55
         headerView.addSubview(collapseButton)
 
+        historyStack.translatesAutoresizingMaskIntoConstraints = false
+        historyStack.orientation = .horizontal
+        historyStack.spacing = 6
+        historyStack.alignment = .centerY
+        historyBadge.isEditable = false
+        historyBadge.isBordered = false
+        historyBadge.drawsBackground = false
+        viewButton.title = ""
+        viewButton.image = SymbolImageCache.image("sidebar.right", accessibilityDescription: L("View change"))
+        viewButton.toolTip = L("Show in File Changes")
+        viewButton.isBordered = false
+        viewButton.target = self
+        viewButton.action = #selector(openInPanel)
+        viewButton.alphaValue = 0.55
+        viewButton.widthAnchor.constraint(equalToConstant: 20).isActive = true
+        viewButton.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        revertButton.isBordered = false
+        revertButton.bezelStyle = .inline
+        revertButton.target = self
+        revertButton.action = #selector(revertOrUndo)
+        revertButton.alphaValue = 0.75
+        for view in [historyBadge, viewButton, revertButton] as [NSView] {
+            historyStack.addArrangedSubview(view)
+        }
+        historyStack.isHidden = true
+        headerView.addSubview(historyStack)
+
         // Transparent toggle overlay over the header up to the action buttons,
         // added last so it sits in front of the icon/labels and captures their
         // clicks while copy / collapse keep their own.
@@ -252,7 +307,7 @@ final class NativeFileDiffView: NSView {
             headerButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
             headerButton.topAnchor.constraint(equalTo: headerView.topAnchor),
             headerButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
-            headerButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor),
+            headerButton.trailingAnchor.constraint(equalTo: historyStack.leadingAnchor),
         ])
 
         NSLayoutConstraint.activate([
@@ -297,9 +352,12 @@ final class NativeFileDiffView: NSView {
             previewBadge.leadingAnchor.constraint(equalTo: removedLabel.trailingAnchor, constant: 8),
             previewBadge.firstBaselineAnchor.constraint(equalTo: fileLabel.firstBaselineAnchor),
             previewBadge.trailingAnchor.constraint(
-                lessThanOrEqualTo: copyButton.leadingAnchor,
+                lessThanOrEqualTo: historyStack.leadingAnchor,
                 constant: -8
             ),
+
+            historyStack.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -6),
+            historyStack.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
             collapseButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -8),
             collapseButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
@@ -316,6 +374,15 @@ final class NativeFileDiffView: NSView {
         fileLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        historyStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        historyObserver = NotificationCenter.default.addObserver(
+            forName: .fileChangesDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshHistoryState() }
+        }
     }
 
     private func ensureTextView(theme: any ThemeProtocol) -> CodeNSTextView {
@@ -560,6 +627,8 @@ final class NativeFileDiffView: NSView {
             ctx.duration = 0.15
             copyButton.animator().alphaValue = 1
             collapseButton.animator().alphaValue = 1
+            viewButton.animator().alphaValue = 1
+            revertButton.animator().alphaValue = 1
         }
     }
 
@@ -568,6 +637,8 @@ final class NativeFileDiffView: NSView {
             ctx.duration = 0.15
             copyButton.animator().alphaValue = 0.55
             collapseButton.animator().alphaValue = 0.55
+            viewButton.animator().alphaValue = 0.55
+            revertButton.animator().alphaValue = 0.75
         }
     }
 
@@ -592,6 +663,98 @@ final class NativeFileDiffView: NSView {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             self.copyButton.image = SymbolImageCache.image("doc.on.doc", accessibilityDescription: nil)
             self.copyButton.contentTintColor = nil
+        }
+    }
+
+    // MARK: - File history
+
+    private func refreshHistoryState() {
+        guard let setId = historySetId else { return }
+        Task { @MainActor [weak self] in
+            let journal = FileChangeJournal.shared
+            let set = await journal.changeSet(id: setId)
+            let undo: FileChangeSet?
+            if let set {
+                undo = await journal.activeRevert(of: setId, sessionId: set.sessionId)
+            } else {
+                undo = nil
+            }
+            guard let self, self.historySetId == setId else { return }
+            self.historySessionId = set?.sessionId
+            self.historyStatus = set?.status
+            self.historyUndoSetId = undo?.id
+            if let theme = self.lastTheme { self.applyHistoryControls(theme: theme) }
+        }
+    }
+
+    private func applyHistoryControls(theme: any ThemeProtocol) {
+        guard historySetId != nil, historySessionId != nil, let status = historyStatus else {
+            historyStack.isHidden = true
+            return
+        }
+        historyStack.isHidden = false
+        let captionFont = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
+
+        let badge: String?
+        switch status {
+        case .reverted: badge = L("Reverted")
+        case .partiallyReverted: badge = L("Partly reverted")
+        case .untracked: badge = L("Not tracked")
+        default: badge = nil
+        }
+        historyBadge.stringValue = badge ?? ""
+        historyBadge.isHidden = badge == nil
+        historyBadge.font = captionFont
+        historyBadge.textColor = NSColor(theme.tertiaryText)
+
+        let title: String?
+        if status == .reverted {
+            title = historyUndoSetId == nil ? nil : L("Undo")
+        } else if status == .applied || status == .partiallyReverted {
+            title = L("Revert")
+        } else {
+            title = nil
+        }
+        revertButton.isHidden = title == nil
+        revertButton.isEnabled = !historyBusy
+        if let title {
+            revertButton.attributedTitle = NSAttributedString(
+                string: title,
+                attributes: [.font: captionFont, .foregroundColor: NSColor(theme.secondaryText)]
+            )
+            revertButton.toolTip =
+                status == .reverted
+                ? L("Put this change back")
+                : L("Restore the file to how it was before this change")
+        }
+        viewButton.contentTintColor = NSColor(theme.tertiaryText)
+    }
+
+    @objc private func openInPanel() {
+        guard let setId = historySetId, let sessionId = historySessionId else { return }
+        FileChangeSummaryStore.requestPanel(sessionId: sessionId, focusing: setId)
+    }
+
+    @objc private func revertOrUndo() {
+        guard !historyBusy, let setId = historySetId, let sessionId = historySessionId else { return }
+        historyBusy = true
+        revertButton.isEnabled = false
+        let undoSetId = historyStatus == .reverted ? historyUndoSetId : nil
+        Task { @MainActor [weak self] in
+            let journal = FileChangeJournal.shared
+            let scope: FileChangeJournal.RevertScope = .set(undoSetId ?? setId)
+            // Anything that needs a decision (files edited since, snapshots
+            // unavailable) goes through the inspector's confirmation flow.
+            let preview = await journal.previewRevert(scope, sessionId: sessionId)
+            var needsPanel = preview.conflictCount > 0 || preview.unrestorableCount > 0
+            if !needsPanel {
+                let summary = await journal.revert(scope, sessionId: sessionId)
+                needsPanel = !summary.isClean
+            }
+            guard let self else { return }
+            self.historyBusy = false
+            if needsPanel { self.openInPanel() }
+            self.refreshHistoryState()
         }
     }
 }

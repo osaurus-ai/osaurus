@@ -117,9 +117,16 @@ struct ToolPolicyMenu: View {
         ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme)
     }
 
+    /// Send / delete tools ask on every call no matter what is configured
+    /// (`ToolRegistry.execute` forces `.ask`), so offering Auto here would
+    /// be a switch that does nothing.
+    private var offeredPolicies: [ToolPermissionPolicy] {
+        ToolRegistry.shared.requiresPerCallApproval(toolName) ? [.ask, .deny] : [.auto, .ask, .deny]
+    }
+
     var body: some View {
         MenuPill(fill: color.opacity(0.14), stroke: color.opacity(0.22)) {
-            ForEach([ToolPermissionPolicy.auto, .ask, .deny], id: \.self) { policy in
+            ForEach(offeredPolicies, id: \.self) { policy in
                 Button {
                     ToolRegistry.shared.setPolicy(policy, for: toolName)
                     onChange()

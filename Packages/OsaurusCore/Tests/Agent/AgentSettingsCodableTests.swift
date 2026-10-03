@@ -145,22 +145,20 @@ struct AgentSettingsCodableTests {
         #expect(decoded.subagentModelOverrides.count == 1)
     }
 
-    @Test("the per-agent spawnable model pool + notes round-trip")
-    func roundTripsSpawnableModelPool() throws {
-        var settings = AgentSettings.defaultDisabled
-        settings.spawnDelegationEnabled = true
-        settings.spawnableModelNames = ["qwen3-4b-4bit", "openai/gpt-4o-mini"]
-        settings.spawnableModelNotes = [
-            "qwen3-4b-4bit": "Quick local edits",
-            "openai/gpt-4o-mini": "Frontier reasoning",
-        ]
-
-        let data = try JSONEncoder().encode(settings)
-        let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
-
-        #expect(decoded.spawnableModelNames == ["qwen3-4b-4bit", "openai/gpt-4o-mini"])
-        #expect(decoded.spawnableModelNotes["qwen3-4b-4bit"] == "Quick local edits")
-        #expect(decoded.spawnableModelNotes["openai/gpt-4o-mini"] == "Frontier reasoning")
+    @Test("legacy per-agent spawnable model pool keys are ignored on decode")
+    func legacySpawnableModelPoolKeysIgnored() throws {
+        // `spawn_model` was removed; older agent files still carry its pool.
+        let json = #"""
+            {"dbEnabled":false,"spawnDelegationEnabled":true,
+             "spawnableModelNames":["qwen3-4b-4bit"],
+             "spawnableModelNotes":{"qwen3-4b-4bit":"Quick local edits"},
+             "spawnToolAccess":"readOnly"}
+            """#
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: Data(json.utf8))
+        #expect(decoded.spawnDelegationEnabled == true)
+        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+        #expect(!reencoded.contains("spawnableModelNames"))
+        #expect(!reencoded.contains("spawnToolAccess"))
     }
 
     @Test("disabling Spawn preserves the custom agent's configured policy")
@@ -170,11 +168,6 @@ struct AgentSettingsCodableTests {
         var settings = AgentSettings.defaultDisabled
         settings.spawnDelegationEnabled = false
         settings.spawnableAgentIDs = [researcherID, workerID]
-        settings.spawnableModelNames = ["local/fast-helper", "openai/frontier-helper"]
-        settings.spawnableModelNotes = [
-            "local/fast-helper": "Fast local batches",
-            "openai/frontier-helper": "Difficult reasoning",
-        ]
         settings.subagentModelOverrides = [
             SubagentCapabilityRegistry.spawn.id: "local/override-helper"
         ]
@@ -184,23 +177,15 @@ struct AgentSettingsCodableTests {
         settings.subagentBudgets = SubagentBudgets(
             maxDelegateTokens: 8192,
             maxDelegateTurns: 5,
-            maxToolCalls: 8,
             maxElapsedSeconds: 600,
             maxParallelSpawns: 4
         )
-        settings.spawnToolAccess = .readOnly
 
         let data = try JSONEncoder().encode(settings)
         let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
 
         #expect(decoded.spawnDelegationEnabled == false)
         #expect(decoded.spawnableAgentIDs == [researcherID, workerID])
-        #expect(
-            decoded.spawnableModelNames
-                == ["local/fast-helper", "openai/frontier-helper"]
-        )
-        #expect(decoded.spawnableModelNotes["local/fast-helper"] == "Fast local batches")
-        #expect(decoded.spawnableModelNotes["openai/frontier-helper"] == "Difficult reasoning")
         #expect(
             decoded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
                 == "local/override-helper"
@@ -211,10 +196,8 @@ struct AgentSettingsCodableTests {
         )
         #expect(decoded.subagentBudgets.maxDelegateTokens == 8192)
         #expect(decoded.subagentBudgets.maxDelegateTurns == 5)
-        #expect(decoded.subagentBudgets.maxToolCalls == 8)
         #expect(decoded.subagentBudgets.maxElapsedSeconds == 600)
         #expect(decoded.subagentBudgets.maxParallelSpawns == 4)
-        #expect(decoded.spawnToolAccess == .readOnly)
     }
 
     @Test("legacy JSON without the spawnable model pool decodes to empty")
@@ -223,8 +206,6 @@ struct AgentSettingsCodableTests {
         let json = #"{"dbEnabled":false,"spawnableAgentNames":["Coder"]}"#
         let decoded = try JSONDecoder().decode(AgentSettings.self, from: Data(json.utf8))
 
-        #expect(decoded.spawnableModelNames.isEmpty)
-        #expect(decoded.spawnableModelNotes.isEmpty)
         // The legacy name pool is decode-only until the full catalog is
         // available for deterministic UUID migration.
         #expect(decoded.spawnableAgentIDs.isEmpty)
@@ -295,12 +276,13 @@ struct AgentSettingsCodableTests {
 
         #expect(decoded.imageGenerationModelId == nil)
         #expect(decoded.imageEditModelId == nil)
-        // Missing permission map → every kind resolves to the safe `.ask` default.
+        // Missing permission map → per-kind defaults: Image asks, spawn is
+        // Always Allow (the worker's own tools keep their own prompts).
         #expect(
             decoded.subagentPermissions.policy(for: SubagentCapabilityRegistry.image.id) == .ask
         )
         #expect(
-            decoded.subagentPermissions.policy(for: SubagentCapabilityRegistry.spawn.id) == .ask
+            decoded.subagentPermissions.policy(for: SubagentCapabilityRegistry.spawn.id) == .alwaysAllow
         )
         // Missing budgets → the struct defaults.
         #expect(decoded.subagentBudgets == SubagentBudgets())

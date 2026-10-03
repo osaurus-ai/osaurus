@@ -4,6 +4,57 @@ import Testing
 
 @Suite("ModelMediaCapabilities — config and weight evidence")
 struct ModelMediaCapabilitiesMCDCTests {
+    @Test func mimoNativeProcessorAndComponentEvidenceSurviveAliases() throws {
+        let root = try VisionBundleFixture.makeMiMo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "MiMo-V2.6", "Qwen3-VL"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(caps.supportsVideo)
+            #expect(caps.supportsAudio)
+        }
+    }
+
+    @Test(arguments: ["visual.patch_embed", "visual.blocks.1", "visual.merger.mlp.2",
+                      "speech_embeddings.1", "audio_encoder.projection.mlp.2",
+                      "audio_encoder.input_local_transformer.layers.1"])
+    func mimoMissingComponentOnlyDisablesItsModality(component: String) throws {
+        let root = try VisionBundleFixture.makeMiMo(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "neutral")
+        #expect(caps.supportsImage == !component.hasPrefix("visual"))
+        #expect(caps.supportsVideo == caps.supportsImage)
+        #expect(caps.supportsAudio == component.hasPrefix("visual"))
+    }
+
+    @Test(arguments: ["encoder.conv1", "encoder.down_sample_layer", "encoder.layers.1",
+                      "encoder.quantizer.vq.layers.1"])
+    func mimoAudioRequiresTokenizerWeights(component: String) throws {
+        let root = try VisionBundleFixture.makeMiMo(sidecarOmit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "neutral")
+        #expect(caps.supportsImage && caps.supportsVideo)
+        #expect(!caps.supportsAudio)
+    }
+
+    @Test(arguments: ["attention_projection_layout", "processor_config", "video_token_id", "audio_token_id"])
+    func mimoRequiresNativeRepresentationAndMatchingTokens(key: String) throws {
+        let root = try VisionBundleFixture.makeMiMo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("config.json")
+        var config = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        config.removeValue(forKey: key)
+        try VisionBundleFixture.writeJSON(config, to: file)
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "MiMo-V2.6")
+        if key == "video_token_id" {
+            #expect(caps.supportsImage && caps.supportsAudio && !caps.supportsVideo)
+        } else if key == "audio_token_id" {
+            #expect(caps.supportsImage && caps.supportsVideo && !caps.supportsAudio)
+        } else {
+            #expect(caps == .textOnly)
+        }
+    }
+
     @Test func visionEvidenceMatchesFormatPreflightAndRefreshesChangedHeaders() throws {
         let root = try VisionBundleFixture.make()
         defer { try? FileManager.default.removeItem(at: root) }

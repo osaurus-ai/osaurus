@@ -11,9 +11,105 @@ import Foundation
     import FoundationModels
 #endif
 
-enum FoundationModelServiceError: Error, LocalizedError {
-    case notAvailable
-    case generationFailed
+/// Why `SystemLanguageModel.default` cannot serve right now. Mirrors
+/// `SystemLanguageModel.Availability.UnavailableReason` plus the two
+/// build/OS-level cases the framework can't report itself. Surfaced in the
+/// Core Model picker and Memory diagnostics so "Foundation is set but
+/// nothing works" has a concrete, user-actionable explanation.
+enum FoundationUnavailableReason: Sendable, Equatable {
+    /// Hardware can't run Apple Intelligence (e.g. Intel, older Apple silicon).
+    case deviceNotEligible
+    /// Apple Intelligence is turned off in System Settings.
+    case appleIntelligenceNotEnabled
+    /// Apple Intelligence is on but the on-device model is still
+    /// downloading / being provisioned. Transient.
+    case modelNotReady
+    /// Running on macOS < 26.
+    case osTooOld
+    /// Built without the FoundationModels framework.
+    case frameworkMissing
+    /// The framework reported a reason this build doesn't know about.
+    case unknown
+
+    /// Short user-facing explanation, phrased as the fix when there is one.
+    var userDescription: String {
+        switch self {
+        case .deviceNotEligible:
+            return "This Mac is not eligible for Apple Intelligence."
+        case .appleIntelligenceNotEnabled:
+            return "Apple Intelligence is turned off. Enable it in System Settings → Apple Intelligence & Siri."
+        case .modelNotReady:
+            return "The Apple Intelligence model is still downloading. Try again in a few minutes."
+        case .osTooOld:
+            return "Foundation Model requires macOS 26 or later."
+        case .frameworkMissing:
+            return "This build of Osaurus does not include Foundation Models support."
+        case .unknown:
+            return "Apple Intelligence is not available right now."
+        }
+    }
+}
+
+/// Availability snapshot for the system default language model.
+enum FoundationAvailability: Sendable, Equatable {
+    case available
+    case unavailable(FoundationUnavailableReason)
+
+    var isAvailable: Bool { self == .available }
+
+    var unavailableReason: FoundationUnavailableReason? {
+        if case .unavailable(let reason) = self { return reason }
+        return nil
+    }
+}
+
+/// Typed mirror of `LanguageModelSession.GenerationError`. Lets the
+/// routing layer (`CoreModelService`) decide "retry", "fall back", or
+/// "surface" without importing FoundationModels or matching on a
+/// framework type that only exists on macOS 26+.
+enum FoundationGenerationFailure: Sendable, Equatable {
+    case exceededContextWindowSize
+    case assetsUnavailable
+    case guardrailViolation
+    case unsupportedGuide
+    case unsupportedLanguageOrLocale
+    case decodingFailure
+    case rateLimited
+    case concurrentRequests
+    case refusal
+    case unknown
+
+    /// True when an immediate retry against the same model has a real
+    /// chance of succeeding. Everything else is either a property of this
+    /// Mac (assets, locale), of this prompt (context window, guardrail,
+    /// refusal, guide), or a framework bug (decoding) — retrying just burns
+    /// the caller's timeout budget before the fallback gets a turn.
+    var isTransient: Bool {
+        switch self {
+        case .rateLimited, .concurrentRequests: return true
+        default: return false
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .exceededContextWindowSize: return "prompt exceeds the Foundation Model context window"
+        case .assetsUnavailable: return "Foundation Model assets are unavailable"
+        case .guardrailViolation: return "Foundation Model guardrail blocked the request"
+        case .unsupportedGuide: return "Foundation Model does not support the requested output guide"
+        case .unsupportedLanguageOrLocale: return "Foundation Model does not support this language or locale"
+        case .decodingFailure: return "Foundation Model output could not be decoded"
+        case .rateLimited: return "Foundation Model is rate limited"
+        case .concurrentRequests: return "Foundation Model rejected a concurrent request"
+        case .refusal: return "Foundation Model refused the request"
+        case .unknown: return "Foundation Model generation failed"
+        }
+    }
+}
+
+enum FoundationModelServiceError: Error, LocalizedError, Equatable {
+    case notAvailable(FoundationUnavailableReason)
+    case generation(FoundationGenerationFailure, detail: String)
     /// The Foundation Models system model is text-only on macOS 26.
     /// When the request carries image parts we surface this instead of
     /// silently degrading to text — callers can choose to retry against
@@ -22,14 +118,26 @@ enum FoundationModelServiceError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notAvailable:
-            return "Foundation Models is not available on this device."
-        case .generationFailed:
-            return "Foundation Models generation failed."
+        case .notAvailable(let reason):
+            return "Foundation Model is not available: \(reason.userDescription)"
+        case .generation(let failure, let detail):
+            let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? failure.summary : "\(failure.summary) (\(trimmed))"
         case .visionUnsupported:
             return
                 "Foundation Models is text-only and cannot accept image inputs. "
                 + "Use an MLX VLM (e.g. Qwen3.5-VL) or a remote provider with vision support."
+        }
+    }
+
+    /// Whether `CoreModelService` should retry the same model for this error.
+    /// `notAvailable` is never transient at call scale: even `.modelNotReady`
+    /// (asset download) resolves in minutes, not within a retry backoff.
+    var isTransient: Bool {
+        switch self {
+        case .notAvailable: return false
+        case .generation(let failure, _): return failure.isTransient
+        case .visionUnsupported: return false
         }
     }
 }
@@ -44,16 +152,92 @@ actor FoundationModelService: ToolCapableService {
 
     /// Returns true if the system default language model is available on this device/OS.
     static func isDefaultModelAvailable() -> Bool {
+        defaultModelAvailability().isAvailable
+    }
+
+    /// Availability of the system default language model *with the reason*
+    /// when it isn't. Cheap and side-effect-free (a framework property
+    /// read), so it is safe to consult right before every request — the
+    /// state flips at runtime when the user toggles Apple Intelligence in
+    /// System Settings or while the model assets are still downloading.
+    static func defaultModelAvailability() -> FoundationAvailability {
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
-                return SystemLanguageModel.default.isAvailable
+                switch SystemLanguageModel.default.availability {
+                case .available:
+                    return .available
+                case .unavailable(let reason):
+                    switch reason {
+                    case .deviceNotEligible: return .unavailable(.deviceNotEligible)
+                    case .appleIntelligenceNotEnabled: return .unavailable(.appleIntelligenceNotEnabled)
+                    case .modelNotReady: return .unavailable(.modelNotReady)
+                    @unknown default: return .unavailable(.unknown)
+                    }
+                }
             } else {
-                return false
+                return .unavailable(.osTooOld)
             }
         #else
-            return false
+            return .unavailable(.frameworkMissing)
         #endif
     }
+
+    /// Fail fast with the concrete reason instead of letting the framework
+    /// hang or throw an opaque error when the model can't serve. The router
+    /// already gates on `isAvailable()`, but availability can change between
+    /// routing and the request, and callers outside the router (tests,
+    /// direct `generateOneShot`) need the same guarantee.
+    private static func requireAvailable() throws {
+        if let reason = defaultModelAvailability().unavailableReason {
+            throw FoundationModelServiceError.notAvailable(reason)
+        }
+    }
+
+    /// Translate a framework error into the typed service error so the
+    /// routing layer can decide retry / fall back / surface without
+    /// depending on FoundationModels types. Errors that are already typed,
+    /// cancellation, and anything unrecognised pass through unchanged.
+    nonisolated static func mapFrameworkError(_ error: Error) -> Error {
+        if error is FoundationModelServiceError || error is CancellationError { return error }
+        #if canImport(FoundationModels)
+            if #available(macOS 26.0, *),
+                let generation = error as? LanguageModelSession.GenerationError
+            {
+                return map(generation)
+            }
+        #endif
+        return error
+    }
+
+    #if canImport(FoundationModels)
+        @available(macOS 26.0, *)
+        nonisolated static func map(_ error: LanguageModelSession.GenerationError)
+            -> FoundationModelServiceError
+        {
+            switch error {
+            case .exceededContextWindowSize(let ctx):
+                return .generation(.exceededContextWindowSize, detail: ctx.debugDescription)
+            case .assetsUnavailable(let ctx):
+                return .generation(.assetsUnavailable, detail: ctx.debugDescription)
+            case .guardrailViolation(let ctx):
+                return .generation(.guardrailViolation, detail: ctx.debugDescription)
+            case .unsupportedGuide(let ctx):
+                return .generation(.unsupportedGuide, detail: ctx.debugDescription)
+            case .unsupportedLanguageOrLocale(let ctx):
+                return .generation(.unsupportedLanguageOrLocale, detail: ctx.debugDescription)
+            case .decodingFailure(let ctx):
+                return .generation(.decodingFailure, detail: ctx.debugDescription)
+            case .rateLimited(let ctx):
+                return .generation(.rateLimited, detail: ctx.debugDescription)
+            case .concurrentRequests(let ctx):
+                return .generation(.concurrentRequests, detail: ctx.debugDescription)
+            case .refusal(_, let ctx):
+                return .generation(.refusal, detail: ctx.debugDescription)
+            @unknown default:
+                return .generation(.unknown, detail: error.localizedDescription)
+            }
+        }
+    #endif
 
     /// Real on-device context window of the system default model, in tokens,
     /// or `nil` when Foundation Models is unavailable on this device/OS.
@@ -85,6 +269,13 @@ actor FoundationModelService: ToolCapableService {
 
     nonisolated func isAvailable() -> Bool { Self.isDefaultModelAvailable() }
 
+    /// The system model is always resident and normally answers a short
+    /// utility prompt in well under a second; no output for this long means
+    /// the framework is wedged (asset lock contention, a stuck XPC session),
+    /// and `CoreModelService` should hand the call to the chat model.
+    static let firstTokenDeadlineSeconds: TimeInterval = 5
+    nonisolated var firstTokenDeadline: TimeInterval? { Self.firstTokenDeadlineSeconds }
+
     nonisolated func handles(requestedModel: String?) -> Bool {
         let t = (requestedModel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty || t.caseInsensitiveCompare("default") == .orderedSame
@@ -98,6 +289,7 @@ actor FoundationModelService: ToolCapableService {
         temperature: Float?,
         maxTokens: Int
     ) async throws -> String {
+        try requireAvailable()
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
                 let session = LanguageModelSession()
@@ -107,13 +299,17 @@ actor FoundationModelService: ToolCapableService {
                     temperature: temperature.map(Double.init),
                     maximumResponseTokens: maxTokens
                 )
-                let response = try await session.respond(to: prompt, options: options)
-                return response.content
+                do {
+                    let response = try await session.respond(to: prompt, options: options)
+                    return response.content
+                } catch {
+                    throw mapFrameworkError(error)
+                }
             } else {
-                throw FoundationModelServiceError.notAvailable
+                throw FoundationModelServiceError.notAvailable(.osTooOld)
             }
         #else
-            throw FoundationModelServiceError.notAvailable
+            throw FoundationModelServiceError.notAvailable(.frameworkMissing)
         #endif
     }
 
@@ -127,6 +323,7 @@ actor FoundationModelService: ToolCapableService {
             throw FoundationModelServiceError.visionUnsupported
         }
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
+        try Self.requireAvailable()
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
                 let session = LanguageModelSession()
@@ -171,7 +368,7 @@ actor FoundationModelService: ToolCapableService {
                         if Task.isCancelled {
                             continuation.finish()
                         } else {
-                            continuation.finish(throwing: error)
+                            continuation.finish(throwing: Self.mapFrameworkError(error))
                         }
                     }
                 }
@@ -183,10 +380,10 @@ actor FoundationModelService: ToolCapableService {
 
                 return stream
             } else {
-                throw FoundationModelServiceError.notAvailable
+                throw FoundationModelServiceError.notAvailable(.osTooOld)
             }
         #else
-            throw FoundationModelServiceError.notAvailable
+            throw FoundationModelServiceError.notAvailable(.frameworkMissing)
         #endif
     }
 
@@ -220,6 +417,7 @@ actor FoundationModelService: ToolCapableService {
             throw FoundationModelServiceError.visionUnsupported
         }
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
+        try Self.requireAvailable()
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
                 let appleTools: [any FoundationModels.Tool] =
@@ -252,12 +450,14 @@ actor FoundationModelService: ToolCapableService {
                         throw ServiceToolInvocation(toolName: inv.toolName, jsonArguments: inv.jsonArguments)
                     }
                     throw error
+                } catch {
+                    throw Self.mapFrameworkError(error)
                 }
             } else {
-                throw FoundationModelServiceError.notAvailable
+                throw FoundationModelServiceError.notAvailable(.osTooOld)
             }
         #else
-            throw FoundationModelServiceError.notAvailable
+            throw FoundationModelServiceError.notAvailable(.frameworkMissing)
         #endif
     }
 
@@ -273,6 +473,7 @@ actor FoundationModelService: ToolCapableService {
             throw FoundationModelServiceError.visionUnsupported
         }
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
+        try Self.requireAvailable()
         #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
                 let appleTools: [any FoundationModels.Tool] =
@@ -332,7 +533,7 @@ actor FoundationModelService: ToolCapableService {
                         if Task.isCancelled {
                             continuation.finish()
                         } else {
-                            continuation.finish(throwing: error)
+                            continuation.finish(throwing: Self.mapFrameworkError(error))
                         }
                     }
                 }
@@ -344,10 +545,10 @@ actor FoundationModelService: ToolCapableService {
 
                 return stream
             } else {
-                throw FoundationModelServiceError.notAvailable
+                throw FoundationModelServiceError.notAvailable(.osTooOld)
             }
         #else
-            throw FoundationModelServiceError.notAvailable
+            throw FoundationModelServiceError.notAvailable(.frameworkMissing)
         #endif
     }
 

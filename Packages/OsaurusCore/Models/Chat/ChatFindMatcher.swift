@@ -35,6 +35,25 @@ struct ChatFindTurnSnapshot: Sendable {
     let id: UUID
     let role: MessageRole
     let content: String
+
+    init(id: UUID, role: MessageRole, content: String) {
+        self.id = id
+        self.role = role
+        self.content = content
+    }
+
+    /// Snapshot of what the chat PAINTS for `turn`: a user turn wrapped in a
+    /// dispatch envelope (channel / delegated / scheduled / watcher) is
+    /// searched by its displayed text, so the "N of M" total, the block-level
+    /// `searchableText` offsets, and the highlights all agree.
+    @MainActor
+    init(turn: ChatTurn, sessionSource: SessionSource) {
+        self.init(
+            id: turn.id,
+            role: turn.role,
+            content: turn.role == .user ? turn.displayContent(sessionSource: sessionSource) : turn.content
+        )
+    }
 }
 
 enum ChatFindMatcher {
@@ -72,12 +91,13 @@ enum ChatFindMatcher {
     static func recompute(
         query: String,
         turns: [ChatTurn],
+        sessionSource: SessionSource = .chat,
         previous: ChatFindState,
         preserveCurrentMatch: Bool
     ) -> (state: ChatFindState, jumpTo: ChatFindMatch?) {
         recompute(
             query: query,
-            turns: turns.map { ChatFindTurnSnapshot(id: $0.id, role: $0.role, content: $0.content) },
+            turns: turns.map { ChatFindTurnSnapshot(turn: $0, sessionSource: sessionSource) },
             previous: previous,
             preserveCurrentMatch: preserveCurrentMatch
         )

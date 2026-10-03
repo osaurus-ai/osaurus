@@ -333,19 +333,37 @@ internal func sandboxBinaryDocumentRefusal(path: String, tool: String) -> String
         return nil
     }
     let label = ext == "pdf" ? "PDF" : ".\(ext) document"
+    let hostServed = WorkspaceShareRoute.servesRead(extension: ext)
+    let pivot: String
+    if hostServed {
+        // The format IS supported — the file just isn't where the host can
+        // reach it (outside `/workspace`, or missing).
+        pivot =
+            "Documents under `/workspace/...` (your sandbox home or `/workspace/shared`) are read "
+            + "directly — text is extracted from PDF/Word/PowerPoint and XLSX is previewed. "
+            + "This path is outside the share or does not exist: copy it under your sandbox home "
+            + "(`cp` via the shell tool) and read it from there. "
+    } else {
+        pivot = "No built-in reader exists for .\(ext); "
+    }
     return ToolEnvelope.failure(
         kind: .invalidArgs,
         message:
-            "`\(path)` is a \(label) — a binary format the sandbox file reader cannot decode "
-            + "(it returns raw bytes only). If this document belongs to a knowledge collection, "
+            "`\(path)` is a \(label). " + pivot
+            + "If this document belongs to a knowledge collection, "
             + "read its text with `read_knowledge` using the collection-relative path from "
             + "`search_knowledge` / `list_knowledge`. Otherwise extract the text inside the "
-            + "sandbox with `sandbox_exec` (e.g. `pdftotext`, or Python with `pypdf` / "
-            + "`python-docx` / `openpyxl` after `sandbox_install`) and read the output file.",
+            + "sandbox with the shell tool (e.g. `pdftotext`, or Python with `pypdf` / "
+            + "`python-docx` / `openpyxl`) and read the output file.",
         field: "path",
-        expected: "a text file, or a document read via `read_knowledge` / `sandbox_exec` extraction",
+        expected:
+            "a text file, a document under `/workspace/...`, or a document read via `read_knowledge` / shell extraction",
         tool: tool,
-        retryable: false
+        retryable: false,
+        metadata: [
+            "extension": ext,
+            "readable_formats": WorkspaceFileFormatPolicy.readableFormatsSummary,
+        ]
     )
 }
 
@@ -643,7 +661,10 @@ internal func sandboxBridgeWrite(
     let raw = try await SandboxWriteFileTool(agentName: bridge.agentName, home: bridge.home)
         .execute(argumentsJSON: encodeBridgeArgs(args))
     guard !ToolEnvelope.isError(raw) else { return relabelToolEnvelope(raw, tool: tool) }
-    return ToolEnvelope.success(tool: tool, result: ToolEnvelope.successPayload(raw))
+    // Warnings (relaxed-match notes, dry-run PREVIEW ONLY) are part of the
+    // edit contract; keep them when re-labelling.
+    let warnings = ToolEnvelope.warnings(raw)
+    return ToolEnvelope.success(tool: tool, result: ToolEnvelope.successPayload(raw), warnings: warnings.isEmpty ? nil : warnings)
 }
 
 /// Route the public `shell_run` contract to the VM executor.
@@ -1593,6 +1614,9 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_read_file"
     let description =
         "Read a file's contents from the sandbox. **Use this instead of `cat`/`head`/`tail` in `sandbox_exec`.** "
+        + "Text is returned raw; PDF, Word, and PowerPoint documents are extracted to text, XLSX returns a cell "
+        + "preview, and images are shown to vision models (OCR text otherwise) — call it on the document itself, "
+        + "never `pdftotext`/`unzip` first. "
         + "Supports line ranges (`start_line` + `line_count`), log-style tails (`tail_lines`), and a per-call "
         + "character cap (`max_chars`). Pass either a path under the agent home (e.g. `notes.txt`) or an "
         + "absolute path inside the sandbox (e.g. `/workspace/shared/data.csv`). Surfaces stderr on failure."
@@ -1648,12 +1672,32 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
 
+        // Documents and images under the VirtioFS share are served by the
+        // host extractors (PDF/Word/PowerPoint text, XLSX preview, image
+        // attach/OCR) — the same coverage as a trusted-folder `file_read`.
+        // Translate the sandbox `start_line`+`line_count` range to the host
+        // `start_line`/`end_line` convention first.
+        var hostArgs = args
+        hostArgs.removeValue(forKey: "line_count")
+        if let start = coerceInt(args["start_line"]), start > 0,
+            let count = coerceInt(args["line_count"]), count > 0
+        {
+            hostArgs["end_line"] = start + count - 1
+        }
+        if let served = try await FileReadTool.readFromWorkspaceShare(
+            path: resolved,
+            home: home,
+            args: hostArgs
+        ) {
+            return relabelToolEnvelope(served, tool: name)
+        }
+
         // The sandbox read is a raw `head`/`sed`/`tail` over the bytes; a
-        // PDF / Office package comes back as compressed streams that fail
-        // the UTF-8 decode and collapse to an empty or garbage read. The
-        // model then saw an opaque failure and abandoned the document
-        // (osaurus#2680) even though `read_knowledge` extracts the same
-        // file's text. Refuse up front and name the working paths instead.
+        // PDF / Office package outside the share (or in a format with no
+        // adapter) comes back as compressed streams that fail the UTF-8
+        // decode and collapse to an empty or garbage read. The model then
+        // saw an opaque failure and abandoned the document (osaurus#2680).
+        // Refuse up front and name the working paths instead.
         if let refusal = sandboxBinaryDocumentRefusal(path: resolved, tool: name) {
             return refusal
         }
@@ -1966,16 +2010,26 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         + "Provide `content` to write/replace the whole file; use `mode: \"append\"` for additive changes. "
         + "For a large file, write a bounded first "
         + "chunk and use `mode: \"append\"` for later chunks; "
-        + "provide `old_string` (+`new_string`) to replace one exact match. **Use this instead of "
+        + "provide `old_string` (+`new_string`) to replace one match, or `edits` (array of {old_string, new_string}) "
+        + "to apply several replacements atomically in one call. **Use this instead of "
         + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
-        + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "
-        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations. "
-        + "Binary document/package extensions are rejected; this tool writes UTF-8 source only. "
+        + "needed. For an edit, `old_string` must match one location — include surrounding "
+        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations "
+        + "(pass `replace_all: true` to change every occurrence). Small drift is tolerated when the match stays "
+        + "unique (indentation, tabs vs spaces, blank-line count, curly vs straight quotes) and the result "
+        + "reports `match_strategy`. `dry_run: true` previews the diff without writing. "
+        + "Text of any extension is written as UTF-8; `.xlsx` is generated from CSV/TSV or JSON rows and "
+        + "`.docx`/`.pdf` from Markdown or HTML, `.pptx` from Markdown (one slide per heading) — `content` only; "
+        + "documents are regenerated whole here (in-place document edits are a working-folder `file_edit` feature). "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial mutation."
     let agentName: String
     let home: String
 
     var mutatesSandboxWorkspace: Bool { true }
+
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
 
     var parameters: JSONValue? {
         .object([
@@ -2016,6 +2070,28 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                         "Replacement text for the `old_string` edit. Use `\"\"` to delete the match."
                     ),
                 ]),
+                "edits": .object([
+                    "type": .string("array"),
+                    "description": .string(
+                        "Batch of {old_string, new_string} edits applied in order, atomically (all or none; max \(FileEditTool.maxBatchEdits)). Present ⇒ in-place edit; omit `old_string`/`new_string`."
+                    ),
+                    "items": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "old_string": .object(["type": .string("string")]),
+                            "new_string": .object(["type": .string("string")]),
+                        ]),
+                        "required": .array([.string("old_string"), .string("new_string")]),
+                    ]),
+                ]),
+                "replace_all": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Edit only: replace every occurrence instead of requiring a unique match (default false)."),
+                ]),
+                "dry_run": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Edit only: preview the diff without writing (default false)."),
+                ]),
             ]),
             "required": .array([.string("path")]),
         ])
@@ -2023,7 +2099,16 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        guard case .value(let rawArgs) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        // Same filler tolerance as host `file_edit`: an empty `edits` array
+        // next to `content` (whole-file write) or `old_string` is a
+        // constrained-decoder artifact, not a batch request.
+        var args = FileEditTool.droppingEditFormFillers(rawArgs)
+        if args["content"] != nil, let edits = args["edits"],
+            edits is NSNull || (edits as? [Any])?.isEmpty == true
+        {
+            args.removeValue(forKey: "edits")
+        }
 
         let pathReq = requireString(
             args,
@@ -2035,18 +2120,50 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
+        let ext = URL(fileURLWithPath: resolved).pathExtension.lowercased()
+
+        // Generated documents (.xlsx/.docx/.pdf/.pptx) are rendered host-side into
+        // the VirtioFS share — the shell pipeline below only carries text.
+        // An in-place edit of a document is refused with the
+        // read-then-regenerate pivot, like host `file_edit`.
+        let isEdit = args["old_string"] != nil || args["edits"] != nil
+        if WorkspaceShareRoute.servesWrite(extension: ext) {
+            if isEdit,
+                let rejection = WorkspaceWriteSafety.documentEditRejection(
+                    path: path,
+                    fileExtension: ext,
+                    toolName: name,
+                    regenerateHint: "call `\(name)` with `content` holding the complete new document."
+                )
+            {
+                return rejection
+            }
+            if let content = args["content"] as? String {
+                let mode = (args["mode"] as? String) ?? "overwrite"
+                if let served = try await FileWriteTool.writeDocumentToWorkspaceShare(
+                    path: resolved,
+                    home: home,
+                    content: content,
+                    mode: mode,
+                    dryRun: false,
+                    tool: name
+                ) {
+                    return served
+                }
+            }
+        }
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: path,
-            fileExtension: URL(fileURLWithPath: resolved).pathExtension.lowercased(),
+            fileExtension: ext,
             toolName: name
         ) {
             return rejected
         }
 
-        // The presence of `old_string` decides edit vs whole-file write —
-        // the model picks the behavior from an argument it already holds,
-        // not a separate tool name. (Decision-elimination test.)
-        if args["old_string"] != nil {
+        // The presence of `old_string` / `edits` decides edit vs whole-file
+        // write — the model picks the behavior from an argument it already
+        // holds, not a separate tool name. (Decision-elimination test.)
+        if isEdit {
             return try await editInPlace(args: args, resolved: resolved)
         }
 
@@ -2056,10 +2173,10 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
-                    "Provide `content` to write the whole file, or `old_string` (+`new_string`) to "
-                    + "edit one exact match in place.",
+                    "Provide `content` to write the whole file, or `old_string` (+`new_string`) / `edits` to "
+                    + "edit matching text in place.",
                 field: "content",
-                expected: "`content` (whole-file write) or `old_string` + `new_string` (in-place edit)",
+                expected: "`content` (whole-file write) or `old_string` + `new_string` / `edits` (in-place edit)",
                 tool: name
             )
         }
@@ -2144,115 +2261,148 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         )
     }
 
-    /// In-place edit branch: replace one exact `old_string` match with
-    /// `new_string`. `old_string` is already known present; `new_string`
-    /// is required here (its absence is the merge's only new validation).
+    /// In-place edit branch: the file is read back through the sandbox,
+    /// the edits are applied host-side with the same matcher as `file_edit`
+    /// (`FileEditTool.applyEdits`: tolerance cascade, atomic `edits`
+    /// batches, `replace_all`, `dry_run`), and the whole result is written
+    /// back in one shot. Nothing touches the file until every edit has
+    /// resolved, so a failing edit leaves it untouched.
     private func editInPlace(args: [String: Any], resolved: String) async throws -> String {
-        let oldReq = requireString(
-            args,
-            "old_string",
-            expected: "non-empty exact text that uniquely matches one location in the file",
-            tool: name
-        )
-        guard case .value(let oldString) = oldReq else { return oldReq.failureEnvelope ?? "" }
-
-        guard args["new_string"] != nil else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message:
-                    "`old_string` given without `new_string` — an in-place edit needs both. Use "
-                    + "`\"\"` for `new_string` to delete the match.",
-                field: "new_string",
-                expected: "replacement text (use `\"\"` to delete the match)",
-                tool: name
-            )
+        let requestedEdits: [(old: String, new: String)]
+        switch FileEditTool().parseRequestedEdits(args, tool: name) {
+        case .success(let edits): requestedEdits = edits
+        case .failureEnvelope(let envelope): return envelope
         }
-        // Allow empty new_string (used to delete the matched text).
-        let newReq = requireString(
-            args,
-            "new_string",
-            expected: "replacement text (use `\"\"` to delete the match)",
-            tool: name,
-            allowEmpty: true
-        )
-        guard case .value(let newString) = newReq else { return newReq.failureEnvelope ?? "" }
+        let isBatch = args["edits"] != nil
+        let replaceAll = coerceBool(args["replace_all"]) ?? false
+        let dryRun = coerceBool(args["dry_run"]) ?? false
 
-        // Capture pre-edit content for the diff card (best-effort).
-        let before = await readForDiff(resolved: resolved)
-
-        let tmpDir = "\(home)/.tmp"
-        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "mkdir -p '\(tmpDir)'"
-        )
-
-        let suffix = String(UUID().uuidString.prefix(8))
-        let oldFile = "\(tmpDir)/.edit_old_\(suffix)"
-        let newFile = "\(tmpDir)/.edit_new_\(suffix)"
-
-        let escapedOld = shellEscapeSingleQuoted(oldString)
-        let escapedNew = shellEscapeSingleQuoted(newString)
-        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "printf '%s' '\(escapedOld)' > '\(oldFile)'"
-        )
-        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "printf '%s' '\(escapedNew)' > '\(newFile)'"
-        )
-
-        let script = """
-            import sys
-            target = sys.argv[1]
-            old_file = sys.argv[2]
-            new_file = sys.argv[3]
-            with open(target, 'r') as f:
-                content = f.read()
-            with open(old_file, 'r') as f:
-                old = f.read()
-            with open(new_file, 'r') as f:
-                new = f.read()
-            count = content.count(old)
-            if count == 0:
-                print('ERROR: old_string not found in file', file=sys.stderr)
-                sys.exit(1)
-            if count > 1:
-                print(f'ERROR: old_string matches {count} locations — include more context to make it unique', file=sys.stderr)
-                sys.exit(1)
-            content = content.replace(old, new, 1)
-            with open(target, 'w') as f:
-                f.write(content)
-            old_lines = old.count('\\n') + (0 if old.endswith('\\n') else 1)
-            new_lines = new.count('\\n') + (0 if new.endswith('\\n') else 1)
-            print(f'replaced {old_lines} line(s) with {new_lines} line(s)')
-            """
-
-        let escapedScript = shellEscapeSingleQuoted(script)
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command:
-                "python3 -c '\(escapedScript)' '\(resolved)' '\(oldFile)' '\(newFile)'; EC=$?; rm -f '\(oldFile)' '\(newFile)'; exit $EC"
-        )
-
-        guard result.succeeded else {
+        guard let current = await readForDiff(resolved: resolved) else {
             return sandboxExecutionFailure(
                 tool: name,
-                message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+                message: "Could not read `\(resolved)` from the sandbox to apply the edit; nothing was changed."
+            )
+        }
+        guard current.existed else {
+            return ToolEnvelope.failure(
+                kind: .notFound,
+                message: "`\(resolved)` does not exist, so there is nothing to edit. Use `content` to create it.",
+                field: "path",
+                expected: "an existing file (pass `content` to create a new one)",
+                tool: name,
                 retryable: false
             )
         }
 
-        // Read the applied result so the diff reflects what's actually on disk.
-        let after = await readForDiff(resolved: resolved)?.content
+        let applied: FileEditTool.AppliedEdits
+        switch FileEditTool.applyEdits(
+            requestedEdits, to: current.content, replaceAll: replaceAll, isBatch: isBatch,
+            relativePath: resolved, tool: name
+        ) {
+        case .success(let result): applied = result
+        case .failureEnvelope(let envelope): return envelope
+        }
+
+        var extra: [String: Any] = [
+            "replacements": applied.perEditReplacements.reduce(0, +),
+            "match_strategy": applied.overallStrategy.rawValue,
+            "matched_lines": applied.matchedLineLabels,
+            "summary": Self.editSummary(before: current.content, after: applied.content, edits: requestedEdits.count),
+        ]
+        if isBatch {
+            extra["edits_applied"] = applied.perEditReplacements
+            extra["edit_strategies"] = applied.perEditStrategies.map(\.rawValue)
+        }
+        var warnings = applied.warnings
+
+        if dryRun {
+            warnings.append(
+                "PREVIEW ONLY - nothing was written. The file is unchanged. "
+                    + "Repeat the same call WITHOUT dry_run to apply the edit.")
+            return sandboxSuccess(
+                tool: name,
+                result: writeResult(resolved: resolved, before: current, after: applied.content, extra: extra, dryRun: true),
+                warnings: warnings
+            )
+        }
+
+        if let failure = try await writeEditedContent(applied.content, to: resolved) {
+            return failure
+        }
         return sandboxSuccess(
             tool: name,
-            result: writeResult(
-                resolved: resolved,
-                before: before,
-                after: after,
-                extra: ["summary": result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)]
-            )
+            result: writeResult(resolved: resolved, before: current, after: applied.content, extra: extra),
+            warnings: warnings.isEmpty ? nil : warnings
         )
+    }
+
+    /// Largest single `printf` argument we hand the sandbox shell. Linux
+    /// caps one argv string at 128 KiB (MAX_ARG_STRLEN); staying well under
+    /// it keeps edits to big files working.
+    private static let writeChunkBytes = 96 * 1024
+
+    /// Write the fully-edited text back: chunks into a sibling temp file,
+    /// then one `cat` into the target (keeps the target's inode, mode and
+    /// owner — a plain `mv` would reset an executable script's `+x`). A
+    /// failed chunk never reaches the target; the temp file is removed on
+    /// every path. Returns a failure envelope, or nil on success.
+    private func writeEditedContent(_ content: String, to resolved: String) async throws -> String? {
+        let tmp = "\(resolved).osaurus-edit-\(UUID().uuidString.prefix(8)).tmp"
+        var chunks: [String] = []
+        var current = ""
+        var currentBytes = 0
+        for scalar in content.unicodeScalars {
+            let width = String(scalar).utf8.count
+            if currentBytes + width > Self.writeChunkBytes, !current.isEmpty {
+                chunks.append(current)
+                current = ""
+                currentBytes = 0
+            }
+            current.unicodeScalars.append(scalar)
+            currentBytes += width
+        }
+        chunks.append(current)
+
+        for (index, chunk) in chunks.enumerated() {
+            let redirect = index == 0 ? ">" : ">>"
+            let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: "printf '%s' '\(shellEscapeSingleQuoted(chunk))' \(redirect) '\(tmp)'"
+            )
+            guard result.succeeded else {
+                _ = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: "rm -f '\(tmp)'")
+                return sandboxExecutionFailure(
+                    tool: name,
+                    message:
+                        "Failed to stage the edited `\(resolved)` (the file is unchanged): "
+                        + result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+        }
+        let splice = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command: "cat '\(tmp)' > '\(resolved)'; EC=$?; rm -f '\(tmp)'; exit $EC"
+        )
+        guard splice.succeeded else {
+            return sandboxExecutionFailure(
+                tool: name,
+                message:
+                    "Failed to write the edited `\(resolved)`: "
+                    + splice.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        return nil
+    }
+
+    /// One-line human summary in the shape the old in-place edit printed
+    /// (`replaced N line(s) with M line(s)`), computed from the line-count
+    /// delta so it is honest for batches and `replace_all` too.
+    private static func editSummary(before: String, after: String, edits: Int) -> String {
+        let beforeLines = before.split(separator: "\n", omittingEmptySubsequences: false).count
+        let afterLines = after.split(separator: "\n", omittingEmptySubsequences: false).count
+        let delta = afterLines - beforeLines
+        let change = delta == 0 ? "same line count" : (delta > 0 ? "+\(delta) line\(delta == 1 ? "" : "s")" : "\(delta) line\(delta == -1 ? "" : "s")")
+        return "applied \(edits) edit\(edits == 1 ? "" : "s") (\(change))"
     }
 
     /// Best-effort read of the current file for diffing. Returns nil on any exec
@@ -2280,7 +2430,8 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         resolved: String,
         before: (existed: Bool, content: String)?,
         after: String?,
-        extra: [String: Any]
+        extra: [String: Any],
+        dryRun: Bool = false
     ) -> [String: Any] {
         var dict: [String: Any] = [
             "path": resolved,
@@ -2291,6 +2442,9 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             ],
         ]
         dict.merge(extra) { _, new in new }
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            dict["operation_id"] = setId.uuidString
+        }
         var diffTruncated = false
         if let before, let after {
             let diff = WorkspaceWriteSafety.unifiedDiffText(
@@ -2302,7 +2456,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             dict["diff"] = diff.text
             dict["diff_truncated"] = diff.truncated
             diffTruncated = diff.truncated
-            dict["dry_run"] = false
+            dict["dry_run"] = dryRun
             dict["action"] = before.existed ? "update" : "create"
             dict["content_sha256"] = WorkspaceWriteSafety.contentSHA256(after)
             if before.existed {
@@ -2313,7 +2467,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         WorkspaceWriteSafety.annotateMutationResult(
             &dict,
             path: resolved,
-            dryRun: false,
+            dryRun: dryRun,
             diffTruncated: diffTruncated
         )
         return dict
@@ -2531,16 +2685,16 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     command: command
                 )
                 // The job's file mutations land after this tool call
-                // returns, so the foreground checkpoint can't see them.
-                // Record a pending pre-manifest now; the tracker
-                // reconciles when the job exits/is killed (or after
-                // relaunch for jobs that died with the previous run).
+                // returns, so the foreground capture can't see them.
+                // Open a write-ahead capture now; the journal finalizes
+                // it when the job exits/is killed (or after relaunch for
+                // jobs that died with the previous run).
                 if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
-                    await SandboxWorkspaceChangeTracker.shared.registerBackgroundJob(
+                    await FileChangeJournal.shared.beginBackgroundJob(
                         sessionId: sessionId,
                         agentName: agentName,
                         pid: pid,
-                        sourceTool: name
+                        toolName: name
                     )
                 }
                 // Tee the log file into the chat UI so background jobs
@@ -2738,8 +2892,8 @@ private func registerBackgroundLiveExec(
                 statusBox.send(killedByUser ? .killed(reason: "user") : .exited(0))
                 tailer.stop()
                 // Fold the finished job's workspace mutations into the
-                // owning chat's tracked change set.
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                // owning chat's file history.
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -2963,7 +3117,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if !alive {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -2998,7 +3152,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if exited {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -3025,7 +3179,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let dead = killResult.stdout.contains("dead")
             if dead {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )

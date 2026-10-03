@@ -1,0 +1,40 @@
+{
+  "id": "agent_loop.read-pdf-directly",
+  "domain": "agent_loop",
+  "label": "agent loop • summarize a PDF by calling file_read on it (no shell conversion)",
+  "query": "Summarize report.pdf in two sentences and name the program director.",
+  "notes": "Unified file_read contract: a PDF is read directly (extracted text layer) instead of shell pdftotext/strings/unzip detours. The director's name only exists inside the PDF, so a correct answer proves the read.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "report.pdf",
+        "contentsFromFixture": "Documents/report.pdf"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "maxToolCalls": 3,
+      "mustCallTools": [
+        "file_read"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "noToolErrors": true,
+      "toolUsageAudit": [
+        {
+          "tool": "file_read",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "report.pdf"
+        }
+      ],
+      "finalTextContains": [
+        "Natarajan"
+      ]
+    }
+  }
+}

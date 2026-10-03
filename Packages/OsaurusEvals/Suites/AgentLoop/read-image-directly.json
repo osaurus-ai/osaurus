@@ -1,0 +1,41 @@
+{
+  "id": "agent_loop.read-image-directly",
+  "domain": "agent_loop",
+  "label": "agent loop • read an image with file_read (vision or OCR), no shell OCR detour",
+  "query": "What invoice number and total are shown in invoice.png?",
+  "notes": "Images are first-class file_read inputs: attached to vision models, OCR text for everyone else (the headless harness has no vision surface, so this exercises the OCR rail). Must not shell out to tesseract/sips or refuse.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "invoice.png",
+        "contentsFromFixture": "Documents/invoice.png"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "maxToolCalls": 3,
+      "mustCallTools": [
+        "file_read"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "noToolErrors": true,
+      "toolUsageAudit": [
+        {
+          "tool": "file_read",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "invoice.png"
+        }
+      ],
+      "finalTextContains": [
+        "40291",
+        "1,250"
+      ]
+    }
+  }
+}

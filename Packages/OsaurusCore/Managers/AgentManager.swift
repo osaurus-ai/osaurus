@@ -13,6 +13,8 @@ import SwiftUI
 /// Notification posted when the active agent changes or an agent is updated
 extension Notification.Name {
     static let activeAgentChanged = Notification.Name("activeAgentChanged")
+    /// Posted when the agent NEW chats open with (`new_chat_agent`) changes.
+    static let newChatAgentChanged = Notification.Name("newChatAgentChanged")
     static let agentUpdated = Notification.Name("agentUpdated")
     /// Posted from `AgentManager.add(_:)` after the new agent is persisted
     /// and an address has been assigned (best effort). `userInfo["agentId"]`
@@ -61,7 +63,30 @@ public final class AgentManager: ObservableObject {
             // the moment the cached existence probes can become wrong.
             AvatarExistenceCache.shared.invalidateAll()
             syncIdentityRegistry()
+            Self.refreshAgentNameCache(agents)
         }
+    }
+
+    // MARK: - Nonisolated name lookup (activity log attribution)
+
+    /// `id -> name` mirror readable off the main actor. The Insights
+    /// emitters run on detached producer tasks and need a display name for
+    /// the agent that drove a request without hopping to main.
+    private nonisolated(unsafe) static var agentNameCache: [UUID: String] = [:]
+    private nonisolated static let agentNameLock = NSLock()
+
+    private nonisolated static func refreshAgentNameCache(_ agents: [Agent]) {
+        let snapshot = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        agentNameLock.lock()
+        agentNameCache = snapshot
+        agentNameLock.unlock()
+    }
+
+    /// Display name for an agent id, or nil when unknown. Safe from any thread.
+    public nonisolated static func agentDisplayName(for id: UUID) -> String? {
+        agentNameLock.lock()
+        defer { agentNameLock.unlock() }
+        return agentNameCache[id]
     }
 
     /// `id -> agents` offset, so `agent(for:)` is a dictionary hit.
@@ -123,12 +148,29 @@ public final class AgentManager: ObservableObject {
         APIKeyValidatorEpoch.shared.bump()
     }
 
-    /// The currently active agent ID
+    /// The agent in the FOREGROUND chat window — moved by the chat picker,
+    /// `/agent`, and `ChatWindowState.switchAgent`. Sandbox tool registration,
+    /// MCP probes and plugin hosts key on it as "the agent the user is
+    /// looking at". It is NOT what a brand-new chat opens with; that is
+    /// `newChatAgentId`.
     @Published public private(set) var activeAgentId: UUID = Agent.defaultId
 
     /// The currently active agent
     public var activeAgent: Agent {
         agents.first { $0.id == activeAgentId } ?? Agent.default
+    }
+
+    /// The agent NEW chats open with (a new window, the menu-bar chat, the
+    /// "Ask Osaurus" App Intent). Defaults to the Orchestrator and changes
+    /// ONLY through an explicit `new_chat_agent` apply / `setNewChatAgent`:
+    /// browsing to a custom agent's chat (`switchAgent`) must never re-target
+    /// the next chat away from the Orchestrator, which is what happened while
+    /// this and `activeAgentId` were one value.
+    @Published public private(set) var newChatAgentId: UUID = Agent.defaultId
+
+    /// The agent NEW chats open with.
+    public var newChatAgent: Agent {
+        agents.first { $0.id == newChatAgentId } ?? Agent.default
     }
 
     /// Agents currently flagged as "approaching their storage
@@ -166,6 +208,14 @@ public final class AgentManager: ObservableObject {
             if agents.contains(where: { $0.id == savedId }) {
                 activeAgentId = savedId
             }
+        }
+        // The new-chat agent is its own persisted choice. Nothing is
+        // inferred from `activeAgentId` (that would re-create the "browsed
+        // to a custom agent → every new chat opens there" behavior); an
+        // install that never applied `new_chat_agent` opens on the
+        // Orchestrator.
+        if let savedId = loadNewChatAgentId(), agents.contains(where: { $0.id == savedId }) {
+            newChatAgentId = savedId
         }
 
         // Auto-grow per-agent enabled tool sets when new tools register so users
@@ -269,12 +319,18 @@ public final class AgentManager: ObservableObject {
     /// Reload agents from disk
     public func refresh() {
         let loaded = AgentStore.loadAll()
+        let liveIDs = Set(loaded.map(\.id))
         let migrated = loaded.map { agent -> Agent in
-            guard !agent.isBuiltIn, !agent.settings.legacySpawnableAgentNames.isEmpty else {
-                return agent
-            }
+            guard !agent.isBuiltIn else { return agent }
             var updated = agent
-            updated.settings = agent.settings.migratingLegacySpawnableAgents(using: loaded)
+            if !agent.settings.legacySpawnableAgentNames.isEmpty {
+                updated.settings = agent.settings.migratingLegacySpawnableAgents(using: loaded)
+            }
+            // Stale allow-list entries (deleted agents) are dropped on every
+            // load so no launcher can advertise a target that cannot resolve.
+            updated.settings.spawnableAgentIDs = updated.settings.spawnableAgentIDs.filter {
+                liveIDs.contains($0)
+            }
             if updated.settings != agent.settings {
                 AgentStore.save(updated)
             }
@@ -283,6 +339,7 @@ public final class AgentManager: ObservableObject {
         installAgentSnapshot(migrated)
         SubagentConfigurationStore.migrateLegacyAgentNames(using: migrated)
         SubagentConfigurationStore.seedSpawnPoolIfNeeded(with: migrated)
+        SubagentConfigurationStore.reconcile(with: migrated)
     }
 
     /// Return one Agent plus the three Spawn-scoped generations from the same
@@ -355,6 +412,16 @@ public final class AgentManager: ObservableObject {
         }
     }
 
+    /// Set the agent NEW chats open with (`new_chat_agent`). Falls back to
+    /// the Orchestrator when the agent does not exist.
+    public func setNewChatAgent(_ id: UUID) {
+        let targetId = agents.contains(where: { $0.id == id }) ? id : Agent.defaultId
+        guard newChatAgentId != targetId else { return }
+        newChatAgentId = targetId
+        saveNewChatAgentId(targetId)
+        NotificationCenter.default.post(name: .newChatAgentChanged, object: nil)
+    }
+
     /// Create a new agent
     @discardableResult
     public func create(
@@ -368,7 +435,7 @@ public final class AgentManager: ObservableObject {
     ) -> Agent {
         let agent = Self.newCustomAgentRecord(
             name: name,
-            description: description,
+            description: AgentDescriptionPolicy.normalized(description),
             systemPrompt: systemPrompt,
             themeId: themeId,
             defaultModel: defaultModel,
@@ -422,6 +489,8 @@ public final class AgentManager: ObservableObject {
             id: UUID(),
             name: name,
             description: agent.description,
+            generatedDescription: agent.generatedDescription,
+            generatedDescriptionPromptHash: agent.generatedDescriptionPromptHash,
             systemPrompt: agent.systemPrompt,
             themeId: agent.themeId,
             defaultModel: agent.defaultModel,
@@ -459,10 +528,12 @@ public final class AgentManager: ObservableObject {
         AgentStore.save(agent)
         refresh()
         registerInDefaultSpawnPool(agent)
-        // KPI: a user-created agent. Count only — no name or configuration.
-        // Built-in agents are seeded by the app, not created by the user.
+        // KPI: a user-created agent, plus how many agents the install now
+        // has (`refresh()` above already picked up the new record). No name
+        // or configuration. Built-in agents are seeded by the app, not
+        // created by the user.
         if !agent.isBuiltIn {
-            FeatureTelemetry.agentCreated()
+            FeatureTelemetry.agentCreated(numberOfAgents: agents.count)
         }
         assignAddressInBackground(to: agent)
         // Notify subscribers (e.g. PluginManager) so plugins get an
@@ -473,6 +544,7 @@ public final class AgentManager: ObservableObject {
             object: nil,
             userInfo: ["agentId": agent.id]
         )
+        AgentDescriptionBackfill.shared.scheduleIfNeeded(agent.id)
     }
 
     /// Restore a preserved legacy agent backup and publish it like a newly
@@ -582,6 +654,16 @@ public final class AgentManager: ObservableObject {
         }
         var updated = agent
         updated.updatedAt = Date()
+        // A background summary describes one system prompt. If this save
+        // changed the prompt, the summary is stale routing metadata: drop it
+        // here so no caller (Configure, declarative apply, tools) can leave
+        // it behind; the backfill below regenerates it.
+        if updated.generatedDescription != nil,
+            updated.generatedDescriptionPromptHash != AgentDescriptionPolicy.promptHash(updated.systemPrompt)
+        {
+            updated.generatedDescription = nil
+            updated.generatedDescriptionPromptHash = nil
+        }
         AgentStore.save(updated)
         refresh()
         // Push the storage limit + soft-warn threshold down to any
@@ -597,6 +679,7 @@ public final class AgentManager: ObservableObject {
             percent: updated.settings.limits.storageWarnPercent
         )
         NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
+        AgentDescriptionBackfill.shared.scheduleIfNeeded(agent.id)
     }
 
     /// Derive and assign a cryptographic address for an agent.
@@ -816,6 +899,10 @@ public final class AgentManager: ObservableObject {
         if activeAgentId == id {
             setActiveAgent(Agent.defaultId)
         }
+        // …and new chats fall back to the Orchestrator.
+        if newChatAgentId == id {
+            setNewChatAgent(Agent.defaultId)
+        }
 
         // Drop the agent from the DEFAULT / main-chat spawn pool. Agent
         // UUIDs are never reused, so a stale entry would keep the
@@ -825,6 +912,9 @@ public final class AgentManager: ObservableObject {
             config.spawnableAgentIDs.removeAll { $0 == id }
         }
         AgentSetupStateStore.shared.clear(id)
+        // …and from every remaining custom agent's own allow-list, so no
+        // launcher anywhere keeps advertising a target that no longer exists.
+        pruneSpawnableAgentID(id)
 
         refresh()
 
@@ -887,6 +977,72 @@ public final class AgentManager: ObservableObject {
         return AgentDeleteResult(deleted: true, sandboxCleanupNotice: cleanupNotice)
     }
 
+    /// Remove `id` from every stored custom agent's `spawnableAgentIDs` and
+    /// persist the ones that changed. Runs on delete; `pruneStaleSpawnableAgentIDs`
+    /// runs the same sweep across all ids on load.
+    private func pruneSpawnableAgentID(_ id: UUID) {
+        for var agent in AgentStore.loadAll() where !agent.isBuiltIn {
+            guard agent.settings.spawnableAgentIDs.contains(id) else { continue }
+            agent.settings.spawnableAgentIDs.removeAll { $0 == id }
+            agent.updatedAt = Date()
+            AgentStore.save(agent)
+        }
+    }
+
+    /// Drop every `spawnableAgentIDs` entry (Orchestrator pool and each custom
+    /// agent's allow-list) that no longer names a live agent. Agent UUIDs are
+    /// never reused, so an id with no agent behind it can only be a leftover
+    /// from a deletion that raced an open editor or an older build.
+    func pruneStaleSpawnableAgentIDs() {
+        let stored = AgentStore.loadAll()
+        let live = Set(stored.map(\.id)).union([Agent.defaultId])
+        for var agent in stored where !agent.isBuiltIn {
+            let pruned = agent.settings.spawnableAgentIDs.filter { live.contains($0) }
+            guard pruned.count != agent.settings.spawnableAgentIDs.count else { continue }
+            agent.settings.spawnableAgentIDs = pruned
+            AgentStore.save(agent)
+        }
+        _ = SubagentConfigurationStore.mutate { config in
+            config.spawnableAgentIDs.removeAll { !live.contains($0) }
+        }
+    }
+
+    /// Create the three starter agents (Coder, Researcher, Writer) from
+    /// `AgentStarterTemplate` and add them to the Orchestrator's pool. Skips
+    /// a template whose name already exists (case-insensitive) so the action
+    /// is idempotent. New agents inherit the Orchestrator's current model so
+    /// delegation never triggers a model swap out of the box.
+    @discardableResult
+    func createStarterAgents(
+        _ templates: [AgentStarterTemplate] = [.coder, .researcher, .writer]
+    ) -> [Agent] {
+        let existing = Set(agents.map { $0.name.lowercased() })
+        let model = orchestratorModelForNewAgents()
+        var created: [Agent] = []
+        for template in templates where template != .blank {
+            let name = template.defaultName
+            guard !existing.contains(name.lowercased()) else { continue }
+            let agent = create(
+                name: name,
+                description: template.routingDescription,
+                systemPrompt: template.systemPrompt,
+                defaultModel: model
+            )
+            created.append(agent)
+        }
+        return created
+    }
+
+    /// The model a new agent inherits when none is given: the Orchestrator's
+    /// current model (falling back to the chat default). Same-model workers
+    /// never trigger a local model swap out of the box.
+    public func orchestratorModelForNewAgents() -> String? {
+        let model = DefaultAgentConfigurationStore.load().defaultModel
+            ?? ChatConfigurationStore.load().defaultModel
+        let trimmed = model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
     /// Get an agent by ID
     public func agent(for id: UUID) -> Agent? {
         guard let offset = agentIndex[id], agents.indices.contains(offset) else {
@@ -921,6 +1077,17 @@ public final class AgentManager: ObservableObject {
 
     private func saveActiveAgentId(_ id: UUID) {
         UserDefaults.standard.set(id.uuidString, forKey: Self.activeAgentKey)
+    }
+
+    private static let newChatAgentKey = "newChatAgentId"
+
+    private func loadNewChatAgentId() -> UUID? {
+        guard let string = UserDefaults.standard.string(forKey: Self.newChatAgentKey) else { return nil }
+        return UUID(uuidString: string)
+    }
+
+    private func saveNewChatAgentId(_ id: UUID) {
+        UserDefaults.standard.set(id.uuidString, forKey: Self.newChatAgentKey)
     }
 }
 
@@ -1026,12 +1193,19 @@ extension AgentManager {
 
     // MARK: - Working folder (sticky per agent)
 
-    /// The agent's persisted working folder, or nil when the agent has none,
-    /// is unknown, or is the built-in Default agent (which never carries a
-    /// folder — its chats show no folder chip). Either component may be nil
-    /// on its own: a stale bookmark leaves the path as a plain-path fallback.
+    /// The agent's persisted working folder, or nil when the agent has none
+    /// or is unknown. The built-in Orchestrator (`Agent.defaultId`) stores
+    /// its folder in `DefaultAgentConfiguration` (read-only for itself,
+    /// inherited read/write by folder-less subagents). Either component may
+    /// be nil on its own: a stale bookmark leaves the path as a plain-path
+    /// fallback.
     public func workingFolder(for agentId: UUID) -> (bookmark: Data?, path: String?)? {
-        guard agentId != Agent.defaultId, let agent = agent(for: agentId) else { return nil }
+        if agentId == Agent.defaultId {
+            let config = DefaultAgentConfigurationStore.load()
+            guard config.hasWorkingFolder else { return nil }
+            return (config.workingFolderBookmark, config.workingFolderPath)
+        }
+        guard let agent = agent(for: agentId) else { return nil }
         let hasFolder =
             agent.workingFolderBookmark != nil || agent.workingFolderPath?.isEmpty == false
         guard hasFolder else { return nil }
@@ -1041,13 +1215,22 @@ extension AgentManager {
     /// Remember `bookmark`/`path` as the agent's working folder so every
     /// fresh chat and every folder-less dispatch for this agent inherits it.
     /// Called by the composer folder chip (the chip is the source of truth:
-    /// the last user pick wins) and by the agent editor. No-op for the
-    /// Default agent and for unknown ids. Pass both nil to forget the folder
-    /// (see `clearWorkingFolder`).
+    /// the last user pick wins) and by the agent editor. The Orchestrator's
+    /// folder lands in `DefaultAgentConfiguration`. No-op for unknown ids.
+    /// Pass both nil to forget the folder (see `clearWorkingFolder`).
     public func updateWorkingFolder(for agentId: UUID, bookmark: Data?, path: String?) {
-        guard agentId != Agent.defaultId else { return }
-        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         let normalizedPath = path?.isEmpty == false ? path : nil
+        if agentId == Agent.defaultId {
+            var config = DefaultAgentConfigurationStore.load()
+            guard config.workingFolderBookmark != bookmark || config.workingFolderPath != normalizedPath
+            else { return }
+            config.workingFolderBookmark = bookmark
+            config.workingFolderPath = normalizedPath
+            DefaultAgentConfigurationStore.save(config)
+            NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+            return
+        }
+        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         guard agent.workingFolderBookmark != bookmark || agent.workingFolderPath != normalizedPath
         else { return }
         agent.workingFolderBookmark = bookmark
@@ -1253,7 +1436,11 @@ extension AgentManager {
                 // Like Computer Use, Browser Use is a custom-agent capability:
                 // the Default agent is locked to its fixed baseline and never
                 // gets browser access.
-                browserUseEnabled: false
+                browserUseEnabled: false,
+                // Apple app tools are custom-agent capabilities too: the
+                // Default agent provisions them on other agents through
+                // `osaurus_config` and never calls them itself.
+                enabledAppleApps: []
             )
         }
 
@@ -1279,14 +1466,13 @@ extension AgentManager {
             appleScriptEnabled: agent.settings.appleScriptEnabled,
             spawnableAgentIDs: agent.settings.spawnableAgentIDs,
             spawnableAgentNames: agent.settings.legacySpawnableAgentNames,
-            spawnableModelNames: agent.settings.spawnableModelNames,
-            spawnableModelNotes: agent.settings.spawnableModelNotes,
             spawnableWorkspaceAgents: agent.settings.spawnableWorkspaceAgents,
             knowledgeEnabled: agent.settings.knowledgeEnabled,
             knowledgeCollectionIds: agent.settings.knowledgeCollectionIds,
             // Curator is a child of the knowledge opt-in.
             knowledgeCuratorEnabled: agent.settings.knowledgeEnabled
-                && agent.settings.knowledgeCuratorEnabled
+                && agent.settings.knowledgeCuratorEnabled,
+            enabledAppleApps: agent.settings.enabledAppleApps
         )
     }
 
@@ -1395,7 +1581,11 @@ extension AgentManager {
     }
 
     /// Update the agent's enabled tool allowlist (used by the capability picker).
+    /// Built-in Apple tool names are never stored here: their only switch is
+    /// `settings.enabledAppleApps` (per app), so a stale allowlist entry can
+    /// never disagree with the Abilities toggle.
     public func updateEnabledToolNames(_ names: [String], for agentId: UUID) {
+        let names = Self.strippingAppleToolNames(names)
         if agentId == Agent.defaultId {
             var config = DefaultAgentConfigurationStore.load()
             config.manualToolNames = names
@@ -1405,6 +1595,28 @@ extension AgentManager {
         }
         guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         agent.manualToolNames = names
+        update(agent)
+    }
+
+    /// Drop built-in Apple tool names from a manual allowlist.
+    static func strippingAppleToolNames(_ names: [String]) -> [String] {
+        names.filter { !AppleApp.allToolNames.contains($0) }
+    }
+
+    /// Replace the built-in Apple app families a custom agent may use. Written
+    /// by the Tools picker's Apple groups (per app, never per tool). The
+    /// Default agent never carries Apple tools, so it is refused here like
+    /// every other built-in. Any Apple tool name that leaked into the manual
+    /// allowlist (older builds, hand-edited config) is removed at the same
+    /// time so the toggle stays the single source of truth.
+    public func updateEnabledAppleApps(_ apps: Set<AppleApp>, for agentId: UUID) {
+        guard agentId != Agent.defaultId,
+            var agent = agent(for: agentId), !agent.isBuiltIn
+        else { return }
+        let cleaned = agent.manualToolNames.map(Self.strippingAppleToolNames)
+        guard agent.settings.enabledAppleApps != apps || cleaned != agent.manualToolNames else { return }
+        agent.settings.enabledAppleApps = apps
+        agent.manualToolNames = cleaned
         update(agent)
     }
 

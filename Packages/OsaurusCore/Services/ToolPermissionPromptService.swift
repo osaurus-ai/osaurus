@@ -69,6 +69,10 @@ enum ToolPermissionPromptService {
         /// (osaurus#2651). Nil for prompts that are not about executing a
         /// tool on a machine (billing, spawn policy), which show no badge.
         let executionSurface: ToolExecutionSurface?
+        /// Raised by a run of the paired phone. Only these reach the phone's
+        /// `GET /approvals`, as in the computer-use and config queues: a card
+        /// from a Mac chat is answered on the Mac.
+        let fromPairedPhone: Bool
     }
 
     private struct PendingPrompt {
@@ -171,6 +175,64 @@ enum ToolPermissionPromptService {
         queue.removeAll()
     }
 
+    // MARK: - Remote approvals (Osaurus Connect)
+
+    /// One card as a paired phone sees it (docs/MOBILE_PROTOCOL.md §16).
+    struct RemotePrompt: Sendable, Equatable {
+        let id: UUID
+        let toolName: String
+        let description: String
+        let argumentsJSON: String
+        /// Whether "Allow for This Task" is on offer.
+        let offersRunLease: Bool
+        /// Where the approved call would run, so consent is informed.
+        let surface: String?
+        /// True for the card on screen; the rest are queued behind it.
+        let isPresented: Bool
+    }
+
+    /// Everything outstanding from the paired phone's runs, presented card
+    /// first. The phone shows these and answers them with `resolveRemotely`.
+    static var remotePrompts: [RemotePrompt] {
+        var result: [RemotePrompt] = []
+        if let slot, let request = presentedRequest, request.fromPairedPhone {
+            result.append(remotePrompt(id: slot.id, request: request, isPresented: true))
+        }
+        for entry in queue where entry.id != slot?.id && entry.request.fromPairedPhone {
+            result.append(remotePrompt(id: entry.id, request: entry.request, isPresented: false))
+        }
+        return result
+    }
+
+    /// The outstanding card `id`, presented or queued.
+    private static func pendingRequest(id: UUID) -> PromptRequest? {
+        if let slot, slot.id == id { return presentedRequest }
+        return queue.first { $0.id == id }?.request
+    }
+
+    private static func remotePrompt(id: UUID, request: PromptRequest, isPresented: Bool) -> RemotePrompt {
+        RemotePrompt(
+            id: id,
+            toolName: request.toolName,
+            description: request.description,
+            argumentsJSON: request.argumentsJSON,
+            offersRunLease: request.offersRunLease && !request.perCallApprovalOnly,
+            surface: request.executionSurface?.rawValue,
+            isPresented: isPresented
+        )
+    }
+
+    /// Answers a card from a paired phone, exactly as the panel's buttons do:
+    /// the waiting run resumes and any open panel is torn down. False when
+    /// the id is unknown — already answered on the Mac, or the run ended —
+    /// or the card is not from one of the phone's runs.
+    @discardableResult
+    static func resolveRemotely(id: UUID, outcome: PromptResolution) -> Bool {
+        guard continuations[id] != nil, pendingRequest(id: id)?.fromPairedPhone == true else { return false }
+        resolve(id: id, outcome: outcome)
+        return true
+    }
+
     // MARK: - Entry points
 
     static func requestApproval(
@@ -223,7 +285,8 @@ enum ToolPermissionPromptService {
                 knowledgeWritePreview: knowledgeWritePreview,
                 perCallApprovalOnly: perCallApprovalOnly,
                 offersRunLease: !perCallApprovalOnly,
-                executionSurface: executionSurface
+                executionSurface: executionSurface,
+                fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
             ),
             revalidate: nil
         )
@@ -277,7 +340,8 @@ enum ToolPermissionPromptService {
                 knowledgeWritePreview: nil,
                 perCallApprovalOnly: false,
                 offersRunLease: false,
-                executionSurface: nil
+                executionSurface: nil,
+                fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
             ),
             revalidate: mappedRevalidate
         )

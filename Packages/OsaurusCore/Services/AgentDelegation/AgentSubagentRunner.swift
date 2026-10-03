@@ -148,11 +148,13 @@ enum AgentSubagentRunner {
         modelName: String,
         seedMessages: [ChatMessage],
         maxTokens: Int?,
+        admissionPositionLimit: Int? = nil,
         maxIterations: Int,
         deadline: Date,
         sessionId: String,
         temperature: Float? = nil,
         enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         isAgentRequest: Bool = true,
         stopOnToolRejection: Bool = false,
         treatEmptyChoicesAsFinal: Bool = false,
@@ -169,6 +171,12 @@ enum AgentSubagentRunner {
         var recordedCancelCause: SubagentCancelCause?
 
         let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelName)
+        // Whether the child's model can view images. Gates both what
+        // `file_read` stages (image vs OCR) and how the tool message is
+        // encoded, so the two never disagree.
+        let childAcceptsImages = await MainActor.run {
+            ComputerUseTool.modelAcceptsImages(modelName)
+        }
         let toolTokens: Int
         if let set = toolset {
             toolTokens = await MainActor.run { ToolRegistry.shared.totalEstimatedTokens(for: set.specs) }
@@ -207,7 +215,7 @@ enum AgentSubagentRunner {
                     messages.append(ChatMessage(role: "user", content: notice))
                 }
                 return AgentLoopBudget.composeIterationMessages(
-                    messages,
+                    ToolResultMediaBridge.collapsingOlderImages(messages),
                     notices: [],
                     manager: budgetManager,
                     watermark: watermark
@@ -233,9 +241,11 @@ enum AgentSubagentRunner {
                 // Same posture as the main chat surface: a per-agent
                 // temperature override rides along, everything else stays on
                 // the model bundle's own generation defaults.
+                request.admissionPositionLimit = admissionPositionLimit ?? contextWindow
                 request.samplingParametersAreImplicit = true
                 request.isAgentRequest = isAgentRequest
                 request.enable_thinking = enableThinking
+                request.reasoning_effort = reasoningEffort
                 // A child is user-visible work, but its cold load must not
                 // evict an unrelated resident owned by HTTP/plugin traffic.
                 // The runtime's background intent is atomic: same-model cache
@@ -359,7 +369,11 @@ enum AgentSubagentRunner {
                 // temporarily bind its target id inside the individual
                 // operation so registry policy follows the child's persona.
                 let operation = ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                    toolset.beginExecution(invocation)
+                    ChatExecutionContext.$currentModelName.withValue(modelName) {
+                        ChatExecutionContext.$toolResultImagesEnabled.withValue(childAcceptsImages) {
+                            toolset.beginExecution(invocation)
+                        }
+                    }
                 }
                 let result: String
                 do {
@@ -383,12 +397,18 @@ enum AgentSubagentRunner {
                 } catch {
                     result = ToolEnvelope.fromError(error, tool: invocation.toolName)
                 }
+                // Image tool results (file_read on a picture) reach a
+                // vision-capable child as multimodal tool messages; the
+                // live window is trimmed in `buildMessages`.
                 messages.append(
-                    ChatMessage(
-                        role: "tool",
+                    ToolResultMediaBridge.toolMessage(
                         content: result,
-                        tool_calls: nil,
-                        tool_call_id: callId
+                        toolCallId: callId,
+                        attachments: ToolResultMediaBridge.attachments(
+                            toolName: invocation.toolName,
+                            result: result
+                        ),
+                        supportsImages: childAcceptsImages
                     )
                 )
                 return AgentLoopToolExecution(

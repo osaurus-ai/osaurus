@@ -2,13 +2,17 @@
 //  RequestLog.swift
 //  osaurus
 //
-//  Model for in-memory request/response logging used by InsightsService.
+//  Model for the persisted activity / audit log surfaced by Insights
+//  (`InsightsService` + `ActivityLogStore`). Every interaction that this
+//  device runs or sends — local inference, cloud inference, web search,
+//  URL extraction, MCP tool calls, channel deliveries, Router control
+//  calls, inbound API traffic and plugin activity — is one `RequestLog`.
 //
 
 import Foundation
 
 /// Represents a logged tool call within an inference
-struct ToolCallLog: Identifiable, Sendable {
+struct ToolCallLog: Identifiable, Sendable, Codable, Equatable {
     let id: UUID
     let name: String
     let arguments: String
@@ -30,6 +34,44 @@ struct ToolCallLog: Identifiable, Sendable {
         self.result = Self.redactedResult(toolName: name, result: result)
         self.durationMs = durationMs
         self.isError = isError
+    }
+
+    /// Decoding bypasses the redactors: persisted rows were redacted when
+    /// they were first recorded and must round-trip byte-for-byte so the
+    /// hash chain verifies.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        arguments = try c.decodeIfPresent(String.self, forKey: .arguments) ?? ""
+        result = try c.decodeIfPresent(String.self, forKey: .result)
+        durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
+        isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+    }
+
+    private init(
+        rawId: UUID, rawName: String, rawArguments: String, rawResult: String?,
+        rawDurationMs: Double?, rawIsError: Bool
+    ) {
+        id = rawId
+        name = rawName
+        arguments = rawArguments
+        result = rawResult
+        durationMs = rawDurationMs
+        isError = rawIsError
+    }
+
+    /// Copy with every free-text field replaced by a marker. Used when the
+    /// user has turned off "store message content in activity log".
+    func withoutContent() -> ToolCallLog {
+        ToolCallLog(
+            rawId: id,
+            rawName: name,
+            rawArguments: RequestLog.contentWithheldMarker,
+            rawResult: result == nil ? nil : RequestLog.contentWithheldMarker,
+            rawDurationMs: durationMs,
+            rawIsError: isError
+        )
     }
 
     private static func redactedArguments(toolName: String, arguments: String) -> String {
@@ -75,7 +117,7 @@ struct ToolCallLog: Identifiable, Sendable {
 }
 
 /// Source of the request
-enum RequestSource: String, Sendable, CaseIterable {
+enum RequestSource: String, Sendable, CaseIterable, Codable {
     case chatUI = "Chat UI"
     /// A local agent or delegated subagent model step.
     case agent = "Agent"
@@ -102,6 +144,11 @@ enum RequestSource: String, Sendable, CaseIterable {
     case watcher = "Watcher"
     /// Agent-authored wake-up.
     case selfSchedule = "Self-scheduled"
+    /// Egress performed by a tool on behalf of whatever run invoked it
+    /// (web search, URL fetch, MCP call, channel delivery, Router call).
+    case tool = "Tool"
+    /// Store-level bookkeeping rows (e.g. "log cleared").
+    case system = "System"
 
     var displayName: String {
         switch self {
@@ -115,6 +162,42 @@ enum RequestSource: String, Sendable, CaseIterable {
         case .schedule: return L("Schedule")
         case .watcher: return L("Watcher")
         case .selfSchedule: return L("Self-scheduled")
+        case .tool: return L("Tool")
+        case .system: return L("System")
+        }
+    }
+
+    var shortName: String {
+        switch self {
+        case .chatUI: return "Chat"
+        case .agent: return "Agent"
+        case .httpAPI: return "HTTP"
+        case .plugin: return "Plugin"
+        case .p2p: return "P2P"
+        case .scheduled: return "Scheduled"
+        case .channel: return "Channel"
+        case .schedule: return "Schedule"
+        case .watcher: return "Watcher"
+        case .selfSchedule: return "Self-scheduled"
+        case .tool: return "Tool"
+        case .system: return "System"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .chatUI: return "bubble.left.fill"
+        case .agent: return "person.crop.circle.fill"
+        case .httpAPI: return "network"
+        case .plugin: return "puzzlepiece.extension.fill"
+        case .p2p: return "antenna.radiowaves.left.and.right"
+        case .scheduled: return "clock.fill"
+        case .channel: return "bubble.left.and.bubble.right.fill"
+        case .schedule: return "calendar.badge.clock"
+        case .watcher: return "eye.fill"
+        case .selfSchedule: return "clock.badge.checkmark.fill"
+        case .tool: return "wrench.and.screwdriver.fill"
+        case .system: return "gearshape.fill"
         }
     }
 }
@@ -122,7 +205,7 @@ enum RequestSource: String, Sendable, CaseIterable {
 /// How a request reached its model — distinguishes a purely local run from
 /// the two remote shapes so Insights doesn't conflate "the local Apple model
 /// ran" with "a remote agent ran its own loop".
-enum RequestMode: String, Sendable {
+enum RequestMode: String, Sendable, Codable {
     /// Ran on this device (MLX / Foundation / etc.).
     case local
     /// Mode 1: a remote peer used as a plain inference backend (`/chat/completions`).
@@ -141,7 +224,7 @@ enum RequestMode: String, Sendable {
 }
 
 /// Transport security for a request that crossed the network.
-enum RequestTransport: String, Sendable {
+enum RequestTransport: String, Sendable, Codable {
     /// Never left the device.
     case local
     /// Osaurus Secure Channel (forward-secret, mutually authenticated E2E).
@@ -162,7 +245,7 @@ enum RequestTransport: String, Sendable {
 /// where a remote run actually went (relay/host + real endpoint + mode) instead
 /// of a bare model badge, and — for inbound host traffic — which paired access
 /// key it authenticated with so per-connection usage can be tallied.
-struct RequestConnectionInfo: Sendable, Equatable {
+struct RequestConnectionInfo: Sendable, Equatable, Codable {
     /// The `RemoteProvider.id` for an outbound remote request (client side).
     var providerId: UUID?
     /// Human-readable host/relay + the real path used, e.g.
@@ -201,11 +284,202 @@ struct RequestConnectionInfo: Sendable, Equatable {
     }
 }
 
+/// What kind of interaction a log row describes. Raw values are the on-disk
+/// `category` column and the export field — keep them stable.
+enum ActivityCategory: String, Sendable, Codable, CaseIterable {
+    /// A model generation (local or remote), including tool-call steps.
+    case inference
+    /// Hidden context-compaction generation.
+    case compaction
+    /// `web_search` tool: the query left the device to one or more providers.
+    case webSearch = "web_search"
+    /// `search_and_extract` / readability fetch of one or more URLs.
+    case urlExtract = "url_extract"
+    /// A tool call forwarded to an MCP server.
+    case mcpToolCall = "mcp_tool_call"
+    /// A message delivered to an Agent Channel (Slack, Discord, webhook…).
+    case channelDelivery = "channel_delivery"
+    /// Osaurus Router control-plane call (workspaces, credits, identity…).
+    case routerControl = "router_control"
+    /// Inbound request to the local HTTP server (API clients, MCP, peers).
+    case inboundAPI = "inbound_api"
+    /// Plugin host API call made by an installed plugin.
+    case pluginCall = "plugin_call"
+    /// Plugin console log line.
+    case pluginLog = "plugin_log"
+    /// Text → vector embedding (memory, knowledge, tool/skill search, `/v1/embeddings`).
+    case embedding
+    /// Speech → text (voice input, `/v1/audio/transcriptions`).
+    case audioTranscription = "audio_transcription"
+    /// Text → speech (read-aloud, `speak` tool, remote TTS providers).
+    case speechSynthesis = "speech_synthesis"
+    /// Image / video generation, editing or upscaling (local or cloud).
+    case mediaGeneration = "media_generation"
+    /// Store-level events (cleared, pruned, verified, exported, settings
+    /// changed, recovered). Chain-of-custody rows for reviewers.
+    case system
+
+    var displayName: String {
+        switch self {
+        case .inference: return L("Inference")
+        case .compaction: return L("Compaction")
+        case .webSearch: return L("Web search")
+        case .urlExtract: return L("URL fetch")
+        case .mcpToolCall: return L("MCP tool")
+        case .channelDelivery: return L("Channel")
+        case .routerControl: return L("Router")
+        case .inboundAPI: return L("API")
+        case .pluginCall: return L("Plugin call")
+        case .pluginLog: return L("Plugin log")
+        case .embedding: return L("Embedding")
+        case .audioTranscription: return L("Transcription")
+        case .speechSynthesis: return L("Speech")
+        case .mediaGeneration: return L("Media")
+        case .system: return L("System")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .inference: return "cpu"
+        case .compaction: return "arrow.down.right.and.arrow.up.left"
+        case .webSearch: return "magnifyingglass"
+        case .urlExtract: return "doc.text.magnifyingglass"
+        case .mcpToolCall: return "wrench.and.screwdriver"
+        case .channelDelivery: return "paperplane"
+        case .routerControl: return "network"
+        case .inboundAPI: return "arrow.down.left.circle"
+        case .pluginCall: return "puzzlepiece.extension"
+        case .pluginLog: return "text.alignleft"
+        case .embedding: return "point.3.connected.trianglepath.dotted"
+        case .audioTranscription: return "waveform"
+        case .speechSynthesis: return "speaker.wave.2"
+        case .mediaGeneration: return "photo.on.rectangle.angled"
+        case .system: return "gearshape"
+        }
+    }
+
+    /// True for categories that run a model (local or remote) rather than
+    /// moving data or bookkeeping.
+    var isModelWork: Bool {
+        switch self {
+        case .inference, .compaction, .embedding, .audioTranscription, .speechSynthesis, .mediaGeneration:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+/// Whether the interaction's data stayed on this Mac or crossed the network.
+enum DataLocality: String, Sendable, Codable, CaseIterable {
+    case local
+    case remote
+
+    var displayName: String {
+        switch self {
+        case .local: return L("Local")
+        case .remote: return L("Cloud")
+        }
+    }
+}
+
+/// Describes what left the device and where it went. Present on every
+/// `.remote` row; absent for purely local work.
+struct EgressInfo: Sendable, Equatable, Codable {
+    /// Human-readable destination: "OpenAI", "Tavily", "Osaurus Router",
+    /// "slack.com", a peer's relay host…
+    var destinationLabel: String?
+    /// Bare host of the destination endpoint.
+    var destinationHost: String?
+    var bytesSent: Int?
+    var bytesReceived: Int?
+    /// Coarse classes of data in the outbound payload: `prompt`, `tools`,
+    /// `search_query`, `urls`, `tool_arguments`, `channel_message`,
+    /// `attachments`, `account`.
+    var dataClasses: [String]
+    /// True when the Privacy Filter rewrote spans before send.
+    var privacyFilterApplied: Bool
+    /// Number of spans the Privacy Filter replaced with placeholders.
+    var redactedSpanCount: Int?
+    /// Category-specific facts (search query, providers tried, URLs,
+    /// MCP server name, channel kind…). Small string bag; values clipped
+    /// by the store.
+    var details: [String: String]
+
+    init(
+        destinationLabel: String? = nil,
+        destinationHost: String? = nil,
+        bytesSent: Int? = nil,
+        bytesReceived: Int? = nil,
+        dataClasses: [String] = [],
+        privacyFilterApplied: Bool = false,
+        redactedSpanCount: Int? = nil,
+        details: [String: String] = [:]
+    ) {
+        self.destinationLabel = destinationLabel
+        self.destinationHost = destinationHost
+        self.bytesSent = bytesSent
+        self.bytesReceived = bytesReceived
+        self.dataClasses = dataClasses
+        self.privacyFilterApplied = privacyFilterApplied
+        self.redactedSpanCount = redactedSpanCount
+        self.details = details
+    }
+
+    /// `details` keys that carry user content (as opposed to metadata) and
+    /// are withheld when content storage is disabled.
+    static let contentDetailKeys: Set<String> = ["query", "urls", "arguments", "result_preview", "message"]
+
+    /// Host component of an endpoint string, or the string itself when it
+    /// is not a URL.
+    static func host(from endpoint: String?) -> String? {
+        guard let endpoint, !endpoint.isEmpty else { return nil }
+        if let url = URL(string: endpoint), let host = url.host, !host.isEmpty {
+            return host
+        }
+        // "host/path" without scheme
+        if let slash = endpoint.firstIndex(of: "/") {
+            let head = String(endpoint[..<slash])
+            return head.isEmpty ? nil : head
+        }
+        return endpoint
+    }
+}
+
 /// Represents a single request log entry with optional inference data
-struct RequestLog: Identifiable, Sendable {
+struct RequestLog: Identifiable, Sendable, Codable {
+    /// Placeholder written in place of bodies when the user has disabled
+    /// content storage for the activity log.
+    /// Placeholder written in place of prompts, responses, tool arguments and
+    /// wire payloads when content is withheld — either because Privacy ›
+    /// Activity Log › Store Prompts and Responses is off, or because an export
+    /// was made with "Include message content" unchecked.
+    static let contentWithheldMarker = "[content withheld — metadata only]"
+
     let id: UUID
     let timestamp: Date
     let source: RequestSource
+
+    /// What kind of interaction this row is.
+    let category: ActivityCategory
+    /// Whether data stayed on this Mac or crossed the network.
+    let locality: DataLocality
+    /// What was sent where. nil for purely local rows.
+    let egress: EgressInfo?
+
+    /// Attribution: the agent / session that produced this row, when known.
+    let agentId: UUID?
+    let agentName: String?
+    let sessionId: UUID?
+    /// (inbound only) Remote client address that made the request.
+    let clientIP: String?
+
+    /// Hash-chain position, assigned by `ActivityLogStore` on append. nil
+    /// until persisted.
+    var seq: Int?
+    var prevHash: String?
+    var hash: String?
 
     /// Local-only correlation back to the chat assistant turn that produced
     /// this log (chatUI source only). Lets the per-message "Insights" button
@@ -285,11 +559,33 @@ struct RequestLog: Identifiable, Sendable {
         errorMessage: String? = nil,
         wireRequestBody: String? = nil,
         wireResponseBody: String? = nil,
-        connection: RequestConnectionInfo? = nil
+        connection: RequestConnectionInfo? = nil,
+        category: ActivityCategory? = nil,
+        locality: DataLocality? = nil,
+        egress: EgressInfo? = nil,
+        agentId: UUID? = nil,
+        agentName: String? = nil,
+        sessionId: UUID? = nil,
+        clientIP: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
         self.source = source
+        let resolvedConnection = (connection?.isEmpty == true) ? nil : connection
+        self.category =
+            category
+            ?? Self.inferCategory(method: method, path: path, pluginId: pluginId)
+        self.locality =
+            locality
+            ?? Self.inferLocality(connection: resolvedConnection, egress: egress)
+        self.egress = egress
+        self.agentId = agentId
+        self.agentName = agentName
+        self.sessionId = sessionId
+        self.clientIP = clientIP
+        self.seq = nil
+        self.prevHash = nil
+        self.hash = nil
         self.turnId = turnId
         self.requestId = requestId
         self.method = method
@@ -310,7 +606,7 @@ struct RequestLog: Identifiable, Sendable {
         self.errorMessage = errorMessage
         self.wireRequestBody = wireRequestBody
         self.wireResponseBody = wireResponseBody
-        self.connection = (connection?.isEmpty == true) ? nil : connection
+        self.connection = resolvedConnection
 
         // Calculate tokens per second if we have inference data
         if let outputTokens = outputTokens, durationMs > 0 {
@@ -320,7 +616,7 @@ struct RequestLog: Identifiable, Sendable {
         }
     }
 
-    enum FinishReason: String, Sendable {
+    enum FinishReason: String, Sendable, Codable {
         case stop = "stop"
         case length = "length"
         case toolCalls = "tool_calls"
@@ -328,7 +624,294 @@ struct RequestLog: Identifiable, Sendable {
         case cancelled = "cancelled"
     }
 
+    // MARK: - Category / locality inference
+
+    /// Default category for legacy call sites that only know method + path.
+    static func inferCategory(method: String, path: String, pluginId: String?) -> ActivityCategory {
+        if method == "LOG" { return .pluginLog }
+        if path.contains("compaction") { return .compaction }
+        // `/internal/<purpose>` = CoreModelService one-shots (titles,
+        // follow-ups, memory distillation, transcript cleanup…).
+        if path.hasPrefix("/internal/") { return .inference }
+        if path.contains("chat") || (path.contains("/agents/") && path.hasSuffix("/run")) {
+            return .inference
+        }
+        if let media = mediaCategory(forPath: path) { return media }
+        if pluginId != nil { return .pluginCall }
+        return .inboundAPI
+    }
+
+    /// Category for the OpenAI-style media / embedding endpoints served by
+    /// the local HTTP API (and mirrored by the in-process emitters).
+    static func mediaCategory(forPath path: String) -> ActivityCategory? {
+        let p = path.lowercased()
+        if p.hasSuffix("/embeddings") || p.contains("/embeddings/") || p.hasSuffix("/embed") { return .embedding }
+        if p.contains("/audio/transcriptions") || p.contains("/audio/translations")
+            || p == "/internal/audio_transcription"
+        {
+            return .audioTranscription
+        }
+        if p.contains("/audio/speech") || p == "/internal/speech_synthesis" { return .speechSynthesis }
+        if p.contains("/images/") || p.hasSuffix("/images") || p.contains("/videos/") || p.hasSuffix("/videos")
+            || p.hasPrefix("/internal/image_") || p.hasPrefix("/internal/video_")
+        {
+            return .mediaGeneration
+        }
+        return nil
+    }
+
+    /// Default locality when the caller didn't say: anything with a remote
+    /// mode, a non-local transport, or an egress destination crossed the
+    /// network.
+    static func inferLocality(connection: RequestConnectionInfo?, egress: EgressInfo?) -> DataLocality {
+        if egress?.destinationHost != nil || egress?.destinationLabel != nil { return .remote }
+        guard let connection else { return .local }
+        switch connection.mode {
+        case .remoteInference, .remoteAgentRun: return .remote
+        case .local: return .local
+        case nil: break
+        }
+        switch connection.transport {
+        case .secureChannel, .direct: return .remote
+        case .local, nil: return .local
+        }
+    }
+
+    // MARK: - Content policy
+
+    /// Copy of this row with every free-text body replaced by
+    /// `contentWithheldMarker`. Metadata, sizes, tool names and egress facts
+    /// are kept so the row still answers "what went where".
+    func withoutContent() -> RequestLog {
+        var scrubbedEgress = egress
+        if var details = scrubbedEgress?.details {
+            for key in EgressInfo.contentDetailKeys where details[key] != nil {
+                details[key] = Self.contentWithheldMarker
+            }
+            scrubbedEgress?.details = details
+        }
+        var copy = RequestLog(
+            id: id,
+            timestamp: timestamp,
+            source: source,
+            turnId: turnId,
+            requestId: requestId,
+            method: method,
+            path: path,
+            statusCode: statusCode,
+            durationMs: durationMs,
+            requestBody: requestBody == nil ? nil : Self.contentWithheldMarker,
+            responseBody: responseBody == nil ? nil : Self.contentWithheldMarker,
+            userAgent: userAgent,
+            pluginId: pluginId,
+            model: model,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            toolCalls: toolCalls?.map { $0.withoutContent() },
+            finishReason: finishReason,
+            errorMessage: errorMessage,
+            wireRequestBody: wireRequestBody == nil ? nil : Self.contentWithheldMarker,
+            wireResponseBody: wireResponseBody == nil ? nil : Self.contentWithheldMarker,
+            connection: connection,
+            category: category,
+            locality: locality,
+            egress: scrubbedEgress,
+            agentId: agentId,
+            agentName: agentName,
+            sessionId: sessionId,
+            clientIP: clientIP
+        )
+        copy.seq = seq
+        copy.prevHash = prevHash
+        copy.hash = hash
+        return copy
+    }
+
+    /// Earlier spellings of `contentWithheldMarker`. Rows written with them
+    /// must keep reading as "withheld" rather than as real content.
+    static let legacyContentWithheldMarkers: Set<String> = [
+        "[content not stored — see Privacy › Activity Log]"
+    ]
+
+    /// True when `value` is the withheld-content placeholder (current or legacy).
+    static func isWithheldContent(_ value: String?) -> Bool {
+        guard let value else { return false }
+        return value == contentWithheldMarker || legacyContentWithheldMarkers.contains(value)
+    }
+
+    /// True when at least one body / argument field holds real content
+    /// (not nil and not the withheld placeholder).
+    var hasStoredContent: Bool {
+        [requestBody, responseBody, wireRequestBody, wireResponseBody]
+            .contains { $0 != nil && !Self.isWithheldContent($0) }
+            || (toolCalls?.contains { !Self.isWithheldContent($0.arguments) } ?? false)
+    }
+
     // MARK: - Computed Properties
+
+    /// Short, human-readable one-liner for list rows, CSV and Markdown.
+    var title: String {
+        let d = egress?.details ?? [:]
+        switch category {
+        case .inference:
+            if let purpose = internalPurposeLabel {
+                return model != nil ? "\(purpose) · \(shortModelName)" : purpose
+            }
+            return model.map { _ in shortModelName } ?? path
+        case .compaction:
+            return L("Context compaction") + (model != nil ? " · \(shortModelName)" : "")
+        case .webSearch:
+            if let q = d["query"], !q.isEmpty { return L("Web search") + ": “\(q)”" }
+            return L("Web search")
+        case .urlExtract:
+            if let urls = d["urls"], !urls.isEmpty {
+                let list = urls.split(separator: "\n").map(String.init)
+                if list.count == 1 { return list[0] }
+                return String(format: L("Fetched %d URLs"), list.count)
+            }
+            return L("URL fetch")
+        case .mcpToolCall:
+            let tool = d["tool"] ?? path
+            if let server = d["server"], !server.isEmpty { return "\(tool) @ \(server)" }
+            return tool
+        case .channelDelivery:
+            let kind = d["channel_kind"] ?? L("Channel")
+            if let host = egress?.destinationHost { return "\(kind) → \(host)" }
+            return kind
+        case .routerControl:
+            return "\(method) \(path)"
+        case .inboundAPI:
+            return "\(method) \(path)"
+        case .pluginCall:
+            return path
+        case .pluginLog:
+            return responseBody?.split(separator: "\n").first.map(String.init) ?? path
+        case .embedding:
+            let count = d["texts"].flatMap(Int.init)
+            let base = count.map { String(format: L("Embedded %d texts"), $0) } ?? L("Embedding")
+            return model != nil ? "\(base) · \(shortModelName)" : base
+        case .audioTranscription:
+            var base = L("Transcribed audio")
+            if let secs = d["audio_seconds"].flatMap(Double.init), secs > 0 {
+                base = String(format: L("Transcribed %.0fs audio"), secs)
+            }
+            return model != nil ? "\(base) · \(shortModelName)" : base
+        case .speechSynthesis:
+            var base = L("Spoke text")
+            if let chars = d["chars"].flatMap(Int.init) {
+                base = String(format: L("Spoke %d chars"), chars)
+            }
+            return model != nil ? "\(base) · \(shortModelName)" : base
+        case .mediaGeneration:
+            let kind = d["media_kind"] ?? "image"
+            let op = d["operation"] ?? "generate"
+            let count = d["count"].flatMap(Int.init) ?? 1
+            let noun = kind == "video" ? (count == 1 ? L("video") : L("videos")) : (count == 1 ? L("image") : L("images"))
+            let verb: String
+            switch op {
+            case "edit": verb = L("Edited")
+            case "upscale": verb = L("Upscaled")
+            case "quote": verb = L("Quoted")
+            default: verb = L("Generated")
+            }
+            let base = "\(verb) \(count) \(noun)"
+            return model != nil ? "\(base) · \(shortModelName)" : base
+        case .system:
+            if let event = d["event"] {
+                switch event {
+                case "cleared_by_user", "cleared": return L("Activity log cleared")
+                case "pruned": return L("Activity log pruned")
+                case "verified": return L("Activity log verified")
+                case "exported": return L("Activity log exported")
+                case "settings_changed": return L("Activity log settings changed")
+                case "recovered": return L("Activity log recovered")
+                default: return event.replacingOccurrences(of: "_", with: " ").capitalized
+                }
+            }
+            if let reason = d["reason"], reason.hasPrefix("cleared") { return L("Activity log cleared") }
+            return errorMessage ?? path
+        }
+    }
+
+    /// Plain-language sentence for a `system` chain-of-custody row.
+    var systemEventSummary: String? {
+        guard category == .system else { return nil }
+        let d = egress?.details ?? [:]
+        let event = d["event"] ?? (d["reason"]?.hasPrefix("cleared") == true ? "cleared" : nil)
+        switch event {
+        case "cleared", "cleared_by_user":
+            let removed = d["removed_rows"] ?? "?"
+            return String(format: L("The user cleared the activity log; %@ rows were removed and the chain anchor moved forward."), removed)
+        case "pruned":
+            let removed = d["removed_rows"] ?? "?"
+            let cutoff = d["cutoff"] ?? "?"
+            return String(format: L("Retention removed %@ rows older than %@; the chain anchor moved forward."), removed, cutoff)
+        case "verified":
+            let records = d["records"] ?? "?"
+            if let problems = d["problems"], problems != "0" {
+                return String(format: L("Verify ran over %@ records and found %@ problem(s)."), records, problems)
+            }
+            return String(format: L("Verify ran over %@ records; chain intact."), records)
+        case "exported":
+            let format = d["format"] ?? "?"
+            let records = d["records"] ?? "?"
+            let content = d["include_content"] == "true" ? L("with message content") : L("metadata only")
+            return String(format: L("Exported %@ records as %@ (%@)."), records, format.uppercased(), content)
+        case "settings_changed":
+            let retention = d["retention_days"].map { $0 == "forever" ? L("forever") : String(format: L("%@ days"), $0) } ?? "?"
+            let store = d["store_content"] == "true" ? L("on") : L("off")
+            return String(format: L("Activity Log settings changed: keep %@, store prompts and responses %@."), retention, store)
+        case "recovered":
+            return String(
+                format: L("On open the chain head (seq %@) disagreed with the database tail (seq %@); the log continues from the database."),
+                d["expected_seq"] ?? "?", d["found_seq"] ?? "?"
+            )
+        default:
+            return errorMessage
+        }
+    }
+
+    /// Plain-language label for a `CoreModelService` one-shot
+    /// (`/internal/<purpose>`); nil for ordinary chat turns.
+    var internalPurposeLabel: String? {
+        guard path.hasPrefix("/internal/") else { return nil }
+        let raw = String(path.dropFirst("/internal/".count))
+        switch raw {
+        case "chat_title": return L("Chat title")
+        case "follow_up_suggestions": return L("Follow-up suggestions")
+        case "memory_distillation": return L("Memory distillation")
+        case "transcription_cleanup": return L("Transcription cleanup")
+        case "agent_description": return L("Agent description")
+        case "compaction": return L("Context compaction")
+        case "core_model": return L("Background generation")
+        default: return raw.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    /// Destination shown in list rows: egress label, else the remote host,
+    /// else "This Mac".
+    var destinationDisplay: String {
+        if let label = egress?.destinationLabel, !label.isEmpty { return label }
+        if let host = egress?.destinationHost, !host.isEmpty { return host }
+        if let endpoint = connection?.remoteEndpoint, let host = EgressInfo.host(from: endpoint) {
+            return host
+        }
+        return locality == .local ? L("This Mac") : L("Remote")
+    }
+
+    /// Day bucket (local calendar) for grouped lists.
+    var dayKey: String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: timestamp)
+    }
+
+    /// Short hash prefix for the integrity line in the detail pane.
+    var shortHash: String? {
+        hash.map { String($0.prefix(12)) }
+    }
 
     /// Whether this is a plugin console log entry (not an API call)
     var isPluginLog: Bool {
@@ -337,7 +920,7 @@ struct RequestLog: Identifiable, Sendable {
 
     /// Whether this is an inference request (chat endpoint)
     var isInference: Bool {
-        path.contains("chat")
+        category == .inference || category == .compaction
     }
 
     /// Whether the request was successful (2xx status)

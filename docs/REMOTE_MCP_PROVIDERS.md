@@ -304,6 +304,19 @@ For example, a Linear provider with a tool called `search_issues` is registered 
 linear_search_issues
 ```
 
+Servers document their own tools by canonical name (`search_issues`), both in
+the tool descriptions and in the `instructions` they return on connect. Two
+things keep those references usable after prefixing:
+
+- Each exposed description starts with `Exposed as \`linear_search_issues\`
+  (server name \`search_issues\`).` and, when the description cites sibling
+  tools from the same server by canonical name, maps those too.
+- A call to a bare canonical name (`search_issues`) resolves to the prefixed
+  tool of the server that publishes it, then passes through the normal
+  exposure and permission gates. If two connected servers publish the same
+  name, the one exposed to the request wins; if both are exposed, the model
+  is told both exposed names and asked to pick.
+
 ### Tool Execution
 
 When a model calls a remote MCP tool:
@@ -423,7 +436,7 @@ A green **Connected** badge means discovery succeeded — it does not mean every
 
 1. **Agent capability grant.** Each custom agent has its own tool allowlist (agent editor → Capabilities). A remote tool left unchecked there is invisible to that agent: it won't appear in the agent's capability manifest, `capabilities_discover` won't return it, and loading it is refused with `not enabled for this agent`.
 2. **Auto vs Manual tool mode.** In **Auto** mode (the default) remote MCP tools are deliberately NOT in the model's first-turn tool schema — the agent sees them listed in its "Enabled capabilities" manifest and pulls one in with `capabilities_load` when a task needs it. This keeps the prompt small and the KV cache stable. In **Manual** mode only your explicitly picked tools are exposed and the manifest is omitted, so pick the remote tools you want the agent to use.
-3. **Namespaced tool names.** The callable name is provider-prefixed (`linear_search_issues`, not `search_issues`). A model that invents the bare vendor name gets `tool_not_found`. The Tools settings view (Available tab) shows every registered tool's exact exposed name and state.
+3. **Namespaced tool names.** The callable name is provider-prefixed (`linear_search_issues`, not `search_issues`). A bare vendor name resolves to the prefixed tool when exactly one connected server publishes it (see Tool Namespacing); a name no server publishes gets `tool_not_found`. The Tools settings view (Available tab) shows every registered tool's exact exposed name and state.
 4. **Permission prompts.** Remote MCP tools default to **Ask** permission. A pending or denied approval stops the run — check for an approval prompt before concluding the tool "wasn't called". You can relax the per-tool policy in Tools settings.
 5. **New chat after changes.** The capability manifest is frozen when a chat session starts. Providers or tools added mid-conversation are reachable via `capabilities_discover`, but start a new chat to get them listed up front.
 6. **Model capability.** Small local models skip the discover → load step more often, especially on long, multi-step tasks. If tool calling degrades as the task grows, try a stronger model or reduce the number of connected providers so the manifest stays short.

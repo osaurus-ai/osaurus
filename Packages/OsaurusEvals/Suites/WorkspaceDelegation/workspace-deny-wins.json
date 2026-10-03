@@ -1,0 +1,61 @@
+{
+  "id": "workspace_delegation.workspace-deny-wins",
+  "domain": "subagent",
+  "label": "Workspace delegation • Deny on the workspace kind wins over local Always Allow",
+  "query": "The user set shared-agent delegation to Deny; a mixed wave is refused as a whole.",
+  "notes": "Model-free. Deny on `spawn_workspace` combines to Deny for the wave even though the local part is Always Allow; with nothing on Ask the card would cover both kinds.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "workspace",
+      "workspaceDelegation": {
+        "scenario": {
+          "localAgents": [
+            "Coder"
+          ],
+          "sharedAgents": [
+            {
+              "name": "Analyst",
+              "workspaceId": "ws-acme",
+              "workspaceName": "Acme",
+              "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+              "online": true,
+              "lastSeenSecondsAgo": null
+            }
+          ],
+          "localPolicy": "always_allow",
+          "workspacePolicy": "deny",
+          "steps": [
+            {
+              "targets": [
+                "Coder",
+                "Analyst@Acme"
+              ],
+              "artifacts": null
+            }
+          ]
+        },
+        "expected": [
+          {
+            "resolutions": [
+              "local:Coder",
+              "workspace:Analyst@Acme"
+            ],
+            "refusals": [
+              "",
+              ""
+            ],
+            "policy": "deny",
+            "cardKinds": [
+              "spawn",
+              "spawn_workspace"
+            ],
+            "cardDescription": "Let this agent run 2 subagents in parallel? 1 of them run on teammates' Macs and spend those workspaces' pools.",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          }
+        ]
+      }
+    }
+  }
+}

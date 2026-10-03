@@ -44,7 +44,7 @@ struct MaterializeMediaDataUrlMCDCTests {
             ]}]
             """.data(using: .utf8)!
         let msgs = try! JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = (try? ModelRuntime.mapOpenAIChatToMLX(msgs)) ?? []
         guard let video = mapped.first?.videos.first,
             case .url(let u) = video
         else { return nil }
@@ -58,7 +58,7 @@ struct MaterializeMediaDataUrlMCDCTests {
             ]}]
             """.data(using: .utf8)!
         let msgs = try! JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = (try? ModelRuntime.mapOpenAIChatToMLX(msgs)) ?? []
         guard let audio = mapped.first?.audios.first,
             case .url(let u) = audio
         else { return nil }

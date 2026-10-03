@@ -450,6 +450,16 @@ final class CodeNSTextView: NSTextView, CrossSelectableTextView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// See SelectableNSTextView.copy — the cross-block selection wins.
+    override func copy(_ sender: Any?) {
+        if copyCrossSelectionIfActive() { return }
+        super.copy(sender)
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        crossSelectionEnablesCopy(item) || super.validateUserInterfaceItem(item)
+    }
+
     /// Suppress NSTextView's default scroll-rect-to-visible.
     /// See `SelectableNSTextView.scrollToVisible(_:)` for the rationale —
     /// this view is read-only and any `scrollRectToVisible` originating

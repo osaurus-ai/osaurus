@@ -203,6 +203,10 @@ public enum OpenAICodexOAuthService {
     /// available, but this list keeps the UI usable before sign-in and when the
     /// `/models` endpoint cannot be reached.
     public static let supportedModels: [String] = [
+        "gpt-6-astra",
+        "gpt-5.6",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
         "gpt-5.5",
         "gpt-5.5-pro",
         "gpt-5.4",
@@ -399,14 +403,21 @@ public enum OpenAICodexOAuthService {
             return .shellToolDisabled
         }
 
-        // Codex slugs always use a dotted version (e.g. "gpt-5.4-codex").
-        // Chat-only slugs use dashes throughout (e.g. "gpt-5-4-thinking",
-        // "gpt-4o"). Match the dotted "<family>-<major>.<minor>" prefix.
-        if entry.slug.range(of: #"^gpt-\d+\.\d+"#, options: .regularExpression) == nil {
+        // Codex slugs use either a dotted version ("gpt-5.4-codex",
+        // "gpt-5.6-terra") or, starting with GPT-6, a major version followed
+        // by a codename ("gpt-6-astra"). Chat-only slugs use a dashed
+        // minor version ("gpt-5-4-thinking") or a fused suffix ("gpt-4o"),
+        // neither of which matches: after the major digits we require a "."
+        // or a "-" followed by a letter.
+        if entry.slug.range(of: codexSlugPattern, options: .regularExpression) == nil {
             return .nonCodexSlug
         }
         return nil
     }
+
+    /// Slug shape accepted by the Codex Responses backend. Exposed so the
+    /// static fallback list can be checked against the same rule in tests.
+    static let codexSlugPattern = #"^gpt-\d+(\.\d+|-[a-z])"#
 
     /// Convenience wrapper used by call sites that want a single "best
     /// available" list: prefer the live catalog when we have tokens, otherwise
@@ -531,7 +542,7 @@ public enum OpenAICodexOAuthService {
     /// catalog for older or unrecognized versions (non-semver values like
     /// "osaurus-1.2.3" get the wrong subset entirely). Bump this to the
     /// current Codex CLI release when new models stop appearing in discovery.
-    public static let codexClientVersion = "0.151.0"
+    public static let codexClientVersion = "0.155.1"
 
     /// Codex CLI-style `User-Agent`, mirroring codex-rs's
     /// `get_codex_user_agent()` format:

@@ -1,0 +1,57 @@
+{
+  "id": "agent_loop.edit-pptx-in-place",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 change slide text in an existing .pptx with file_edit (no regenerate, no shell)",
+  "query": "In deck.pptx, change the key risk on the Risks slide to: vendor contract renewal slips past April. Leave the other slides exactly as they are.",
+  "notes": "Slide text is edited in place (replace_text or set_slide_text). The assertions prove the new risk text, the old one gone, and the untouched first slide still intact.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "deck.pptx",
+        "contentsFromFixture": "Documents/deck.pptx"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxToolCalls": 5,
+      "mustCallTools": [
+        "file_edit"
+      ],
+      "mustNotCallTools": [
+        "shell_run",
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 3,
+          "maxErrors": 1,
+          "argsMustContain": "deck.pptx"
+        }
+      ],
+      "files": [
+        {
+          "path": "deck.pptx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "unzip -p deck.pptx ppt/slides/slide3.xml | grep -q 'vendor contract renewal'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p deck.pptx ppt/slides/slide3.xml | grep -q 'payment provider'",
+          "expectExitCode": 1
+        },
+        {
+          "command": "unzip -p deck.pptx ppt/slides/slide1.xml | grep -q 'Lisbon'",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

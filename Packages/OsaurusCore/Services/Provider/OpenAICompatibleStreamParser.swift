@@ -655,7 +655,9 @@ struct OpenAICompatibleStreamParser {
                         id: nil, name: nil, args: "", thoughtSignature: nil
                     )
                 if let id = toolCall.id { current.id = id }
-                if let name = toolCall.function?.name, current.name == nil {
+                // Some compatible servers emit an empty placeholder before the name.
+                // Keep the slot unnamed until the actual nonempty name arrives.
+                if let name = toolCall.function?.name, !name.isEmpty, current.name == nil {
                     current.name = name
                     print("[Osaurus] OpenAI tool call detected: index=\(idx), name=\(name)")
                     yield(StreamingToolHint.encode(name))

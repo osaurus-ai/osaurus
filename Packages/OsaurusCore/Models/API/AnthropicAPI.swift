@@ -780,12 +780,13 @@ struct MessageDeltaEvent: Codable, Sendable {
 
     struct MessageDeltaUsage: Codable, Sendable {
         let output_tokens: Int
+        let input_tokens: Int?
     }
 
-    init(stopReason: String?, outputTokens: Int) {
+    init(stopReason: String?, outputTokens: Int, inputTokens: Int? = nil) {
         self.type = "message_delta"
         self.delta = MessageDelta(stop_reason: stopReason, stop_sequence: nil)
-        self.usage = MessageDeltaUsage(output_tokens: outputTokens)
+        self.usage = MessageDeltaUsage(output_tokens: outputTokens, input_tokens: inputTokens)
     }
 }
 

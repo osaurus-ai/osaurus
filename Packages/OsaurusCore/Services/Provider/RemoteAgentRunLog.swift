@@ -31,20 +31,24 @@ enum RemoteAgentRunLog {
     /// keeps it out of the escaping OSLog interpolation closure, which can't
     /// capture a non-escaping autoclosure parameter.
     static func client(_ message: String) {
+        ConsoleLogFile.append("[RemoteAgentRun client] \(message)")
         clientLogger.info("\(message, privacy: .public)")
     }
 
     static func clientError(_ message: String) {
+        ConsoleLogFile.append("[RemoteAgentRun client] ERROR \(message)")
         clientLogger.error("\(message, privacy: .public)")
     }
 
     /// Host side (the device running `/agents/{id}/run`): agent + model
     /// resolution, per-tool start/complete, run exit state, errors.
     static func server(_ message: String) {
+        ConsoleLogFile.append("[RemoteAgentRun host] \(message)")
         serverLogger.info("\(message, privacy: .public)")
     }
 
     static func serverError(_ message: String) {
+        ConsoleLogFile.append("[RemoteAgentRun host] ERROR \(message)")
         serverLogger.error("\(message, privacy: .public)")
     }
 }

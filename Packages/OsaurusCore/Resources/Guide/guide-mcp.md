@@ -10,7 +10,7 @@ MCP connects Osaurus to external tool servers — issue trackers, docs, code hos
 
 ## Connecting an MCP provider
 
-- Management (⌘⇧M) → Tools → Connections tab → Add Provider → pick from the MCP catalog or Custom Server.
+- Settings… (⌘,) → Tools & MCP → Services → **Add Service** → pick a service from the catalog or Custom Server. The **Directory** below the Services list shows the same catalog as a list; click **Add** on a row to start adding it. The Services header shows a one-line summary (connected · needs attention · tools) and a ⋯ menu with Show (filter), Reconnect All, Test Connections, and Copy Diagnostics.
 - Note: use the Tools sidebar item (under Agents & Automation), not the top-level Providers item — that one is for inference endpoints, not MCP tool servers.
 - Catalog includes Linear, Notion, GitHub, Atlassian, Vercel, Supabase, Stripe, Zapier, Exa Search, DeepWiki, Hugging Face, Sentry, and more.
 - Auth: Sign In (OAuth), API key, or none — tokens are stored in the Keychain. Non-secret config lives in `~/.osaurus/providers/mcp.json`.
@@ -19,7 +19,7 @@ MCP connects Osaurus to external tool servers — issue trackers, docs, code hos
 
 ## Using MCP tools
 
-- Tools are namespaced `provider_toolname` (e.g. `linear_search_issues`); exact names appear under Tools → Available.
+- Tools are namespaced `provider_toolname` (e.g. `linear_search_issues`); exact names appear under Tools & MCP → All Tools.
 - In Auto tool mode, agents discover and load remote tools on demand; in Manual mode you pick them explicitly. Per-agent allowlists live in the agent editor's Capabilities section.
 - The default permission for remote MCP tools is Ask (one-tap approval per call until you grant always-allow).
 - Start a new chat after adding providers so the session's capability manifest refreshes.
@@ -28,4 +28,4 @@ MCP connects Osaurus to external tool servers — issue trackers, docs, code hos
 
 - External MCP clients can launch Osaurus with `command: "osaurus"`, `args: ["mcp"]`.
 - Over HTTP: `GET /mcp/tools` and `POST /mcp/call` on `http://127.0.0.1:1337`. If server network exposure is on, authenticate with an access key from Settings → Server.
-- Debug connections and tool calls in the Insights tab.
+- Debug connections and tool calls in the Insights tab: each call is an **MCP tool** row with the server, tool, arguments, result preview and transport (stdio servers are Local; HTTP servers are Cloud).

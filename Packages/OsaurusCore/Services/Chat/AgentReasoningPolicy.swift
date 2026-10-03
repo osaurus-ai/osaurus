@@ -2,10 +2,8 @@
 //  AgentReasoningPolicy.swift
 //  osaurus
 //
-//  Resolves the one agent-specific reasoning default Osaurus owns. Ordinary
-//  chat leaves an omitted thinking control to the model bundle. Agent/tool
-//  runs instead choose the direct rail for locally detected toggleable
-//  templates, unless the user or API explicitly chose a mode.
+//  Preserves the model bundle/template reasoning contract on every surface.
+//  Only explicit user or API choices may override omitted thinking controls.
 //
 
 import Foundation
@@ -14,11 +12,8 @@ enum AgentReasoningPolicy {
     /// Return the thinking override an agent/tool request should add, or nil
     /// when the caller/model contract must remain untouched.
     ///
-    /// Precedence is deliberate:
-    /// 1. The wire-safe API toggle is an explicit user/client choice.
-    /// 2. The canonical local model option is the same choice before encoding.
-    /// 3. A reasoning-effort control owns the model's reasoning rail.
-    /// 4. Only a truly unspecified agent/tool run receives the direct default.
+    /// Explicit wire and model-option choices win. Otherwise leave the control
+    /// omitted, including for agent/tool requests and template-only defaults.
     static func defaultEnableThinking(
         isAgentOrToolRequest: Bool,
         explicitEnableThinking: Bool?,
@@ -43,32 +38,13 @@ enum AgentReasoningPolicy {
         {
             return nil
         }
-        // A segmented reasoning-effort rail (DSV4 instruct/reasoning/max,
-        // Hy3, and similar profiles) owns its own default semantics even when
-        // the underlying template also happens to accept `enable_thinking`.
-        // Never collapse that richer contract into the generic boolean rail.
-        guard !usesReasoningEffortControl else { return nil }
-        guard isAgentOrToolRequest, capability.isToggleableThinking else {
-            return nil
-        }
-        // A publisher-declared serving default (generation_config >
-        // default_chat_template_kwargs > enable_thinking) is an explicit
-        // bundle contract, not a template inference — leave it in force even
-        // on agent/tool surfaces. Concrete case: Raptor/Laguna QAT bundles
-        // are pruned to rely on reasoning for arithmetic; forcing the direct
-        // rail here silently broke agent math while plain chat worked.
-        guard capability.declaredDefaultThinkingOn == nil else { return nil }
-        // An explicit-only native tail has THREE states. Default must not
-        // be collapsed to the agent-specific direct rail.
-        guard !capability.preservesOmittedThinking else { return nil }
-        return false
+        // Tool availability is not a user choice about reasoning. The processor
+        // resolves omitted controls from the active bundle/template, including
+        // native three-state contracts and models without a separate manifest.
+        return nil
     }
 
-    /// Resolve the state the UI should present for a toggleable local model.
-    /// This deliberately reuses the dispatch policy so an untouched agent
-    /// composer cannot claim the bundle default is active while dispatch will
-    /// select the direct rail. Explicit choices still win; ordinary no-tool
-    /// chat falls back to the bundle's own template default.
+    /// Presentation follows explicit choices, then the native template default.
     static func effectiveEnableThinkingForPresentation(
         isAgentOrToolRequest: Bool,
         modelOptions: [String: ModelOptionValue],

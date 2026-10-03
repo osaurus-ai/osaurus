@@ -6,7 +6,7 @@ order: 160
 
 # Computer Use, Browser, and Sandbox
 
-Three ways agents can act beyond chat — each isolated, gated, and off by default where it matters.
+Three ways agents can act beyond chat — each isolated, gated, and off by default where it matters. All three (like AppleScript and image generation) are custom-agent abilities: the built-in Orchestrator has none of them itself and reaches them only by delegating to an agent that does (Settings → Orchestrator → Subagents → Allowed subagents).
 
 ## Computer Use (experimental)
 
@@ -26,6 +26,6 @@ Three ways agents can act beyond chat — each isolated, gated, and off by defau
 ## Sandbox
 
 - An isolated Linux VM (Apple Containerization) for shell and code work — keeps execution off your Mac. Needs macOS 26+ on Apple Silicon; older macOS falls back to Seatbelt process isolation (weaker).
-- Management (⌘⇧M) → Sandbox → Provision (~1 minute). Resources: CPUs (default 2), memory (default 2 GB), network mode (outbound / proxy with per-agent allowed domains / none).
+- Settings… (⌘,) → Sandbox → Provision (~1 minute). Resources: CPUs (default 2), memory (default 2 GB), network mode (outbound / proxy with per-agent allowed domains / none).
 - Toggle the sandbox on the chat input bar; write/exec tools additionally require the agent's autonomous-exec setting.
 - Live tool cards stream output with Terminate/Copy. Secrets injected into the sandbox come from the Keychain via a secure overlay — values never enter chat. Workspace: `~/.osaurus/container/workspace/`.

@@ -175,7 +175,6 @@ struct SpawnRemoteProviderIdentityTests {
             disconnected.isConnected = false
             manager._testSetState(disconnected, for: remote.id)
             #expect(manager.connectedSpawnModelTarget(forStoredId: target.id) == nil)
-            #expect(SubagentModelResolution.currentRequestedTarget(target.id) == nil)
 
             manager._testRemoveProviders(ids: [remote.id])
             #expect(manager.connectedSpawnModelTarget(forStoredId: target.id) == nil)

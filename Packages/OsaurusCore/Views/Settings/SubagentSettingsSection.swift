@@ -26,59 +26,13 @@ struct SubagentSettingsSection: View {
     private var systemSection: some View {
         SettingsSection(title: "Subagents", icon: "point.3.connected.trianglepath.dotted") {
             VStack(alignment: .leading, spacing: 16) {
-                SettingsSubsection(label: "Orchestrator Capabilities") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(
-                            "The Orchestrator may delegate to these model-backed subagents. Browser Use and Computer Use remain custom-agent-only.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                        // The Orchestrator never gets `computer_use` /
-                        // `browser_use`, and an ephemeral spawned worker
-                        // strips them too. The only paths are chatting with
-                        // the custom agent directly or adding it to the spawn
-                        // allow-list below (delegated runs keep the agent's
-                        // full tool surface). Say so here, where users look
-                        // when Computer Use "does nothing" in the main chat.
-                        Text(
-                            "To drive apps or the browser, chat with a custom agent that has Computer Use or Browser Use enabled (Agents → Configure → Subagents), or add that agent to the Main Chat Spawn allow-list below so the Orchestrator can delegate to it.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                        mainCapabilityToggle(
-                            title: "Image",
-                            description:
-                                "Generate or edit images with an installed local image model.",
-                            isOn: $configuration.imageDelegationEnabled,
-                            readiness: mainImageReadiness
-                        )
-
-                        mainCapabilityToggle(
-                            title: "AppleScript",
-                            description:
-                                "Use an installed AppleScript model for Mac queries and approved automation.",
-                            isOn: $configuration.appleScriptDelegationEnabled,
-                            readiness: mainAppleScriptReadiness
-                        )
-                    }
-                }
-
-                Divider()
-                    .overlay(themeManager.currentTheme.inputBorder)
-
                 SettingsSubsection(
-                    label: "Subagents the Orchestrator can delegate to",
+                    label: "Allowed subagents",
                     anchorId: "settings.orchestrator.delegation.mainChat"
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(
-                            "Choose the agents and local or cloud models the Orchestrator may delegate a task to. It picks from this list for each task; an empty list keeps delegation off.",
+                            "The Orchestrator hands real work to these agents. Each runs as its own chat session with its own prompt, model, tools, and folder (it inherits the Orchestrator's folder when it has none). Media, AppleScript, Browser Use, and Computer Use live on custom agents — add such an agent here so the Orchestrator can delegate to it.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
@@ -93,11 +47,10 @@ struct SubagentSettingsSection: View {
                             modelOverride: mainChatSpawnModelOverride,
                             spawnableAgentIDs: $configuration.spawnableAgentIDs,
                             spawnableWorkspaceAgents: $configuration.spawnableWorkspaceAgents,
-                            spawnableModelNames: $configuration.spawnableModelNames,
-                            spawnableModelNotes: $configuration.spawnableModelNotes,
+                            removedWorkspaceAgents: $configuration.removedWorkspaceAgents,
                             permissionDefaults: $configuration.permissionDefaults,
                             budgets: $configuration.budgets,
-                            toolAccess: $configuration.spawnToolAccess,
+                            anchorPrefix: "settings.orchestrator.delegation",
                             onChange: {}
                         )
                         .padding(12)
@@ -123,26 +76,29 @@ struct SubagentSettingsSection: View {
                     anchorId: "settings.orchestrator.delegation.handoff"
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
+                        Text(
+                            "Advanced. The defaults keep local delegation memory-safe; change these only if you know how your Mac's memory is being used.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+
                         SettingsToggle(
                             title: "Swap local models for subagents",
                             description:
-                                "Memory-safe sequence whenever a subagent uses a different local model than the chat: unload the chat model → load the subagent's model → run → unload it → load the chat model back → continue the turn. Applies whether or not the chat model was loaded at the start, and to every agent that delegates. Same-model subagents never swap. Off: the subagent runs without this sequence and the server eviction policy decides what stays loaded. (Cloud subagents never need this.)",
+                                "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.",
                             isOn: $configuration.localTextDelegationEnabled
                         )
+                        .settingsLandingAnchor("settings.orchestrator.delegation.swapModels")
 
                         SettingsToggle(
                             title: "Check memory before delegating",
                             description:
-                                "Before delegating image or text work, budget one model weight footprint plus architecture-aware KV, SSM, and activation headroom for every subagent that will run. Same-model groups are split into smaller waves when needed; if even one subagent cannot fit, refuse before unloading the chat model.",
+                                "Applies to the Orchestrator and every agent. On: check available memory and child KV/activation costs, reusing resident weights once; split batches or refuse when needed. Off: bypass delegation memory checks, including elevated memory pressure. Allocations may fail or the app may crash. Separate Server Memory Safety load budgets and explicit concurrency limits still apply.",
                             isOn: $configuration.ramSafetyPreflightEnabled
                         )
-
-                        SettingsToggle(
-                            title: "Keep the chat model loaded alongside subagents (experimental)",
-                            description:
-                                "Only while \"Swap local models for subagents\" is off: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the subagent's model next to the chat model, skipping the swap round-trip on high-RAM Macs. With swapping on, the unload/reload sequence always runs instead.",
-                            isOn: $configuration.subagentCoexistenceEnabled
-                        )
+                        .settingsLandingAnchor("settings.orchestrator.delegation.ramSafety")
                     }
                 }
             }
@@ -152,22 +108,16 @@ struct SubagentSettingsSection: View {
     private var mainSpawnReadiness: AgentCapabilityReadiness {
         let configuredAgentIDs = configuration.spawnableAgentIDs
         let configuredCount =
-            configuredAgentIDs.count + configuration.spawnableModelNames.count
-            + configuration.spawnableWorkspaceAgents.count
+            configuredAgentIDs.count + configuration.spawnableWorkspaceAgents.count
         let availability = SpawnDescriptors.resolveForPreview(
             agentIDs: configuredAgentIDs,
-            modelNames: configuration.spawnableModelNames,
-            modelNotes: configuration.spawnableModelNotes,
             launcherModelOverride:
                 configuration.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
             workspaceAgents: configuration.spawnableWorkspaceAgents
         )
         let runnableCount =
-            availability.runnableAgentIDs.count + availability.runnableModelIds.count
-            + availability.runnableWorkspaceAgents.count
-        let checking =
-            availability.agentTargets.contains { $0.state == .checking }
-            || availability.modelTargets.contains { $0.state == .checking }
+            availability.runnableAgentIDs.count + availability.runnableWorkspaceAgents.count
+        let checking = availability.agentTargets.contains { $0.state == .checking }
 
         return AgentCapabilityReadiness.subagent(
             flag: .spawn,
@@ -180,64 +130,6 @@ struct SubagentSettingsSection: View {
             permission: configuration.permissionDefaults.policy(
                 for: SubagentCapabilityRegistry.spawn.id
             )
-        )
-    }
-
-    private var mainImageReadiness: AgentCapabilityReadiness {
-        AgentCapabilityReadiness.subagent(
-            flag: .image,
-            configured: configuration.imageDelegationEnabled,
-            toolsEnabled: true,
-            hasResolvedModel: true,
-            hasReadyImageModel: modelPickerCache.hasReadyImageModel,
-            permission: configuration.permissionDefaults.policy(
-                for: SubagentCapabilityRegistry.image.id
-            )
-        )
-    }
-
-    private var mainAppleScriptReadiness: AgentCapabilityReadiness {
-        AgentCapabilityReadiness.subagent(
-            flag: .appleScript,
-            configured: configuration.appleScriptDelegationEnabled,
-            toolsEnabled: true,
-            hasResolvedModel: true,
-            hasReadyAppleScriptModel: modelPickerCache.hasReadyAppleScriptModel
-        )
-    }
-
-    private func mainCapabilityToggle(
-        title: LocalizedStringKey,
-        description: LocalizedStringKey,
-        isOn: Binding<Bool>,
-        readiness: AgentCapabilityReadiness
-    ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title, bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                Text(description, bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                if readiness.configured {
-                    readinessLabel(readiness)
-                }
-            }
-            Spacer(minLength: 12)
-            Toggle("", isOn: isOn)
-                .toggleStyle(.switch)
-                .labelsHidden()
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(themeManager.currentTheme.tertiaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(readinessColor(readiness.state).opacity(0.45), lineWidth: 1)
-                )
         )
     }
 

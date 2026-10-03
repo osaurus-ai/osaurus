@@ -17,12 +17,9 @@
 //  The entry points keep their names so the send handshake, window manager
 //  and stop paths need no rewiring; each documents what it no longer does.
 //
-//  One retained side effect is not purely observational: window activation
-//  reads `ModelRuntime.chatActivationResidencySnapshot`, which atomically
-//  cancels a PENDING idle-eviction decision for this chat's selected model
-//  (a focused chat keeps its resident model). That was the behaviour before
-//  lazy loading and it loads nothing; an eviction already in flight is not
-//  reversed and no replacement load is scheduled.
+//  Window activation reads `ModelRuntime.chatActivationResidencySnapshot`
+//  without changing idle deadlines. Focus cannot pin the selected model
+//  indefinitely: only real requests or Keep Model Loaded retain it.
 //
 
 import Foundation

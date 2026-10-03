@@ -22,6 +22,14 @@ struct WorkspaceSyncFrame: Decodable, Sendable {
 /// One subscription for the account, independent of Settings and chat windows.
 /// Every reconnect starts with a full authorized snapshot. A heartbeat only
 /// renews verification after the server has reconciled current database state.
+///
+/// The stream is lazy: it only runs for an account known to belong to at
+/// least one workspace (`hasKnownMembership`, persisted across launches).
+/// The router closes every stream after ~110 s so the client re-signs, which
+/// for a user with no workspaces meant ~30 signed reconnects an hour for
+/// nothing. A first launch (or a cleared flag) issues one `GET /workspaces`
+/// probe through the roster store; a non-empty list starts the stream, an
+/// empty snapshot or list stops it again.
 @MainActor
 final class WorkspaceSyncService: ObservableObject {
     static let shared = WorkspaceSyncService()
@@ -36,7 +44,39 @@ final class WorkspaceSyncService: ObservableObject {
     private var revision = 0
     private var streamGeneration = UUID()
     private var lastFallback = Date.distantPast
+    /// Current fallback / reconnect delay while the stream is not verified.
+    /// Doubles from `fallbackInitialDelay` up to `fallbackMaxDelay` and resets
+    /// on any frame, so an unreachable router (offline Mac, old router) is
+    /// asked a few times a minute at first and then every five minutes.
+    private(set) var fallbackDelay: TimeInterval = WorkspaceSyncService.fallbackInitialDelay
     var client: OsaurusRouterAPIClient = .shared
+    private let defaults: UserDefaults
+    /// Someone asked for the stream this launch (launch bootstrap or a chat
+    /// window observing the roster). The stream itself still waits for
+    /// known membership.
+    private var wanted = false
+    /// The one-per-launch membership probe (`GET /workspaces`) already ran
+    /// or is running.
+    private var probedMembership = false
+
+    nonisolated static let fallbackInitialDelay: TimeInterval = 10
+    nonisolated static let fallbackMaxDelay: TimeInterval = 300
+
+    /// Persisted "this account belongs to >= 1 workspace" flag that gates the
+    /// stream. Set from any non-empty list or snapshot, cleared by an empty
+    /// one, so the next launch can decide without a probe.
+    nonisolated static let membershipDefaultsKey = "ai.osaurus.workspaces.hasMembership"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var hasKnownMembership: Bool {
+        defaults.bool(forKey: Self.membershipDefaultsKey)
+    }
+
+    /// True while the stream loop is running (not necessarily verified).
+    var isStreaming: Bool { task != nil }
 
     /// Whether the stream's last frame is recent enough to keep trusting it.
     /// The router sends a `verified` heartbeat (or a `snapshot`) every second
@@ -60,8 +100,86 @@ final class WorkspaceSyncService: ObservableObject {
         now.timeIntervalSince(startedAt) < firstFrameDeadline
     }
 
+    /// Next fallback delay after a fruitless pass: exponential, capped.
+    nonisolated static func nextFallbackDelay(after current: TimeInterval) -> TimeInterval {
+        min(fallbackMaxDelay, max(fallbackInitialDelay, current * 2))
+    }
+
+    /// Ask for the stream. Starts it right away for an account with known
+    /// membership; otherwise runs one membership probe this launch and lets
+    /// `noteMembership` start it if the list is non-empty. Idempotent.
     func start() {
-        guard task == nil, !RuntimeEnvironment.isUnderTests else { return }
+        guard !RuntimeEnvironment.isUnderTests else { return }
+        wanted = true
+        reconcileStream()
+    }
+
+    /// Stop the stream and forget the request. The roster store's observers
+    /// calling `start()` again re-arm it (membership permitting).
+    func stop() {
+        wanted = false
+        stopStream()
+    }
+
+    /// Record whether the account belongs to any workspace. Called with every
+    /// authoritative list (`WorkspaceRosterStore.refresh`,
+    /// `WorkspacesService.refreshWorkspaces`) and snapshot, so the stream
+    /// starts the moment a first workspace appears and stops once the last
+    /// one is gone.
+    func noteMembership(hasWorkspaces: Bool) {
+        if hasKnownMembership != hasWorkspaces {
+            defaults.set(hasWorkspaces, forKey: Self.membershipDefaultsKey)
+        }
+        guard !RuntimeEnvironment.isUnderTests else { return }
+        reconcileStream()
+    }
+
+    /// What the stream should do given the current gates. Pure so the lazy
+    /// start/stop/probe policy is unit-testable without a connection.
+    enum StreamDecision: Equatable, Sendable {
+        /// Run (or keep running) the `/workspaces/sync` stream.
+        case stream
+        /// Tear the stream down (or keep it down) and do nothing else.
+        case stop
+        /// Stream down; issue the one-per-launch `GET /workspaces` probe.
+        case probe
+    }
+
+    nonisolated static func streamDecision(
+        wanted: Bool,
+        routerEnabled: Bool,
+        hasKnownMembership: Bool,
+        alreadyProbed: Bool,
+        hasIdentity: Bool
+    ) -> StreamDecision {
+        guard wanted, routerEnabled else { return .stop }
+        if hasKnownMembership { return .stream }
+        return (!alreadyProbed && hasIdentity) ? .probe : .stop
+    }
+
+    private func reconcileStream() {
+        switch Self.streamDecision(
+            wanted: wanted,
+            routerEnabled: OsaurusRouter.isEnabled,
+            hasKnownMembership: hasKnownMembership,
+            alreadyProbed: probedMembership,
+            hasIdentity: MasterKey.existsCached()
+        ) {
+        case .stream:
+            startStream()
+        case .stop:
+            stopStream()
+        case .probe:
+            stopStream()
+            probedMembership = true
+            // One `GET /workspaces` through the roster store (which also
+            // seeds the sidebar); its `apply` reports membership back here.
+            Task { await WorkspaceRosterStore.shared.refresh(reason: .launch) }
+        }
+    }
+
+    private func startStream() {
+        guard task == nil else { return }
         watchdog = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
@@ -80,6 +198,7 @@ final class WorkspaceSyncService: ObservableObject {
         task = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
+                var delay: TimeInterval = 1
                 if OsaurusRouter.isEnabled, MasterKey.existsCached() {
                     self.revision = 0
                     self.snapshot = nil
@@ -103,20 +222,44 @@ final class WorkspaceSyncService: ObservableObject {
                     if !Self.verificationIsFresh(lastFrameAt: self.lastFrameAt) {
                         self.invalidateVerification()
                     }
-                    // Older routers and connection failures retain discoverability
-                    // with bounded polling. They never masquerade as a live feed.
-                    if !self.isVerified, Date().timeIntervalSince(self.lastFallback) >= 10 {
-                        self.lastFallback = Date()
-                        await WorkspaceRosterStore.shared.refresh(reason: .manual)
-                        await WorkspacesService.shared.refreshWorkspaces()
-                        await WorkspacesService.shared.refreshSelectedWorkspace()
+                    // Older routers and connection failures retain
+                    // discoverability with bounded, backing-off polling that
+                    // never masquerades as a live feed. The reconnect itself
+                    // backs off the same way: a connection that produced no
+                    // frame is not retried every second.
+                    if !self.isVerified {
+                        if Date().timeIntervalSince(self.lastFallback) >= self.fallbackDelay {
+                            self.lastFallback = Date()
+                            await WorkspaceRosterStore.shared.refresh(reason: .manual)
+                            await WorkspacesService.shared.refreshSelectedWorkspace()
+                            self.fallbackDelay = Self.nextFallbackDelay(after: self.fallbackDelay)
+                        }
+                        if self.connectionProducedNoFrame(since: self.connectionStartedAt) {
+                            delay = self.fallbackDelay
+                        }
                     }
                 } else {
                     self.invalidateVerification()
                 }
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(delay))
             }
         }
+    }
+
+    private func connectionProducedNoFrame(since startedAt: Date) -> Bool {
+        lastFrameAt < startedAt
+    }
+
+    private func stopStream() {
+        guard task != nil || watchdog != nil else { return }
+        watchdog?.cancel()
+        watchdog = nil
+        connectionTask?.cancel()
+        connectionTask = nil
+        task?.cancel()
+        task = nil
+        invalidateVerification()
+        fallbackDelay = Self.fallbackInitialDelay
     }
 
     private func receive(_ frame: WorkspaceSyncFrame, generation: UUID) async {
@@ -141,11 +284,16 @@ final class WorkspaceSyncService: ObservableObject {
                     _ = RemoteAgentManager.shared.remove(id: remote.id)
                 }
             }
+            // The last workspace is gone: `apply` above cleared the
+            // membership flag and `noteMembership` stopped this stream. Do
+            // not renew a lease on a stream that is being torn down.
+            guard task != nil else { return }
         } else if frame.type != "verified" || frame.revision != revision || snapshot == nil {
             return
         }
         lastFrameAt = Date()
         isVerified = true
+        fallbackDelay = Self.fallbackInitialDelay
         WorkspaceRosterStore.shared.renewVerification()
         for entry in snapshot?.workspaces ?? [] where workers[entry.workspace.id] == nil {
             let id = entry.workspace.id

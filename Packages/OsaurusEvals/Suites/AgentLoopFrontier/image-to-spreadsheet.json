@@ -1,0 +1,63 @@
+{
+  "id": "frontier.image-to-spreadsheet",
+  "domain": "agent_loop",
+  "label": "frontier • extract invoice fields from an image via file_read and record them in a new .xlsx",
+  "query": "invoice.png is a scan of an invoice. Read it, then create invoices.xlsx with columns Invoice, Total, Due and one row containing the values from the image. Confirm the numbers you recorded.",
+  "notes": "Image reading (vision or OCR rail) feeding a document write: proves the model treats file_read as the way to look at a picture and file_write as the way to make a spreadsheet, without shell OCR tools.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "invoice.png",
+        "contentsFromFixture": "Documents/invoice.png"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxToolCalls": 5,
+      "mustCallTools": [
+        "file_read",
+        "file_write"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_read",
+          "minCalls": 1,
+          "maxCalls": 3,
+          "maxErrors": 0,
+          "argsMustContain": "invoice.png"
+        },
+        {
+          "tool": "file_write",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "invoices.xlsx"
+        }
+      ],
+      "files": [
+        {
+          "path": "invoices.xlsx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "unzip -l invoices.xlsx | grep -q 'xl/workbook.xml'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p invoices.xlsx xl/worksheets/sheet1.xml xl/sharedStrings.xml | grep -q '40291'",
+          "expectExitCode": 0
+        }
+      ],
+      "finalTextContains": [
+        "40291"
+      ]
+    }
+  }
+}

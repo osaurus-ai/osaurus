@@ -41,19 +41,74 @@ enum FolderToolError: LocalizedError {
         /// `DocumentParser` threw `.readFailed` / `.unsupportedFormat` /
         /// `.fileTooLarge`.
         case parseFailed
+        /// A recognised document family (`.xls`, `.pages`, `.odt`, ...)
+        /// with no built-in adapter. Distinct from `parseFailed` so the
+        /// message can name the supported sibling format instead of
+        /// implying the file is corrupt.
+        case unsupportedFormat(family: WorkspaceFileFormatPolicy.DocumentFamily)
+
+        /// Short, model-facing statement of WHAT went wrong. Never says
+        /// "file_read only supports text" — the tool reads documents and
+        /// images, and a failure message that denies that teaches the model
+        /// the wrong contract for every later turn.
+        func explanation(path: String, extLabel: String) -> String {
+            switch self {
+            case .nulByte, .decodeFailed:
+                return
+                    "'\(path)' is a binary file\(extLabel) that file_read cannot decode as text, "
+                    + "and its extension is not one of the document or image formats file_read opens "
+                    + "(\(WorkspaceFileFormatPolicy.readableFormatsSummary))."
+            case .imageOnlyPdf:
+                return
+                    "'\(path)' is a PDF with no extractable text layer (scanned or image-only pages), "
+                    + "and OCR of its rendered pages recognised no legible text. "
+                    + "file_read extracts PDF text normally; this file simply has none."
+            case .image:
+                return
+                    "'\(path)' is an image\(extLabel). file_read shows images to vision-capable models; "
+                    + "the active model cannot view images and no text could be recognised in it."
+            case .parseFailed:
+                return
+                    "'\(path)'\(extLabel) is a document format file_read normally extracts, but this file "
+                    + "could not be parsed — it may be encrypted, password-protected, truncated, or malformed."
+            case .unsupportedFormat(let family):
+                var text =
+                    "'\(path)' is a \(family.label)\(extLabel) in a variant file_read cannot extract. "
+                    + "file_read opens \(WorkspaceFileFormatPolicy.readableFormatsSummary)."
+                if let alternative = family.supportedAlternative {
+                    text += " Convert it to \(alternative) and read that"
+                }
+                return text
+            }
+        }
+
+        var family: WorkspaceFileFormatPolicy.DocumentFamily? {
+            switch self {
+            case .unsupportedFormat(let family): return family
+            case .imageOnlyPdf: return .pdf
+            default: return nil
+            }
+        }
+
+        /// Whether a shell / sandbox pivot (`pdftotext`, `unzip`, `file`)
+        /// is a sensible next step. For an unsupported document variant the
+        /// conversion hint is the primary pivot; shell tools are secondary.
+        var suggestsShellPivot: Bool {
+            switch self {
+            case .image: return false
+            default: return true
+            }
+        }
 
         var pivotHint: String? {
             switch self {
             case .imageOnlyPdf:
                 return
-                    "The PDF has no extractable text layer (likely scanned images); use an OCR tool via shell_run."
+                    "Use an OCR tool (e.g. `ocrmypdf`, `tesseract`) via shell_run to recover the text."
             case .image:
                 return
-                    "This is an image file; file_read returns text only. Attach the image to chat or use an OCR / vision tool to read it."
-            case .parseFailed:
-                return
-                    "The document couldn't be parsed — it may be encrypted, password-protected, or malformed."
-            case .nulByte, .decodeFailed:
+                    "Ask the user to attach the image to chat for a vision model, or use an OCR tool via shell_run."
+            case .parseFailed, .unsupportedFormat, .nulByte, .decodeFailed:
                 return nil
             }
         }
@@ -79,6 +134,18 @@ enum FolderToolError: LocalizedError {
 
 /// Shared utilities for folder tools
 enum FolderToolHelpers {
+    /// Lines of file content, not separator-delimited fields. A final line
+    /// terminator does not introduce another empty line; CRLF is one newline.
+    /// Keep the existing single editable-line representation of an empty file.
+    static func contentLines(_ text: String) -> [String] {
+        var lines = text.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline })
+            .map(String.init)
+        if text.last?.isNewline == true, lines.count > 1 {
+            lines.removeLast()
+        }
+        return lines
+    }
+
     /// Resolve a tool's `path` argument under the working folder.
     /// Accepts a relative path under root (e.g. `src/app.py`) or an
     /// absolute path that lives inside root (e.g. `/Users/x/proj/src/app.py`
@@ -261,7 +328,7 @@ enum FolderToolHelpers {
             kind: .unavailable,
             message:
                 "No working folder is selected for this chat — folder tools are "
-                + "unavailable. Ask the user to pick a folder via the Folder chip.",
+                + "unavailable. " + PromptWorkingFolderTool.attachFolderSteer,
             tool: tool,
             retryable: false
         )
@@ -283,6 +350,7 @@ enum FolderToolHelpers {
     /// Run a process and wait for completion asynchronously without blocking the main thread.
     /// The termination handler is set before running to avoid race conditions.
     static func runProcessAsync(_ process: Process) async throws {
+        try ProcessInputValidation.validate(process)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { _ in
                 continuation.resume()
@@ -518,14 +586,17 @@ enum FolderToolHelpers {
     static let maxContentSearchFileBytes = 2 * 1024 * 1024
 
     /// Extensions skipped by a content search before any read: obvious
-    /// binary/media/archive/office-binary types that can't yield a useful
-    /// text substring match. The UTF-8 decode `nil`-skip remains the backstop.
+    /// binary/media/archive types that can't yield a useful text substring
+    /// match, plus document families with no extractor (`.xls`, `.key`, …).
+    /// Documents WITH an adapter (PDF/DOCX/PPTX/XLSX) are not here — they
+    /// are searched through `DocumentTextExtractionCache`. The UTF-8 decode
+    /// `nil`-skip remains the backstop.
     static let contentSearchSkippedExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "heic", "ico", "icns",
         "mov", "mp4", "m4v", "avi", "mkv", "webm",
         "mp3", "wav", "aac", "m4a", "flac", "ogg",
         "zip", "gz", "tar", "tgz", "bz2", "xz", "7z", "rar", "dmg",
-        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "key", "numbers", "pages",
+        "xls", "ppt", "key", "numbers", "pages", "odt", "ods", "odp",
         "bin", "exe", "dll", "so", "dylib", "o", "a", "class", "wasm",
     ]
 }
@@ -790,13 +861,19 @@ struct FileTreeTool: OsaurusTool {
 struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read a file's contents, or list a directory's contents — the path decides. Files return text "
-        + "with `N|` line-number prefixes (UTF-8 source files, including HTML/RTF/SVG, are returned raw; "
-        + "trusted-folder paths also extract PDF, Word, and PowerPoint text and provide a bounded XLSX "
-        + "preview; VM sandbox paths are raw-text only, so process binary documents there with shell/code); "
-        + "bound large reads with "
-        + "start_line/end_line, tail_lines, or max_chars. Directories return a listing; bound with "
-        + "max_depth. Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
+        "Read a file's contents, or list a directory's contents — the path decides. Handles every "
+        + "file type in one call: UTF-8 source/text (including HTML/RTF/SVG) is returned raw; PDF, "
+        + "Word (.docx/.doc/.rtfd), and PowerPoint (.pptx) documents are extracted to text; Excel "
+        + "(.xlsx) returns a bounded cell preview (`sheet_name`, `max_rows`, `max_columns`); images "
+        + "(.png/.jpg/.gif/.webp/.heic/…) are shown to vision models and OCR'd to text otherwise. "
+        + "Call it on the document itself — never unzip, convert, or shell out first. Files return "
+        + "text with `N|` line-number prefixes plus `format`/`source` metadata; bound large reads with "
+        + "start_line/end_line, tail_lines, or max_chars. PDF text is split by `--- Page N of M ---` "
+        + "markers (labels and values on one visual row share a line) and `pages: \"3-5\"` reads a page "
+        + "range. Directories return a listing; bound with "
+        + "max_depth. Pass `mode: \"structure\"` on a .docx/.xlsx/.pptx/.pdf to get the numbered paragraphs, "
+        + "cells, slides/shapes, or pages (and form fields) that `file_edit` `operations` address. "
+        + "Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -831,6 +908,12 @@ struct FileReadTool: OsaurusTool {
                 "type": .string("integer"),
                 "description": .string("Optional cap on returned characters after line selection"),
             ]),
+            "pages": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Optional PDF page selector: one page (\"3\") or a contiguous range (\"3-5\"). Overrides start_line/end_line."
+                ),
+            ]),
             "max_rows": .object([
                 "type": .string("integer"),
                 "description": .string("Optional XLSX preview row cap per sheet (default 8, max 50)"),
@@ -838,6 +921,13 @@ struct FileReadTool: OsaurusTool {
             "max_columns": .object([
                 "type": .string("integer"),
                 "description": .string("Optional XLSX preview column cap per row (default 8, max 30)"),
+            ]),
+            "mode": .object([
+                "type": .string("string"),
+                "enum": .array([.string("content"), .string("structure")]),
+                "description": .string(
+                    "Optional. `structure` returns a .docx/.xlsx/.pptx/.pdf outline with the ids `file_edit` operations use (default: content)"
+                ),
             ]),
         ]),
         "required": .array([.string("path")]),
@@ -872,14 +962,18 @@ struct FileReadTool: OsaurusTool {
         else {
             return .unsupported
         }
-        // PDF text-layer extraction has a fully async, cancellation-aware
-        // adapter path below. Other parser-backed formats still pass through
-        // DocumentParser's synchronous compatibility shim, so they cannot be
-        // owned by a spawned operation yet.
+        // PDF extraction is the only document route audited for
+        // cooperative cancellation (`PDFAdapter` checks between pages —
+        // see SpawnedPDFReadTests). Word/RTF parse through one blocking
+        // `NSAttributedString(url:)` call and XLSX/PPTX have no drain
+        // proof yet, so they stay unsupported for spawned ownership, as do
+        // images (attached or OCR'd on a detached task).
         if ext == "pdf" {
             return .cooperative
         }
-        guard !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) else {
+        guard !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext),
+            WorkspaceFileFormatPolicy.readSupport(for: ext) != .workbook
+        else {
             return .unsupported
         }
         if DocumentParser.isImageFile(url: fileURL), ext != "svg" {
@@ -908,9 +1002,35 @@ struct FileReadTool: OsaurusTool {
     /// heuristic.
     private static let binarySniffBytes = 4096
 
+    /// Where the text came from. Carried into the result payload so the
+    /// model can tell raw source from an extracted text layer (a PDF's
+    /// "line 12" is a line of extracted prose, not a line of the file).
+    enum ContentSource: String {
+        case rawText = "raw_text"
+        case extractedText = "extracted_text"
+        case ocrText = "ocr_text"
+    }
+
     private struct LoadedFileContent {
         let text: String
         let rawRead: RawReadMetadata?
+        /// Short format id for the payload (`text`, `pdf`, `docx`, `pptx`, …).
+        let format: String
+        let source: ContentSource
+        /// Cheap structural counts the adapter already computed
+        /// (`pages`, `slides`). Empty for raw reads.
+        var counts: [String: Int] = [:]
+        /// Provenance note surfaced as `note` (e.g. OCR caveats).
+        var note: String? = nil
+    }
+
+    private enum ImageReadOutcome {
+        /// Vision-capable surface: the envelope carries an `image_ref`.
+        case attached(String)
+        /// Text-only surface: OCR lines flow through the normal `N|` path.
+        case recognizedText(LoadedFileContent)
+        /// The bytes are not a decodable image; take the ordinary read path.
+        case notAnImage
     }
 
     private struct RawReadMetadata {
@@ -942,6 +1062,16 @@ struct FileReadTool: OsaurusTool {
         if combinedFileRoute(path: relativePath) == .sandbox,
             let bridge = ChatExecutionContext.sandboxReadBridge
         {
+            // Documents and images under the VirtioFS share are served
+            // host-side (same extractors/OCR as a trusted-folder read);
+            // everything else keeps the raw-text bridge.
+            if let served = try await Self.readFromWorkspaceShare(
+                path: relativePath,
+                home: bridge.home,
+                args: args
+            ) {
+                return served
+            }
             return try await sandboxBridgeRead(
                 bridge,
                 path: relativePath,
@@ -994,6 +1124,61 @@ struct FileReadTool: OsaurusTool {
             }
             throw FolderToolError.fileNotFound(relativePath)
         }
+        return try await readResolved(
+            fileURL: fileURL,
+            relativePath: relativePath,
+            isDirectory: isDirectory.boolValue,
+            rootPath: rootPath,
+            args: args
+        )
+    }
+
+    /// Host-side read of a sandbox document/image under the `/workspace`
+    /// share (combined mode and VM-only mode). Returns `nil` when the path
+    /// is not a share-served format, is rejected by the sandbox sanitizer,
+    /// or does not exist host-side — the caller then falls back to the raw
+    /// bridge, whose envelopes carry the specific rejection / not-found
+    /// reason. `path` in the result is the absolute sandbox path the model
+    /// can reuse.
+    static func readFromWorkspaceShare(
+        path: String,
+        home: String,
+        args: [String: Any]
+    ) async throws -> String? {
+        guard let resolved = WorkspaceShareRoute.resolveForRead(path: path, home: home) else {
+            return nil
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolved.hostURL.path, isDirectory: &isDirectory)
+        else { return nil }
+        // A directory whose name merely ends in a document extension is a
+        // listing, which the bridge handles (RTFD packages are directories
+        // but extract as documents).
+        if isDirectory.boolValue,
+            !WorkspaceFileFormatPolicy.prefersDocumentExtraction(resolved.fileExtension)
+        {
+            return nil
+        }
+        return try await FileReadTool(rootPath: WorkspaceShareRoute.shareRoot).readResolved(
+            fileURL: resolved.hostURL,
+            relativePath: resolved.sandboxPath,
+            isDirectory: isDirectory.boolValue,
+            rootPath: WorkspaceShareRoute.shareRoot,
+            args: args
+        )
+    }
+
+    /// Everything after path resolution: listing, workbook preview, image
+    /// attach/OCR, document extraction, and the `N|` rendering contract.
+    /// Shared by the host route and the `/workspace` share route.
+    private func readResolved(
+        fileURL: URL,
+        relativePath: String,
+        isDirectory isDirectoryFlag: Bool,
+        rootPath: URL,
+        args: [String: Any]
+    ) async throws -> String {
+        let isDirectory = ObjCBool(isDirectoryFlag)
         let ext = fileURL.pathExtension.lowercased()
 
         // A directory path lists rather than reads (the path carries the
@@ -1012,6 +1197,48 @@ struct FileReadTool: OsaurusTool {
                 path: relativePath,
                 entries: listing.entries,
                 truncated: listing.truncated
+            )
+        }
+
+        if let mode = (args["mode"] as? String)?.lowercased(), mode == "structure" {
+            guard DocumentEditService.isEditable(ext), !isDirectory.boolValue else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`mode: \"structure\"` outlines .docx, .xlsx, .pptx and .pdf files; read other files normally.",
+                    field: "mode",
+                    expected: "a .docx/.xlsx/.pptx/.pdf path, or omit `mode`",
+                    tool: name
+                )
+            }
+            do {
+                var outline = try await DocumentEditService.structure(of: fileURL)
+                outline["path"] = relativePath
+                return ToolEnvelope.success(tool: name, result: outline)
+            } catch {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: "Couldn't outline \(relativePath): \(error.localizedDescription)",
+                    field: "path",
+                    tool: name
+                )
+            }
+        }
+
+        // `pages` is a PDF-only selector; reject it up front for other
+        // files so the model gets a field-level correction instead of a
+        // silently ignored argument.
+        let pagesSpec: String? = {
+            if let string = args["pages"] as? String { return string }
+            if let number = coerceInt(args["pages"]) { return String(number) }
+            return nil
+        }()
+        if pagesSpec != nil, ext != "pdf" {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "`pages` selects pages of a PDF; '\(relativePath)' is a .\(ext) file.",
+                field: "pages",
+                expected: "omit `pages`, or use start_line/end_line",
+                tool: name
             )
         }
 
@@ -1037,15 +1264,95 @@ struct FileReadTool: OsaurusTool {
             sheetName: sheetName,
             args: args
         ) {
-            return ToolEnvelope.success(tool: name, text: workbookPreview)
+            var result: [String: Any] = [
+                "kind": "workbook",
+                "text": workbookPreview.text,
+                "path": relativePath,
+                "format": "xlsx",
+                "source": "workbook_preview",
+                "sheets": workbookPreview.sheetCount,
+                "sheet_names": workbookPreview.sheetNames,
+                "preview_note":
+                    "Bounded cell preview (`max_rows`/`max_columns`, `start_line`/`end_line` = rows); "
+                    + "pass `sheet_name` to focus one sheet.",
+            ]
+            if let sheetName { result["sheet_name"] = sheetName }
+            return ToolEnvelope.success(tool: name, result: result)
         }
 
-        let content = try await loadFileContent(
-            url: fileURL,
-            relativePath: relativePath,
-            ext: ext
-        )
-        let lines = content.text.components(separatedBy: .newlines)
+        // Pixel images: attach for a vision model, OCR for everyone else.
+        // SVG is XML source and keeps the raw text path.
+        let imageByPolicy = WorkspaceFileFormatPolicy.readSupport(for: ext) == .image
+        let content: LoadedFileContent
+        if ext != "svg", !isDirectory.boolValue,
+            imageByPolicy || DocumentParser.isImageFile(url: fileURL)
+        {
+            switch try await readImage(fileURL: fileURL, relativePath: relativePath, ext: ext) {
+            case .attached(let envelope):
+                return envelope
+            case .recognizedText(let loaded):
+                content = loaded
+            case .notAnImage:
+                // Mislabelled bytes (e.g. source text saved as `.png`):
+                // UTF-8 source still wins over the extension.
+                content = try await loadFileContent(
+                    url: fileURL,
+                    relativePath: relativePath,
+                    ext: ext
+                )
+            }
+        } else {
+            content = try await loadFileContent(
+                url: fileURL,
+                relativePath: relativePath,
+                ext: ext
+            )
+        }
+        let lines = FolderToolHelpers.contentLines(content.text)
+
+        // `pages` (PDF only) maps a page range onto the global gutter via
+        // the `--- Page N of M ---` headers, so page reads keep the same
+        // line numbering and continuation contract as any other read.
+        var pageRange: ClosedRange<Int>?
+        if let pagesSpec {
+            guard content.format == "pdf", content.source == .extractedText else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: content.source == .ocrText
+                        ? "`pages` is unavailable for this PDF: it has no text layer, so the lines are OCR output without page markers."
+                        : "`pages` selects pages of a PDF text layer; '\(relativePath)' is not a PDF.",
+                    field: "pages",
+                    expected: "omit `pages`, or use start_line/end_line",
+                    tool: name
+                )
+            }
+            do {
+                guard let range = try Self.lineRange(forPages: pagesSpec, in: lines) else {
+                    let pageCount = content.counts["pages"] ?? 0
+                    return ToolEnvelope.success(
+                        tool: name,
+                        result: [
+                            "kind": "file",
+                            "path": relativePath,
+                            "format": content.format,
+                            "source": content.source.rawValue,
+                            "pages": pageCount,
+                            "pages_requested": pagesSpec,
+                            "text": "Page(s) \(pagesSpec) of this \(pageCount)-page PDF have no extractable text layer.",
+                        ]
+                    )
+                }
+                pageRange = range
+            } catch let error as PagesArgumentError {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Invalid `pages` value \"\(pagesSpec)\".",
+                    field: "pages",
+                    expected: error.expected,
+                    tool: name
+                )
+            }
+        }
 
         // `tail_lines` (last N lines, for logs) overrides an explicit
         // start/end range; `max_chars` optionally tightens the per-call
@@ -1054,7 +1361,10 @@ struct FileReadTool: OsaurusTool {
         let maxChars = max(coerceInt(args["max_chars"]) ?? 0, 0)
         let startLine: Int
         let endLine: Int
-        if tailLines > 0 {
+        if let pageRange {
+            startLine = pageRange.lowerBound
+            endLine = pageRange.upperBound
+        } else if tailLines > 0 {
             endLine = lines.count
             startLine = max(1, lines.count - tailLines + 1)
         } else {
@@ -1177,6 +1487,13 @@ struct FileReadTool: OsaurusTool {
             // wrong-answer retry loop.
             "line_format": "each line is `<line number>|<content>`; content starts after the first `|`",
             "path": relativePath,
+            // Self-describing provenance: `format` is the file type that
+            // was opened, `source` says whether the lines are the file's
+            // own bytes or a text layer extracted from a document. Without
+            // this a PDF read is indistinguishable from a `.txt` read and
+            // the model reasons about "line 12 of the file" literally.
+            "format": content.format,
+            "source": content.source.rawValue,
             "start_line": validStart,
             "end_line": lastLineIncluded,
             "total_lines": lines.count,
@@ -1190,6 +1507,15 @@ struct FileReadTool: OsaurusTool {
         if let continuationStart {
             result["next_start_line"] = continuationStart
             result["next_end_line"] = validEnd
+        }
+        for (key, value) in content.counts {
+            result[key] = value
+        }
+        if pageRange != nil, let pagesSpec {
+            result["pages_requested"] = pagesSpec
+        }
+        if let note = content.note {
+            result["note"] = note
         }
         // Anti-paging guard: a model on chunk 2+ of a file too large to
         // ever fit is usually sequentially paging the whole thing through
@@ -1240,7 +1566,7 @@ struct FileReadTool: OsaurusTool {
         // dropped the trailing newline, failing a byte-for-byte check by one
         // byte). Only stated when the read actually reached the end of file.
         if content.rawRead?.truncatedByByteLimit != true {
-            result["ends_with_newline"] = content.text.hasSuffix("\n")
+            result["ends_with_newline"] = content.text.last?.isNewline == true
         }
         if let partialLine {
             result["partial_line"] = partialLine
@@ -1256,6 +1582,95 @@ struct FileReadTool: OsaurusTool {
         return ToolEnvelope.success(
             tool: name,
             result: result
+        )
+    }
+
+    /// Image branch. When the running surface can carry an image to a
+    /// vision model (`ChatExecutionContext.toolResultImagesEnabled`), the
+    /// bytes are bounded, spilled to `AttachmentBlobStore`, and referenced
+    /// from a `kind: "image"` envelope that `ToolResultMediaBridge` turns
+    /// into a multimodal tool message. Otherwise Vision OCR recognises the
+    /// text so a text-only model still reads the picture; an image with no
+    /// recognisable text throws the `.image` binary envelope.
+    private func readImage(
+        fileURL: URL,
+        relativePath: String,
+        ext: String
+    ) async throws -> ImageReadOutcome {
+        let loaded: FileReadImageSupport.LoadedImage
+        do {
+            loaded = try await Task.detached(priority: .userInitiated) {
+                try FileReadImageSupport.load(url: fileURL)
+            }.value
+        } catch FileReadImageSupport.LoadError.tooLarge(let bytes) {
+            throw FolderToolError.operationFailed(
+                "'\(relativePath)' is a \(bytes / (1024 * 1024)) MB image, above the "
+                    + "\(FileReadImageSupport.maxSourceBytes / (1024 * 1024)) MB limit file_read attaches or OCRs. "
+                    + "Downscale it first (e.g. `sips -Z 2048` via shell_run)."
+            )
+        } catch {
+            // Not decodable as an image after all (mislabelled bytes): let
+            // the ordinary path read UTF-8 source or raise the binary error.
+            return .notAnImage
+        }
+        try Task.checkCancellation()
+
+        let format =
+            loaded.mimeSubtype == "jpeg" && ext != "jpg" && ext != "jpeg" && !loaded.downscaled
+            ? loaded.mimeSubtype : (ext.isEmpty ? loaded.mimeSubtype : ext)
+        let dimensions = "\(loaded.pixelWidth)x\(loaded.pixelHeight)"
+
+        if ChatExecutionContext.toolResultImagesEnabled {
+            let hash: String
+            do {
+                hash = try AttachmentBlobStore.write(loaded.data)
+            } catch {
+                throw FolderToolError.operationFailed(
+                    "Could not stage the image for the model: \(error.localizedDescription)"
+                )
+            }
+            var text =
+                "Image \(relativePath) (\(dimensions), \(format.uppercased()), \(loaded.sourceBytes) bytes) "
+                + "is attached to this tool result and visible to you as an image. Describe or analyse it directly; "
+                + "do not call a shell tool or OCR to inspect it."
+            if loaded.downscaled {
+                text += " It was downscaled to \(loaded.pixelWidth)x\(loaded.pixelHeight) JPEG for transport."
+            }
+            let result: [String: Any] = [
+                "kind": "image",
+                "path": relativePath,
+                "format": format,
+                "source": "image",
+                "width": loaded.pixelWidth,
+                "height": loaded.pixelHeight,
+                "bytes": loaded.sourceBytes,
+                "image_ref": [
+                    "hash": hash,
+                    "byte_count": loaded.data.count,
+                    "mime": "image/\(loaded.mimeSubtype)",
+                ],
+                "text": text,
+            ]
+            return .attached(ToolEnvelope.success(tool: name, result: result))
+        }
+
+        let lines = await FileReadImageSupport.recognizeTextLines(in: loaded.data)
+        try Task.checkCancellation()
+        guard !lines.isEmpty else {
+            throw Self.binaryError(path: relativePath, ext: ext, detail: .image)
+        }
+        return .recognizedText(
+            LoadedFileContent(
+                text: lines.joined(separator: "\n"),
+                rawRead: nil,
+                format: format,
+                source: .ocrText,
+                counts: ["width": loaded.pixelWidth, "height": loaded.pixelHeight],
+                note:
+                    "The active model cannot view images, so these lines are OCR text recognised in the "
+                    + "\(dimensions) image (reading order is approximate; layout, colours, and non-text "
+                    + "content are not represented)."
+            )
         )
     }
 
@@ -1278,28 +1693,33 @@ struct FileReadTool: OsaurusTool {
         ext: String
     ) async throws -> LoadedFileContent {
         if ext == "pdf" {
-            return LoadedFileContent(
-                text: try await extractPDFTextLayer(
-                    url: url,
-                    relativePath: relativePath,
-                    ext: ext
-                ),
-                rawRead: nil
+            return try await extractPDFTextLayer(
+                url: url,
+                relativePath: relativePath,
+                ext: ext
+            )
+        }
+
+        if case .unsupportedDocument(let family) = WorkspaceFileFormatPolicy.readSupport(for: ext) {
+            // Recognised family, no adapter: say so precisely instead of
+            // falling through to a "could not be parsed" or binary message.
+            throw Self.binaryError(
+                path: relativePath,
+                ext: ext,
+                detail: .unsupportedFormat(family: family)
             )
         }
 
         if WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) {
-            DocumentAdaptersBootstrap.registerBuiltIns()
-            guard DocumentParser.canParse(url: url) else {
+            DocumentAdaptersBootstrap.registerBuiltIns(registry: documentRegistry)
+            guard let adapter = documentRegistry.adapter(for: url) else {
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
             }
-            return LoadedFileContent(
-                text: try await extractRichDocumentText(
-                    url: url,
-                    relativePath: relativePath,
-                    ext: ext
-                ),
-                rawRead: nil
+            return try await extractRichDocumentText(
+                adapter: adapter,
+                url: url,
+                relativePath: relativePath,
+                ext: ext
             )
         }
 
@@ -1324,19 +1744,132 @@ struct FileReadTool: OsaurusTool {
             if DocumentParser.isImageFile(url: url) {
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .image)
             }
-            DocumentAdaptersBootstrap.registerBuiltIns()
-            if DocumentParser.canParse(url: url) {
-                return LoadedFileContent(
-                    text: try await extractRichDocumentText(
-                        url: url,
-                        relativePath: relativePath,
-                        ext: ext
-                    ),
-                    rawRead: nil
+            DocumentAdaptersBootstrap.registerBuiltIns(registry: documentRegistry)
+            if let adapter = documentRegistry.adapter(for: url),
+                adapter.formatId != PlainTextAdapter().formatId,
+                !adapter.formatId.hasPrefix("csv")
+            {
+                return try await extractRichDocumentText(
+                    adapter: adapter,
+                    url: url,
+                    relativePath: relativePath,
+                    ext: ext
                 )
             }
             throw error
         }
+    }
+
+    /// Payload for a PDF text layer: the page-marked text plus the counts
+    /// and provenance note that keep a small model from reading the `N|`
+    /// gutter as the form's own line numbers (observed live: a 4B model
+    /// tried to reconcile "line 9" of the gutter with "line 9" of a 1040).
+    /// `pages` is the document page count (same meaning as the `file_write`
+    /// payload); pages without a text layer are visible as numbering gaps.
+    private static func pdfTextLayerContent(_ document: StructuredDocument) -> LoadedFileContent {
+        let text = document.textFallback
+        let pageCount =
+            text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first
+            .flatMap { PDFAdapter.pageMarker(fromHeaderLine: String($0))?.pageCount } ?? 0
+        let pagesWithText = (document.representation.underlying as? PDFDocumentRepresentation)?.pages.count ?? 0
+        let layoutOrdered = PDFAdapter.layoutOrderedPageIndexes(in: document).count
+        let hidden = document.security.findings.first { $0.kind == .hiddenContent }
+
+        var note = "Text layer of a \(pageCount)-page PDF"
+        if pagesWithText < pageCount {
+            note += " (\(pageCount - pagesWithText) page(s) have no text layer and are absent)"
+        }
+        note +=
+            ". Gutter numbers are line numbers of the extracted text, not the document's own line or field numbers; "
+            + "`--- Page N of \(pageCount) ---` lines mark page boundaries; pass `pages` (e.g. \"3\" or \"3-5\") to read a page range."
+        if layoutOrdered > 0 {
+            note +=
+                " \(layoutOrdered) page(s) were rebuilt from layout geometry so each label and its value share a line "
+                + "(gaps of three spaces separate columns)."
+        }
+        if let hidden {
+            note += " " + hidden.message
+        }
+        return LoadedFileContent(
+            text: text,
+            rawRead: nil,
+            format: "pdf",
+            source: .extractedText,
+            counts: [
+                "pages": pageCount,
+                "pages_with_text": pagesWithText,
+                "pages_layout_ordered": layoutOrdered,
+            ],
+            note: note
+        )
+    }
+
+    /// Resolves a `pages` request (`"3"`, `"3-5"`) against the page headers
+    /// in the extracted lines. Returns the 1-based inclusive gutter line
+    /// range covering those pages (header line included, trailing blank
+    /// separator excluded), or `nil` when none of the requested pages has
+    /// a text layer. Throws `PagesArgumentError` for malformed or
+    /// out-of-range requests.
+    static func lineRange(forPages spec: String, in lines: [String]) throws -> ClosedRange<Int>? {
+        var headers: [(page: Int, line: Int, pageCount: Int)] = []
+        for (index, line) in lines.enumerated() {
+            if let marker = PDFAdapter.pageMarker(fromHeaderLine: line) {
+                headers.append((marker.page, index + 1, marker.pageCount))
+            }
+        }
+        let pageCount = headers.first?.pageCount ?? 0
+        let requested = try Self.parsePagesArgument(spec, pageCount: pageCount)
+
+        let hits = headers.filter { requested.contains($0.page) }
+        guard let first = hits.first, let last = hits.last else { return nil }
+        let start = first.line
+        var end = lines.count
+        if let following = headers.first(where: { $0.line > last.line }) {
+            end = following.line - 1
+            // Pages are separated by a blank line; leave it to the next page.
+            if end > start, lines[end - 1].isEmpty { end -= 1 }
+        }
+        return start ... max(start, end)
+    }
+
+    enum PagesArgumentError: Error, Equatable {
+        case malformed
+        case notContiguous
+        case outOfRange(pageCount: Int)
+
+        var expected: String {
+            switch self {
+            case .malformed, .notContiguous:
+                return "one page or a contiguous range of PDF pages, e.g. \"3\" or \"3-5\" (make separate calls for non-adjacent pages)"
+            case .outOfRange(let pageCount):
+                return "page numbers between 1 and \(pageCount) (the PDF has \(pageCount) page(s))"
+            }
+        }
+    }
+
+    static func parsePagesArgument(_ spec: String, pageCount: Int) throws -> ClosedRange<Int> {
+        let trimmed = spec.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { throw PagesArgumentError.malformed }
+        if trimmed.contains(",") { throw PagesArgumentError.notContiguous }
+        let parts = trimmed.split(separator: "-", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let range: ClosedRange<Int>
+        switch parts.count {
+        case 1:
+            guard let page = Int(parts[0]) else { throw PagesArgumentError.malformed }
+            range = page ... page
+        case 2:
+            guard let lower = Int(parts[0]), let upper = Int(parts[1]), lower <= upper else {
+                throw PagesArgumentError.malformed
+            }
+            range = lower ... upper
+        default:
+            throw PagesArgumentError.malformed
+        }
+        guard range.lowerBound >= 1, pageCount == 0 || range.upperBound <= pageCount else {
+            throw PagesArgumentError.outOfRange(pageCount: pageCount)
+        }
+        return range
     }
 
     /// Extract a PDF text layer without the synchronous `DocumentParser`
@@ -1347,19 +1880,39 @@ struct FileReadTool: OsaurusTool {
         url: URL,
         relativePath: String,
         ext: String
-    ) async throws -> String {
+    ) async throws -> LoadedFileContent {
         do {
             let document = try await PDFAdapter().parse(
                 url: url,
                 sizeLimit: Int64(DocumentParser.maxFileSize)
             )
             try Task.checkCancellation()
-            return document.textFallback
+            return Self.pdfTextLayerContent(document)
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as DocumentAdapterError {
             switch error {
             case .emptyContent:
+                // No text layer: scanned pages. OCR a bounded number of
+                // rendered pages so the document is still readable here
+                // instead of bouncing the model to a shell tool.
+                if let ocr = await FileReadImageSupport.ocrImageOnlyPDF(url: url) {
+                    try Task.checkCancellation()
+                    var note =
+                        "This PDF has no text layer; the lines are OCR text recognised from "
+                        + "\(ocr.pagesScanned) rendered page(s) (reading order approximate)."
+                    if ocr.pagesScanned < ocr.totalPages {
+                        note += " Only the first \(ocr.pagesScanned) of \(ocr.totalPages) pages were scanned."
+                    }
+                    return LoadedFileContent(
+                        text: ocr.text,
+                        rawRead: nil,
+                        format: "pdf",
+                        source: .ocrText,
+                        counts: ["pages": ocr.totalPages, "pages_scanned": ocr.pagesScanned],
+                        note: note
+                    )
+                }
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .imageOnlyPdf)
             case .cancelled:
                 throw CancellationError()
@@ -1369,39 +1922,64 @@ struct FileReadTool: OsaurusTool {
         }
     }
 
-    /// Run the non-PDF `DocumentParser.parse(url:)` compatibility path on a
-    /// detached task so the
-    /// parser's internal `runBlocking` semaphore can't starve the
-    /// cooperative thread pool. Matches the production pattern in
-    /// `FloatingInputCard`.
+    /// Run a registered non-PDF document adapter directly (async, so the
+    /// adapter's own cancellation checks reach the owning task) and fold
+    /// the structural counts it already computed into the payload.
     private func extractRichDocumentText(
+        adapter: any DocumentFormatAdapter,
         url: URL,
         relativePath: String,
         ext: String
-    ) async throws -> String {
-        let attachment: Attachment
+    ) async throws -> LoadedFileContent {
+        let document: StructuredDocument
         do {
-            attachment = try await Task.detached(priority: .userInitiated) {
-                try DocumentParser.parse(url: url)
-            }.value
-        } catch let err as DocumentParser.ParseError {
-            switch err {
+            document = try await adapter.parse(
+                url: url,
+                sizeLimit: DocumentLimits.limit(forFormatId: adapter.formatId)
+            )
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as DocumentAdapterError {
+            switch error {
             case .emptyContent:
                 // Empty rich doc — surface as empty string; downstream
                 // slicing produces the same "(empty)" output the plain-
                 // text path would for a zero-byte `.txt`.
-                return ""
-            case .unsupportedFormat, .readFailed, .fileTooLarge:
+                return LoadedFileContent(
+                    text: "",
+                    rawRead: nil,
+                    format: Self.formatLabel(ext: ext, adapter: adapter),
+                    source: .extractedText
+                )
+            case .cancelled:
+                throw CancellationError()
+            case .unsupportedFormat, .sizeLimitExceeded, .readFailed, .writeFailed:
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
             }
+        } catch {
+            throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
         }
-        if case .document(_, let text, _) = attachment.kind {
-            return text
+        var counts: [String: Int] = [:]
+        if let presentation = document.representation.underlying as? PresentationDocument {
+            counts["slides"] = presentation.slides.count
         }
-        // Image-only PDF (DocumentParser falls back to per-page image
-        // attachments). We can't surface those through file_read — emit
-        // the binary envelope so the model pivots instead of retrying.
-        throw Self.binaryError(path: relativePath, ext: ext, detail: .imageOnlyPdf)
+        return LoadedFileContent(
+            text: document.textFallback,
+            rawRead: nil,
+            format: Self.formatLabel(ext: ext, adapter: adapter),
+            source: .extractedText,
+            counts: counts
+        )
+    }
+
+    /// Payload `format` id: the file extension when it is a known document
+    /// extension (`docx`, `pptx`), else the adapter's id (`richdoc`).
+    private static func formatLabel(ext: String, adapter: any DocumentFormatAdapter) -> String {
+        if !ext.isEmpty, WorkspaceFileFormatPolicy.readSupport(for: ext).isDocument {
+            return ext
+        }
+        return adapter.formatId
     }
 
     private static func loadBoundedRawText(
@@ -1473,7 +2051,9 @@ struct FileReadTool: OsaurusTool {
                 byteLimit: Self.rawReadByteLimit,
                 fileSize: fileSize,
                 truncatedByByteLimit: truncatedByByteLimit
-            )
+            ),
+            format: ext.isEmpty ? "text" : ext,
+            source: .rawText
         )
     }
 
@@ -1525,12 +2105,18 @@ struct FileReadTool: OsaurusTool {
         return "\(bytes) bytes"
     }
 
+    struct WorkbookPreview {
+        let text: String
+        let sheetCount: Int
+        let sheetNames: [String]
+    }
+
     private func workbookPreviewIfAvailable(
         fileURL: URL,
         relativePath: String,
         sheetName: String?,
         args: [String: Any]
-    ) async throws -> String? {
+    ) async throws -> WorkbookPreview? {
         guard let adapter = workbookAdapter(for: fileURL) else { return nil }
         let document = try await adapter.parse(
             url: fileURL,
@@ -1550,7 +2136,7 @@ struct FileReadTool: OsaurusTool {
         let startRow = max(1, coerceInt(args["start_line"]) ?? 1)
         let endRow = max(startRow, coerceInt(args["end_line"]) ?? Int.max)
 
-        return Self.renderWorkbookPreview(
+        let text = Self.renderWorkbookPreview(
             document: document,
             workbook: workbook,
             relativePath: relativePath,
@@ -1559,6 +2145,11 @@ struct FileReadTool: OsaurusTool {
             endRow: endRow,
             maxRows: maxRows,
             maxColumns: maxColumns
+        )
+        return WorkbookPreview(
+            text: text,
+            sheetCount: workbook.sheets.count,
+            sheetNames: Array(workbook.sheets.map(\.name).prefix(50))
         )
     }
 
@@ -1734,13 +2325,16 @@ struct FileReadTool: OsaurusTool {
 struct FileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
-        "Create, overwrite, or append to a UTF-8 text file — always pass `path` (that exact key) as the FIRST argument, before `content`. "
+        "Create, overwrite, or append to a text file, or generate a document by extension — always pass `path` (that exact key) as the FIRST argument, before `content`. "
         + "Parent directories are created automatically. You MUST provide the file contents in the "
-        + "`content` parameter. Use `mode: \"append\"` for any additive change so existing content remains intact. "
-        + "For a large file, keep calls bounded: write the first chunk normally, "
-        + "then pass `mode: \"append\"` for later chunks. Pass `dry_run: true` to preview the diff and risk warnings without "
-        + "writing. Binary document/package extensions such as `.docx`, `.xlsx`, `.pdf`, and `.pptx` "
-        + "are rejected — write UTF-8 formats such as Markdown/HTML/CSV/TSV instead. "
+        + "`content` parameter. Text/code of any extension is written as UTF-8. Documents are generated from text: "
+        + "`.xlsx` from CSV/TSV rows or JSON `{\"sheets\":[{\"name\":..,\"rows\":[[..]]}]}`; `.docx` and `.pdf` from Markdown or HTML; "
+        + "`.pptx` from Markdown (each `#`/`##` heading starts a slide, the lines below become its bullets). "
+        + "Legacy formats (.doc/.xls/.ppt/.key/…) are not supported. To change part of an existing .docx/.xlsx/.pptx/.pdf, "
+        + "use `file_edit` `operations` instead of regenerating it (that keeps its formatting). "
+        + "Use `mode: \"append\"` for any additive change to a text file so existing content remains intact "
+        + "(documents are regenerated whole; append is refused). For a large text file, keep calls bounded: write the first chunk normally, "
+        + "then pass `mode: \"append\"` for later chunks. Pass `dry_run: true` to preview the diff (text) or the document summary without writing. "
         + "For runnable code, a successful write proves only persistence; run an available check before claiming it works. "
         + "Example: {\"path\": \"notes/summary.md\", \"content\": \"# Summary\\n...\"}"
     let parameters: JSONValue? = .object([
@@ -1755,14 +2349,15 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 "type": .string("string"),
                 "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
                 "description": .string(
-                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
+                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more). "
+                        + "For `.xlsx`: CSV/TSV rows or JSON `{\"sheets\":[{\"name\",\"rows\"}]}`; for `.docx`/`.pdf`: Markdown or HTML."
                 ),
             ]),
             "mode": .object([
                 "type": .string("string"),
                 "enum": .array([.string("overwrite"), .string("append")]),
                 "description": .string(
-                    "Write mode (default: overwrite). Use append for additive changes or later chunks."
+                    "Write mode (default: overwrite). Use append for additive changes or later chunks of a text file; generated documents are always regenerated whole."
                 ),
             ]),
             "dry_run": .object([
@@ -1778,11 +2373,21 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
+    var parameterOrder: [String]? { ["path", "content", "mode", "dry_run"] }
+
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
 
     private let fixedRootPath: URL?
+    private let documentRegistry: DocumentFormatRegistry
+    /// Tool name stamped on document-route envelopes when this instance
+    /// serves another tool (`sandbox_write_file` on the share route).
+    fileprivate var envelopeToolName: String? = nil
 
-    init(rootPath: URL? = nil) {
+    init(rootPath: URL? = nil, documentRegistry: DocumentFormatRegistry = .shared) {
         self.fixedRootPath = rootPath
+        self.documentRegistry = documentRegistry
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -1840,6 +2445,17 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         if combinedFileRoute(path: relativePath) == .sandbox,
             let bridge = ChatExecutionContext.sandboxReadBridge
         {
+            // Generated documents (.xlsx/.docx/.pdf) under the VirtioFS
+            // share are rendered host-side; the bridge only carries text.
+            if let served = try await Self.writeDocumentToWorkspaceShare(
+                path: relativePath,
+                home: bridge.home,
+                content: content,
+                mode: mode,
+                dryRun: dryRun
+            ) {
+                return served
+            }
             if dryRun {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
@@ -1873,6 +2489,20 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 tool: name
             )
         }
+        // Document generation by extension (.xlsx / .docx / .pdf) — the
+        // content is CSV/TSV/JSON rows or Markdown/HTML, not the bytes.
+        if let target = FileWriteDocumentRouting.target(forExtension: fileURL.pathExtension.lowercased()) {
+            return try await writeDocument(
+                target: target,
+                content: content,
+                mode: mode,
+                dryRun: dryRun,
+                relativePath: relativePath,
+                fileURL: fileURL,
+                rootPath: rootPath
+            )
+        }
+
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
@@ -1925,17 +2555,8 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         // Write content
         try proposedContent.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        if let sessionId = ChatExecutionContext.currentSessionId {
-            let operation = FileOperation(
-                type: previousContent == nil ? .create : .write,
-                path: relativePath,
-                previousContent: previousContent,
-                sessionId: sessionId,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: rootPath.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            preview.payload["operation_id"] = operation.id.uuidString
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            preview.payload["operation_id"] = setId.uuidString
         }
         preview.payload["file_reference"] = [
             "kind": "workspace_file",
@@ -1948,6 +2569,257 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             result: preview.payload,
             warnings: preview.warnings
         )
+    }
+
+    /// Host-side generated-document write for a sandbox path under the
+    /// `/workspace` share (combined mode and VM-only mode). Returns `nil`
+    /// when the extension is not a generated document or the path is not a
+    /// share path — the caller falls back to the text bridge. `dry_run`
+    /// works here (unlike the bridge) because the preview is host-side.
+    static func writeDocumentToWorkspaceShare(
+        path: String,
+        home: String,
+        content: String,
+        mode: String,
+        dryRun: Bool,
+        tool: String = "file_write"
+    ) async throws -> String? {
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        guard let target = FileWriteDocumentRouting.target(forExtension: ext) else { return nil }
+        guard let resolved = WorkspaceShareRoute.resolveForWrite(path: path, home: home) else {
+            // A generated document that the host cannot reach must never
+            // fall through to the text bridge — that would write CSV or
+            // Markdown bytes into a `.xlsx`/`.docx`/`.pdf`.
+            return documentShareUnavailableRejection(path: path, fileExtension: ext, tool: tool)
+        }
+        var writer = FileWriteTool(rootPath: WorkspaceShareRoute.shareRoot)
+        writer.envelopeToolName = tool
+        return try await writer.writeDocument(
+            target: target,
+            content: content,
+            mode: mode,
+            dryRun: dryRun,
+            relativePath: resolved.sandboxPath,
+            fileURL: resolved.hostURL,
+            rootPath: WorkspaceShareRoute.shareRoot,
+            area: "sandbox"
+        )
+    }
+
+    /// `content` parsed as a `file_edit` operations array: a JSON array
+    /// (optionally wrapped as `{"operations": [...]}`) whose every element
+    /// is an object with a string `op` that the document editors know.
+    /// Anything else — including a bare array of rows for `.xlsx` — is nil.
+    static func fileEditOperationsPayload(_ content: String) -> [[String: Any]]? {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("[") || trimmed.hasPrefix("{"),
+            let data = trimmed.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data)
+        else { return nil }
+        let list: [[String: Any]]?
+        if let array = object as? [[String: Any]] {
+            list = array
+        } else if let dict = object as? [String: Any], dict.count == 1 {
+            list = dict["operations"] as? [[String: Any]]
+        } else {
+            list = nil
+        }
+        guard let list, !list.isEmpty else { return nil }
+        let known = Set(DocumentEditService.allOperationNames)
+        guard list.allSatisfy({ ($0["op"] as? String).map(known.contains) == true }) else { return nil }
+        return list
+    }
+
+    static func compactJSON(_ value: Any) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: .osaurusCanonical),
+            let text = String(data: data, encoding: .utf8)
+        else { return "[…]" }
+        return text.count > 400 ? String(text.prefix(400)) + "…" : text
+    }
+
+    /// Rejection for a generated-document write whose sandbox path the host
+    /// cannot serve (outside `/workspace`, rejected by the sanitizer, or the
+    /// share root is missing). Names the working alternatives instead of
+    /// letting text bytes land in a document extension.
+    static func documentShareUnavailableRejection(
+        path: String,
+        fileExtension ext: String,
+        tool: String
+    ) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "Refused to write '\(path)': .\(ext) documents are generated host-side and this path is not "
+                + "under the `\(WorkspaceShareRoute.mountPoint)` share the host can reach. Write the document "
+                + "under your sandbox home or `\(WorkspaceShareRoute.mountPoint)/shared`, or write the same "
+                + "content as Markdown/CSV text here.",
+            field: "path",
+            expected: "a `.\(ext)` path under `\(WorkspaceShareRoute.mountPoint)/...`, or a text extension",
+            tool: tool,
+            retryable: false,
+            metadata: ["extension": ext]
+        )
+    }
+
+    /// Generated-document route for `.xlsx` / `.docx` / `.pdf`. Builds the
+    /// document from the model's text and previews it on `dry_run`. The
+    /// file history journal snapshots the previous bytes, so `file_undo`
+    /// restores an overwritten package exactly.
+    private func writeDocument(
+        target: FileWriteDocumentRouting.Target,
+        content: String,
+        mode: String,
+        dryRun: Bool,
+        relativePath: String,
+        fileURL: URL,
+        rootPath: URL,
+        area: String = "workspace"
+    ) async throws -> String {
+        let name = envelopeToolName ?? self.name
+        let ext = target.rawValue
+        if mode == "append" {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`mode: \"append\"` is not supported for generated .\(ext) documents — the file is rendered "
+                    + "as a whole. Read the current content with `file_read`, then call file_write once with the "
+                    + "complete new content (\(target.contentHint)).",
+                field: "mode",
+                expected: "omit `mode` (or `write`) for .\(ext); documents are regenerated whole",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        // `content` that is a `file_edit` operations array (`[{"op":
+        // "fill_form", …}]`) is an edit request typed into the wrong tool,
+        // not a document body. Rendering it would overwrite the document
+        // (a filled PDF form became one line of JSON text — Raptor no-think
+        // `fill-pdf-form-in-place`, twice in one run), so it is refused
+        // with the exact call to make instead.
+        if let operations = Self.fileEditOperationsPayload(content) {
+            let opNames = operations.compactMap { $0["op"] as? String }
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`content` is a list of `file_edit` operations (\(opNames.joined(separator: ", "))), not a document body — writing it would replace '\(relativePath)' with that JSON as text. "
+                    + "Call `file_edit` with {\"path\": \"\(relativePath)\", \"operations\": \(Self.compactJSON(operations))} instead; the file was not changed.",
+                field: "content",
+                expected: target.contentHint,
+                tool: name,
+                retryable: false,
+                metadata: [
+                    "extension": ext,
+                    "retry_with_tool": "file_edit",
+                    "retry_with": ["path": relativePath, "operations": operations],
+                ]
+            )
+        }
+
+        let plan: FileWriteDocumentRouting.Plan
+        do {
+            plan = try FileWriteDocumentRouting.plan(
+                target: target,
+                content: content,
+                filename: fileURL.lastPathComponent
+            )
+        } catch let error as FileWriteDocumentRouting.RoutingError {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Cannot build the .\(ext) document from `content`: \(error.localizedDescription)",
+                field: "content",
+                expected: target.contentHint,
+                tool: name,
+                retryable: false,
+                metadata: ["extension": ext]
+            )
+        }
+
+        let existed = FileManager.default.fileExists(atPath: fileURL.path)
+        let parentDir = fileURL.deletingLastPathComponent()
+        let createsParentDirectories = !FileManager.default.fileExists(atPath: parentDir.path)
+
+        var payload: [String: Any] = [
+            "path": relativePath,
+            "format": ext,
+            "action": existed ? "overwrite" : "create",
+            "input": plan.summary["input"] ?? "",
+        ]
+        for (key, value) in plan.summary where key != "input" {
+            payload[key] = value
+        }
+        var warnings: [String] = []
+        if existed {
+            // Only promise an undo when this call is inside a journal capture.
+            warnings.append(
+                ChatExecutionContext.currentChangeSetId != nil
+                    ? "Overwrites the existing .\(ext) at '\(relativePath)' (previous bytes are captured for `file_undo`)."
+                    : "Overwrites the existing .\(ext) at '\(relativePath)'."
+            )
+        }
+        if createsParentDirectories {
+            warnings.append("Creates missing parent directories for '\(relativePath)'.")
+        }
+
+        if dryRun {
+            payload["kind"] = "document_write_preview"
+            payload["dry_run"] = true
+            payload["applied"] = false
+            payload["note"] =
+                "Preview only — nothing was written. Call again without `dry_run` to generate the .\(ext)."
+            return ToolEnvelope.success(tool: name, result: payload, warnings: warnings.isEmpty ? nil : warnings)
+        }
+
+        let written: FileWriteDocumentRouting.Written
+        do {
+            written = try await FileWriteDocumentRouting.write(plan, to: fileURL, registry: documentRegistry)
+        } catch let error as FileWriteDocumentRouting.RoutingError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Failed to generate '\(relativePath)': \(error.localizedDescription)",
+                tool: name,
+                retryable: false,
+                metadata: ["extension": ext]
+            )
+        } catch let error as WorkbookWorkflowError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Failed to generate '\(relativePath)': \(error.localizedDescription)",
+                tool: name,
+                retryable: false,
+                metadata: ["extension": ext]
+            )
+        } catch let error as DocumentAdapterError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Failed to generate '\(relativePath)': \(error.localizedDescription)",
+                tool: name,
+                retryable: false,
+                metadata: ["extension": ext]
+            )
+        }
+
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            payload["operation_id"] = setId.uuidString
+        }
+
+        payload["kind"] = "document_write_result"
+        payload["applied"] = true
+        payload["bytes_written"] = written.bytesWritten
+        for (key, value) in written.extra {
+            payload[key] = value
+        }
+        payload["file_reference"] = [
+            "kind": area == "sandbox" ? "sandbox_file" : "workspace_file",
+            "path": relativePath,
+            "exportable": true,
+        ]
+        payload["area"] = area
+        payload["verification"] =
+            "Generated .\(ext). Open it with `file_read` to confirm the content reads back as intended."
+        payload["share_hint"] =
+            "To surface this document as a clickable card in chat, call `share_artifact` with this path."
+        return ToolEnvelope.success(tool: name, result: payload, warnings: warnings.isEmpty ? nil : warnings)
     }
 }
 
@@ -1967,12 +2839,21 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "`old_string` must uniquely match exactly one "
         + "location in the file — include surrounding context lines if needed to ensure uniqueness. "
         + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
-        + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "
+        + "`file_read` output. Small drift is tolerated when the match stays unique — indentation, tabs vs spaces, "
+        + "blank-line count, curly vs straight quotes — and the result reports `match_strategy` (\"exact\" when it "
+        + "matched byte-for-byte); the file's own whitespace is kept for unchanged lines. "
+        + "Fails if `old_string` is not found or matches multiple locations. "
         + "For repeated occurrences of the same text pass `replace_all: true` to replace every one. "
         + "For many distinct replacements pass `edits`: an array of {old_string, new_string} applied "
         + "atomically in one call — if any edit fails to match, nothing is written. Prefer one `edits` "
         + "call over many single-edit calls; for large pattern rewrites consider `shell_run` with `sed`. "
-        + "Binary document/package extensions are rejected; this tool edits UTF-8 source only. "
+        + "Documents (.docx/.xlsx/.pptx/.pdf) are edited in place with `operations` (formatting, styles, media and "
+        + "untouched content are kept): call `file_read` with `mode: \"structure\"` first to get paragraph numbers, "
+        + "cell refs, slides/shapes, or pages; on .docx/.pptx a plain old_string/new_string also works (text is "
+        + "matched across formatting runs; on .docx each line of a multi-line old_string is one paragraph and each "
+        + "line of new_string becomes a paragraph, with `## Heading` / `- bullet` lines styled like `file_write` "
+        + "Markdown — leading bullets/numbers are list formatting, not text). Other document types (.doc/.xls/.odt/…) are read with `file_read` and "
+        + "regenerated with `file_write`. "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial edit. "
         + "Pass `dry_run: true` to preview the diff without modifying the file. "
         + "Example: {\"path\": \"config.py\", \"old_string\": \"debug = True\", \"new_string\": \"debug = False\"}"
@@ -2016,6 +2897,29 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     "required": .array([.string("old_string"), .string("new_string")]),
                 ]),
             ]),
+            "operations": .object([
+                "type": .string("array"),
+                "description": .string(
+                    "Document edits for .docx/.xlsx/.pptx/.pdf, applied in order and atomically (all or nothing), each {\"op\": name, …}; `op` may be left out when the keys name a content edit (e.g. {old_string, new_string} or {cells}). "
+                        + "`sheet`, `slide`, `cells`, `page` and every other operation key go INSIDE the operation object, never at the top level of the call. "
+                        + ".docx: replace_text {old_string, new_string, replace_all?}, insert_paragraph {text, after|before, style?}, delete_paragraph {index}, "
+                        + "set_table_cell {table, row, column, text}, append_markdown {markdown}. "
+                        + "Example: {\"path\": \"brief.docx\", \"operations\": [{\"op\": \"replace_text\", \"old_string\": \"Q3\", \"new_string\": \"Q4\", \"replace_all\": true}]}. "
+                        + ".xlsx: set_cells {sheet?, cells: {\"B3\": 42, \"C3\": \"=SUM(B1:B2)\", \"D3\": null}}, insert_rows / delete_rows {sheet?, at, count?}, "
+                        + "add_sheet {name}, rename_sheet {sheet, name}, delete_sheet {sheet}. "
+                        + "Example: {\"path\": \"q3.xlsx\", \"operations\": [{\"op\": \"set_cells\", \"sheet\": \"Summary\", \"cells\": {\"B2\": 1200, \"B3\": \"=B2*1.1\"}}]}. "
+                        + ".pptx: replace_text {old_string, new_string, replace_all?, slide?}, set_slide_text {slide, shape: title|subtitle|body|number, text}, "
+                        + "duplicate_slide {slide}, delete_slide {slide}, reorder_slides {order}. "
+                        + "Example: {\"path\": \"deck.pptx\", \"operations\": [{\"op\": \"set_slide_text\", \"slide\": 2, \"shape\": \"title\", \"text\": \"Roadmap\"}]}. "
+                        + ".pdf: delete_pages {pages}, reorder_pages {order}, rotate_pages {pages?, degrees}, merge {files}, fill_form {fields: {\"Name\": \"Ada\", \"Agree\": true, \"Plan\": \"Pro\"}} (`file_read` mode \"structure\" lists form_fields with types and options), "
+                        + "add_text {page, text, x?, y?}, add_note {page, text}, highlight {text, page?}. "
+                        + "Example: {\"path\": \"intake.pdf\", \"operations\": [{\"op\": \"fill_form\", \"fields\": {\"Name\": \"Ada Lovelace\", \"Agree\": true}}]}. Numbers are 1-based."
+                ),
+                // Free-form on purpose — see
+                // `DocumentEditService.operationItemSchema` for the
+                // constrained-decoder evidence.
+                "items": DocumentEditService.operationItemSchema,
+            ]),
             "dry_run": .object([
                 "type": .string("boolean"),
                 "description": .string(
@@ -2029,6 +2933,134 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
+    /// `old_string` must precede `new_string` on the wire — see
+    /// `ToolWirePropertyOrder` for the constrained-decoder evidence.
+    var parameterOrder: [String]? {
+        ["path", "old_string", "new_string", "replace_all", "edits", "operations", "dry_run"]
+    }
+
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
+
+    /// Keys models put at the top level that belong inside an `operations`
+    /// entry, with the operation they usually mean. Guidance only.
+    static let operationKeyHints: [String: String] = [
+        "sheet": "{\"op\": \"set_cells\", \"sheet\": \"Q3\", \"cells\": {\"B2\": 42}}",
+        "cells": "{\"op\": \"set_cells\", \"cells\": {\"B2\": 42}}",
+        "slide": "{\"op\": \"replace_text\", \"slide\": 3, \"old_string\": \"old\", \"new_string\": \"new\"}",
+        "shape": "{\"op\": \"set_slide_text\", \"slide\": 2, \"shape\": \"title\", \"text\": \"…\"}",
+        "page": "{\"op\": \"add_note\", \"page\": 1, \"text\": \"…\"}",
+        "pages": "{\"op\": \"delete_pages\", \"pages\": [3]}",
+        "op": "{\"op\": \"replace_text\", \"old_string\": \"old\", \"new_string\": \"new\"}",
+        "text": "{\"op\": \"insert_paragraph\", \"text\": \"…\", \"after\": 3}",
+        "markdown": "{\"op\": \"append_markdown\", \"markdown\": \"…\"}",
+        "fields": "{\"op\": \"fill_form\", \"fields\": {\"Name\": \"…\"}}",
+        "order": "{\"op\": \"reorder_slides\", \"order\": [2, 1, 3]}",
+    ]
+
+    func argumentHint(_ property: String) -> String? {
+        guard let example = Self.operationKeyHints[property] else { return nil }
+        var hint = "`\(property)` belongs inside an `operations` entry: {\"path\": \"…\", \"operations\": [\(example)]}."
+        if property == "slide" || property == "sheet" || property == "page" {
+            hint += " A plain text swap needs no `\(property)`: top-level `old_string`/`new_string` searches the whole document."
+        }
+        return hint
+    }
+
+    /// Three narrowly documented Raptor-0.6-4B shapes are repaired before
+    /// the shared schema validator runs (nothing else about the payload
+    /// changes, and the public schema stays strict):
+    ///
+    /// 1. `edits` / `operations` sent as a JSON **string** (`"edits":
+    ///    "[{…}]"`, `edit-docx-in-place`) is decoded so the entries can be
+    ///    read below; the shared coercer would decode it later anyway.
+    /// 2. A missing top-level `path` whose value every entry carries
+    ///    identically (`{"edits": [{"path": "memo.docx", …}, {"path":
+    ///    "memo.docx", …}]}`, `edit-docx-in-place` ×3 and
+    ///    `fill-pdf-form-in-place` ×2) is hoisted; entries that disagree, or
+    ///    a call with no `path` anywhere, still get "Missing required
+    ///    property: path".
+    /// 3. Document operations under `edits` (`{"edits": [{"op": "set_cells",
+    ///    …}]}`, `edit-xlsx-in-place`, `document-drafting-revisions`) move to
+    ///    `operations`: `edits.items` requires `old_string`, so the validator
+    ///    would otherwise reject them and the model re-guesses shapes. Only an
+    ///    array in which at least one entry carries a known document `op`
+    ///    moves (text-file batches never do); `{old_string, new_string}`
+    ///    entries in the same array become `replace_text` (top-level
+    ///    `replace_all` carries over), and a real `operations` array wins.
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        Self.normalizingEditShapes(argumentsJSON)
+    }
+
+    static func normalizingEditShapes(_ argumentsJSON: String) -> String {
+        guard let data = argumentsJSON.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return argumentsJSON }
+        var changed = false
+
+        // 1. String-encoded arrays.
+        for key in ["edits", "operations"] {
+            guard let encoded = object[key] as? String,
+                let bytes = encoded.data(using: .utf8),
+                let decoded = try? JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]
+            else { continue }
+            object[key] = decoded
+            changed = true
+        }
+
+        // 2. `path` carried by every entry instead of the call. The same
+        //    resolution lives in `AgentTaskState.sharedEntryPath`, so the
+        //    loop's mutation bookkeeping (which sees the raw call) targets
+        //    the same file.
+        let topPath = (object["path"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        if topPath.isEmpty, let shared = AgentTaskState.sharedEntryPath(object) {
+            object["path"] = shared
+            for key in ["edits", "operations"] {
+                guard let entries = object[key] as? [[String: Any]] else { continue }
+                object[key] = entries.map { entry -> [String: Any] in
+                    guard let own = entry["path"] as? String,
+                        AgentTaskState.canonicalPath(own.trimmingCharacters(in: .whitespaces)) == AgentTaskState.canonicalPath(shared)
+                    else { return entry }
+                    var stripped = entry
+                    stripped.removeValue(forKey: "path")
+                    return stripped
+                }
+            }
+            changed = true
+        }
+
+        // 3. Document operations under `edits`.
+        if let edits = object["edits"] as? [[String: Any]], !edits.isEmpty {
+            let known = Set(DocumentEditService.allOperationNames)
+            func isOperation(_ entry: [String: Any]) -> Bool {
+                guard let op = entry["op"] as? String else { return false }
+                return known.contains(op)
+            }
+            func isPair(_ entry: [String: Any]) -> Bool {
+                entry["op"] == nil && entry["old_string"] is String && entry["new_string"] is String
+            }
+            let hasRealOperations = object["operations"].map { !isContentFree($0) } ?? false
+            if !hasRealOperations, edits.contains(where: isOperation), edits.allSatisfy({ isOperation($0) || isPair($0) }) {
+                let replaceAll = ArgumentCoercion.bool(object["replace_all"]) ?? false
+                object["operations"] = edits.map { entry -> [String: Any] in
+                    if isOperation(entry) { return entry }
+                    var op = entry
+                    op["op"] = "replace_text"
+                    if replaceAll, op["all"] == nil, op["replace_all"] == nil { op["all"] = true }
+                    return op
+                }
+                object.removeValue(forKey: "edits")
+                changed = true
+            }
+        }
+
+        guard changed,
+            let cleaned = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+            let text = String(data: cleaned, encoding: .utf8)
+        else { return argumentsJSON }
+        return text
+    }
 
     /// Cap on `edits` entries per call so a runaway batch can't produce an
     /// unreviewably large atomic change.
@@ -2040,9 +3072,50 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         self.fixedRootPath = rootPath
     }
 
+    /// Constrained decoders that walk the schema in declared order emit
+    /// optional collection keys as empty fillers when the model has nothing
+    /// to put in them (`"operations": []` next to a real `edits` batch, 5/5
+    /// on xAI grok-4.3; the same shape as the `"description": ""` fillers
+    /// `SchemaValidator.coerceArguments` already tolerates). An empty array,
+    /// `null` or `""` under `edits` / `operations` carries no intent, so it
+    /// is dropped whenever another edit form is present instead of being
+    /// rejected as "operations on a text file". A request that carries
+    /// *only* a filler still reaches the pointed non-empty-array error.
+    /// Fillers are content-free values: `null`, `""`, `[]`, `{}`, and
+    /// containers holding only such values (`[{}]`, `[{"op": ""}]` — the
+    /// same decoders also pad the array with an empty object once they have
+    /// opened it).
+    static func droppingEditFormFillers(_ args: [String: Any]) -> [String: Any] {
+        func isFiller(_ value: Any?) -> Bool {
+            guard let value else { return false }
+            return Self.isContentFree(value)
+        }
+        let editForms = ["edits", "operations"]
+        let fillers = editForms.filter { isFiller(args[$0]) }
+        guard !fillers.isEmpty else { return args }
+        let hasOtherForm =
+            args["old_string"] != nil
+            || editForms.contains { args[$0] != nil && !isFiller(args[$0]) }
+        guard hasOtherForm else { return args }
+        var cleaned = args
+        for key in fillers { cleaned.removeValue(forKey: key) }
+        return cleaned
+    }
+
+    /// `null`, `""`, and arrays/objects (recursively) made only of those.
+    /// Numbers and booleans are content.
+    static func isContentFree(_ value: Any) -> Bool {
+        if value is NSNull { return true }
+        if let string = value as? String { return string.isEmpty }
+        if let array = value as? [Any] { return array.allSatisfy(isContentFree) }
+        if let object = value as? [String: Any] { return object.values.allSatisfy(isContentFree) }
+        return false
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        guard case .value(let rawArgs) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let args = Self.droppingEditFormFillers(rawArgs)
 
         let pathReq = requireString(
             args,
@@ -2057,121 +3130,64 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         let dryRun = coerceBool(args["dry_run"]) ?? false
         let replaceAll = coerceBool(args["replace_all"]) ?? false
 
+        let documentExtension = URL(fileURLWithPath: relativePath).pathExtension.lowercased()
+        if DocumentEditService.isEditable(documentExtension) {
+            return try await editDocument(
+                args: args, relativePath: relativePath, ext: documentExtension,
+                dryRun: dryRun, replaceAll: replaceAll)
+        }
+        if args["operations"] != nil {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`operations` edits .docx, .xlsx, .pptx and .pdf documents. For this file use `old_string`/`new_string` (or `edits`).",
+                field: "operations",
+                expected: "old_string/new_string for text files",
+                tool: name
+            )
+        }
+
         // Resolve the requested edits: either the batch `edits` array or the
         // single `old_string`/`new_string` pair. Both funnel into one ordered
         // list so the apply loop below has a single shape.
-        var requestedEdits: [(old: String, new: String)] = []
+        let requestedEdits: [(old: String, new: String)]
         let isBatch = args["edits"] != nil
-        if isBatch {
-            guard let rawEdits = args["edits"] as? [[String: Any]], !rawEdits.isEmpty else {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message: "`edits` must be a non-empty array of {old_string, new_string} objects.",
-                    field: "edits",
-                    expected: "non-empty array of {old_string, new_string}",
-                    tool: name
-                )
-            }
-            if rawEdits.count > Self.maxBatchEdits {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "`edits` contains \(rawEdits.count) entries; the cap is \(Self.maxBatchEdits) per call. Split into multiple calls.",
-                    field: "edits",
-                    expected: "at most \(Self.maxBatchEdits) edits per call",
-                    tool: name
-                )
-            }
-            for (index, raw) in rawEdits.enumerated() {
-                // Empty `old_string` is ambiguous (same rule as the single
-                // form); empty `new_string` is the delete-the-match form.
-                guard let old = raw["old_string"] as? String, !old.isEmpty else {
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message: "`edits[\(index)].old_string` must be a non-empty string.",
-                        field: "edits",
-                        expected: "non-empty exact text for every edit's old_string",
-                        tool: name
-                    )
-                }
-                guard let new = raw["new_string"] as? String else {
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message: "`edits[\(index)].new_string` must be a string (use `\"\"` to delete the match).",
-                        field: "edits",
-                        expected: "replacement text for every edit",
-                        tool: name
-                    )
-                }
-                requestedEdits.append((old, new))
-            }
-        } else {
-            // Empty `old_string` is ambiguous — `requireString` (default
-            // `allowEmpty: false`) rejects it with a pointed envelope that
-            // matches the sandbox in-place edit (`sandbox_write_file`).
-            let oldReq = requireString(
-                args,
-                "old_string",
-                expected: "non-empty exact text that matches the target location (or pass `edits` for a batch)",
-                tool: name
-            )
-            guard case .value(let oldString) = oldReq else {
-                return oldReq.failureEnvelope ?? ""
-            }
-
-            // Empty `new_string` is the supported delete-the-match form.
-            let newReq = requireString(
-                args,
-                "new_string",
-                expected: "replacement text (use `\"\"` to delete the match)",
-                tool: name,
-                allowEmpty: true
-            )
-            guard case .value(let newString) = newReq else {
-                return newReq.failureEnvelope ?? ""
-            }
-            requestedEdits.append((oldString, newString))
+        switch parseRequestedEdits(args, tool: name) {
+        case .success(let edits): requestedEdits = edits
+        case .failureEnvelope(let envelope): return envelope
         }
 
         // Writable combined mode: an absolute `/workspace/...` path is the
         // Linux sandbox — route to the sandbox writer's in-place edit
-        // branch (`old_string` present selects it), mirroring `file_read`.
+        // branch (`old_string`/`edits` present selects it), mirroring
+        // `file_read`. The sandbox writer reads the file back through the
+        // bridge and applies the same `applyEdits` matcher host-side, so
+        // batches, `replace_all`, `dry_run` and the tolerance cascade behave
+        // identically on both routes.
         if combinedFileRoute(path: relativePath) == .sandbox,
             let bridge = ChatExecutionContext.sandboxReadBridge
         {
-            if dryRun {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "`dry_run` previews are not supported for `/workspace/...` sandbox paths — "
-                        + "edit directly, or preview host-folder paths only.",
-                    field: "dry_run",
-                    expected: "omit `dry_run` for sandbox paths",
-                    tool: name
-                )
+            // Documents are never text-edited on the sandbox route: the
+            // pivot is read (extracted) -> change the text -> regenerate whole.
+            if let rejected = WorkspaceWriteSafety.documentEditRejection(
+                path: relativePath,
+                fileExtension: URL(fileURLWithPath: relativePath).pathExtension.lowercased(),
+                toolName: name,
+                regenerateHint:
+                    "regenerate the whole document with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/TSV or JSON rows, `.pptx` from Markdown)."
+            ) {
+                return rejected
             }
-            // The sandbox writer's in-place edit branch only understands the
-            // single unique-match form; batch/replace_all stay host-only.
-            if isBatch || replaceAll {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "`edits` and `replace_all` are not supported for `/workspace/...` sandbox paths — "
-                        + "issue single old_string/new_string edits, or use `sandbox_exec` with `sed`.",
-                    field: isBatch ? "edits" : "replace_all",
-                    expected: "single old_string/new_string edit for sandbox paths",
-                    tool: name
-                )
+            var forwarded: [String: Any] = ["path": relativePath]
+            if isBatch {
+                forwarded["edits"] = requestedEdits.map { ["old_string": $0.old, "new_string": $0.new] }
+            } else {
+                forwarded["old_string"] = requestedEdits[0].old
+                forwarded["new_string"] = requestedEdits[0].new
             }
-            return try await sandboxBridgeWrite(
-                bridge,
-                tool: name,
-                args: [
-                    "path": relativePath,
-                    "old_string": requestedEdits[0].old,
-                    "new_string": requestedEdits[0].new,
-                ]
-            )
+            if replaceAll { forwarded["replace_all"] = true }
+            if dryRun { forwarded["dry_run"] = true }
+            return try await sandboxBridgeWrite(bridge, tool: name, args: forwarded)
         }
 
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
@@ -2186,10 +3202,12 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 tool: name
             )
         }
-        if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
+        if let rejected = WorkspaceWriteSafety.documentEditRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
-            toolName: name
+            toolName: name,
+            regenerateHint:
+                "regenerate the whole document with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/TSV or JSON rows, `.pptx` from Markdown)."
         ) {
             return rejected
         }
@@ -2210,54 +3228,18 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         case .failureEnvelope(let envelope):
             return envelope
         }
-        var content = originalContent
-
         // Apply every requested edit in order against the evolving content.
         // Atomic by construction: content only reaches the filesystem after
         // the whole loop succeeds, so a failing edit means nothing changed.
-        var perEditReplacements: [Int] = []
-        for (index, edit) in requestedEdits.enumerated() {
-            let label = isBatch ? "edits[\(index)].old_string" : "old_string"
-            let atomicNote = isBatch ? " No edits were applied — the batch is atomic." : ""
-            let matches = content.ranges(of: edit.old)
-            if matches.isEmpty {
-                let diagnosis = Self.noMatchDiagnosis(oldString: edit.old, content: content)
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "Could not find `\(label)` in \(relativePath). \(diagnosis)\(atomicNote)",
-                    field: "old_string",
-                    expected: "exact non-empty text present in the target file",
-                    tool: name
-                )
-            }
-            if matches.count > 1, !replaceAll {
-                // Action-first phrasing plus a machine-readable retry hint:
-                // observed live, a 9B model got the old hint ("...or pass
-                // replace_all...") buried mid-sentence, retried with
-                // `dry_run: true` instead, and abandoned the task.
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "Found \(matches.count) matches for `\(label)` in \(relativePath). "
-                        + "To replace EVERY occurrence, retry the same call with the added "
-                        + "argument \"replace_all\": true. To replace only one occurrence, "
-                        + "include more surrounding context in `old_string`. Do NOT add "
-                        + "dry_run - it only previews and changes nothing.\(atomicNote)",
-                    field: "old_string",
-                    expected: "the same call plus \"replace_all\": true (or a uniquely matching old_string)",
-                    tool: name,
-                    metadata: ["retry_with": ["replace_all": true]]
-                )
-            }
-            if replaceAll {
-                content = content.replacingOccurrences(of: edit.old, with: edit.new)
-                perEditReplacements.append(matches.count)
-            } else {
-                content.replaceSubrange(matches[0], with: edit.new)
-                perEditReplacements.append(1)
-            }
+        let applied: Self.AppliedEdits
+        switch Self.applyEdits(
+            requestedEdits, to: originalContent, replaceAll: replaceAll, isBatch: isBatch,
+            relativePath: relativePath, tool: name
+        ) {
+        case .success(let result): applied = result
+        case .failureEnvelope(let envelope): return envelope
         }
+        let content = applied.content
         var preview = WorkspaceWriteSafety.preview(
             path: relativePath,
             previousContent: originalContent,
@@ -2268,10 +3250,14 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             createsParentDirectories: false,
             fileURL: fileURL
         )
-        preview.payload["replacements"] = perEditReplacements.reduce(0, +)
+        preview.payload["replacements"] = applied.perEditReplacements.reduce(0, +)
+        preview.payload["match_strategy"] = applied.overallStrategy.rawValue
+        preview.payload["matched_lines"] = applied.matchedLineLabels
         if isBatch {
-            preview.payload["edits_applied"] = perEditReplacements
+            preview.payload["edits_applied"] = applied.perEditReplacements
+            preview.payload["edit_strategies"] = applied.perEditStrategies.map(\.rawValue)
         }
+        preview.warnings.append(contentsOf: applied.warnings)
         if dryRun {
             // Unmissable not-applied signal: observed live, a model read a
             // dry-run preview as completion and told the user "all 3
@@ -2289,18 +3275,8 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         }
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        // Log for undo parity with `file_write`. Skipped when no session.
-        if let sid = ChatExecutionContext.currentSessionId {
-            let operation = FileOperation(
-                type: .fileEdit,
-                path: relativePath,
-                previousContent: originalContent,
-                sessionId: sid,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: rootPath.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            preview.payload["operation_id"] = operation.id.uuidString
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            preview.payload["operation_id"] = setId.uuidString
         }
         preview.payload["file_reference"] = [
             "kind": "workspace_file",
@@ -2315,16 +3291,409 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         )
     }
 
+    /// In-place document edit: explicit `operations`, or old/new text
+    /// mapped onto run-aware `replace_text` for .docx/.pptx. Validated in a
+    /// staged copy before the original is swapped (see DocumentEditService).
+    private func editDocument(
+        args: [String: Any],
+        relativePath: String,
+        ext: String,
+        dryRun: Bool,
+        replaceAll: Bool
+    ) async throws -> String {
+        if combinedFileRoute(path: relativePath) == .sandbox, ChatExecutionContext.sandboxReadBridge != nil {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    (FolderToolHelpers.resolveRoot(fixed: fixedRootPath) == nil
+                        ? "In-place document edits work on host files, and this chat has no working folder — `/workspace/...` sandbox paths can't be edited in place. "
+                            + "Regenerate the document with `file_write`, or select a working folder and edit it there."
+                        : "In-place document edits work on files in the working folder, not `/workspace/...` sandbox paths. "
+                            + "Regenerate the document with `file_write`, or edit a copy in the working folder."),
+                field: "path",
+                expected: "a working-folder document path",
+                tool: name,
+                retryable: false
+            )
+        }
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
+        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
+            return FolderToolHelpers.secretWriteRefusalEnvelope(relativePath: relativePath, tool: name)
+        }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw FolderToolError.fileNotFound(relativePath)
+        }
+
+        let operations: [[String: Any]]
+        if let raw = args["operations"] {
+            guard let list = raw as? [[String: Any]], !list.isEmpty else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`operations` must be a non-empty array of {\"op\": …} objects.",
+                    field: "operations",
+                    expected: "array of operation objects",
+                    tool: name
+                )
+            }
+            operations = list
+        } else if args["old_string"] != nil || args["edits"] != nil {
+            guard ext == "docx" || ext == "pptx" else {
+                let hint =
+                    ext == "pdf"
+                    ? "PDF body text can't be rewritten in place. Edit the source document and export again, or regenerate with `file_write`; `operations` can still delete/reorder/rotate pages, fill forms, and add text boxes or highlights."
+                    : "Use `operations` with `set_cells` (e.g. {\"op\": \"set_cells\", \"cells\": {\"B3\": 42}}); `file_read` with `mode: \"structure\"` lists the cells."
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "old_string/new_string text edits aren't supported for .\(ext). \(hint)",
+                    field: "old_string",
+                    expected: "`operations` for .\(ext)",
+                    tool: name
+                )
+            }
+            // An empty `old_string` with text in `new_string` is an insert,
+            // which `replace_text` can't anchor; name the operations that can.
+            let insertHint =
+                ext == "docx"
+                ? " To add text without replacing any, use `operations`: {\"op\": \"append_markdown\", \"markdown\": \"## Heading\\n- item\"} appends styled paragraphs at the end, or {\"op\": \"insert_paragraph\", \"text\": \"…\", \"after\": N} places one after paragraph N (`file_read` mode \"structure\" numbers them)."
+                : " To add text without replacing any, use `operations` with `set_slide_text` (or `duplicate_slide` then `set_slide_text` for a new slide)."
+            var pairs: [(String, String)] = []
+            if let edits = args["edits"] as? [[String: Any]] {
+                for (index, edit) in edits.enumerated() {
+                    guard let old = edit["old_string"] as? String, !old.isEmpty, let new = edit["new_string"] as? String else {
+                        let isInsert = (edit["old_string"] as? String)?.isEmpty == true && edit["new_string"] is String
+                        return ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message: "`edits[\(index)]` needs a non-empty `old_string` and a `new_string`." + (isInsert ? insertHint : ""),
+                            field: "edits",
+                            expected: "{old_string, new_string}",
+                            tool: name
+                        )
+                    }
+                    pairs.append((old, new))
+                }
+            } else if let old = args["old_string"] as? String, !old.isEmpty, let new = args["new_string"] as? String {
+                pairs.append((old, new))
+            } else {
+                let isInsert = (args["old_string"] as? String)?.isEmpty == true && args["new_string"] is String
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Pass a non-empty `old_string` and a `new_string`." + (isInsert ? insertHint : ""),
+                    field: "old_string",
+                    expected: "document text to replace",
+                    tool: name
+                )
+            }
+            operations = pairs.map { ["op": "replace_text", "old_string": $0.0, "new_string": $0.1, "all": replaceAll] }
+        } else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    (ext == "docx" || ext == "pptx"
+                        ? "Nothing to apply: pass `old_string` + `new_string` (text is matched across runs) or `operations` "
+                        : "Pass `operations` ")
+                    + "to edit this .\(ext) (\(DocumentEditService.operationNames(for: ext).joined(separator: ", "))). "
+                    + "Call `file_read` with `mode: \"structure\"` to see what can be addressed.",
+                field: "operations",
+                expected: "`operations` array",
+                tool: name
+            )
+        }
+
+        let prepared: DocumentEditService.PreparedEdit
+        do {
+            prepared = try await DocumentEditService.prepare(
+                fileURL: fileURL,
+                displayPath: relativePath,
+                operations: operations,
+                resolvePath: { try FolderToolHelpers.resolvePath($0, rootPath: rootPath) }
+            )
+        } catch let error as DocumentEditError {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: error.message + (error.message.contains("unchanged") ? "" : " Nothing was changed."),
+                field: "operations",
+                expected: "operations valid for this document",
+                tool: name
+            )
+        }
+
+        var payload: [String: Any] = [
+            "path": relativePath,
+            "format": ext,
+            "action": "update",
+            "dry_run": dryRun,
+            "operations_applied": prepared.summaries,
+        ]
+        if let diff = prepared.diffText {
+            payload["diff"] = diff
+            payload["diff_truncated"] = prepared.diffTruncated
+        }
+        var warnings = prepared.warnings
+        if dryRun {
+            prepared.discard()
+            warnings.append(
+                "PREVIEW ONLY - nothing was written. The document is unchanged. Repeat the same call WITHOUT dry_run to apply it.")
+            return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
+        }
+        do {
+            try prepared.commit()
+        } catch let error as DocumentEditError {
+            return ToolEnvelope.failure(kind: .executionError, message: error.message, field: "path", tool: name)
+        }
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            payload["operation_id"] = setId.uuidString
+        }
+        payload["file_reference"] = [
+            "kind": "workspace_file",
+            "path": relativePath,
+            "exportable": true,
+        ]
+        return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
+    }
+
+    // MARK: - Shared text-edit application
+
+    enum RequestedEditsResult {
+        case success([(old: String, new: String)])
+        case failureEnvelope(String)
+    }
+
+    /// Validate the edit request shape — batch `edits` array or single
+    /// `old_string`/`new_string` — into one ordered list. Shared by the host
+    /// route and the sandbox writer (via `FileEditTool().parseRequestedEdits`)
+    /// so both reject malformed requests with the same envelopes. Instance
+    /// method only for the protocol's `requireString` helpers; it reads no
+    /// state.
+    func parseRequestedEdits(_ rawArgs: [String: Any], tool: String) -> RequestedEditsResult {
+        let args = Self.droppingEditFormFillers(rawArgs)
+        var requestedEdits: [(old: String, new: String)] = []
+        if args["edits"] != nil {
+            guard let rawEdits = args["edits"] as? [[String: Any]], !rawEdits.isEmpty else {
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`edits` must be a non-empty array of {old_string, new_string} objects.",
+                        field: "edits",
+                        expected: "non-empty array of {old_string, new_string}",
+                        tool: tool
+                    ))
+            }
+            if rawEdits.count > Self.maxBatchEdits {
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message:
+                            "`edits` contains \(rawEdits.count) entries; the cap is \(Self.maxBatchEdits) per call. Split into multiple calls.",
+                        field: "edits",
+                        expected: "at most \(Self.maxBatchEdits) edits per call",
+                        tool: tool
+                    ))
+            }
+            for (index, raw) in rawEdits.enumerated() {
+                // Empty `old_string` is ambiguous (same rule as the single
+                // form); empty `new_string` is the delete-the-match form.
+                guard let old = raw["old_string"] as? String, !old.isEmpty else {
+                    return .failureEnvelope(
+                        ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message: "`edits[\(index)].old_string` must be a non-empty string.",
+                            field: "edits",
+                            expected: "non-empty exact text for every edit's old_string",
+                            tool: tool
+                        ))
+                }
+                guard let new = raw["new_string"] as? String else {
+                    return .failureEnvelope(
+                        ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message: "`edits[\(index)].new_string` must be a string (use `\"\"` to delete the match).",
+                            field: "edits",
+                            expected: "replacement text for every edit",
+                            tool: tool
+                        ))
+                }
+                requestedEdits.append((old, new))
+            }
+            return .success(requestedEdits)
+        }
+
+        // Empty `old_string` is ambiguous — `requireString` (default
+        // `allowEmpty: false`) rejects it with a pointed envelope.
+        let oldReq = requireString(
+            args,
+            "old_string",
+            expected: "non-empty exact text that matches the target location (or pass `edits` for a batch)",
+            tool: tool
+        )
+        guard case .value(let oldString) = oldReq else {
+            return .failureEnvelope(oldReq.failureEnvelope ?? "")
+        }
+        guard args["new_string"] != nil else {
+            return .failureEnvelope(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`old_string` given without `new_string` — an in-place edit needs both. Use "
+                        + "`\"\"` for `new_string` to delete the match.",
+                    field: "new_string",
+                    expected: "replacement text (use `\"\"` to delete the match)",
+                    tool: tool
+                ))
+        }
+        // Empty `new_string` is the supported delete-the-match form.
+        let newReq = requireString(
+            args,
+            "new_string",
+            expected: "replacement text (use `\"\"` to delete the match)",
+            tool: tool,
+            allowEmpty: true
+        )
+        guard case .value(let newString) = newReq else {
+            return .failureEnvelope(newReq.failureEnvelope ?? "")
+        }
+        return .success([(oldString, newString)])
+    }
+
+    /// Result of applying an ordered list of edits to one file's text.
+    struct AppliedEdits {
+        let content: String
+        let perEditReplacements: [Int]
+        let perEditStrategies: [FileEditMatcher.Strategy]
+        /// `"12"` or `"12-15"` per replaced block, in file order of the
+        /// first edit that touched it.
+        let matchedLineLabels: [String]
+        /// Model-facing notes for relaxed matches (verbatim file text).
+        let warnings: [String]
+
+        /// The most relaxed strategy any edit needed.
+        var overallStrategy: FileEditMatcher.Strategy {
+            let order = FileEditMatcher.Strategy.allCases
+            return perEditStrategies.max { order.firstIndex(of: $0)! < order.firstIndex(of: $1)! } ?? .exact
+        }
+    }
+
+    enum ApplyEditsResult {
+        case success(AppliedEdits)
+        case failureEnvelope(String)
+    }
+
+    /// Apply `edits` in order to `content` with the shared tolerance
+    /// cascade. Pure: the caller decides where the result is written. Used
+    /// by the host route and the sandbox bridge so both routes have one
+    /// matching contract and one set of error envelopes.
+    static func applyEdits(
+        _ edits: [(old: String, new: String)],
+        to content: String,
+        replaceAll: Bool,
+        isBatch: Bool,
+        relativePath: String,
+        tool: String
+    ) -> ApplyEditsResult {
+        var working = content
+        var replacements: [Int] = []
+        var strategies: [FileEditMatcher.Strategy] = []
+        var lineLabels: [String] = []
+        var warnings: [String] = []
+        for (index, edit) in edits.enumerated() {
+            let label = isBatch ? "edits[\(index)].old_string" : "old_string"
+            let atomicNote = isBatch ? " No edits were applied — the batch is atomic." : ""
+            switch FileEditMatcher.apply(oldString: edit.old, newString: edit.new, to: working, replaceAll: replaceAll) {
+            case .noOp:
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message:
+                            "`\(label)` and its `new_string` are identical in \(relativePath) — there is nothing to change. "
+                            + "If the file already has the intended text, the edit is done; otherwise fix `new_string`.\(atomicNote)",
+                        field: "new_string",
+                        expected: "replacement text that differs from old_string",
+                        tool: tool
+                    )
+                )
+            case .notFound:
+                let diagnosis = Self.noMatchDiagnosis(oldString: edit.old, content: working)
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "Could not find `\(label)` in \(relativePath). \(diagnosis)\(atomicNote)",
+                        field: "old_string",
+                        expected: "exact non-empty text present in the target file",
+                        tool: tool
+                    )
+                )
+            case .ambiguous(let count, let strategy):
+                // Action-first phrasing plus a machine-readable retry hint:
+                // observed live, a 9B model got the old hint ("...or pass
+                // replace_all...") buried mid-sentence, retried with
+                // `dry_run: true` instead, and abandoned the task.
+                let how = strategy.isRelaxed ? " (matching \(strategy.explanation))" : ""
+                return .failureEnvelope(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message:
+                            "Found \(count) matches for `\(label)` in \(relativePath)\(how). "
+                            + "To replace EVERY occurrence, retry the same call with the added "
+                            + "argument \"replace_all\": true. To replace only one occurrence, "
+                            + "include more surrounding context in `old_string`. Do NOT add "
+                            + "dry_run - it only previews and changes nothing.\(atomicNote)",
+                        field: "old_string",
+                        expected: "the same call plus \"replace_all\": true (or a uniquely matching old_string)",
+                        tool: tool,
+                        metadata: ["retry_with": ["replace_all": true]]
+                    )
+                )
+            case .applied(let applied):
+                working = applied.content
+                replacements.append(applied.replacements)
+                strategies.append(applied.strategy)
+                lineLabels.append(
+                    contentsOf: applied.matchedLines.map {
+                        $0.lowerBound == $0.upperBound ? "\($0.lowerBound)" : "\($0.lowerBound)-\($0.upperBound)"
+                    }
+                )
+                if applied.strategy.isRelaxed {
+                    let where_ = applied.matchedLines.first.map { range in
+                        range.lowerBound == range.upperBound
+                            ? "line \(range.lowerBound)" : "lines \(range.lowerBound)-\(range.upperBound)"
+                    } ?? "the matched region"
+                    var note =
+                        "`\(label)` did not match the file byte-for-byte; it was matched at \(where_) "
+                        + "with \(applied.strategy.explanation). The file's own indentation, blank lines and line "
+                        + "endings were kept for unchanged lines"
+                    if applied.replacements > 1 { note += " (\(applied.replacements) occurrences)" }
+                    note += "."
+                    if let matched = applied.matchedText {
+                        note += " The file text there was:\n\(Self.boundedQuote(matched))"
+                    }
+                    warnings.append(note)
+                }
+            }
+        }
+        return .success(
+            AppliedEdits(
+                content: working,
+                perEditReplacements: replacements,
+                perEditStrategies: strategies,
+                matchedLineLabels: lineLabels,
+                warnings: warnings
+            )
+        )
+    }
+
     /// Truthful diagnosis for a 0-match `old_string`, computed against the
     /// already-loaded file content. The generic "make sure it matches"
     /// message left models re-issuing the identical failing call (observed
     /// live: grok-4.3 copied the leading space from `file_read`'s `N| `
     /// line-number formatting into `old_string` and repeated the same edit
-    /// until the iteration cap). Three checks, cheapest signal first:
+    /// until the iteration cap). Whitespace-only, blank-line and unicode
+    /// punctuation drift no longer reach this point: `FileEditMatcher`
+    /// applies those when the relaxed match is unique. Two checks remain,
+    /// cheapest signal first:
     ///   1. `N|` line-number prefixes pasted from `file_read` output.
-    ///   2. A whitespace-only mismatch — the trimmed lines match a unique
-    ///      region of the file; quote the exact file bytes to copy.
-    ///   3. A closest-line anchor — quote the real file line most similar
+    ///   2. A closest-line anchor — quote the real file line most similar
     ///      to the first non-empty `old_string` line.
     /// All hints quote VERBATIM file content (never invented text), so the
     /// recovery path stays honest.
@@ -2342,70 +3711,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         let contentLines = content.components(separatedBy: "\n")
         let trimmedOldLines = oldLines.map { $0.trimmingCharacters(in: .whitespaces) }
 
-        // 2. Whitespace-only mismatch: the trimmed old_string lines match a
-        // unique consecutive run of trimmed file lines. Quote the exact
-        // file bytes for that region so the model can copy them verbatim.
-        if !trimmedOldLines.allSatisfy({ $0.isEmpty }), trimmedOldLines.count <= contentLines.count {
-            let trimmedContentLines = contentLines.map { $0.trimmingCharacters(in: .whitespaces) }
-            var matchStarts: [Int] = []
-            for start in 0 ... (trimmedContentLines.count - trimmedOldLines.count) {
-                if Array(trimmedContentLines[start ..< start + trimmedOldLines.count]) == trimmedOldLines {
-                    matchStarts.append(start)
-                    if matchStarts.count > 1 { break }
-                }
-            }
-            if matchStarts.count == 1, let start = matchStarts.first {
-                let exact = contentLines[start ..< start + trimmedOldLines.count]
-                    .joined(separator: "\n")
-                return "Found text differing only in whitespace at line \(start + 1). "
-                    + "The exact file content there is:\n\(Self.boundedQuote(exact))\n"
-                    + "Use that exact text (including its whitespace) as `old_string`."
-            }
-        }
-
-        // 2b. Blank-line-count drift: same as check 2 but comparing only the
-        // NON-empty trimmed lines. Models routinely collapse a `\n\n\n` run
-        // to `\n\n` (observed live: a model normalized two blank lines
-        // between functions to one and re-issued the identical failing edit
-        // until its budget ran out, because check 2 requires equal line
-        // counts and check 3's single-line anchor was useless). On a unique
-        // match, quote the true file region — including its real blank
-        // lines — verbatim.
-        let oldNonEmpty = trimmedOldLines.filter { !$0.isEmpty }
-        if oldNonEmpty.count >= 2 {
-            // Indices of non-empty file lines, in file order.
-            var fileNonEmpty: [(index: Int, text: String)] = []
-            for (index, line) in contentLines.enumerated() {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty { fileNonEmpty.append((index, trimmed)) }
-            }
-            if oldNonEmpty.count <= fileNonEmpty.count {
-                var matchStarts: [Int] = []
-                for start in 0 ... (fileNonEmpty.count - oldNonEmpty.count) {
-                    var all = true
-                    for offset in 0 ..< oldNonEmpty.count
-                    where fileNonEmpty[start + offset].text != oldNonEmpty[offset] {
-                        all = false
-                        break
-                    }
-                    if all {
-                        matchStarts.append(start)
-                        if matchStarts.count > 1 { break }
-                    }
-                }
-                if matchStarts.count == 1, let start = matchStarts.first {
-                    let firstLine = fileNonEmpty[start].index
-                    let lastLine = fileNonEmpty[start + oldNonEmpty.count - 1].index
-                    let exact = contentLines[firstLine ... lastLine].joined(separator: "\n")
-                    return "Found the same non-blank lines at line \(firstLine + 1), but the "
-                        + "blank lines between them differ from your `old_string`. The exact "
-                        + "file content there is:\n\(Self.boundedQuote(exact))\n"
-                        + "Use that exact text (including its blank lines) as `old_string`."
-                }
-            }
-        }
-
-        // 3. Closest-line anchor: score every file line against the first
+        // 2. Closest-line anchor: score every file line against the first
         // non-empty trimmed old_string line (containment either way, or
         // shared prefix — cheap but catches the common "the line changed
         // after the model last read it" case) and quote the best one when
@@ -2449,8 +3755,9 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 struct FileOperationHistoryTool: OsaurusTool {
     let name = "file_operation_history"
     let description =
-        "Show recent file writes/edits made by this chat session. Use this before undo/review "
-        + "or after multi-file work to inspect what changed. Optional `path` filters to one file."
+        "Show recent file changes made by this chat session, newest first: one entry per tool call "
+        + "with every file it created, modified, or deleted. Use this before undo/review or after "
+        + "multi-file work to inspect what changed. Optional `path` filters to one file."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -2468,9 +3775,11 @@ struct FileOperationHistoryTool: OsaurusTool {
     ])
 
     private let fixedRootPath: URL?
+    private let journal: FileChangeJournal
 
-    init(rootPath: URL? = nil) {
+    init(rootPath: URL? = nil, journal: FileChangeJournal = .shared) {
         self.fixedRootPath = rootPath
+        self.journal = journal
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -2486,39 +3795,28 @@ struct FileOperationHistoryTool: OsaurusTool {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
-            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
-        }
-
-        let rawPath = args["path"] as? String
-        let pathFilter: String?
-        if let rawPath {
-            let resolvedURL = try FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
-            pathFilter = Self.relativePath(for: resolvedURL, rootPath: rootPath)
-        } else {
-            pathFilter = nil
-        }
-
+        let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath)
+        let pathFilter = (args["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let limit = min(max(coerceInt(args["limit"]) ?? 20, 1), 100)
-        let operations = await FileOperationLog.shared.operations(for: sessionId)
+        let sets = await journal.changeSets(for: sessionId)
         let filtered =
-            pathFilter.map { path in
-                operations.filter { $0.path == path || $0.destinationPath == path }
-            } ?? operations
+            pathFilter.flatMap { $0.isEmpty ? nil : $0 }.map { raw in
+                sets.filter { set in
+                    set.entries.contains { Self.matches($0, raw: raw, rootPath: rootPath) }
+                }
+            } ?? sets
         let recent = Array(filtered.suffix(limit).reversed())
-        let entries = recent.map(WorkspaceWriteSafety.operationHistoryEntry)
         var payload: [String: Any] = [
             "kind": "file_operation_history",
             "session_id": sessionId,
-            "entries": entries,
+            "entries": recent.map(Self.historyEntry),
             "operation_count": filtered.count,
-            "returned_count": entries.count,
+            "returned_count": recent.count,
             "limit": limit,
         ]
-        if let pathFilter {
+        if let pathFilter, !pathFilter.isEmpty {
             payload["path"] = pathFilter
         }
-
         let warnings =
             filtered.count > limit
             ? ["History truncated to the \(limit) most recent matching operations."]
@@ -2526,8 +3824,41 @@ struct FileOperationHistoryTool: OsaurusTool {
         return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
     }
 
-    fileprivate static func relativePath(for url: URL, rootPath: URL) -> String {
-        FolderToolHelpers.displayPath(for: url, under: rootPath)
+    /// Whether `entry` is the file the model named: a path relative to
+    /// (or absolute under) the host folder, or a sandbox display path.
+    static func matches(_ entry: FileChangeEntry, raw: String, rootPath: URL?) -> Bool {
+        if entry.displayPath == raw || entry.path == FileChangeJournal.normalize(raw) {
+            return true
+        }
+        if entry.rootKind == .hostFolder, let rootPath,
+            case .path(let rel) = FileChangeCapture.resolveHost(raw, folder: rootPath)
+        {
+            return entry.path == rel
+        }
+        return false
+    }
+
+    static func historyEntry(_ set: FileChangeSet) -> [String: Any] {
+        var entry: [String: Any] = [
+            "id": set.id.uuidString,
+            "tool": set.toolName,
+            "origin": set.origin.rawValue,
+            "status": set.status.rawValue,
+            "timestamp": ISO8601DateFormatter().string(from: set.createdAt),
+            "can_undo": set.isRevertible && set.status != .reverted,
+            "files": set.entries.map { e -> [String: Any] in
+                var file: [String: Any] = [
+                    "path": e.rootKind == .hostFolder ? e.path : e.displayPath,
+                    "change": e.kind.rawValue,
+                    "state": e.state.rawValue,
+                ]
+                if let from = e.fromPath { file["renamed_from"] = from }
+                if e.entryType != .file { file["type"] = e.entryType.rawValue }
+                return file
+            },
+        ]
+        if let note = set.note { entry["note"] = note }
+        return entry
     }
 }
 
@@ -2536,12 +3867,12 @@ struct FileOperationHistoryTool: OsaurusTool {
 struct FileUndoTool: OsaurusTool, PermissionedTool {
     let name = "file_undo"
     let description =
-        "Revert file operations made by this chat session. With no arguments it undoes the most "
-        + "recent operation; pass `operation_id` (from `file_operation_history` or a write "
-        + "result) to undo one specific operation, or `path` to revert every logged operation "
-        + "on one file. If both are given, `operation_id` wins (path is checked against that "
-        + "operation's file). Only operations whose history entry shows `can_undo: true` can "
-        + "be reverted. Check `file_operation_history` first when unsure what would be undone."
+        "Revert file changes made by this chat session. With no arguments it undoes the most "
+        + "recent change; pass `operation_id` (from `file_operation_history` or a write result) to "
+        + "undo one specific tool call, or `path` to restore one file to how it was before this "
+        + "chat touched it. If both are given, `operation_id` wins (path is checked against that "
+        + "operation's files). Files changed again since (by the user or another chat) are left "
+        + "untouched and reported. Check `file_operation_history` first when unsure what would be undone."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -2555,7 +3886,7 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
             "path": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Relative file path: undo ALL logged operations on this file, newest first"
+                    "Relative file path: restore this file to its state before this chat changed it"
                 ),
             ]),
         ]),
@@ -2565,14 +3896,15 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     /// Mutates the working folder — same gate class as `file_write`.
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
-    /// Restores coalesce back OUT of the Changes list when the tracker
-    /// re-diffs against the baseline.
-    var mutatesHostFolder: Bool { true }
+    // Not a registry-captured mutation: the journal records each revert
+    // as its own change set (so an undo can itself be undone).
 
     private let fixedRootPath: URL?
+    private let journal: FileChangeJournal
 
-    init(rootPath: URL? = nil) {
+    init(rootPath: URL? = nil, journal: FileChangeJournal = .shared) {
         self.fixedRootPath = rootPath
+        self.journal = journal
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -2587,106 +3919,131 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
-            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
-        }
-
+        let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath)
         let operationIdRaw = (args["operation_id"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let rawPath = (args["path"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sets = await journal.changeSets(for: sessionId)
 
-        do {
-            let undone: [FileOperation]
-            if let operationIdRaw, !operationIdRaw.isEmpty {
-                guard let operationId = UUID(uuidString: operationIdRaw) else {
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message: "`operation_id` is not a valid operation ID.",
-                        field: "operation_id",
-                        expected: "UUID from `file_operation_history`",
-                        tool: name
-                    )
-                }
-                // Both args together are fine when they AGREE — models
-                // routinely echo the path alongside the id (observed live:
-                // gemma-4-12B sent `{"operation_id": …, "path":
-                // "CHANGELOG.md"}`, got the old "not both" rejection, and
-                // spiralled into a blind rewrite instead of the undo).
-                // Only an actual DISAGREEMENT is ambiguous and refused.
-                if let rawPath, !rawPath.isEmpty {
-                    let target = try? FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
-                    let relative = target.map {
-                        FileOperationHistoryTool.relativePath(for: $0, rootPath: rootPath)
-                    }
-                    let op = await FileOperationLog.shared
-                        .operations(for: sessionId)
-                        .first(where: { $0.id == operationId })
-                    if let op, let relative, op.path != relative, op.destinationPath != relative {
-                        return ToolEnvelope.failure(
-                            kind: .invalidArgs,
-                            message:
-                                "`operation_id` \(operationIdRaw) is an operation on "
-                                + "`\(op.path)`, not `\(relative)`. Pass just the "
-                                + "`operation_id`, or just `path` to undo all "
-                                + "operations on that file.",
-                            field: "path",
-                            expected: "arguments that refer to the same file",
-                            tool: name
-                        )
-                    }
-                }
-                let op = try await FileOperationLog.shared.undo(
-                    sessionId: sessionId,
-                    operationId: operationId
+        let scope: FileChangeJournal.RevertScope
+        var undoneSet: FileChangeSet?
+        if let operationIdRaw, !operationIdRaw.isEmpty {
+            guard let operationId = UUID(uuidString: operationIdRaw) else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`operation_id` is not a valid operation ID.",
+                    field: "operation_id",
+                    expected: "UUID from `file_operation_history`",
+                    tool: name
                 )
-                undone = op.map { [$0] } ?? []
-            } else if let rawPath, !rawPath.isEmpty {
-                let resolvedURL = try FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
-                let relative = FileOperationHistoryTool.relativePath(
-                    for: resolvedURL,
-                    rootPath: rootPath
-                )
-                undone = try await FileOperationLog.shared.undoFile(
-                    sessionId: sessionId,
-                    path: relative
-                )
-                if undone.isEmpty {
-                    return ToolEnvelope.failure(
-                        kind: .notFound,
-                        message:
-                            "No logged operations found for `\(relative)` in this session — nothing to undo.",
-                        field: "path",
-                        tool: name
-                    )
-                }
-            } else {
-                let op = try await FileOperationLog.shared.undoLast(sessionId: sessionId)
-                guard let op else {
-                    return ToolEnvelope.failure(
-                        kind: .notFound,
-                        message: "No logged file operations in this session — nothing to undo.",
-                        tool: name
-                    )
-                }
-                undone = [op]
             }
-            let entries = undone.map(WorkspaceWriteSafety.operationHistoryEntry)
-            return ToolEnvelope.success(
-                tool: name,
-                result: [
-                    "kind": "file_undo",
-                    "undone_count": undone.count,
-                    "undone": entries,
-                ] as [String: Any]
-            )
-        } catch let error as FileUndoError {
-            return ToolEnvelope.failure(
-                kind: .executionError,
-                message: error.localizedDescription,
-                tool: name
-            )
+            guard let set = sets.first(where: { $0.id == operationId }) else {
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: "No operation `\(operationIdRaw)` in this session's file history.",
+                    field: "operation_id",
+                    tool: name
+                )
+            }
+            // Both args together are fine when they AGREE — models
+            // routinely echo the path alongside the id (observed live:
+            // gemma-4-12B sent `{"operation_id": …, "path":
+            // "CHANGELOG.md"}`, got the old "not both" rejection, and
+            // spiralled into a blind rewrite instead of the undo).
+            // Only an actual DISAGREEMENT is ambiguous and refused.
+            if let rawPath, !rawPath.isEmpty,
+                !set.entries.contains(where: {
+                    FileOperationHistoryTool.matches($0, raw: rawPath, rootPath: rootPath)
+                })
+            {
+                let files = set.entries.map(\.path).joined(separator: "`, `")
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`operation_id` \(operationIdRaw) is an operation on `\(files)`, not "
+                        + "`\(rawPath)`. Pass just the `operation_id`, or just `path` to restore "
+                        + "that file.",
+                    field: "path",
+                    expected: "arguments that refer to the same file",
+                    tool: name
+                )
+            }
+            guard set.status != .reverted else {
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message: "Operation `\(operationIdRaw)` was already undone.",
+                    field: "operation_id",
+                    tool: name,
+                    retryable: false
+                )
+            }
+            scope = .set(operationId)
+            undoneSet = set
+        } else if let rawPath, !rawPath.isEmpty {
+            let key = sets.flatMap(\.entries)
+                .last { FileOperationHistoryTool.matches($0, raw: rawPath, rootPath: rootPath) }?
+                .pathKey
+            guard let key else {
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: "No logged operations found for `\(rawPath)` in this session — nothing to undo.",
+                    field: "path",
+                    tool: name
+                )
+            }
+            scope = .file(key)
+        } else {
+            guard let latest = await journal.latestRevertibleAgentSet(sessionId: sessionId) else {
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: "No logged file operations in this session — nothing to undo.",
+                    tool: name
+                )
+            }
+            scope = .set(latest.id)
+            undoneSet = latest
         }
+
+        let preview = await journal.previewRevert(scope, sessionId: sessionId)
+        let summary = await journal.revert(scope, sessionId: sessionId)
+        if let blocked = summary.blockedReason {
+            return ToolEnvelope.failure(kind: .unavailable, message: blocked, tool: name, retryable: true)
+        }
+        let conflicted = preview.items.filter(\.isConflict).map { $0.key.displayPath }
+        if summary.restored == 0, summary.conflicted + summary.failed > 0 {
+            var message = "Nothing was undone."
+            if !conflicted.isEmpty {
+                message +=
+                    " These files changed after this chat's edit and were left untouched: "
+                    + conflicted.joined(separator: ", ")
+                    + ". Ask the user before overwriting them."
+            }
+            if !summary.failures.isEmpty { message += " " + summary.failures.joined(separator: "; ") }
+            return ToolEnvelope.failure(kind: .executionError, message: message, tool: name, retryable: false)
+        }
+        var warnings: [String] = []
+        if !conflicted.isEmpty {
+            warnings.append(
+                "Left untouched (changed after this chat's edit): " + conflicted.joined(separator: ", "))
+        }
+        warnings += summary.failures
+        var result: [String: Any] = [
+            "kind": "file_undo",
+            "undone_count": summary.restored,
+            // What actually changed on disk, not what the preview planned.
+            "undone": summary.restoredPaths.map {
+                ["path": $0.rootKind == .hostFolder ? $0.path : $0.displayPath]
+            },
+        ]
+        if let undoneSet {
+            result["undone_operation_id"] = undoneSet.id.uuidString
+            result["undone_tool"] = undoneSet.toolName
+        }
+        if let revertId = summary.revertSetId {
+            result["revert_operation_id"] = revertId.uuidString
+        }
+        return ToolEnvelope.success(tool: name, result: result, warnings: warnings.isEmpty ? nil : warnings)
     }
 }
 
@@ -2699,6 +4056,8 @@ struct FileSearchTool: OsaurusTool {
     let description =
         "Search files in the working directory. With `target=\"content\"` (default) it finds text by "
         + "case-insensitive substring match, returning matching lines with file paths and line numbers. "
+        + "Content search also looks inside PDF, Word, PowerPoint, and Excel files (extracted text; matches "
+        + "carry a `[page N]` / `[slide N]` / `[Sheet row N]` locator instead of a line number). "
         + "With `target=\"files\"` it finds files by name (case-insensitive substring, e.g. `q4` matches "
         + "`q4_sales_report.xlsx`; use `*`/`?` for a glob like `*.swift`). "
         + "Example: {\"pattern\": \"TODO\", \"path\": \"src\", \"file_pattern\": \"*.py\"}"
@@ -2872,9 +4231,11 @@ struct FileSearchTool: OsaurusTool {
         var skipRemaining = offset
         let collectCap = maxResults + 1
         // Files the search never looked inside (binary extension, over the
-        // size cap, or undecodable). Counted so "No matches" can't silently
-        // mean "the file you care about was skipped".
-        var skippedFiles = 0
+        // size cap, undecodable, or an unextractable document). Tallied so
+        // "No matches" can't silently mean "the file you care about was
+        // skipped", and so the note names WHICH kinds were left out.
+        var skippedFiles = ContentSearchSkipTally()
+        let documentBudget = DocumentSearchBudget()
 
         // Determine if searching a file or directory
         var isDirectory: ObjCBool = false
@@ -2952,7 +4313,8 @@ struct FileSearchTool: OsaurusTool {
                 switch try await searchFile(
                     fileURL,
                     pattern: pattern,
-                    maxResults: collectCap - totalMatches + skipRemaining
+                    maxResults: collectCap - totalMatches + skipRemaining,
+                    documentBudget: documentBudget
                 ) {
                 case .matches(var matches):
                     let drop = min(skipRemaining, matches.count)
@@ -2960,21 +4322,26 @@ struct FileSearchTool: OsaurusTool {
                     matches.removeFirst(drop)
                     results.append(contentsOf: matches)
                     totalMatches += matches.count
-                case .skipped:
-                    skippedFiles += 1
+                case .skipped(let reason):
+                    skippedFiles.record(reason)
                 }
             }
         } else {
             // Search single file
-            switch try await searchFile(searchURL, pattern: pattern, maxResults: collectCap + skipRemaining) {
+            switch try await searchFile(
+                searchURL,
+                pattern: pattern,
+                maxResults: collectCap + skipRemaining,
+                documentBudget: documentBudget
+            ) {
             case .matches(var matches):
                 let drop = min(skipRemaining, matches.count)
                 skipRemaining -= drop
                 matches.removeFirst(drop)
                 results.append(contentsOf: matches)
                 totalMatches = matches.count
-            case .skipped:
-                skippedFiles += 1
+            case .skipped(let reason):
+                skippedFiles.record(reason)
             }
         }
         // The (maxResults + 1)th match is the "more exists" probe, never
@@ -3085,12 +4452,31 @@ struct FileSearchTool: OsaurusTool {
     }
 
     /// Human/structured note for files the content search never read.
-    /// Returns nil when nothing was skipped.
-    private static func skippedFilesNote(_ count: Int) -> String? {
-        guard count > 0 else { return nil }
+    /// Names the kinds skipped so the model knows whether the file it
+    /// cares about was one of them. Returns nil when nothing was skipped.
+    static func skippedFilesNote(_ tally: ContentSearchSkipTally) -> String? {
+        guard tally.total > 0 else { return nil }
         let mb = FolderToolHelpers.maxContentSearchFileBytes / (1024 * 1024)
-        return
-            "\(count) file(s) skipped (binary or >\(mb)MB) — their contents were not searched."
+        var parts: [String] = []
+        if tally.binary > 0 {
+            parts.append("\(tally.binary) media/archive/executable file(s)")
+        }
+        if tally.tooLarge > 0 {
+            parts.append("\(tally.tooLarge) text file(s) over \(mb)MB")
+        }
+        if tally.undecodable > 0 {
+            parts.append("\(tally.undecodable) non-UTF-8 file(s)")
+        }
+        if tally.documents > 0 {
+            let exts = tally.documentExtensions.sorted().map { ".\($0)" }.joined(separator: "/")
+            parts.append(
+                "\(tally.documents) document(s) (\(exts)) that could not be extracted here "
+                    + "(over \(DocumentTextExtractionCache.maxDocumentBytes / (1024 * 1024))MB, unparseable, "
+                    + "or past the \(maxDocumentsExtractedPerSearch)-document search budget) — open them with `file_read`"
+            )
+        }
+        return "\(tally.total) file(s) skipped: " + parts.joined(separator: "; ")
+            + ". Their contents were not searched."
     }
 
     /// Appended when a search stops at `maxEntriesVisited` rather than from
@@ -3313,42 +4699,108 @@ struct FileSearchTool: OsaurusTool {
         case matches([String])
         /// File was never searched: binary extension, over the size cap,
         /// or not decodable as UTF-8.
-        case skipped
+        case skipped(ContentSearchSkipReason)
+    }
+
+    /// Why a file was not searched — tallied so the skipped note can say
+    /// which kinds were left out instead of a bare count.
+    enum ContentSearchSkipReason: Equatable {
+        /// Media/archive/executable extension: never searchable.
+        case binaryExtension
+        /// Text file over `maxContentSearchFileBytes`.
+        case tooLarge
+        /// Not decodable as UTF-8 (or unreadable).
+        case undecodable
+        /// A document (PDF/Word/PowerPoint/Excel) that could not be
+        /// extracted: over the document cap, no adapter, parse failure, or
+        /// the per-search document budget was spent.
+        case document(extension: String)
+    }
+
+    /// Tally of skipped files for the search note.
+    struct ContentSearchSkipTally {
+        var binary = 0
+        var tooLarge = 0
+        var undecodable = 0
+        var documents = 0
+        var documentExtensions: Set<String> = []
+
+        var total: Int { binary + tooLarge + undecodable + documents }
+
+        mutating func record(_ reason: ContentSearchSkipReason) {
+            switch reason {
+            case .binaryExtension: binary += 1
+            case .tooLarge: tooLarge += 1
+            case .undecodable: undecodable += 1
+            case .document(let ext):
+                documents += 1
+                documentExtensions.insert(ext)
+            }
+        }
+    }
+
+    /// Documents extracted per search before further documents are
+    /// reported as skipped — keeps one search from extracting a whole
+    /// archive of PDFs cold (the cache makes the next search cheap).
+    static let maxDocumentsExtractedPerSearch = 200
+
+    /// Per-search counter of document extractions (cold or cached).
+    private final class DocumentSearchBudget: @unchecked Sendable {
+        private let lock = NSLock()
+        private var extracted = 0
+        func take() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard extracted < FileSearchTool.maxDocumentsExtractedPerSearch else { return false }
+            extracted += 1
+            return true
+        }
     }
 
     private func searchFile(
         _ url: URL,
         pattern: String,
-        maxResults: Int
+        maxResults: Int,
+        documentBudget: DocumentSearchBudget
     ) async throws -> ContentSearchFileOutcome {
         try Task.checkCancellation()
+        let ext = url.pathExtension.lowercased()
+        // Documents are searched through their extracted text (same
+        // adapters as `file_read`), with page/slide/sheet locators.
+        if DocumentTextExtractionCache.isSearchableDocument(extension: ext) {
+            return try await searchDocument(
+                url,
+                ext: ext,
+                pattern: pattern,
+                maxResults: maxResults,
+                documentBudget: documentBudget
+            )
+        }
         // Skip obvious binaries by extension and any file over the size cap
         // before loading it into memory; the UTF-8 decode below is the final
         // backstop for misnamed or unexpectedly-large text.
-        if FolderToolHelpers.contentSearchSkippedExtensions.contains(
-            url.pathExtension.lowercased()
-        ) {
-            return .skipped
+        if FolderToolHelpers.contentSearchSkippedExtensions.contains(ext) {
+            return .skipped(.binaryExtension)
         }
         if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
             size > FolderToolHelpers.maxContentSearchFileBytes
         {
-            return .skipped
+            return .skipped(.tooLarge)
         }
         let content: String
         do {
-            guard let loaded = try await contentReader(url) else { return .skipped }
+            guard let loaded = try await contentReader(url) else { return .skipped(.undecodable) }
             content = loaded
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            return .skipped
+            return .skipped(.undecodable)
         }
 
-        guard let rootPath else { return .skipped }
+        guard let rootPath else { return .skipped(.undecodable) }
         let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
 
-        let lines = content.components(separatedBy: .newlines)
+        let lines = FolderToolHelpers.contentLines(content)
         var matches: [String] = []
 
         for (index, line) in lines.enumerated() {
@@ -3361,6 +4813,38 @@ struct FileSearchTool: OsaurusTool {
             }
         }
 
+        return .matches(matches)
+    }
+
+    /// Content search inside one document. Matches are rendered as
+    /// `path [page 3]: text` — the bracketed locator replaces the line
+    /// number because the text is an extracted layer, not the file's bytes.
+    private func searchDocument(
+        _ url: URL,
+        ext: String,
+        pattern: String,
+        maxResults: Int,
+        documentBudget: DocumentSearchBudget
+    ) async throws -> ContentSearchFileOutcome {
+        guard documentBudget.take() else { return .skipped(.document(extension: ext)) }
+        let extracted: ExtractedDocumentText
+        do {
+            extracted = try await DocumentTextExtractionCache.shared.units(for: url)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return .skipped(.document(extension: ext))
+        }
+        guard let rootPath else { return .skipped(.document(extension: ext)) }
+        let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
+        var matches: [String] = []
+        for unit in extracted.units {
+            try Task.checkCancellation()
+            guard matches.count < maxResults else { break }
+            if unit.text.localizedCaseInsensitiveContains(pattern) {
+                matches.append("\(relativePath) [\(unit.locator)]: \(unit.text)")
+            }
+        }
         return .matches(matches)
     }
 
@@ -3505,6 +4989,15 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
     var mutatesHostFolder: Bool { true }
 
+    /// Opaque (full before/after scan); when the folder is too large to
+    /// scan, a simple `mv`/`cp`/`rm`/`mkdir` still names its paths.
+    func fallbackMutationTargets(argumentsJSON: String) -> [String]? {
+        guard let command = FileChangeCapture.declaredPaths(argumentsJSON, keys: ["command"])?.first,
+            let root = ChatExecutionContext.currentFolderRoot
+        else { return nil }
+        return ShellMutationPlanner.targets(command: command, rootPath: root)
+    }
+
     /// Streaming exec opts out of the registry's wall-clock cap. Long
     /// commands rely on the user's [Terminate] button + the optional
     /// `timeout` (idle ceiling) as the safety net.
@@ -3562,13 +5055,6 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         let idleTimeout: TimeInterval? =
             requestedTimeout ?? ChatExecutionContext.defaultShellIdleTimeout
 
-        // Pre-exec undo planning: simple `mv`/`cp`/`rm`/`mkdir` forms are
-        // captured into the same operation log as `file_write`/`file_edit`
-        // (an `rm` target's content only exists BEFORE the command runs).
-        // Unparseable mutation commands surface a "not in the undo log"
-        // warning instead of a silent gap.
-        let mutationPlan = ShellMutationLog.plan(command: command, rootPath: rootPath)
-
         // `set -o pipefail` wrapping so a real upstream pipeline
         // failure surfaces as the rightmost non-zero exit instead of
         // being masked by `head` / `tee` / `cat`. zsh honours pipefail
@@ -3599,6 +5085,10 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         process.executableURL = invocation.executableURL
         process.arguments = invocation.arguments
         process.currentDirectoryURL = rootPath
+
+        // Reject invalid strings before allocating streaming pipes or registering
+        // a live execution. The shared launch helper also validates other callers.
+        try ProcessInputValidation.validate(process)
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -3733,34 +5223,8 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             )
         }
 
-        // Undo-log bookkeeping for the mutation plan computed pre-exec.
-        if exitCode == 0 {
-            switch mutationPlan {
-            case .none:
-                break
-            case .mutations(let planned):
-                if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
-                    var operationIds: [String] = []
-                    for op in planned {
-                        let operation = FileOperation(
-                            type: op.type,
-                            path: op.path,
-                            destinationPath: op.destinationPath,
-                            previousContent: op.previousContent,
-                            sessionId: sessionId,
-                            batchId: ChatExecutionContext.currentBatchId,
-                            rootPath: rootPath.standardizedFileURL.path
-                        )
-                        await FileOperationLog.shared.log(operation)
-                        operationIds.append(operation.id.uuidString)
-                    }
-                    payload["operation_ids"] = operationIds
-                }
-            case .unloggable:
-                warnings.append(
-                    "This command's filesystem changes were NOT captured in the undo log — `file_undo` cannot revert them."
-                )
-            }
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            payload["operation_id"] = setId.uuidString
         }
 
         return ToolEnvelope.success(
@@ -4041,7 +5505,7 @@ struct GitDiffTool: OsaurusTool {
             output,
             cap: ToolOutputCaps.gitDiff,
             headFraction: 0.6,
-            hint: "re-run git_diff with `file_path` scoped to one file to see its full diff"
+            hint: "re-run git_diff with `path` set to one file to see its full diff"
         )
         let text = truncated.isEmpty ? "No differences" : truncated
         return ToolEnvelope.success(tool: name, text: text)
@@ -4154,11 +5618,13 @@ enum FolderToolFactory {
     /// global built-in (registered in `ToolRegistry.registerBuiltInTools`)
     /// so it works in plain chat / folder / sandbox alike.
     ///
-    /// Lean by design: filesystem mutations (`mv`, `cp`, `rm`, `mkdir`)
+    /// Lean by design: filesystem mutations (`mv`, `rm`, `mkdir`)
     /// go through `shell_run` rather than discrete `file_move` /
-    /// `file_copy` / `file_delete` / `dir_create` tools so the model
-    /// picks "shell command" once instead of differentiating four
-    /// near-identical tool names. `shell_run` is loaded on every folder
+    /// `file_delete` / `dir_create` tools so the model picks "shell
+    /// command" once instead of differentiating near-identical tool
+    /// names. `file_copy` is the one exception: a byte copy that is
+    /// tracked in the operation log and undoable (shell `cp` is not).
+    /// `shell_run` is loaded on every folder
     /// mount (not gated on a detected project type) so the prompt's
     /// "use `shell_run` for `mv`/`cp`/`rm`/`mkdir`" advice always
     /// matches the schema. Multi-step orchestration goes through
@@ -4186,9 +5652,9 @@ enum FolderToolFactory {
             DetectPIITool(rootPath: rootPath),
             RedactFileTool(rootPath: rootPath),
             ShellRunTool(rootPath: rootPath),
-            // Combined-mode bridge: registered with the folder set (it
-            // needs the root) but hidden outside combined sandbox +
-            // host-read mode (`ToolRegistry.combinedModeBridgeToolNames`).
+            // Binary-safe, undoable duplicate (host→host; host↔share when
+            // a sandbox bridge is bound). Hidden in VM-only mode
+            // (`ToolRegistry.hostWorkspaceOnlyToolNames`).
             FileCopyTool(rootPath: rootPath),
         ]
     }

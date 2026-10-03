@@ -24,6 +24,15 @@ protocol OsaurusTool: Sendable {
     /// JSON schema for function parameters (OpenAI-compatible minimal subset)
     var parameters: JSONValue? { get }
 
+    /// Authored order for `parameters.properties` on the provider wire.
+    /// Canonical encoding sorts keys alphabetically; schema-constrained
+    /// decoders (xAI, JSON-schema grammars) only let the model emit optional
+    /// keys in declared order, so a pair like `old_string`/`new_string`
+    /// must be declared in the order a model naturally writes it. Keys not
+    /// listed keep their sorted position after the listed ones. Default nil
+    /// (alphabetical). See `ToolWirePropertyOrder`.
+    var parameterOrder: [String]? { get }
+
     /// Execute the tool with arguments provided as a JSON string.
     ///
     /// **Cancellation contract:** the registry wraps every call with a
@@ -63,17 +72,32 @@ protocol OsaurusTool: Sendable {
 
     /// When `true`, executing this tool can create/edit/delete files in
     /// the agent's sandbox workspace (agent home / `/workspace/shared`).
-    /// The registry wraps such calls in a `SandboxWorkspaceChangeTracker`
-    /// checkpoint so the chat's "Changes" list stays complete. Default
-    /// `false`.
+    /// The registry wraps such calls in a `FileChangeJournal` capture so
+    /// every change lands in the chat's file history. Default `false`.
     var mutatesSandboxWorkspace: Bool { get }
 
     /// When `true`, executing this tool can create/edit/delete files in the
     /// user-selected host folder (the "Folder" chip). The registry wraps such
-    /// calls in a host-folder checkpoint so those mutations land in the same
-    /// "Changes" list. Mutually exclusive with `mutatesSandboxWorkspace`.
+    /// calls in a host-folder capture so those mutations land in the same
+    /// file history. Mutually exclusive with `mutatesSandboxWorkspace`.
     /// Default `false`.
     var mutatesHostFolder: Bool { get }
+
+    /// The exact paths (as the model passed them) this call will mutate, so
+    /// the journal can snapshot just those instead of scanning the whole
+    /// tree. `nil` means the tool is opaque (a shell) and gets a full
+    /// before/after scan. Directories expand to their subtree.
+    func declaredMutationTargets(argumentsJSON: String) -> [String]?
+
+    /// Extra guidance appended to a schema rejection for `property` (an
+    /// unexpected or invalid key), e.g. where a misplaced key belongs.
+    /// Nil for no advice.
+    func argumentHint(_ property: String) -> String?
+
+    /// Best-effort precise targets for an opaque tool, used only when the
+    /// tree is too large to scan (e.g. the paths of a simple `rm`/`mv`).
+    /// `nil` when the call can't be parsed faithfully.
+    func fallbackMutationTargets(argumentsJSON: String) -> [String]?
 
     /// Optional, tool-owned repair for a narrowly documented model-output
     /// shape before the shared schema validator runs. The default is identity;
@@ -98,6 +122,9 @@ extension OsaurusTool {
     /// Streaming tools (`sandbox_exec`, `shell_run`) override to `true`.
     var bypassRegistryTimeout: Bool { false }
 
+    /// Default: alphabetical wire order (no authored order).
+    var parameterOrder: [String]? { nil }
+
     /// Default: tools do not mutate the sandbox workspace. Sandbox
     /// write/exec/install/plugin tools override to `true`.
     var mutatesSandboxWorkspace: Bool { false }
@@ -105,6 +132,13 @@ extension OsaurusTool {
     /// Default: tools do not mutate the selected host folder. Folder
     /// write/edit/shell/undo tools override to `true`.
     var mutatesHostFolder: Bool { false }
+
+    /// Default: opaque — the journal scans the root before and after.
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? { nil }
+
+    func argumentHint(_ property: String) -> String? { nil }
+
+    func fallbackMutationTargets(argumentsJSON: String) -> [String]? { nil }
 
     /// Default: preserve the model/client payload byte-for-byte.
     func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {

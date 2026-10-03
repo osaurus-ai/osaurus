@@ -48,12 +48,36 @@ public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
     public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
     /// Product-selected temporary model for the first-run local-download
-    /// experience. Match by final path component because Router ids are
-    /// provider-prefixed (for example `osaurus/deepseek-ai/...`).
-    static let firstRunOsaurusModelSlug = "deepseek-v4-flash"
+    /// experience: DeepSeek V4.1 Flash on Osaurus Cloud. Match by final path
+    /// component because Router ids are provider-prefixed (for example
+    /// `osaurus/deepseek-v4-1-flash`).
+    static let firstRunOsaurusModelSlug = "deepseek-v4-1-flash"
 
     /// Current configuration
-    @Published public private(set) var configuration: RemoteProviderConfiguration
+    @Published public private(set) var configuration: RemoteProviderConfiguration {
+        didSet { Self.refreshProviderNameCache(configuration.providers) }
+    }
+
+    /// Lock-protected id → display-name mirror so nonisolated loggers
+    /// (Insights egress attribution) can label a provider without hopping
+    /// to the main actor.
+    private nonisolated(unsafe) static var providerNameCache: [UUID: String] = [:]
+    private nonisolated static let providerNameLock = NSLock()
+
+    private nonisolated static func refreshProviderNameCache(_ providers: [RemoteProvider]) {
+        var cache: [UUID: String] = [:]
+        for provider in providers { cache[provider.id] = provider.name }
+        providerNameLock.lock()
+        providerNameCache = cache
+        providerNameLock.unlock()
+    }
+
+    /// Display name of a configured remote provider, from any actor.
+    public nonisolated static func providerDisplayName(for id: UUID) -> String? {
+        providerNameLock.lock()
+        defer { providerNameLock.unlock() }
+        return providerNameCache[id]
+    }
 
     /// SwiftUI mirror of `OsaurusRouter.isEnabled` (UserDefaults). The default
     /// expression runs before `init`'s body, so the first
@@ -99,6 +123,7 @@ public final class RemoteProviderManager: ObservableObject {
 
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
+        Self.refreshProviderNameCache(configuration.providers)
         ensureManagedOsaurusRouterProviderIfNeeded()
 
         // Initialize states for all providers
@@ -466,6 +491,9 @@ public final class RemoteProviderManager: ObservableObject {
 
             print("[Osaurus] Remote Provider '\(provider.name)': Connected with \(models.count) models")
 
+            if provider.providerType == .osaurusRouter {
+                seedStarterFavoritesFromOsaurusRouterCatalog()
+            }
             notifyStatusChanged()
             notifyModelsChanged()
 
@@ -812,7 +840,7 @@ public final class RemoteProviderManager: ObservableObject {
                 }
                 return false
             case .invalidURL, .notConnected, .requestFailed,
-                .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected:
+                .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected, .sessionReplaced:
                 return false
             }
         }
@@ -1024,12 +1052,14 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Re-query `/models` for one connected provider without tearing down its
     /// service, flipping `isConnecting`, or refreshing OAuth.
-    public func refetchModels(providerId: UUID) async {
+    /// Returns true after a successful fetch, including an unchanged catalog.
+    @discardableResult
+    public func refetchModels(providerId: UUID) async -> Bool {
         guard let provider = configuration.provider(id: providerId),
             provider.enabled,
             var state = providerStates[providerId],
             state.isConnected
-        else { return }
+        else { return false }
 
         let discovered: [String]
         var mediaCatalogChanged = false
@@ -1065,20 +1095,44 @@ public final class RemoteProviderManager: ObservableObject {
                 customProviderContextLengths[provider.id] = discovery.contextLengths
             }
         } catch {
-            return
+            return false
         }
 
         let merged = provider.mergedModelIds(discovered: discovered)
         lastModelRefetchAt[providerId] = Date()
         guard mediaCatalogChanged || contextLengthsChanged || merged != state.discoveredModels
-        else { return }
+        else { return true }
 
         state.discoveredModels = merged
         providerStates[providerId] = state
         if let service = services[providerId] {
             await service.updateModels(merged)
         }
+        if provider.providerType == .osaurusRouter {
+            // A starter favourite the Router did not offer at first connect
+            // (e.g. a model added to the catalog later) lands on refetch.
+            seedStarterFavoritesFromOsaurusRouterCatalog()
+        }
         notifyModelsChanged()
+        return true
+    }
+
+    /// Seed the Osaurus Cloud starter favourites from the Router's current
+    /// picker-prefixed catalog. Cheap and idempotent; see
+    /// `FavoriteModelsStore.seedStarterFavoritesIfNeeded`.
+    private func seedStarterFavoritesFromOsaurusRouterCatalog() {
+        guard
+            let entry = cachedAvailableModels().first(where: {
+                $0.providerId == Self.osaurusRouterProviderId
+            })
+        else { return }
+        FavoriteModelsStore.shared.seedStarterFavoritesIfNeeded(
+            routerModelIds: entry.models,
+            routerSourceKey: ModelPickerItem.Source.remote(
+                providerName: entry.providerName,
+                providerId: Self.osaurusRouterProviderId
+            ).uniqueKey
+        )
     }
 
     /// Refresh every enabled provider's model list, coalesced and throttled.
@@ -1332,7 +1386,7 @@ public final class RemoteProviderManager: ObservableObject {
     func connectedSpawnModelTargets() -> [ConnectedSpawnModelTarget] {
         guard !isOffline else { return [] }
         // Providers minted by pairing a teammate's WORKSPACE agent are Mode 2
-        // endpoints (the host runs its own agent), not a `spawn_model`
+        // endpoints (the host runs its own agent), not a bare-model
         // catalog. They also connect/disconnect with the teammate's presence,
         // and this index feeds the composed prompt + spawn schema — so
         // including them would reset the prefix cache every time a teammate's
@@ -1428,7 +1482,7 @@ public final class RemoteProviderManager: ObservableObject {
             ?? entry.models.first
     }
 
-    /// DeepSeek V4 Flash for first-run Cloud, with the normal chat-capable
+    /// DeepSeek V4.1 Flash for first-run Cloud, with the normal chat-capable
     /// provider fallback if the Router temporarily omits that model.
     public func firstRunOsaurusRouterModelId() -> String? {
         guard

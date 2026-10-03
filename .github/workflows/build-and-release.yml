@@ -86,10 +86,11 @@ jobs:
     # because Containerization needs the macOS 26 SDK.
     runs-on: macos-26
     # Release builds are intentionally cache-free (fresh cold compile of
-    # mlx-swift Cmlx + SQLCipher). Cold builds can exceed 60m on slower hosted
-    # runners, so leave enough time for signing, notarization, and publishing
-    # while still bounding a hung job well below GitHub's 6h default.
-    timeout-minutes: 90
+    # mlx-swift Cmlx + SQLCipher). The compile step alone ran 69-87m across
+    # recent green runs and 0.25.11 timed out at the previous 90m cap, so
+    # leave headroom for signing, notarization, and publishing while still
+    # bounding a hung job well below GitHub's 6h default.
+    timeout-minutes: 120
 
     steps:
       - name: Checkout code
@@ -133,12 +134,27 @@ jobs:
       - name: Verify App Launch (spawn gate)
         run: bash scripts/build/verify_launch.sh
 
-      - name: Create DMGs
+      # Hand the signed light app to `build_full` so the model-bundled DMG
+      # never needs a second Xcode compile. ditto keeps Sparkle.framework's
+      # symlinks intact (upload-artifact alone flattens them).
+      - name: Package app for full build
+        run: ditto -c -k --keepParent build_output/Osaurus.app build_output/Osaurus-app.zip
+
+      - name: Upload app for full build
+        uses: actions/upload-artifact@v5
+        with:
+          name: osaurus-app-${{ env.VERSION }}
+          path: build_output/Osaurus-app.zip
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Create DMG (light)
         env:
           DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}
+          DMG_VARIANT: light
         run: bash scripts/build/create_dmgs.sh
 
-      - name: Notarize apps
+      - name: Notarize DMG (light)
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
@@ -216,6 +232,97 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: bash scripts/release/discord_notify.sh
+
+  build_full:
+    # Model-bundled ("full") DMG: the signed light app from `build` plus
+    # Raptor 0.6 under Contents/Resources/BundledModels, re-signed, packaged
+    # as ULFO, notarized, and published to the Hugging Face Hub (GitHub
+    # Releases cap assets at 2 GiB). Runs after `build` so the light release,
+    # appcast, and Discord post are never delayed by the ~4 GB pipeline; on
+    # tag pushes it appends the download link to the release notes when done.
+    needs: build
+    # `verify_ci` is skipped on workflow_dispatch, and the default `success()`
+    # condition treats a skipped transitive dependency as failure — so without
+    # this the job never runs for manual validation builds. Mirror `build`.
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: macos-26
+    # Model download (~3.7 GB), ULFO conversion, a 4 GB notarization
+    # round-trip, and the Hub upload each take minutes; bound a hung job well
+    # below GitHub's 6h default.
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Xcode ${{ env.XCODE_VERSION }}
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Setup build environment
+        run: bash scripts/setup_env.sh
+
+      - name: Install certificates
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: bash scripts/build/install_certificates.sh
+
+      - name: Download signed light app
+        uses: actions/download-artifact@v5
+        with:
+          name: osaurus-app-${{ env.VERSION }}
+          path: build_output
+
+      - name: Unpack light app
+        run: |
+          ditto -x -k build_output/Osaurus-app.zip build_output
+          rm -f build_output/Osaurus-app.zip
+          test -d build_output/Osaurus.app
+
+      - name: Build full app (bundle Raptor 0.6)
+        env:
+          DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: bash scripts/build/build_full_app.sh
+
+      - name: Create DMG (full)
+        env:
+          DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}
+          DMG_VARIANT: full
+        run: bash scripts/build/create_dmgs.sh
+
+      - name: Notarize DMG (full)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/build/notarize.sh "build_output/Osaurus-${VERSION}-full.dmg" 45m
+
+      - name: Publish full DMG to Hugging Face
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_REPO: ${{ github.repository }}
+          IS_BETA: ${{ env.IS_BETA }}
+        run: bash scripts/release/upload_full_dmg_hf.sh
+
+      - name: Record full DMG checksum
+        run: |
+          cd build_output
+          shasum -a 256 "Osaurus-${VERSION}-full.dmg" | tee "Osaurus-${VERSION}-full.dmg.SHA256SUMS"
+
+      # The 4 GB DMG itself is not kept as a workflow artifact (the Hub copy
+      # is the durable one); the checksum is enough to audit a run.
+      - name: Upload full DMG checksum
+        uses: actions/upload-artifact@v5
+        with:
+          name: osaurus-full-dmg-checksum-${{ env.VERSION }}
+          path: build_output/Osaurus-${{ env.VERSION }}-full.dmg.SHA256SUMS
+          if-no-files-found: warn
 
   mark_released:
     needs: build

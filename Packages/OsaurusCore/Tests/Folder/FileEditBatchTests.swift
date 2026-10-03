@@ -149,6 +149,53 @@ struct FileEditBatchTests {
         #expect(ToolEnvelope.successPayload(output) == nil)
     }
 
+    /// Constrained decoders emit the unused optional collection as an
+    /// empty filler next to the real edit form (`"operations": []` beside
+    /// `edits`, 5/5 on xAI grok-4.3). The filler carries no intent and must
+    /// not turn a text-file batch into an "operations on a text file" error.
+    @Test func batch_emptyOperationsFiller_isIgnored() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try write("timeout = 30\nretries = 3\n", name: "settings.ini", root: root)
+
+        let batch = try await FileEditTool(rootPath: root).execute(
+            argumentsJSON:
+                #"{"path":"settings.ini","edits":[{"old_string":"timeout = 30","new_string":"timeout = 60"}],"operations":[]}"#
+        )
+        #expect(ToolEnvelope.successPayload(batch) != nil, "\(batch)")
+        #expect(fileContent(url) == "timeout = 60\nretries = 3\n")
+
+        let single = try await FileEditTool(rootPath: root).execute(
+            argumentsJSON:
+                #"{"path":"settings.ini","old_string":"retries = 3","new_string":"retries = 5","edits":[],"operations":null}"#
+        )
+        #expect(ToolEnvelope.successPayload(single) != nil, "\(single)")
+        #expect(fileContent(url) == "timeout = 60\nretries = 5\n")
+
+        // Once the decoder has opened the array it may pad it with an empty
+        // object (grok-4.3, `edit-batch-edits-single-call`): still content-free.
+        for filler in [#"[{}]"#, #"{}"#, #"[{"op":""}]"#, #"[{"op":null,"cells":{}}]"#] {
+            let padded = try await FileEditTool(rootPath: root).execute(
+                argumentsJSON:
+                    #"{"path":"settings.ini","edits":[{"old_string":"retries = 5","new_string":"retries = 7"}],"operations":"# + filler + "}"
+            )
+            #expect(ToolEnvelope.successPayload(padded) != nil, "\(filler) → \(padded)")
+            #expect(fileContent(url) == "timeout = 60\nretries = 7\n")
+            _ = try await FileEditTool(rootPath: root).execute(
+                argumentsJSON: #"{"path":"settings.ini","old_string":"retries = 7","new_string":"retries = 5"}"#)
+        }
+        #expect(FileEditTool.isContentFree([["op": NSNull(), "cells": [String: Any]()]]))
+        #expect(!FileEditTool.isContentFree([["op": "set_cells"]]))
+        #expect(!FileEditTool.isContentFree([["index": 0]]))
+
+        // A filler with no other form still gets the pointed error.
+        let onlyFiller = try await FileEditTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"settings.ini","operations":[]}"#
+        )
+        #expect(ToolEnvelope.successPayload(onlyFiller) == nil)
+        #expect(failureMessage(onlyFiller).contains("operations"), "\(failureMessage(onlyFiller))")
+    }
+
     @Test func batch_overCap_rejected() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -195,6 +242,92 @@ struct FileEditBatchTests {
         )
         let payload = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
         #expect(payload["replacements"] as? Int == 1)
+        #expect(payload["match_strategy"] as? String == "exact")
+        #expect(payload["matched_lines"] as? [String] == ["1"])
         #expect(fileContent(url) == "hello osaurus")
+    }
+
+    // MARK: - tolerance cascade through the tool
+
+    private func warnings(_ output: String) -> [String] {
+        guard let data = output.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [] }
+        return dict["warnings"] as? [String] ?? []
+    }
+
+    @Test func relaxedMatch_appliesReportsStrategyAndQuotesFileText() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try write("def f():\n\tif x:\n\t\treturn 1\n\treturn 0\n", name: "a.py", root: root)
+
+        let output = try await FileEditTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"a.py","old_string":"    if x:\n        return 1","new_string":"    if x:\n        return 2"}"#
+        )
+        let payload = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
+        #expect(payload["match_strategy"] as? String == "whitespace_normalized")
+        #expect(payload["matched_lines"] as? [String] == ["2-3"])
+        #expect(fileContent(url) == "def f():\n\tif x:\n\t\treturn 2\n\treturn 0\n")
+        let notes = warnings(output)
+        #expect(notes.contains { $0.contains("did not match the file byte-for-byte") && $0.contains("\tif x:") })
+    }
+
+    @Test func batch_mixedStrategies_reportPerEdit() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try write("name: \u{201C}Ada\u{201D}\nport: 8080\n", name: "cfg.yaml", root: root)
+
+        let output = try await FileEditTool(rootPath: root).execute(
+            argumentsJSON: """
+                {"path":"cfg.yaml","edits":[
+                  {"old_string":"port: 8080","new_string":"port: 9090"},
+                  {"old_string":"name: \\"Ada\\"","new_string":"name: \\"Grace\\""}
+                ]}
+                """
+        )
+        let payload = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
+        #expect(payload["edit_strategies"] as? [String] == ["exact", "unicode_normalized"])
+        #expect(payload["match_strategy"] as? String == "unicode_normalized")
+        #expect(fileContent(url) == "name: \"Grace\"\nport: 9090\n")
+    }
+
+    @Test func identicalOldAndNew_isRejectedAsNoOp() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try write("x = 1\n", name: "a.txt", root: root)
+
+        let output = try await FileEditTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"a.txt","old_string":"x = 1","new_string":"x = 1"}"#
+        )
+        #expect(ToolEnvelope.successPayload(output) == nil)
+        #expect(failureMessage(output).contains("identical"))
+    }
+
+    @Test func relaxedAmbiguity_namesStrategyAndSuggestsReplaceAll() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try write("\tfoo(1)\n\tbar\n\tfoo(1)\n", name: "a.txt", root: root)
+
+        let output = try await FileEditTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"a.txt","old_string":"  foo(1)","new_string":"  foo(2)"}"#
+        )
+        #expect(ToolEnvelope.successPayload(output) == nil)
+        let message = failureMessage(output)
+        #expect(message.contains("Found 2 matches"))
+        #expect(message.contains("replace_all"))
+        #expect(message.contains("whitespace"))
+        #expect(fileContent(url) == "\tfoo(1)\n\tbar\n\tfoo(1)\n")
+    }
+
+    @Test func crlfFile_keepsCRLFAfterEdit() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try write("one\r\ntwo\r\nthree\r\n", name: "win.txt", root: root)
+
+        let output = try await FileEditTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"win.txt","old_string":"two\nthree","new_string":"two\n2.5\nthree"}"#
+        )
+        _ = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
+        #expect(fileContent(url) == "one\r\ntwo\r\n2.5\r\nthree\r\n")
     }
 }

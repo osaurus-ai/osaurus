@@ -111,7 +111,9 @@ public actor MethodSearchService {
             let toolDescs = Self.loadToolDescriptions()
             let id = deterministicUUID(for: method.id)
             let text = buildIndexText(for: method, toolDescriptions: toolDescs)
-            _ = try await db.addDocument(text: text, id: id)
+            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("method_index") {
+                try await db.addDocument(text: text, id: id)
+            }
         } catch {
             MethodLogger.search.error("Failed to index method \(method.id): \(error)")
         }
@@ -139,11 +141,13 @@ public actor MethodSearchService {
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3
-            let results = try await db.search(
-                query: .text(query),
-                numResults: fetchCount,
-                threshold: threshold ?? Self.defaultSearchThreshold
-            )
+            let results = try await MediaActivityLogger.$embeddingPurpose.withValue("method_search") {
+                try await db.search(
+                    query: .text(query),
+                    numResults: fetchCount,
+                    threshold: threshold ?? Self.defaultSearchThreshold
+                )
+            }
 
             let scoreMap = Dictionary(
                 results.map { ($0.id.uuidString, Float($0.score)) },
@@ -214,7 +218,9 @@ public actor MethodSearchService {
                 ids.append(id)
             }
             if !texts.isEmpty {
-                _ = try await db.addDocuments(texts: texts, ids: ids)
+                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("method_index") {
+                    try await db.addDocuments(texts: texts, ids: ids)
+                }
             }
             MethodLogger.search.info("Method index rebuilt with \(methods.count) methods")
         } catch {

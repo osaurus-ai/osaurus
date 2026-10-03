@@ -143,7 +143,7 @@ extension ChatMessage {
     /// Same message with different content parts. ChatMessage's stored fields
     /// are `let` and its designated inits each drop some field, so the policy
     /// rebuilds through this full-fields copy.
-    fileprivate func replacingContentParts(_ parts: [MessageContentPart]?) -> ChatMessage {
+    func replacingContentParts(_ parts: [MessageContentPart]?) -> ChatMessage {
         ChatMessage(
             role: role,
             content: content,

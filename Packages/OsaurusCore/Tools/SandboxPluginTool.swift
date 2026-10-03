@@ -240,7 +240,7 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
         return env
     }
 
-    private func buildParamVars(from args: [String: Any]) -> [String: String] {
+    func buildParamVars(from args: [String: Any]) -> [String: String] {
         var env: [String: String] = [:]
         for (key, value) in args {
             let envKey = "PARAM_\(key.uppercased())"
@@ -250,7 +250,10 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
                 env[envKey] = num.stringValue
             } else if let bool = value as? Bool {
                 env[envKey] = bool ? "true" : "false"
-            } else if let data = try? JSONSerialization.data(withJSONObject: value, options: .osaurusCanonical),
+            } else if let data = try? JSONSerialization.data(
+                withJSONObject: value,
+                options: [.osaurusCanonical, .fragmentsAllowed]
+            ),
                 let str = String(data: data, encoding: .utf8)
             {
                 env[envKey] = str

@@ -14,11 +14,10 @@
 //      eval-kit unit tests (mirror `ComputerUseLoopEvalTests`).
 //    - spawn: live. The real `spawn_agent` path (host + `TextSubagentKind`)
 //      against a user-configured spawnable agent — the text-subagent path.
-//    - spawn_model: live. The real `spawn_model` path (host + `TextSubagentKind`)
-//      against a bare spawnable model id with NO agent/system prompt.
-//    - spawn_model_residency: live. The PRODUCTION residency path (no eval
-//      passthrough seam) with an independent orchestrator + target, proving the
-//      real unload/reload across all four directions (local↔local, local↔remote,
+//    - spawn_residency: live. The PRODUCTION residency path (no eval
+//      passthrough seam) with an independent orchestrator + target model (run
+//      through a temporary spawnable agent pinned to it), proving the real
+//      unload/reload across all four directions (local↔local, local↔remote,
 //      remote↔local, remote↔remote) with RAM footprint.
 //    - image: live. The real `ImageTool` (host + `ImageSubagentKind`);
 //      `sourcePaths` non-empty selects the edit path, empty selects generate.
@@ -53,14 +52,58 @@ extension EvalRunner {
         }
 
         switch exp.lane {
+        case "ram_admission":
+            guard let fixture = exp.ramAdmission,
+                !fixture.scenario.steps.isEmpty,
+                fixture.scenario.steps.count == fixture.expected.count
+            else {
+                return .terminal(id: testCase.id, label: label, domain: testCase.domain,
+                    outcome: .errored, notes: ["ram_admission needs nonempty steps and one expected observation per step"],
+                    modelId: modelId)
+            }
+            let started = Date()
+            let observed = await SubagentAdmissionEvaluator.run(fixture.scenario)
+            let notes = zip(observed, fixture.expected).enumerated().map { index, pair in
+                "step \(index + 1): \(pair.0 == pair.1 ? "PASS" : "FAIL") observed=\(pair.0) expected=\(pair.1)"
+            }
+            return EvalCaseReport(id: testCase.id, label: label, domain: testCase.domain,
+                query: testCase.query, outcome: observed == fixture.expected ? .passed : .failed,
+                notes: ["Injected host facts; production planner/recovery/reservation lifecycle. No hardware or inference qualification."] + notes,
+                modelId: modelId, latencyMs: Date().timeIntervalSince(started) * 1000)
+        case "workspace":
+            guard let fixture = exp.workspaceDelegation,
+                !fixture.scenario.steps.isEmpty,
+                fixture.scenario.steps.count == fixture.expected.count
+            else {
+                return .terminal(id: testCase.id, label: label, domain: testCase.domain,
+                    outcome: .errored,
+                    notes: ["workspace needs nonempty steps and one expected observation per step"],
+                    modelId: modelId)
+            }
+            let started = Date()
+            let observed = await MainActor.run { WorkspaceDelegationEvaluator.run(fixture.scenario) }
+            var notes = [
+                "Scripted roster and policies; production AgentTargetResolver, workspace refusal copy, "
+                    + "SpawnWaveGate.wavePermissionPlan and RemoteRunArtifactRelay.payload. "
+                    + "No relay, model, or Keychain — not two-Mac proof."
+            ]
+            for (index, pair) in zip(observed, fixture.expected).enumerated() {
+                if pair.0 == pair.1 {
+                    notes.append("step \(index + 1): PASS")
+                } else {
+                    notes.append("step \(index + 1): FAIL observed=\(pair.0) expected=\(pair.1)")
+                }
+            }
+            return EvalCaseReport(id: testCase.id, label: label, domain: testCase.domain,
+                query: testCase.query, outcome: observed == fixture.expected ? .passed : .failed,
+                notes: notes, modelId: modelId,
+                latencyMs: Date().timeIntervalSince(started) * 1000)
         case "scripted":
             return await scoreScriptedLane(testCase, exp: exp, modelId: modelId, label: label)
         case "spawn":
             return await scoreSpawnLane(testCase, exp: exp, modelId: modelId, label: label)
-        case "spawn_model":
-            return await scoreSpawnModelLane(testCase, exp: exp, modelId: modelId, label: label)
-        case "spawn_model_residency":
-            return await scoreSpawnModelResidencyLane(testCase, exp: exp, modelId: modelId, label: label)
+        case "spawn_residency":
+            return await scoreSpawnResidencyLane(testCase, exp: exp, modelId: modelId, label: label)
         case "image":
             return await scoreImageLane(testCase, exp: exp, modelId: modelId, label: label)
         case "computer_use":
@@ -75,7 +118,7 @@ extension EvalRunner {
                 outcome: .errored,
                 notes: [
                     "unknown subagent lane '\(exp.lane)' "
-                        + "(expected scripted|spawn|spawn_model|spawn_model_residency|image|"
+                        + "(expected scripted|workspace|ram_admission|spawn|spawn_residency|image|"
                         + "computer_use|browser_use)"
                 ],
                 modelId: modelId
@@ -99,24 +142,24 @@ extension EvalRunner {
         if let raw = exp.runFailure, ScriptedSubagentSpec.Failure(rawValue: raw) == nil {
             return scriptedSpecError(testCase, label: label, modelId: modelId, field: "runFailure", raw: raw)
         }
-        if let invalid = exp.scriptedBatch?.compactMap(\.runFailure).first(where: {
+        if let invalid = exp.scriptedWave?.compactMap(\.runFailure).first(where: {
             ScriptedSubagentSpec.Failure(rawValue: $0) == nil
         }) {
             return scriptedSpecError(
                 testCase,
                 label: label,
                 modelId: modelId,
-                field: "scriptedBatch.runFailure",
+                field: "scriptedWave.runFailure",
                 raw: invalid
             )
         }
-        if let scriptedBatch = exp.scriptedBatch, scriptedBatch.count < 2 {
+        if let scriptedWave = exp.scriptedWave, scriptedWave.count < 2 {
             return .terminal(
                 id: testCase.id,
                 label: label,
                 domain: testCase.domain,
                 outcome: .errored,
-                notes: ["`scriptedBatch` requires at least two child specs"],
+                notes: ["`scriptedWave` requires at least two child specs"],
                 modelId: modelId
             )
         }
@@ -135,12 +178,13 @@ extension EvalRunner {
             includeUsageAccounting: exp.includeUsageAccounting ?? false,
             rendezvousArrivals: (exp.rendezvous ?? false) ? max(2, parallel) : 0
         )
-        // `parallel ≥ 2` drives the parallel-batch path (one batch, N
-        // concurrent host runs, shared overlap probe); otherwise one run,
-        // optionally stopped mid-run through the real interrupt center.
+        // `parallel ≥ 2` drives the parallel-wave path (several `spawn_agent`
+        // calls in one message: N concurrent host runs, shared overlap probe);
+        // otherwise one run, optionally stopped mid-run through the real
+        // interrupt center.
         let transcript: SubagentJobTranscript
-        if let scriptedBatch = exp.scriptedBatch {
-            let jobs = scriptedBatch.enumerated().map { index, child in
+        if let scriptedWave = exp.scriptedWave {
+            let jobs = scriptedWave.enumerated().map { index, child in
                 let id = child.id ?? "scripted-\(index + 1)"
                 let modelName =
                     child.modelName ?? child.target ?? "scripted-model"
@@ -161,20 +205,19 @@ extension EvalRunner {
                     includeUsageAccounting: exp.includeUsageAccounting ?? false,
                     rendezvousArrivals: child.rendezvousArrivals ?? 0
                 )
-                return ScriptedSpawnBatchJobSpec(
+                return ScriptedSpawnWaveJobSpec(
                     id: id,
-                    targetType: child.targetType ?? "model",
                     target: child.target ?? modelName,
-                    input: child.input ?? "scripted batch input \(index + 1)",
+                    input: child.input ?? "scripted wave input \(index + 1)",
                     subagent: spec
                 )
             }
-            transcript = await SubagentJobEvaluator.runScriptedSpawnBatch(
+            transcript = await SubagentJobEvaluator.runScriptedSpawnWave(
                 jobs,
                 interruptAfterMs: exp.interruptAfterMs
             )
         } else if parallel >= 2 {
-            transcript = await SubagentJobEvaluator.runScriptedParallelBatch(spec, count: parallel)
+            transcript = await SubagentJobEvaluator.runScriptedParallelWave(spec, count: parallel)
         } else {
             transcript = await SubagentJobEvaluator.runScripted(
                 spec,
@@ -259,77 +302,14 @@ extension EvalRunner {
         return finishLive(testCase, exp: exp, transcript: transcript, lane: "spawn", modelId: modelId, label: label)
     }
 
-    // MARK: - Live spawn_model lane
+    // MARK: - Live spawn residency-direction lane
 
-    private static func scoreSpawnModelLane(
-        _ testCase: EvalCase,
-        exp: EvalCase.SubagentExpectations,
-        modelId: String,
-        label: String
-    ) async -> EvalCaseReport {
-        guard let input = exp.input else {
-            return .terminal(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                outcome: .errored,
-                notes: ["spawn_model lane needs `input`"],
-                modelId: modelId
-            )
-        }
-        // Target model: an explicit `model` (negative guards target an
-        // unseeded id) else the RUN model, so a seeded happy-path case is a real
-        // cross-model column. Positive cases opt into seeding the model into the
-        // spawnable pool (so they RUN anywhere); negative guards (not-spawnable)
-        // must NOT be seeded.
-        let target = exp.model ?? modelId
-        let interruptAfterMs = exp.interruptAfterMs
-        let transcript: SubagentJobTranscript
-        if exp.seedSpawnableModel == true {
-            // `seedSpawnToolAccess: "readOnly"` additionally grants the child
-            // the curated read-only toolset for the run (tool-capable lane).
-            // Accept the friendly camelCase spelling and the stored raw value.
-            let toolAccess: SpawnToolAccess? = exp.seedSpawnToolAccess.flatMap {
-                switch $0 {
-                case "readOnly", "read_only": return .readOnly
-                case "none": return SpawnToolAccess.none
-                default: return SpawnToolAccess(rawValue: $0)
-                }
-            }
-            transcript = await SubagentJobEvaluator.withSpawnableModel(
-                id: target,
-                toolAccess: toolAccess
-            ) {
-                await SubagentJobEvaluator.runSpawnModel(
-                    model: target,
-                    input: input,
-                    interruptAfterMs: interruptAfterMs
-                )
-            }
-        } else {
-            transcript = await SubagentJobEvaluator.runSpawnModel(
-                model: target,
-                input: input,
-                interruptAfterMs: interruptAfterMs
-            )
-        }
-        return finishLive(
-            testCase,
-            exp: exp,
-            transcript: transcript,
-            lane: "spawn_model",
-            modelId: modelId,
-            label: label
-        )
-    }
-
-    // MARK: - Live spawn_model residency-direction lane
-
-    /// Drive the PRODUCTION `spawn_model` residency path (NOT the eval
+    /// Drive the PRODUCTION `spawn_agent` residency path (NOT the eval
     /// passthrough seam) with an independent `orchestrator` (resident chat
-    /// model) + `model` (target) so the real `SubagentResidency.resolve`
-    /// decision + `ResidencyHandoff` run end-to-end — the only lane that proves
-    /// the actual unload/reload across all four directions. Peak RAM is captured
+    /// model) + `model` (target, pinned on a temporary spawnable agent) so the
+    /// real `SubagentResidency.resolve` decision + `ResidencyHandoff` run
+    /// end-to-end — the only lane that proves the actual unload/reload across
+    /// all four directions. Peak RAM is captured
     /// by the outer resource-sampled dispatch (`subagent` is a sampled domain),
     /// so a local→local swap records its footprint automatically. SKIPS (via the
     /// facade's `unavailable` envelope + `finishLive`) when a required local
@@ -340,7 +320,7 @@ extension EvalRunner {
     /// bootstrapped, so run the suite with a REMOTE `--model` (e.g.
     /// `xai/grok-4.3`) whenever a direction targets a remote model — local
     /// targets stay routable regardless.
-    private static func scoreSpawnModelResidencyLane(
+    private static func scoreSpawnResidencyLane(
         _ testCase: EvalCase,
         exp: EvalCase.SubagentExpectations,
         modelId: String,
@@ -354,7 +334,7 @@ extension EvalRunner {
                 domain: testCase.domain,
                 outcome: .errored,
                 notes: [
-                    "spawn_model_residency lane needs `orchestrator` + `model` (target) + `input`"
+                    "spawn_residency lane needs `orchestrator` + `model` (target) + `input`"
                 ],
                 modelId: modelId
             )
@@ -374,7 +354,7 @@ extension EvalRunner {
         var lastTranscript: SubagentJobTranscript?
 
         for cycle in 1 ... cycles {
-            let transcript = await SubagentJobEvaluator.runSpawnModelResidency(
+            let transcript = await SubagentJobEvaluator.runSpawnResidency(
                 orchestrator: orchestrator,
                 target: target,
                 handoffEnabled: exp.handoffEnabled ?? true,
@@ -397,7 +377,7 @@ extension EvalRunner {
                     domain: testCase.domain,
                     outcome: .skipped,
                     notes: [
-                        "live spawn_model_residency lane unavailable on this host: "
+                        "live spawn_residency lane unavailable on this host: "
                             + (transcript.error ?? transcript.envelopeKind)
                     ],
                     modelId: modelId
@@ -991,33 +971,33 @@ extension EvalRunner {
                     + "!= \(want)"
             )
         }
-        if let want = exp.expectBatchAggregateStatus {
+        if let want = exp.expectWaveAggregateStatus {
             check(
-                t.batchAggregateStatus == want,
-                pass: "batch aggregate status ok: \(want)",
+                t.waveAggregateStatus == want,
+                pass: "wave aggregate status ok: \(want)",
                 fail:
-                    "batch aggregate status "
-                    + "\(t.batchAggregateStatus ?? "nil") != \(want)"
+                    "wave aggregate status "
+                    + "\(t.waveAggregateStatus ?? "nil") != \(want)"
             )
         }
-        if let want = exp.expectBatchJobIDs {
-            let got = t.batchJobs?.map(\.id)
+        if let want = exp.expectWaveJobIDs {
+            let got = t.waveJobs?.map(\.id)
             check(
                 got == want,
-                pass: "batch job ids ok: \(want)",
-                fail: "batch job ids \(got ?? []) != \(want)"
+                pass: "wave job ids ok: \(want)",
+                fail: "wave job ids \(got ?? []) != \(want)"
             )
         }
-        if let want = exp.expectBatchSummaries {
-            let got = t.batchJobs?.map(\.summary)
+        if let want = exp.expectWaveSummaries {
+            let got = t.waveJobs?.map(\.summary)
             check(
                 got == want,
-                pass: "batch summaries ok: \(want)",
-                fail: "batch summaries \(got ?? []) != \(want)"
+                pass: "wave summaries ok: \(want)",
+                fail: "wave summaries \(got ?? []) != \(want)"
             )
         }
-        if let want = exp.expectBatchPayloadFields {
-            let got = t.batchJobs ?? []
+        if let want = exp.expectWavePayloadFields {
+            let got = t.waveJobs ?? []
             let payloadsMatch =
                 got.count == want.count
                 && zip(got, want).allSatisfy { child, expected in
@@ -1027,9 +1007,9 @@ extension EvalRunner {
                 }
             check(
                 payloadsMatch,
-                pass: "batch payload subsets ok",
+                pass: "wave payload subsets ok",
                 fail:
-                    "batch payload subsets mismatch: "
+                    "wave payload subsets mismatch: "
                     + "\(got.map { $0.payload ?? [:] })"
             )
         }

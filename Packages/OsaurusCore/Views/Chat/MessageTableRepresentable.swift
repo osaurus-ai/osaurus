@@ -66,8 +66,28 @@ final class CenteredMessageScrollView: NSScrollView {
         let contentWidth = contentSize.width
         if contentWidth != lastFittedContentWidth {
             lastFittedContentWidth = contentWidth
-            (documentView as? NSTableView)?.sizeLastColumnToFit()
+            let tableView = documentView as? NSTableView
+            tableView?.sizeLastColumnToFit()
+            // Report the fitted column width, not `contentSize`: the latter
+            // ignores the centering insets and would overshoot the column.
+            if let columnWidth = tableView?.tableColumns.first?.width {
+                onContentWidthChanged?(columnWidth)
+            }
         }
+    }
+
+    /// Fired from `tile()` with the column width after it is refitted. This
+    /// is the width cells actually get, which is narrower than SwiftUI's
+    /// width whenever a legacy (always-visible) scroller takes up room.
+    var onContentWidthChanged: ((CGFloat) -> Void)?
+
+    /// Fired before a wheel / trackpad scroll is applied, so programmatic
+    /// position holds (restore, bottom re-pin) can stand down for the user.
+    var onUserScroll: (() -> Void)?
+
+    override func scrollWheel(with event: NSEvent) {
+        onUserScroll?()
+        super.scrollWheel(with: event)
     }
 }
 
@@ -87,6 +107,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let autoScrollEnabled: Bool
     let theme: ThemeProtocol
     let expandedBlocksStore: ExpandedBlocksStore
+    let scrollPositionStore: ThreadScrollPositionStore
 
     // Scroll
     let scrollToBottomTrigger: Int
@@ -156,6 +177,10 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onScrolledAwayFromBottom: onScrolledAwayFromBottom
         )
         coordinator.setupHoverTracking(on: tableView)
+        scrollView.onUserScroll = { [weak coordinator] in coordinator?.userDidScroll() }
+        scrollView.onContentWidthChanged = { [weak coordinator] width in
+            coordinator?.tiledContentWidthDidChange(width)
+        }
 
         // sync session store into coordinator's expand cache for the initial load
         coordinator.expandedIds = expandedBlocksStore.expandedIds
@@ -164,6 +189,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
 
         coordinator.onVisibleTopUserTurnChanged = onVisibleTopUserTurnChanged
         coordinator.lastScrollToTurnTrigger = scrollToTurnTrigger
+        coordinator.scrollPositionStore = scrollPositionStore
+        coordinator.pendingScrollRestore = scrollPositionStore.position
 
         coordinator.applyBlocks(
             blocks,
@@ -198,7 +225,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         }
 
         let rctx = renderingContext(for: coordinator)
-        coordinator.lastSwiftUIWidth = rctx.width
+        coordinator.lastSwiftUIWidth = max(100, width)
         coordinator.applyBlocks(
             blocks,
             groupHeaderMap: groupHeaderMap,
@@ -246,6 +273,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     /// detached table must not keep firing tracking events into a
     /// tearing-down coordinator (issue #1632).
     static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        coordinator.saveScrollPosition()
         if let table = scrollView.documentView as? HoverTrackingTableView {
             table.onMouseMoved = nil
             table.onMouseExited = nil
@@ -256,7 +284,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
 
     private func renderingContext(for coordinator: Coordinator) -> CellRenderingContext {
         CellRenderingContext(
-            width: max(100, width),
+            width: coordinator.resolvedContentWidth(swiftUIWidth: max(100, width)),
             agentName: agentName,
             agentAvatar: agentAvatar,
             agentCustomAvatarPath: agentCustomAvatarPath,
@@ -415,6 +443,16 @@ extension MessageTableRepresentable {
         /// Width last provided by SwiftUI (effectiveContentWidth, already clamped to maxContentWidth).
         /// Used by the frame-change debounce to avoid reading the clip view before tile() has run.
         var lastSwiftUIWidth: CGFloat = 100
+        /// Content width from the scroll view's last `tile()`, 0 until the
+        /// first real layout. Cells must render at this width, not SwiftUI's:
+        /// a legacy scroller makes the column narrower than SwiftUI's width,
+        /// and any later SwiftUI update would otherwise re-render every cell
+        /// wider than its column.
+        private var tiledContentWidth: CGFloat = 0
+
+        func resolvedContentWidth(swiftUIWidth: CGFloat) -> CGFloat {
+            tiledContentWidth > 100 ? tiledContentWidth : swiftUIWidth
+        }
         /// Clip-view width the table column was last fitted to; gates
         /// `sizeLastColumnToFit` in `updateNSView` to real width changes.
         var lastFitColumnClipWidth: CGFloat = -1
@@ -435,8 +473,68 @@ extension MessageTableRepresentable {
         /// The assistant turn ID we already scrolled to (fire-once guard).
         private var lastScrolledToTurnId: UUID?
 
+        /// Per-session saved position, written on unmount.
+        var scrollPositionStore: ThreadScrollPositionStore?
+        /// Position to restore on the first snapshot that has rows.
+        var pendingScrollRestore: ThreadScrollPosition?
+        /// Until this time, row measurements re-pin a pinned reader to the
+        /// bottom (see `reportMeasuredHeight`).
+        private var pinSettleDeadline: Date = .distantPast
+        private static let pinSettleDuration: TimeInterval = 1.0
+
+        /// Restored position held while the remounted table settles. Rows
+        /// just above the viewport measure after the restore (shifting the
+        /// content under it) and the top inset lands with the first tile, so
+        /// the position is re-applied on every change until the hold ends.
+        private var heldScrollRestore: ThreadScrollPosition?
+        private var restoreHoldDeadline: Date = .distantPast
+        private var isReapplyingRestore = false
+        private static let restoreHoldDuration: TimeInterval = 1.0
+
+        private func beginRestoreHold(_ position: ThreadScrollPosition) {
+            heldScrollRestore = position
+            restoreHoldDeadline = Date() + Self.restoreHoldDuration
+            scrollAnchor.holdUnpinned = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.restoreHoldDuration) { [weak self] in
+                guard let self, Date() >= self.restoreHoldDeadline else { return }
+                self.endRestoreHold()
+            }
+        }
+
+        private func endRestoreHold() {
+            guard heldScrollRestore != nil else { return }
+            heldScrollRestore = nil
+            // Re-evaluates pinned against the settled layout.
+            scrollAnchor.holdUnpinned = false
+        }
+
+        private func reapplyHeldRestore() {
+            // Re-entrancy guard: setting the origin posts a bounds change
+            // synchronously, and when the target is past what the clip view
+            // allows (content still measuring) its clamp posts another one.
+            // Without this, that feedback recursed until the stack overflowed.
+            guard let held = heldScrollRestore, !isReapplyingRestore else { return }
+            guard Date() < restoreHoldDeadline else {
+                endRestoreHold()
+                return
+            }
+            isReapplyingRestore = true
+            defer { isReapplyingRestore = false }
+            _ = scrollAnchor.restorePosition(held, rowForBlockId: { blockIds.firstIndex(of: $0) })
+        }
+
+        /// The user took over scrolling: stop holding or re-pinning.
+        func userDidScroll() {
+            pinSettleDeadline = .distantPast
+            if heldScrollRestore != nil {
+                restoreHoldDeadline = .distantPast
+                endRestoreHold()
+            }
+        }
+
         // MARK: Rendering Context
 
+        private var responseStatsByTurn: [UUID: String] = [:]
         private var ctx = CellRenderingContext(
             width: 400,
             agentName: "",
@@ -570,6 +668,13 @@ extension MessageTableRepresentable {
         ) {
             scrollAnchor.onScrolledToBottom = onScrolledToBottom
             scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
+            scrollAnchor.blockIdForRow = { [weak self] row in
+                guard let self, row >= 0, row < self.blockIds.count else { return nil }
+                return self.blockIds[row]
+            }
+            scrollAnchor.rowForBlockId = { [weak self] id in
+                self?.blockIds.firstIndex(of: id)
+            }
             scrollAnchor.attach(to: scrollView, tableView: tableView)
 
             // observe actual frame changes from AppKit layout (fires after
@@ -596,7 +701,10 @@ extension MessageTableRepresentable {
                 object: clipView,
                 queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.scheduleVisibleUserTurnUpdate() }
+                MainActor.assumeIsolated {
+                    self?.reapplyHeldRestore()
+                    self?.scheduleVisibleUserTurnUpdate()
+                }
             }
         }
 
@@ -609,26 +717,47 @@ extension MessageTableRepresentable {
             guard abs(rawWidth - lastKnownFrameWidth) > 1.0 else {
                 return
             }
+            // The first real frame after mount is not a resize: cells are
+            // already configured for SwiftUI's width and `tile()` sizes the
+            // column. Reconfiguring here re-wrapped every visible message on
+            // each tab switch (the column snapped from the tiled content width
+            // to `lastSwiftUIWidth` ~150 ms later). Record it and stop.
+            let isFirstFrame = lastKnownFrameWidth == 0
             lastKnownFrameWidth = rawWidth
+            if isFirstFrame {
+                return
+            }
 
-            // only reconfigure after the frame stops changing
-            // to avoid expensive per-frame work
+            scheduleWidthReconfigure()
+        }
+
+        /// `tile()` laid the column out at a new width (window resize, or a
+        /// legacy scroller appearing/disappearing). Reconfigure the cells
+        /// only if they were rendered for a different width, so overlay
+        /// scrollers (where the two always agree) keep the no-rewrap mount.
+        func tiledContentWidthDidChange(_ width: CGFloat) {
+            guard width > 100 else { return }
+            tiledContentWidth = width
+            guard abs(ctx.width - width) > 1.0 else { return }
+            scheduleWidthReconfigure()
+        }
+
+        /// Reconfigure every cell for the current content width once the
+        /// width stops changing, to avoid expensive per-frame work.
+        private func scheduleWidthReconfigure() {
             frameDebounceWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self, let tableView else { return }
-                // use SwiftUI's pre-computed effectiveContentWidth (already clamped to
-                // maxContentWidth). Reading contentView.bounds.width here is unreliable
-                // because tile() may not have applied centering insets yet at this point.
-                let contentWidth = self.lastSwiftUIWidth
+                // By now tile() has run, so prefer its content width (which
+                // accounts for a legacy scroller) over SwiftUI's.
+                let contentWidth = self.resolvedContentWidth(swiftUIWidth: self.lastSwiftUIWidth)
                 self.ctx.width = contentWidth
                 self.heightCache.removeAll()
-                // set column width explicitly to match SwiftUI's effective content width
-                // (tile() may not have updated clip view insets yet, so sizeLastColumnToFit
-                // could give a stale value).
                 if let col = tableView.tableColumns.first {
                     col.width = contentWidth
                 }
                 self.reconfigureAllCellsFromLookup(self.blockLookup)
+                self.reapplyHeldRestore()
             }
             frameDebounceWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
@@ -753,6 +882,26 @@ extension MessageTableRepresentable {
             lastAssistantTurnId: UUID?,
             autoScrollEnabled: Bool
         ) {
+            // Keep the measured values for Inspect response, including restored
+            // chats whose request log has expired. Refresh before the no-change
+            // path: final statistics can arrive without another text delta.
+            responseStatsByTurn.removeAll(keepingCapacity: true)
+            for block in blocks {
+                if case let .generationStats(ttft, rate, count, unclosed, load, cached, total) = block.kind {
+                    responseStatsByTurn[block.turnId] = NativeStatsView.statsText(
+                        ttft: ttft, tokensPerSecond: rate, tokenCount: count,
+                        unclosedReasoning: unclosed, modelLoad: load,
+                        cachedInputTokens: cached, totalDuration: total
+                    )
+                }
+            }
+            // Only an incomplete-response warning needs a visible footer row.
+            // The original blocks and persisted generation measurements remain
+            // unchanged; this filters the table's presentation only.
+            let blocks = blocks.filter { block in
+                if case let .generationStats(_, _, _, unclosed, _, _, _) = block.kind { return unclosed }
+                return true
+            }
             let widthChanged = abs(ctx.width - context.width) > 1.0
             let expandedIdsChanged = context.expandedIds != ctx.expandedIds
             let previousEditingTurnId = ctx.editingTurnId
@@ -1019,6 +1168,11 @@ extension MessageTableRepresentable {
                 newIds.reversed().filter { seenIds.insert($0).inserted }.reversed()
             )
 
+            // Save the anchor while `blockIds` still matches the table's rows,
+            // so the anchor records the block the reader is actually on.
+            let wasPinnedToBottom = scrollAnchor.isPinnedToBottom
+            scrollAnchor.saveAnchor()
+
             blockLookup = newLookup
             blockIds = uniqueIds
             streamingBlockId = newStreamingBlockId
@@ -1026,9 +1180,6 @@ extension MessageTableRepresentable {
             let stableChangedIds = uniqueIds.filter { id in
                 oldIdSet.contains(id) && newLookup[id] != oldLookup[id]
             }
-
-            let wasPinnedToBottom = scrollAnchor.isPinnedToBottom
-            scrollAnchor.saveAnchor()
 
             var snapshot = NSDiffableDataSourceSnapshot<MessageSection, String>()
             snapshot.appendSections([.main])
@@ -1102,6 +1253,22 @@ extension MessageTableRepresentable {
             wasPinnedToBottom: Bool,
             isStreaming: Bool
         ) {
+            // First snapshot after a remount (tab switch): put the reader back
+            // where they left this session. A pinned reader takes the normal
+            // bottom path below; a restore whose block is gone falls through.
+            if let restore = pendingScrollRestore, !blockIds.isEmpty {
+                pendingScrollRestore = nil
+                if !restore.isPinnedToBottom,
+                    scrollAnchor.restorePosition(restore, rowForBlockId: { blockIds.firstIndex(of: $0) })
+                {
+                    // Keep the next streaming snapshot from homing to the
+                    // current turn's header and undoing the restore.
+                    lastScrolledToTurnId = lastAssistantTurnId
+                    beginRestoreHold(restore)
+                    return
+                }
+            }
+
             if autoScrollEnabled,
                 isStreaming,
                 let turnId = lastAssistantTurnId,
@@ -1113,16 +1280,30 @@ extension MessageTableRepresentable {
                     scrollAnchor.scrollToRow(row, animated: true)
                 } else if wasPinnedToBottom {
                     scrollAnchor.scrollToBottom()
+                    pinSettleDeadline = Date() + Self.pinSettleDuration
                 } else {
                     scrollAnchor.restoreAnchor()
                 }
             } else if wasPinnedToBottom {
                 scrollAnchor.scrollToBottom()
+                pinSettleDeadline = Date() + Self.pinSettleDuration
             } else {
                 scrollAnchor.restoreAnchor()
             }
 
             scrollAnchor.checkPinnedState()
+        }
+
+        /// Record the reading position on the session so the next mount
+        /// (after a tab switch) can restore it. Called on unmount.
+        func saveScrollPosition() {
+            // A mount that never showed rows has nothing new to say; keep the
+            // earlier saved position instead of wiping it.
+            guard !blockIds.isEmpty else { return }
+            let position = scrollAnchor.capturePosition { row in
+                row >= 0 && row < blockIds.count ? blockIds[row] : nil
+            }
+            scrollPositionStore?.position = position
         }
 
         // MARK: - Cell Factory
@@ -1151,6 +1332,7 @@ extension MessageTableRepresentable {
                 var context = ctx
                 context.expandedIds = expandedIds
                 context.isTurnHovered = hoveredGroupId == groupId
+                context.responseStatsForTurn = { [weak self] in self?.responseStatsByTurn[$0] }
                 cell.configure(block: block, context: context)
             }
         }
@@ -1374,10 +1556,22 @@ extension MessageTableRepresentable {
             heightCache[blockId] = height
             // 2pt was too coarse — short rows (user bubble + corner stroke) looked clipped before the next scroll
             if delta > 0.5 {
+                // Read before re-noting: the height change itself can move the
+                // bottom away and flip the pinned flag in the bounds callback.
+                let wasPinned = scrollAnchor.isPinnedToBottom
                 NSAnimationContext.beginGrouping()
                 NSAnimationContext.current.duration = 0
                 tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
                 NSAnimationContext.endGrouping()
+                reapplyHeldRestore()
+                // Freshly shown rows usually measure taller than their
+                // estimate, growing the content below a reader who was just
+                // put at the bottom. Follow it, but only while settling, so a
+                // reader starting to scroll up is never pulled back down.
+                let settling = Date() < pinSettleDeadline
+                if wasPinned, settling {
+                    scrollAnchor.scrollToBottomCoalesced()
+                }
             }
         }
 

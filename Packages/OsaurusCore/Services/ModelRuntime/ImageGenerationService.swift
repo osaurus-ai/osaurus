@@ -45,6 +45,13 @@ public actor ImageGenerationService {
     /// loop; the loop keeps consuming the engine stream to completion so the
     /// gate is never released mid-eval (soft cancel).
     private var cancelledJobIDs: Set<String> = []
+    /// A stream can terminate before its non-cancellable producer drain. The
+    /// coordinator joins this exact job before releasing its parent hold.
+    private struct ProducerJob {
+        let task: Task<Void, Never>
+        let cancel: @Sendable () -> Void
+    }
+    private var producerJobs: [String: ProducerJob] = [:]
 
     public init() {}
 
@@ -53,6 +60,11 @@ public actor ImageGenerationService {
     /// event boundary and finishes with `.cancelled`.
     public func cancel(jobID: String) {
         cancelledJobIDs.insert(jobID)
+        producerJobs[jobID]?.cancel()
+    }
+
+    func waitForJobDrain(jobID: String) async {
+        await producerJobs[jobID]?.task.value
     }
 
     /// Release the resident image model after agent-triggered jobs or memory
@@ -340,13 +352,26 @@ public actor ImageGenerationService {
         _ build: @escaping @Sendable (FluxEngine, URL) async throws -> [AsyncThrowingStream<ImageGenEvent, Error>]
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
+            guard jobID.map({ producerJobs[$0] == nil }) ?? true else {
+                continuation.yield(.failed(message: "An image job with this ID is already running.", hfAuth: false))
+                continuation.finish()
+                return
+            }
+            // Cancel only the gate waiter, not the producer that consumes the
+            // engine stream. Cancelling that consumer makes AsyncStream stop
+            // iteration immediately even if the engine still produces work.
+            let cancellation = ImageJobCancellation { try await MetalGate.shared.enterImageGeneration() }
+            let cancel: @Sendable () -> Void = { cancellation.cancel() }
             let task = Task {
+                defer {
+                    if let jobID { self.producerJobs.removeValue(forKey: jobID) }
+                }
                 do {
                     // Cancellation-aware: consumer termination (or job cancel)
                     // while another producer holds the GPU releases this task
                     // instead of parking it. No gate is held on the throw
                     // path, so none of the drain tail below applies.
-                    try await MetalGate.shared.enterImageGeneration()
+                    try await cancellation.enter()
                 } catch {
                     continuation.yield(.cancelled)
                     continuation.finish()
@@ -381,7 +406,7 @@ public actor ImageGenerationService {
                 var cancelled = false
                 var produced: [GeneratedImage] = []
                 func cancelRequested() -> Bool {
-                    if Task.isCancelled { return true }
+                    if cancellation.isRequested { return true }
                     if let jobID, self.cancelledJobIDs.contains(jobID) { return true }
                     return false
                 }
@@ -478,7 +503,13 @@ public actor ImageGenerationService {
                     await self.unload()
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
+            if let jobID {
+                producerJobs[jobID] = ProducerJob(task: task, cancel: cancel)
+                if cancelledJobIDs.contains(jobID) { cancel() }
+            }
+            continuation.onTermination = { reason in
+                if case .cancelled = reason { cancel() }
+            }
         }
     }
 

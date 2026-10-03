@@ -18,58 +18,26 @@ struct ToolResultGroundingTests {
     private typealias Event = EvalCase.ToolResultGroundingExpectations.Event
     private typealias Assertion = EvalCase.ToolResultGroundingExpectations.Assertion
 
-    private static func spawnBatchEnvelope(
-        aggregateStatus: String = "succeeded"
-    ) -> String {
-        let succeeded = aggregateStatus == "succeeded"
-        let childEnvelope: [String: Any]
-        if succeeded {
-            childEnvelope = [
-                "ok": true,
-                "result": [
+    private static func spawnEnvelope(ok: Bool = true) -> String {
+        if ok {
+            return ToolEnvelope.success(
+                tool: "spawn_agent",
+                result: [
                     "kind": "spawn_result",
                     "model": "test/worker",
                     "summary": "WORKER_RESULT_41",
-                ],
-            ]
-        } else {
-            childEnvelope = [
-                "ok": false,
-                "kind": "execution_error",
-                "message": "worker failed",
-            ]
-        }
-        let result: [String: Any] = [
-            "kind": "spawn_batch_result",
-            "max_parallel": 1,
-            "succeeded": succeeded ? 1 : 0,
-            "failed": succeeded ? 0 : 1,
-            "aggregate_status": aggregateStatus,
-            "execution": [
-                "waves": [
-                    [
-                        "wave": 0,
-                        "remote_jobs": 1,
-                        "local_jobs": 0,
-                        "effective_local_slots": 1,
-                        "local_subwaves": [1],
-                        "limited_by": [],
-                    ]
-                ],
-                "cache": ["available": false],
-            ],
-            "results": [
-                [
-                    "id": "worker",
-                    "target_type": "agent",
-                    "target": "A11CE001-0000-4000-8000-000000000001",
-                    "ok": succeeded,
-                    "envelope": childEnvelope,
+                    "session_id": "0F0F0F0F-0000-4000-8000-000000000001",
+                    "needs_input": false,
                 ]
-            ],
-        ]
-        return ToolEnvelope.success(tool: "spawn_batch", result: result)
+            )
+        }
+        return ToolEnvelope.failure(
+            kind: .executionError, message: "worker failed", tool: "spawn_agent"
+        )
     }
+
+    private static let workerArguments =
+        "{\"agent\":\"A11CE001-0000-4000-8000-000000000001\",\"input\":\"Return the token.\"}"
 
     @Test func groundedTranscriptPasses() {
         let report = score(
@@ -250,14 +218,14 @@ struct ToolResultGroundingTests {
                 events: [
                     Event(
                         kind: "toolCall",
-                        callId: "batch-1",
-                        tool: "spawn_batch",
-                        arguments: "{\"jobs\":[]}"
+                        callId: "spawn-1",
+                        tool: "spawn_agent",
+                        arguments: Self.workerArguments
                     ),
                     Event(
                         kind: "toolResult",
-                        callId: "batch-1",
-                        tool: "spawn_batch",
+                        callId: "spawn-1",
+                        tool: "spawn_agent",
                         content: "BATCH_SETTLED_17"
                     ),
                     Event(
@@ -279,16 +247,16 @@ struct ToolResultGroundingTests {
                 ],
                 assertions: [
                     Assertion(
-                        callId: "batch-1",
+                        callId: "spawn-1",
                         answerMustContain: ["BATCH_SETTLED_17"]
                     ),
                     Assertion(
                         callId: "write-1",
                         answerMustContain: ["WRITE_COMMIT_61"],
-                        callMustFollowResultOf: "batch-1"
+                        callMustFollowResultOf: "spawn-1"
                     ),
                 ],
-                expectedToolSequence: ["spawn_batch", "file_write"],
+                expectedToolSequence: ["spawn_agent", "file_write"],
                 requireSingleFinalAssistant: true,
                 requireFinalAfterAllToolResults: true,
                 requireFinalIsLastEvent: true
@@ -302,8 +270,8 @@ struct ToolResultGroundingTests {
         let report = score(
             Grounding(
                 events: [
-                    Event(kind: "toolCall", callId: "batch-1", tool: "spawn_batch"),
-                    Event(kind: "toolResult", callId: "batch-1", content: "settled"),
+                    Event(kind: "toolCall", callId: "spawn-1", tool: "spawn_agent"),
+                    Event(kind: "toolResult", callId: "spawn-1", content: "settled"),
                     Event(kind: "toolCall", callId: "write-1", tool: "file_write"),
                     Event(kind: "toolResult", callId: "write-1", content: "written"),
                     Event(kind: "toolCall", callId: "write-2", tool: "file_write"),
@@ -311,7 +279,7 @@ struct ToolResultGroundingTests {
                     Event(kind: "assistant", content: "done"),
                 ],
                 assertions: [],
-                expectedToolSequence: ["spawn_batch", "file_write"],
+                expectedToolSequence: ["spawn_agent", "file_write"],
                 requireSingleFinalAssistant: true,
                 requireFinalAfterAllToolResults: true,
                 requireFinalIsLastEvent: true
@@ -326,16 +294,16 @@ struct ToolResultGroundingTests {
         let report = score(
             Grounding(
                 events: [
-                    Event(kind: "toolCall", callId: "batch-1", tool: "spawn_batch"),
+                    Event(kind: "toolCall", callId: "spawn-1", tool: "spawn_agent"),
                     Event(kind: "toolCall", callId: "write-1", tool: "file_write"),
-                    Event(kind: "toolResult", callId: "batch-1", content: "settled"),
+                    Event(kind: "toolResult", callId: "spawn-1", content: "settled"),
                     Event(kind: "toolResult", callId: "write-1", content: "written"),
                     Event(kind: "assistant", content: "done"),
                 ],
                 assertions: [
                     Assertion(
                         callId: "write-1",
-                        callMustFollowResultOf: "batch-1"
+                        callMustFollowResultOf: "spawn-1"
                     )
                 ]
             )
@@ -349,8 +317,8 @@ struct ToolResultGroundingTests {
         let report = score(
             Grounding(
                 events: [
-                    Event(kind: "toolCall", callId: "batch-1", tool: "spawn_batch"),
-                    Event(kind: "toolResult", callId: "batch-1", content: "settled"),
+                    Event(kind: "toolCall", callId: "spawn-1", tool: "spawn_agent"),
+                    Event(kind: "toolResult", callId: "spawn-1", content: "settled"),
                     Event(kind: "assistant", content: "first final"),
                     Event(kind: "assistant", content: "second final"),
                     Event(kind: "toolCall", callId: "reopened", tool: "todo"),
@@ -369,73 +337,80 @@ struct ToolResultGroundingTests {
         #expect(report.notes.contains { $0.contains("was not the last event") })
     }
 
-    @Test func structuredSpawnBatchContractPassesAndCatchesAggregateDrift() {
-        let assertion = EvalCase.AgentLoopExpectations.SpawnBatchAssertion(
-            exactCallCount: 1,
-            expectedJobIds: ["worker"],
-            expectedSucceeded: 1,
+    @Test func structuredSpawnWaveContractPassesAndCatchesRowDrift() {
+        let assertion = EvalCase.AgentLoopExpectations.SpawnWaveAssertion(
+            exactCallCount: 2,
+            expectedTargets: [
+                "A11CE001-0000-4000-8000-000000000001",
+                "A11CE001-0000-4000-8000-000000000001",
+            ],
+            expectedSucceeded: 2,
             expectedFailed: 0,
-            expectedMaxParallel: 1,
-            requireEveryRowSettled: true,
-            requireReportedCountsMatchRows: true,
-            expectedAggregateStatus: "succeeded",
-            requireEveryExecutionWaveWellFormed: true,
-            expectedCacheAvailable: false,
+            expectedWaveSizes: [2],
             expectedRows: [
                 .init(
-                    id: "worker",
-                    targetType: "agent",
                     target: "A11CE001-0000-4000-8000-000000000001",
                     ok: true,
                     model: "test/worker",
                     summaryContains: ["WORKER_RESULT_41"]
-                )
+                ),
+                .init(ok: true),
             ]
         )
         let events = [
-            Event(kind: "toolCall", callId: "batch-1", tool: "spawn_batch"),
-            Event(
-                kind: "toolResult",
-                callId: "batch-1",
-                tool: "spawn_batch",
-                content: Self.spawnBatchEnvelope()
-            ),
+            Event(kind: "toolCall", callId: "spawn-1", tool: "spawn_agent", arguments: Self.workerArguments),
+            Event(kind: "toolCall", callId: "spawn-2", tool: "spawn_agent", arguments: Self.workerArguments),
+            Event(kind: "toolResult", callId: "spawn-1", tool: "spawn_agent", content: Self.spawnEnvelope()),
+            Event(kind: "toolResult", callId: "spawn-2", tool: "spawn_agent", content: Self.spawnEnvelope()),
             Event(kind: "assistant", content: "WORKER_RESULT_41"),
         ]
         let passing = score(
             Grounding(
                 events: events,
                 assertions: [],
-                expectedToolSequence: ["spawn_batch"],
+                expectedToolSequence: ["spawn_agent", "spawn_agent"],
                 requireSingleFinalAssistant: true,
                 requireFinalAfterAllToolResults: true,
                 requireFinalIsLastEvent: true,
-                spawnBatch: assertion
+                spawnWave: assertion
             )
         )
         #expect(passing.outcome == .passed, "notes: \(passing.notes)")
-        #expect(passing.notes.contains { $0.contains("aggregateStatus") })
+        #expect(passing.notes.contains { $0.contains("waveSizes=[2]") })
 
+        // One failed sibling drifts succeeded/failed and the row's ok flag.
         let drift = score(
             Grounding(
                 events: [
-                    events[0],
+                    events[0], events[1], events[2],
                     Event(
                         kind: "toolResult",
-                        callId: "batch-1",
-                        tool: "spawn_batch",
-                        content: Self.spawnBatchEnvelope(
-                            aggregateStatus: "all_failed"
-                        )
+                        callId: "spawn-2",
+                        tool: "spawn_agent",
+                        content: Self.spawnEnvelope(ok: false)
                     ),
-                    events[2],
+                    events[4],
                 ],
                 assertions: [],
-                spawnBatch: assertion
+                spawnWave: assertion
             )
         )
         #expect(drift.outcome == .failed)
-        #expect(drift.notes.contains { $0.contains("aggregate_status") })
+        #expect(drift.notes.contains { $0.contains("succeeded 1 != 2") })
+        #expect(drift.notes.contains { $0.contains("row[1].ok") })
+
+        // Sequential calls (result between them) are two waves, not one.
+        let sequential = score(
+            Grounding(
+                events: [
+                    events[0], events[2], events[1], events[3], events[4],
+                ],
+                assertions: [],
+                spawnWave: assertion
+            )
+        )
+        #expect(sequential.outcome == .failed)
+        #expect(sequential.notes.contains { $0.contains("wave sizes [1, 1] != [2]") })
     }
 
     @Test func suiteDecodesAndPasses() throws {
@@ -447,15 +422,16 @@ struct ToolResultGroundingTests {
 
         let suite = try EvalSuite.load(from: suiteDir)
         #expect(suite.decodeFailures.isEmpty, "decode failures: \(suite.decodeFailures)")
-        let requiredSpawnBatchCases: Set<String> = [
-            "tool_result_grounding.spawn-batch-partial-failure-parent-continuation",
-            "tool_result_grounding.spawn-batch-second-tool-then-final",
-            "tool_result_grounding.spawn-batch-pending-todo-finalizes-once",
-            "tool_result_grounding.spawn-batch-all-cancelled-finalizes-once",
+        let requiredSpawnWaveCases: Set<String> = [
+            "tool_result_grounding.spawn-wave-partial-failure-parent-continuation",
+            "tool_result_grounding.spawn-wave-second-tool-then-final",
+            "tool_result_grounding.spawn-wave-pending-todo-finalizes-once",
+            "tool_result_grounding.spawn-wave-all-cancelled-finalizes-once",
+            "tool_result_grounding.spawn-continue-follow-up-same-session",
         ]
         #expect(
-            requiredSpawnBatchCases.isSubset(of: Set(suite.cases.map(\.id))),
-            "missing required spawn_batch transcript fixture"
+            requiredSpawnWaveCases.isSubset(of: Set(suite.cases.map(\.id))),
+            "missing required spawn_agent wave transcript fixture"
         )
         for testCase in suite.cases {
             #expect(testCase.domain == "tool_result_grounding")

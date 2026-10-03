@@ -334,27 +334,38 @@ public final class NextRunScheduler {
         }.value
     }
 
+    /// Fixed fragments of the self-scheduled dispatch prompt. Shared with
+    /// `DispatchEnvelope`, which strips them for display, so the producer and
+    /// the parser can never drift apart. Byte-for-byte the historical text.
+    nonisolated public static let selfScheduledRunPrefix = "[Self-scheduled run] "
+    nonisolated public static let selfScheduledRunIntro =
+        selfScheduledRunPrefix
+        + "This chat was started automatically for a "
+        + "scheduled wake. It is a fresh session with no prior "
+        + "conversation context."
+    nonisolated public static let scheduledByLinePrefix = "Scheduled by: "
+    nonisolated public static let previousRunLinePrefix = "Your previous run "
+    nonisolated public static let instructionsHeader = "Instructions for this run:"
+
     /// Prompt preamble + verbatim instructions for a self-scheduled wake.
     public static func composeDispatchPrompt(
         entry: NextRunEntry,
         previousRun: AgentRunRecord?
     ) -> String {
         var lines: [String] = [
-            "[Self-scheduled run] This chat was started automatically for a "
-                + "scheduled wake. It is a fresh session with no prior "
-                + "conversation context.",
-            "Scheduled by: \(entry.scheduledBy.rawValue), "
+            selfScheduledRunIntro,
+            scheduledByLinePrefix + "\(entry.scheduledBy.rawValue), "
                 + "for \(promptTimestamp(entry.scheduledAt)).",
         ]
         if let previousRun, let ended = previousRun.endedAt {
             lines.append(
-                "Your previous run \(statusPhrase(previousRun.status)) at "
+                previousRunLinePrefix + "\(statusPhrase(previousRun.status)) at "
                     + "\(promptTimestamp(ended)). Consult your agent database "
                     + "or notes for any state you saved."
             )
         }
         lines.append("")
-        lines.append("Instructions for this run:")
+        lines.append(instructionsHeader)
         lines.append(entry.instructions)
         return lines.joined(separator: "\n")
     }

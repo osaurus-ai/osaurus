@@ -1,0 +1,30 @@
+{
+  "id": "agent_loop.missing-file-is-recoverable",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 missing files remain recoverable under chat rejection policy",
+  "query": "Use file_read to read the file missing-config.yaml directly \u2014 do not list or search the folder first \u2014 and report its contents.",
+  "notes": "A typed not_found result is correctable even with stopOnToolRejection enabled. The model must report the real missing-file result, not terminate as a user denial. Hard rejection is covered separately by rejection-stops-run.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "README.md",
+        "contents": "This project has no YAML configuration.\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "stopOnToolRejection": true,
+      "mustCallTools": [
+        "file_read"
+      ],
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "missing-config.yaml"
+      ]
+    }
+  }
+}

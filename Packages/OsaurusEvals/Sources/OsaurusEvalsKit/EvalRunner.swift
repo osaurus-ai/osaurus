@@ -1815,11 +1815,13 @@ public enum EvalRunner {
         // selections, or the pre-run binding for keep-current ("(unset)"
         // when nothing was configured — fall back to the store for that).
         let pinnedModel = modelId == "(unset)" ? nil : modelId
-        let transcript = await DefaultAgentConfigurationEvaluator.run(
-            query: testCase.query,
-            maxIterations: exp.maxIterations ?? 6,
-            model: pinnedModel
-        )
+        let transcript = await EvalDefaultAgentModelBinding.run(model: pinnedModel) {
+            await DefaultAgentConfigurationEvaluator.run(
+                query: testCase.query,
+                maxIterations: exp.maxIterations ?? 6,
+                model: pinnedModel
+            )
+        }
         await MainActor.run { ChatConfigurationStore.save(chatConfigBeforeCase) }
         PrivacyFilterStore.save(privacyConfigBeforeCase ?? .default)
         // Normalized latency: loop-only (judge timed separately below).
@@ -1919,6 +1921,13 @@ public enum EvalRunner {
         if let matchers = exp.argsMustContain {
             for matcher in matchers {
                 let result = scoreArgsMustContain(matcher: matcher, transcript: transcript)
+                passed = passed && result.passed
+                notes.append(result.note)
+            }
+        }
+        if let matchers = exp.argsMustNotContain {
+            for matcher in matchers {
+                let result = scoreArgsMustNotContain(matcher: matcher, transcript: transcript)
                 passed = passed && result.passed
                 notes.append(result.note)
             }
@@ -2175,7 +2184,7 @@ public enum EvalRunner {
     /// string) makes the assertion robust to whitespace and key order; the
     /// value comparison is a case-insensitive substring so enum/value casing
     /// from the model doesn't flake the check.
-    private static func scoreArgsMustContain(
+    static func scoreArgsMustContain(
         matcher: EvalCase.DefaultAgentExpectations.ToolArgsMatcher,
         transcript: CapabilityClaimsTranscript
     ) -> (passed: Bool, note: String) {
@@ -2223,6 +2232,35 @@ public enum EvalRunner {
             false,
             "argsMustContain FAIL: no \(matcher.tool) call matched {\(pairs)} — observed: \(observed)"
         )
+    }
+
+    /// Inverse of `scoreArgsMustContain`: passes when NO call to the matcher's
+    /// tool satisfies every key→substring pair (a tool that was never called
+    /// passes trivially — `mustCallTools` owns presence).
+    static func scoreArgsMustNotContain(
+        matcher: EvalCase.DefaultAgentExpectations.ToolArgsMatcher,
+        transcript: CapabilityClaimsTranscript
+    ) -> (passed: Bool, note: String) {
+        let pairs = matcher.args.map { "\($0)=\($1)" }.sorted().joined(separator: ",")
+        let calls = transcript.toolCalls.filter { $0.name == matcher.tool }
+        for (index, call) in calls.enumerated() {
+            guard
+                let data = call.arguments.data(using: .utf8),
+                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            let matches = matcher.args.allSatisfy { key, forbidden in
+                guard let actual = obj[key] else { return false }
+                return argValueString(actual).lowercased().contains(forbidden.lowercased())
+            }
+            if matches {
+                return (
+                    false,
+                    "argsMustNotContain FAIL: \(matcher.tool) call #\(index + 1) matched {\(pairs)} — "
+                        + compactArgsForNote(call.arguments)
+                )
+            }
+        }
+        return (true, "argsMustNotContain ok: no \(matcher.tool) call matched {\(pairs)}")
     }
 
     /// Render one tool call's raw arguments JSON into a compact, log-safe

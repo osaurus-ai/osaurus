@@ -34,6 +34,12 @@ public protocol SubagentKind: Sendable {
     /// mirror it into a duplicate Activity row. Defaults to false.
     var suppressActivityMirror: Bool { get }
 
+    /// The persisted worker session this run will create or resume, known
+    /// BEFORE the run starts, so a `background: true` acknowledgment can
+    /// hand the parent the `session_id` it will later `continue` with or
+    /// open. Nil (the default) for kinds without a persisted session.
+    var plannedSessionId: UUID? { get }
+
     /// Bounded request facts for RAM-admission pricing: the seed/input size
     /// and configured max output THIS run will actually ask the child model
     /// to hold. nil (the default) means "unknown" and admission falls back
@@ -98,15 +104,24 @@ public protocol SubagentKind: Sendable {
 /// A local-model kind whose residency decision can become stale while it waits
 /// for process-wide admission.
 ///
-/// `TextSubagentKind` is the production conformer. Keeping this separate from
-/// `SubagentKind` avoids imposing model-residency policy on browser, media, and
-/// other kinds that already own a different execution contract.
+/// Text, Browser, Computer Use and AppleScript share this scheduling contract.
+/// Keeping it separate from `SubagentKind` avoids imposing text-model residency
+/// policy on media kinds whose detached producers own a different lifetime.
 protocol SubagentPostAdmissionResidencyPlanning: SubagentKind {
     /// Re-read live residency and RAM-safety inputs after admission is held and
     /// update the kind's handoff state to match the returned plan.
     func refreshedResidencyPlanAfterAdmission(
         for resolved: ResolvedModel
     ) async throws -> ResidencyPlan
+}
+
+/// A child whose history window can be tightened before dispatch. The same
+/// ceiling must be used by RAM pricing, history compaction and the rendered
+/// token check; changing an estimate without changing execution is unsafe.
+protocol SubagentContextAdmission: SubagentKind {
+    var minimumAdmissionContextPositions: Int? { get }
+    var admissionContextWasMemoryFitted: Bool { get }
+    func tightenAdmissionContextPositions(to limit: Int) -> Bool
 }
 
 extension SubagentKind {
@@ -116,6 +131,9 @@ extension SubagentKind {
 
     /// Default: ordinary in-memory subagent runs are mirrored to the Activity section.
     public var suppressActivityMirror: Bool { false }
+
+    /// Default: no persisted worker session to announce ahead of the run.
+    public var plannedSessionId: UUID? { nil }
 
     /// Default: no residency change. Model-swapping kinds override.
     public func makeHandoff() -> SubagentHandoff { PassthroughHandoff() }

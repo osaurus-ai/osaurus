@@ -190,20 +190,14 @@ struct SubagentResidencyTests {
             ramSafetyEnabled: true,
             requiredBytes: 2_000,
             idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: SubagentCoexistence(
-                allowed: true,
-                availableBytes: 10_000_000_000,
-                residentBytes: 4_000,
-                flexibleBudgetBytes: 10_000
-            )
+            deniedMessage: denied
         )
         #expect(plan.coexists)
         #expect(!plan.shouldUnload)
     }
 
-    @Test("protected target coexistence (toggle OFF) does not double-charge resident weights")
-    func protectedTargetReuseDoesNotDoubleChargeWeights() throws {
+    @Test("protected target keep-parent planning preserves RAM admission inputs")
+    func protectedTargetReusePreservesMemoryInputs() throws {
         let gb: Int64 = 1 << 30
         let plan = try SubagentResidency.decidePlan(
             isLocal: true,
@@ -214,20 +208,12 @@ struct SubagentResidencyTests {
             ramSafetyEnabled: true,
             requiredBytes: 4 * gb,
             idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: SubagentCoexistence(
-                allowed: true,
-                availableBytes: 5 * gb,
-                residentBytes: 8 * gb,
-                // A+B fits, A+B+B does not. Reusing B must add zero weight.
-                flexibleBudgetBytes: 10 * gb,
-                // A tightened profile may reject a new cold load, but the
-                // target is already protected and resident in this row.
-                memorySafetyAllowsTargetLoad: false
-            )
+            deniedMessage: denied
         )
         #expect(plan.coexists)
         #expect(!plan.shouldUnload)
+        #expect(plan.ramSafetyEnabled)
+        #expect(plan.requiredBytes == 4 * gb)
     }
 
     @Test("RAM-safe coexistence (toggle OFF) may add a child without reclaiming protected residents")
@@ -241,19 +227,13 @@ struct SubagentResidencyTests {
             ramSafetyEnabled: true,
             requiredBytes: 2_000,
             idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: SubagentCoexistence(
-                allowed: true,
-                availableBytes: 10_000_000_000,
-                residentBytes: 4_000,
-                flexibleBudgetBytes: 10_000
-            )
+            deniedMessage: denied
         )
         #expect(plan.coexists)
         #expect(!plan.shouldUnload)
     }
 
-    @Test("a different local model with the handoff toggle OFF runs with NO sequencing (never a refusal)")
+    @Test("OFF uses a scoped keep-parent handoff, never a passthrough eviction")
     func differentLocalHandoffDisabledRunsWithoutSequencing() throws {
         let plan = try SubagentResidency.decidePlan(
             isLocal: true,
@@ -266,11 +246,9 @@ struct SubagentResidencyTests {
             deniedMessage: denied
         )
         #expect(plan.shouldUnload == false)
-        #expect(plan.coexists == false)
-        #expect(plan.sequencingDisabled == true)
-        #expect(plan.mode == "sequencing_off")
-        // Toggle OFF maps to the passthrough handoff: nothing unloaded, nothing restored.
-        #expect(SubagentResidency.handoff(for: plan) is PassthroughHandoff)
+        #expect(plan.coexists)
+        #expect(plan.mode == "coexist")
+        #expect(SubagentResidency.handoff(for: plan) is CoexistenceHandoff)
     }
 
     @Test("handoff toggle ON + main chat model NOT loaded: the reload leg still runs (parity)")
@@ -305,7 +283,7 @@ struct SubagentResidencyTests {
             invokingParentModelName: "local-a"
         )
         #expect(plan.shouldUnload == false)
-        #expect(plan.coexists == false)
+        #expect(plan.coexists)
     }
 
     @Test("main NOT loaded + delegate IS the parent model: no churn even with the toggle ON")
@@ -322,7 +300,7 @@ struct SubagentResidencyTests {
             invokingParentModelName: "local-a"
         )
         #expect(plan.shouldUnload == false)
-        #expect(plan.sequencingDisabled == false)
+        #expect(!plan.coexists)
         #expect(plan.mode == "in_place")
     }
 
@@ -369,202 +347,28 @@ struct SubagentResidencyTests {
         )
     }
 
-    // MARK: - RAM-aware coexistence gate
-
-    /// 10 GB model, plenty of reclaimable RAM, well under the flexible cap.
-    private func roomyCoexistence(allowed: Bool = true) -> SubagentCoexistence {
-        SubagentCoexistence(
-            allowed: allowed,
-            availableBytes: 64 * 1_073_741_824,
-            residentBytes: 8 * 1_073_741_824,
-            flexibleBudgetBytes: 96 * 1_073_741_824
-        )
-    }
-
-    private let tenGB: Int64 = 10 * 1_073_741_824
-
-    @Test("coexistence (toggle OFF): both fit under flexible policy → run alongside, no unload")
-    func coexistenceFitsRunsAlongside() throws {
+    @Test(
+        "OFF retains the parent irrespective of RAM toggle or known bundle size",
+        arguments: [false, true],
+        [Int64(0), Int64(10 * 1_073_741_824)]
+    )
+    func keepParentIsIndependentOfMemoryAdmission(ramSafety: Bool, size: Int64) throws {
         let plan = try SubagentResidency.decidePlan(
             isLocal: true,
             modelName: "local-b",
             residentChatModels: ["local-a"],
             handoffEnabled: false,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
+            ramSafetyEnabled: ramSafety,
+            requiredBytes: size,
             idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: roomyCoexistence()
+            deniedMessage: denied
         )
-        #expect(plan.shouldUnload == false)
-        #expect(plan.coexists == true)
-        #expect(plan.maxElapsedSeconds == 90)
-    }
-
-    @Test("handoff toggle ON always sequences: coexistence never overrides the swap")
-    func handoffOnIgnoresCoexistence() throws {
-        let plan = try SubagentResidency.decidePlan(
-            isLocal: true,
-            modelName: "local-b",
-            residentChatModels: ["local-a"],
-            handoffEnabled: true,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: roomyCoexistence()
-        )
-        #expect(plan.shouldUnload == true)
-        #expect(plan.coexists == false)
-        #expect(plan.mode == "swap_unload_reload")
-    }
-
-    @Test("coexistence disabled (default) keeps the single-residency handoff")
-    func coexistenceDisabledKeepsHandoff() throws {
-        let plan = try SubagentResidency.decidePlan(
-            isLocal: true,
-            modelName: "local-b",
-            residentChatModels: ["local-a"],
-            handoffEnabled: true,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: .disabled
-        )
-        #expect(plan.shouldUnload == true)
-        #expect(plan.coexists == false)
-    }
-
-    // With the toggle OFF there is no swap to fall back to: a projection that
-    // does not fit degrades to the plain no-sequencing run (still never a
-    // refusal), and the toggle-ON path sequences regardless of the projection.
-
-    @Test("coexistence (toggle OFF): tight reclaimable RAM falls back to the no-sequencing run")
-    func coexistenceTightRAMFallsBack() throws {
-        var inputs = roomyCoexistence()
-        // 10 GB * 1.3 + 3 GB headroom = 16 GB needed; only 12 GB available.
-        inputs.availableBytes = 12 * 1_073_741_824
-        let plan = try SubagentResidency.decidePlan(
-            isLocal: true,
-            modelName: "local-b",
-            residentChatModels: ["local-a"],
-            handoffEnabled: false,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: inputs
-        )
-        #expect(plan.shouldUnload == false)
-        #expect(plan.coexists == false)
-        #expect(plan.sequencingDisabled == true)
-    }
-
-    @Test("coexistence (toggle OFF): exceeding the flexible resident budget falls back (runtime would evict)")
-    func coexistenceOverFlexibleBudgetFallsBack() throws {
-        var inputs = roomyCoexistence()
-        // resident 8 GB + incoming 10 GB > 16 GB cap → the runtime's own
-        // budget eviction would evict the orchestrator with no restore lease.
-        inputs.flexibleBudgetBytes = 16 * 1_073_741_824
-        let plan = try SubagentResidency.decidePlan(
-            isLocal: true,
-            modelName: "local-b",
-            residentChatModels: ["local-a"],
-            handoffEnabled: false,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: inputs
-        )
-        #expect(plan.shouldUnload == false)
-        #expect(plan.coexists == false)
-        #expect(plan.sequencingDisabled == true)
-    }
-
-    @Test("coexistence (toggle OFF): Memory Safety target-load refusal falls back before loading")
-    func coexistenceMemorySafetyRefusalFallsBack() throws {
-        var inputs = roomyCoexistence()
-        inputs.memorySafetyAllowsTargetLoad = false
-        let plan = try SubagentResidency.decidePlan(
-            isLocal: true,
-            modelName: "local-b",
-            residentChatModels: ["local-a"],
-            handoffEnabled: false,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: inputs
-        )
+        #expect(plan.coexists)
         #expect(!plan.shouldUnload)
-        #expect(!plan.coexists)
-        #expect(plan.sequencingDisabled)
-    }
-
-    @Test("coexistence (toggle OFF): unknown model size cannot prove the fit → no-sequencing run")
-    func coexistenceUnknownSizeFallsBack() throws {
-        let plan = try SubagentResidency.decidePlan(
-            isLocal: true,
-            modelName: "local-b",
-            residentChatModels: ["local-a"],
-            handoffEnabled: false,
-            ramSafetyEnabled: true,
-            requiredBytes: 0,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: roomyCoexistence()
-        )
-        #expect(plan.shouldUnload == false)
-        #expect(plan.coexists == false)
-        #expect(plan.sequencingDisabled == true)
-    }
-
-    @Test("coexistence is the toggle-OFF alternative: applies with the handoff OFF (nothing is unloaded)")
-    func coexistenceBypassesHandoffToggle() throws {
-        let plan = try SubagentResidency.decidePlan(
-            isLocal: true,
-            modelName: "local-b",
-            residentChatModels: ["local-a"],
-            handoffEnabled: false,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: roomyCoexistence()
-        )
-        #expect(plan.shouldUnload == false)
-        #expect(plan.coexists == true)
-    }
-
-    @Test("coexistence never fires for same-model or remote targets")
-    func coexistenceIrrelevantForSameOrRemote() throws {
-        let same = try SubagentResidency.decidePlan(
-            isLocal: true,
-            modelName: "local-a",
-            residentChatModels: ["local-a"],
-            handoffEnabled: false,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: roomyCoexistence()
-        )
-        #expect(same.coexists == false)
-
-        let remote = try SubagentResidency.decidePlan(
-            isLocal: false,
-            modelName: "xai/grok-4.3",
-            residentChatModels: ["local-a"],
-            handoffEnabled: false,
-            ramSafetyEnabled: true,
-            requiredBytes: tenGB,
-            idleWaitSeconds: 90,
-            deniedMessage: denied,
-            coexistence: roomyCoexistence()
-        )
-        #expect(remote.coexists == false)
+        #expect(plan.requiredBytes == size)
+        #expect(plan.ramSafetyEnabled == ramSafety)
+        #expect(plan.mode == "coexist")
+        #expect(SubagentResidency.handoff(for: plan) is CoexistenceHandoff)
     }
 
     @Test("admission class: coexist and unload plans are exclusive; in-place shares; remote never contends")
@@ -663,7 +467,7 @@ struct SubagentResidencyTests {
         #expect(plan.shouldUnload == true)
     }
 
-    @Test("direction local→local (different, handoff OFF): runs with no sequencing, never refused")
+    @Test("direction local→local (different, handoff OFF): retains invoking parent")
     func directionLocalToLocalDifferentOff() throws {
         let plan = try SubagentResidency.decidePlan(
             isLocal: true,
@@ -676,7 +480,7 @@ struct SubagentResidencyTests {
             deniedMessage: denied
         )
         #expect(plan.shouldUnload == false)
-        #expect(plan.sequencingDisabled == true)
+        #expect(plan.coexists)
     }
 
     @Test("direction local→remote: remote target never touches local GPU")

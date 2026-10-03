@@ -142,10 +142,23 @@ struct RedactionPreviewTextView: NSViewRepresentable {
             textRebuilt || context.coordinator.lastHighlightFingerprint != highlightFingerprint
         let applied: [AppliedRedactionRange]
         if highlightChanged {
+            // `apply` only adds attributes. When the highlight set shrinks
+            // on unchanged text, strip the old runs first or their
+            // underlines outlive the redactions they marked.
+            if !textRebuilt {
+                Self.clearHighlightAttributes(in: storage, bodyColor: NSColor(theme.primaryText))
+            }
+            // Solid, not the chat bubble's dotted underline. A patterned
+            // underline is drawn as a dashed line stroke, and when Skip All
+            // removes every placeholder in one update Core Animation's async
+            // renderer replays a dashed run with nothing left to stroke: a
+            // zero-instance Metal draw that aborts under Xcode's Metal API
+            // Validation. Solid underlines are filled rects, never strokes.
             applied = RedactionHighlighter.apply(
                 on: storage,
                 highlights: highlights,
                 accentColor: NSColor(theme.accentColor),
+                underlineStyle: .single,
                 a11yLabelBuilder: { Self.accessibilityLabel(for: $0) }
             )
             context.coordinator.lastHighlightFingerprint = highlightFingerprint
@@ -174,6 +187,24 @@ struct RedactionPreviewTextView: NSViewRepresentable {
                 ranges: applied
             )
         }
+    }
+
+    /// Remove every attribute `RedactionHighlighter` paints and restore
+    /// the body foreground color it overrode.
+    private static func clearHighlightAttributes(in storage: NSTextStorage, bodyColor: NSColor) {
+        let full = NSRange(location: 0, length: storage.length)
+        guard full.length > 0 else { return }
+        storage.beginEditing()
+        storage.enumerateAttribute(.redactionPlaceholder, in: full, options: []) { value, range, _ in
+            guard value != nil else { return }
+            storage.removeAttribute(.underlineStyle, range: range)
+            storage.removeAttribute(.underlineColor, range: range)
+            storage.removeAttribute(.toolTip, range: range)
+            storage.removeAttribute(.redactionDirection, range: range)
+            storage.removeAttribute(.redactionPlaceholder, range: range)
+            storage.addAttribute(.foregroundColor, value: bodyColor, range: range)
+        }
+        storage.endEditing()
     }
 
     /// Build the body attributed string. Plain text, body font,
@@ -218,7 +249,12 @@ struct RedactionPreviewTextView: NSViewRepresentable {
     /// string (and drop the user's selection) every time the
     /// redaction map ticked.
     private func makeFingerprint() -> String {
-        return "\(scrubbedText.count)|\(theme.isDark ? 1 : 0)|\(theme.bodySize)"
+        // Full-text hash, not the length: a same-length change (e.g. a
+        // placeholder swapped back to an original of equal length) must
+        // still rebuild, or the old text and its highlights stay on screen.
+        var hasher = Hasher()
+        hasher.combine(scrubbedText)
+        return "\(hasher.finalize())|\(theme.isDark ? 1 : 0)|\(theme.bodySize)"
     }
 
     /// (scrubbedText, highlights, accent) fingerprint used to gate

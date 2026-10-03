@@ -1,0 +1,125 @@
+{
+  "id": "tool_result_grounding.spawn-wave-second-tool-then-final",
+  "domain": "tool_result_grounding",
+  "label": "spawn_agent wave • results drive a second tool call before one final",
+  "query": "Delegate both jobs in one message, write their returned tokens to wave-summary.txt, then answer once.",
+  "notes": "Model-free committed-transcript contract. Exact tool order and callMustFollowResultOf prove that file_write follows BOTH wave results; single-final and terminal-position assertions reject duplicate continuation.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "wave-a",
+          "tool": "spawn_agent",
+          "arguments": "{\"agent\":\"A11CE001-0000-4000-8000-000000000331\",\"input\":\"Return alpha.\"}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "wave-b",
+          "tool": "spawn_agent",
+          "arguments": "{\"agent\":\"A11CE001-0000-4000-8000-000000000332\",\"input\":\"Return beta.\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "wave-a",
+          "tool": "spawn_agent",
+          "content": "{\"ok\":true,\"tool\":\"spawn_agent\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/alpha-model\",\"summary\":\"SECOND_STEP_ALPHA_17\",\"session_id\":\"0F0F0F0F-0000-4000-8000-000000000031\",\"needs_input\":false}}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "wave-b",
+          "tool": "spawn_agent",
+          "content": "{\"ok\":true,\"tool\":\"spawn_agent\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/beta-model\",\"summary\":\"SECOND_STEP_BETA_29\",\"session_id\":\"0F0F0F0F-0000-4000-8000-000000000032\",\"needs_input\":false}}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "write-1",
+          "tool": "file_write",
+          "arguments": "{\"path\":\"wave-summary.txt\",\"content\":\"SECOND_STEP_ALPHA_17\\nSECOND_STEP_BETA_29\\n\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "write-1",
+          "tool": "file_write",
+          "content": "WRITE_COMMIT_61"
+        },
+        {
+          "kind": "assistant",
+          "content": "SECOND_STEP_ALPHA_17 and SECOND_STEP_BETA_29 were saved successfully (WRITE_COMMIT_61)."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "wave-a",
+          "answerMustContain": [
+            "SECOND_STEP_ALPHA_17"
+          ],
+          "argumentsMustNotContain": [
+            "SECOND_STEP_ALPHA_17"
+          ]
+        },
+        {
+          "callId": "wave-b",
+          "answerMustContain": [
+            "SECOND_STEP_BETA_29"
+          ],
+          "argumentsMustNotContain": [
+            "SECOND_STEP_BETA_29"
+          ]
+        },
+        {
+          "callId": "write-1",
+          "answerMustContain": [
+            "WRITE_COMMIT_61"
+          ],
+          "resultMustContain": [
+            "WRITE_COMMIT_61"
+          ],
+          "argumentsMustNotContain": [
+            "WRITE_COMMIT_61"
+          ],
+          "callMustFollowResultOf": "wave-b"
+        }
+      ],
+      "expectedToolSequence": [
+        "spawn_agent",
+        "spawn_agent",
+        "file_write"
+      ],
+      "requireSingleFinalAssistant": true,
+      "requireFinalAfterAllToolResults": true,
+      "requireFinalIsLastEvent": true,
+      "spawnWave": {
+        "exactCallCount": 2,
+        "expectedTargets": [
+          "A11CE001-0000-4000-8000-000000000331",
+          "A11CE001-0000-4000-8000-000000000332"
+        ],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedWaveSizes": [
+          2
+        ],
+        "expectedRows": [
+          {
+            "target": "A11CE001-0000-4000-8000-000000000331",
+            "ok": true,
+            "model": "test/alpha-model",
+            "summaryContains": [
+              "SECOND_STEP_ALPHA_17"
+            ]
+          },
+          {
+            "target": "A11CE001-0000-4000-8000-000000000332",
+            "ok": true,
+            "model": "test/beta-model",
+            "summaryContains": [
+              "SECOND_STEP_BETA_29"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

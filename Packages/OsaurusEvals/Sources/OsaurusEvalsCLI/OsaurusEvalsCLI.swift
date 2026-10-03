@@ -248,6 +248,11 @@ struct OsaurusEvalsCLI {
         if let control = opts.mtpControl {
             EvalMTPControlState.apply(control)
         }
+        // Process-wide reasoning-mode default for cases that leave
+        // `enableThinking` unset; stamped into RunEnvironment.thinkingControl.
+        if let thinking = opts.thinkingControl {
+            EvalThinkingControlState.apply(thinking)
+        }
 
         // Remote-model support: the CLI process never auto-connects the
         // user's configured providers, so `--model xai/grok-4.3` (or a
@@ -873,6 +878,10 @@ struct OsaurusEvalsCLI {
         /// reported as explicit errored rows (see `EvalMTPControlState`).
         /// nil = leave the eval process's default resolution (Auto) alone.
         let mtpControl: EvalMTPControl?
+        /// Default reasoning mode (`--thinking on|off`) for agent-loop and
+        /// micro-perf cases that do not pin `enableThinking` themselves.
+        /// nil = bundle default. Stamped into the report environment.
+        let thinkingControl: Bool?
 
         static func parse(_ args: [String]) throws -> Options {
             var suites: [URL] = []
@@ -894,6 +903,7 @@ struct OsaurusEvalsCLI {
             var pluginBootstrapPreference: EvalInstalledPluginBootstrapPreference = .automatic
             var experimentProfilePath: String?
             var mtpControl: EvalMTPControl?
+            var thinkingControl: Bool?
 
             var i = 0
             while i < args.count {
@@ -975,6 +985,13 @@ struct OsaurusEvalsCLI {
                     }
                     mtpControl = control
                     i += 2
+                case "--thinking":
+                    let raw = try valueForArg(args, after: i, flag: arg)
+                    guard let value = EvalThinkingControlState.parse(raw) else {
+                        throw CLIError.invalidValue(arg, "\(raw) (use on|off)")
+                    }
+                    thinkingControl = value
+                    i += 2
                 case "--help", "-h":
                     printUsage()
                     exit(0)
@@ -1009,7 +1026,8 @@ struct OsaurusEvalsCLI {
                 startupTimeoutSeconds: startupTimeoutSeconds,
                 pluginBootstrapPreference: pluginBootstrapPreference,
                 experimentProfilePath: experimentProfilePath,
-                mtpControl: mtpControl
+                mtpControl: mtpControl,
+                thinkingControl: thinkingControl
             )
         }
     }
@@ -1036,7 +1054,7 @@ struct OsaurusEvalsCLI {
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
                                               [--experiment-profile <profile.json>]
-                                              [--mtp off|auto|d1|d2|d3]
+                                              [--mtp off|auto|d1|d2|d3] [--thinking on|off]
                 osaurus-evals optimize-context --suite <dir> [--suite <dir> ...] --out-dir <dir>
                                               [--model <id>] [--filter <substr>] [--repeat <n>]
                                               [--min-savings <tok>] [--max-candidates <n>]
@@ -1175,6 +1193,15 @@ struct OsaurusEvalsCLI {
                                       stamped into every report's environment,
                                       and matrix/diff flag profiled columns —
                                       a profiled run never reads as production.
+                --thinking on|off     Default reasoning mode for agent-loop and
+                                      micro-perf cases that do not pin
+                                      `enableThinking` themselves (a case's own
+                                      value always wins). Omit it to run the
+                                      model bundle's documented default. The
+                                      value is stamped into every report's
+                                      environment (`thinkingControl`); an `off`
+                                      lane is a separate row, never a stand-in
+                                      for the default-mode lane.
                 scorecard             Reads existing EvalReport JSON artifacts
                                       and writes privacy-safe Computer Use
                                       scorecard JSON + Markdown. Defaults to

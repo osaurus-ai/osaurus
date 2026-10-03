@@ -175,6 +175,8 @@ enum ServerRuntimeSettingsDraftReconciler {
 struct ServerSettingsTabContent: View {
     @EnvironmentObject var server: ServerController
     @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.settingsLandingPending) private var pendingLandingAnchor
+    @State private var renderedLandingAnchors: Set<String> = []
 
     /// Local working copy — saved to disk only on "Save Changes" so
     /// typing in a text field doesn't restart the NIO server every
@@ -200,6 +202,7 @@ struct ServerSettingsTabContent: View {
     @State private var successMessage: String?
     @State private var activeSection: ServerSettingsSection = .connection
 
+    @StateObject private var decimalEdits = OptionalDoubleFieldCommitter()
     @ObservedObject private var managementState = ManagementStateManager.shared
     /// Section that just received a settings-search landing, briefly glowing.
     @State private var landedSection: ServerSettingsSection?
@@ -242,7 +245,7 @@ struct ServerSettingsTabContent: View {
     }
 
     private var hasUnsavedChanges: Bool {
-        draft != server.runtimeSettings
+        decimalEdits.hasPendingChanges || draft != server.runtimeSettings
             || draftMetadataFallbackTokens != savedMetadataFallbackTokens
             || draftContextLengthCap != savedContextLengthCap
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
@@ -298,7 +301,8 @@ struct ServerSettingsTabContent: View {
 
                 ServerSettingsActionBar(
                     hasUnsavedChanges: hasUnsavedChanges,
-                    hasBlockingIssues: hasBlockingIssues,
+                    hasBlockingIssues: decimalEdits.blocksSaveAttempt(
+                        hasBlockingIssues: hasBlockingIssues),
                     requiresRestart: requiresRestart,
                     requiresModelReload: requiresModelReload,
                     saving: saving,
@@ -315,6 +319,7 @@ struct ServerSettingsTabContent: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
+        .environment(\.optionalDoubleFieldCommitter, decimalEdits)
         .onAppear {
             // Defer a beat so the section scroll runs after first layout.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -373,6 +378,10 @@ struct ServerSettingsTabContent: View {
         }
     }
 
+    private var controlLandingTarget: String? {
+        pendingLandingAnchor.flatMap { renderedLandingAnchors.contains($0) ? $0 : nil }
+    }
+
     private var sectionScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -388,9 +397,26 @@ struct ServerSettingsTabContent: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear.frame(height: 12)
             }
+            .onPreferenceChange(SettingsLandingAnchorsKey.self) { anchors in
+                renderedLandingAnchors = anchors
+            }
             .onChange(of: activeSection) { _, new in
                 withAnimation(.smooth(duration: 0.45)) {
-                    proxy.scrollTo(new, anchor: .top)
+                    if let controlLandingTarget {
+                        proxy.scrollTo(controlLandingTarget, anchor: .center)
+                    } else {
+                        proxy.scrollTo(new, anchor: .top)
+                    }
+                }
+            }
+            .task(id: controlLandingTarget) {
+                guard let target = controlLandingTarget else { return }
+                // A search may create this pane before its controls lay out.
+                // Cancellation prevents an earlier result stealing the scroll.
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                withAnimation(.smooth(duration: 0.45)) {
+                    proxy.scrollTo(target, anchor: .center)
                 }
             }
         }
@@ -455,6 +481,7 @@ struct ServerSettingsTabContent: View {
     // MARK: - Actions
 
     private func resetToDefaults() {
+        decimalEdits.discard()
         draft = ServerRuntimeSettingsStore.resetDefaults(
             serverConfiguration: .default
         )
@@ -472,6 +499,8 @@ struct ServerSettingsTabContent: View {
     }
 
     private func save() async {
+        decimalEdits.commit()
+        guard !hasBlockingIssues else { return }
         // A same-section external edit must be resolved explicitly. Sending
         // this stale draft would overwrite a newer API/store value.
         guard runtimeConflictSections.isEmpty else { return }

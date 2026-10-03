@@ -33,13 +33,6 @@ struct OnboardingTelemetryEventTests {
         var events: [Event] = []
     }
 
-    /// Drops the global `total_memory_gb` bucket (attached to every event by
-    /// `TelemetryService.track`) so per-event shape assertions stay focused on
-    /// the event-specific props.
-    private func business(_ props: [String: Any]) -> [String: Any] {
-        props.filter { $0.key != "total_memory_gb" }
-    }
-
     /// A granted + started service whose sends are captured. Returns the
     /// service, the recorder, and a cleanup that wipes the defaults suite.
     private func makeRecordingService() -> (TelemetryService, Recorder, () -> Void) {
@@ -57,15 +50,65 @@ struct OnboardingTelemetryEventTests {
         return (service, recorder, { defaults.removePersistentDomain(forName: suiteName) })
     }
 
-    @Test func started_emits_onboarding_started_with_no_props() {
+    /// Drops the global `total_memory_gb` bucket AND the per-event
+    /// `distribution` dimension (asserted separately below) so the shape
+    /// assertions stay focused on each event's own props.
+    private func business(_ props: [String: Any]) -> [String: Any] {
+        props.filter { $0.key != "total_memory_gb" && $0.key != "distribution" }
+    }
+
+    @Test func started_emits_onboarding_started_with_distribution_only() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        OnboardingTelemetry.started(service: service)
+        OnboardingTelemetry.started(distribution: .light, service: service)
 
         #expect(rec.events.count == 1)
         #expect(rec.events[0].name == "onboarding_started")
         #expect(business(rec.events[0].props).isEmpty)
+        #expect(rec.events[0].props["distribution"] as? String == "light")
+    }
+
+    /// Every funnel event carries `distribution` (`light` | `full`) so the
+    /// model-bundled DMG's shorter flow can be compared against the standard
+    /// one. Default resolves from the installed bundle; tests pin it.
+    @Test func every_event_carries_distribution() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.started(distribution: .full, service: service)
+        OnboardingTelemetry.stepViewed(.welcome, distribution: .full, service: service)
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false, distribution: .full, service: service)
+        OnboardingTelemetry.stepSkipped(.configureAI, distribution: .full, service: service)
+        OnboardingTelemetry.completed(lastStep: .createAgent, via: .finishButton, distribution: .full, service: service)
+
+        #expect(rec.events.count == 5)
+        #expect(rec.events.allSatisfy { $0.props["distribution"] as? String == "full" })
+    }
+
+    @Test func distribution_defaults_to_installed_bundle_and_honors_override() {
+        let previous = OnboardingTelemetry.Distribution.overrideForTests
+        defer { OnboardingTelemetry.Distribution.overrideForTests = previous }
+
+        OnboardingTelemetry.Distribution.overrideForTests = .full
+        #expect(OnboardingTelemetry.Distribution.current == .full)
+        OnboardingTelemetry.Distribution.overrideForTests = .light
+        #expect(OnboardingTelemetry.Distribution.current == .light)
+
+        // The SwiftPM test bundle has no BundledModels manifest: light.
+        OnboardingTelemetry.Distribution.overrideForTests = nil
+        let previousSeeder = BundledModelSeeder.isFullDistributionOverrideForTests
+        defer { BundledModelSeeder.isFullDistributionOverrideForTests = previousSeeder }
+        BundledModelSeeder.isFullDistributionOverrideForTests = nil
+        #expect(OnboardingTelemetry.Distribution.current == .light)
+        BundledModelSeeder.isFullDistributionOverrideForTests = true
+        #expect(OnboardingTelemetry.Distribution.current == .full)
+    }
+
+    @Test func distribution_raw_values_match_the_documented_contract() {
+        #expect(OnboardingTelemetry.Distribution.light.rawValue == "light")
+        #expect(OnboardingTelemetry.Distribution.full.rawValue == "full")
+        #expect(OnboardingTelemetry.distributionKey == "distribution")
     }
 
     @Test func stepViewed_emits_step_name_and_index() {

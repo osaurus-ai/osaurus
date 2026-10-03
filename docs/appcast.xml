@@ -3,6 +3,425 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.17</title>
+            <pubDate>Sat, 03 Oct 2026 02:32:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.17</sparkle:version>
+            <sparkle:shortVersionString>0.25.17</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.17/Osaurus-0.25.17.dmg" length="81444028" type="application/octet-stream" sparkle:edSignature="XhF8GoUU2dT4U+03w8KHtk+se6IjDa6e24Z8uxWcFUqIKHOy0+5KUbhlONkFEsXNEfkV06A50Nu6MTrcFmC8BA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- PDF reading-order extraction for flattened forms (file\_read pages, page markers) (#2983) by @tpae
+- Router announcements feed and control-plane polling cuts (#2982) by @tpae
+- International privacy filter presets with region picker (#2979) by @tpae
+- Insights: tamper-evident activity log, Tier 1 coverage gaps, and IA redesign (#2964) by @tpae
+- Consume Naive attention-mask GPU ranges (#2967) by @jjang-ai
+- Seed Osaurus Cloud starter favorites and unify picker Model options column (#2958) by @tpae
+
+## 🐛 Bug Fixes
+
+- Fix: NativeAssistantActionsView NSButton init causes main thread hang (#2977) by @[sentry[bot]](https://github.com/apps/sentry)
+- Preserve requested repeated text without an automatic retry (#2978) by @jjang-ai
+- Preserve native PDF glyph and table cell identity (#2976) by @jjang-ai
+- Fit resident delegation context to available memory (#2973) by @jjang-ai
+- Use corrected mixed affine QMV Metal kernels (#2971) by @jjang-ai
+- Consume GLM native history and text cache boundary fix (#2969) by @jjang-ai
+- fix code block copy button and chat width shift after copying (#2960) by @RaajeevChandran
+- Preserve WhatsApp final responses when the helper exits (#2965) by @jjang-ai
+- Pin compiled post-answer cache persistence (#2962) by @jjang-ai
+- Keep the chat tab strip inside the chat column on new tab and live sidebar resize (#2963) by @tpae
+- Fix Notes -1708 "doesn't understand the count message" in built-in Notes tools (#2961) by @tpae
+- Refresh tool grants between turns and recheck dispatch authorization (#2921) by @jjang-ai
+- Move Insights snapshots off the main queue and reject stale results (#2926) by @[sentry[bot]](https://github.com/apps/sentry)
+- Move response metrics into Inspect response (#2959) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.16...0.25.17
+]]></description>
+        </item>
+        <item>
+            <title>0.25.16</title>
+            <pubDate>Thu, 01 Oct 2026 06:00:58 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.16</sparkle:version>
+            <sparkle:shortVersionString>0.25.16</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.16/Osaurus-0.25.16.dmg" length="80538135" type="application/octet-stream" sparkle:edSignature="T8cgj5FhWtcLutuQGXn4fNllksiaUuotl4DM7l4Ud4ADou7aMYiITh1HCHbhpWIwBWbngC1BS6LVSzjGzyf1BQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Pin MLX 0.32.3 for the crash-fix release (#2956) by @jjang-ai
+- Redesign chat model picker, Cloud browser and Credits menu (#2947) by @losingmyego
+- Settings UX/IA cleanup: grouped-form kit, renamed tabs, Tools \& MCP Services rework (#2950) by @tpae
+
+## 🐛 Bug Fixes
+
+- Pin runtime crash containment and allocator synchronization fixes (#2953) by @jjang-ai
+- Reject invalid process strings before Foundation launch (#2954) by @jjang-ai
+- only show the model switch advisory when leaving a local model (#2952) by @RaajeevChandran
+- fix: reject chunk transfers after lane invalidation (#2949) by @jjang-ai
+- Surface preparation errors and pin validated logits runtime (#2938) by @jjang-ai
+
+## 🧰 Maintenance
+
+- improved model banner ux (#2955) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.15...0.25.16
+]]></description>
+        </item>
+        <item>
+            <title>0.25.15</title>
+            <pubDate>Tue, 29 Sep 2026 21:46:17 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.15</sparkle:version>
+            <sparkle:shortVersionString>0.25.15</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.15/Osaurus-0.25.15.dmg" length="80122255" type="application/octet-stream" sparkle:edSignature="xUnOwemIErfhw+3SHxOL8lL4YpgQy+rMzMBgLZ+4z6/xcDcQhYlTHhBMozv7NPYsF/rRCEbi8LQdoHqT8vp3Cw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Orchestrator audit remediation: truthful addendum, apply-first config, pool guard, default new-chat agent, compact spawn envelope (#2936) by @tpae
+- keep the phone's runs going when its connection drops and let it rejoin or stop them by run id (#2935) by @RaajeevChandran
+- Pin the synchronized ErrorBox runtime (#2934) by @jjang-ai
+- bring phone chats to the front on return to the mac and send the orchestrator's quick actions to the phone (#2930) by @RaajeevChandran
+- send the worked-for span on session turns for the phone (#2931) by @RaajeevChandran
+- Update gathered matmul runtime and fix tied-head cache identity (#2917) by @jjang-ai
+- Add prompt\_working\_folder: let the agent open the folder picker when a chat has no working folder (#2918) by @tpae
+- Bill the workspace pool by default for own shared agents; show pool chip on local tabs (#2915) by @tpae
+- Harden file-edit tools for document drafting (Raptor + grok-4.3 proof) (#2914) by @tpae
+- File change history, in-place document edits, and chat window IA (#2907) by @tpae
+
+## 🚀 Features
+
+- show total response time in the assistant stats footer (#2916) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Respect automatic update policy on model notifications (#2940) by @jjang-ai
+- Keep decimal settings editable until commit (#2939) by @jjang-ai
+- Drain Claude subprocess output after in-flight delivery (#2937) by @jjang-ai
+- Recognize weights in symlinked model bundle diagnostics (#2933) by @jjang-ai
+- Pin GLM and Naive JANGH runtime support (#2932) by @jjang-ai
+- align model updates and osaurus connect cards with the settings card style (#2913) by @RaajeevChandran
+- remember chat scroll position per tab (#2911) by @RaajeevChandran
+- cap chat minimap height and make the expanded list scrollable (#2912) by @RaajeevChandran
+- Keep the chat tab strip clear of the inspector rail (#2910) by @tpae
+- fix chat jumping up when a run finishes while scrolled up (#2909) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.14...0.25.15
+]]></description>
+        </item>
+        <item>
+            <title>0.25.14</title>
+            <pubDate>Sun, 27 Sep 2026 07:10:28 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.14</sparkle:version>
+            <sparkle:shortVersionString>0.25.14</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.14/Osaurus-0.25.14.dmg" length="79256834" type="application/octet-stream" sparkle:edSignature="H+sC9KHzEDiE5wY55YKKLo8wz84pLenOH2QQCwIJXoXMajUmdEtHh9KVX+Rf1ZYDi4SKMXuorKezHwDQyZgQAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Clarify background model admission for description backfill (#2901) by @jjang-ai
+- added iOS app integrations (#2875) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Fix covariant Self default argument in ProductHuntLaunchCampaign init (#2906) by @tpae
+- Fix timing export choices for restored chats (#2902) by @jjang-ai
+- Preserve generation metrics across chat history reloads (#2900) by @jjang-ai
+- fix right-click copy dropping the chat drag selection (#2899) by @RaajeevChandran
+- Show generated agent purposes consistently in local pickers (#2898) by @jjang-ai
+- Fix description backfill after in-flight prompt edits (#2897) by @jjang-ai
+- Pin runtime with composite and recurrent disk-cache fixes (#2896) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Postpone the Raptor Product Hunt dialogs (#2905) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.13...0.25.14
+]]></description>
+        </item>
+        <item>
+            <title>0.25.13</title>
+            <pubDate>Sat, 26 Sep 2026 01:26:07 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.13</sparkle:version>
+            <sparkle:shortVersionString>0.25.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.13/Osaurus-0.25.13.dmg" length="78909784" type="application/octet-stream" sparkle:edSignature="/Cn3bCbpVK645sLNa+JCQG6sl69K5ZtTsvs1AYUyiAdosZpHy58lp8WJfUZgSBcq8Ck3kda+12ndw94kcwfrBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Make agent description optional again with background backfill (#2892) by @tpae
+- Retire Raptor v0.5 and shorten the What's New notes (#2882) by @tpae
+- Make cancellation and runtime-settings tests deterministic (#2885) by @jjang-ai
+- Reuse canonical prefill checkpoints and preserve current model discovery (#2884) by @jjang-ai
+- Use qualified Raptor q6 decode fusion (#2883) by @jjang-ai
+- Reuse completed prefill chunks in batched cache finalization (#2881) by @jjang-ai
+- Fuse Spark large-prefill activation through the vmlx runtime pin (#2879) by @jjang-ai
+- Pin vMLX batched rotating checkpoint prefix reuse (#2876) by @jjang-ai
+- Give core CI tests a separate budget from cold compilation (#2877) by @jjang-ai
+- Generate missing agent descriptions from system prompts (#2869) by @jjang-ai
+- Require agent descriptions and guide legacy agents through repair (#2867) by @jjang-ai
+- Add full DMG build with bundled Raptor 0.6 (light + full releases) (#2868) by @tpae
+- Enable MiMo native capabilities and bound resident allocator reuse (#2863) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Report consistent logical lines in file read and search tools (#2894) by @jjang-ai
+- Fix integer setting editing and persistence, search, and follow-up parsing (#2893) by @jjang-ai
+- Wait on scan barriers without a Task.sleep poll (#2895) by @tpae
+- Preserve streamed tool names and align agent execution contracts (#2889) by @jjang-ai
+- Preserve native generation defaults and admitted output budgets (#2890) by @jjang-ai
+- Check official model updates during menu-only startup (#2888) by @jjang-ai
+- Show when legacy models need revision verification (#2878) by @jjang-ai
+- Preserve native thinking defaults for agent and tool requests (#2874) by @jjang-ai
+- Require saving SSD cache directory changes before clearing (#2873) by @jjang-ai
+- Clear the saved custom SSD cache when prefix reuse is disabled (#2872) by @jjang-ai
+- Keep agent purpose metadata current across remote and voice consumers (#2870) by @jjang-ai
+- Bind inherited worker models to the headless DefaultAgent eval target (#2871) by @jjang-ai
+- Preserve app runtime policy in isolated eval runs (#2865) by @jjang-ai
+- Fix: Prevent main thread hang when opening MarkdownLinkText URLs (#2864) by @[sentry[bot]](https://github.com/apps/sentry)
+- Stop quoting a settings shortcut that is not bound (#2862) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.12...0.25.13
+]]></description>
+        </item>
+        <item>
+            <title>0.25.12</title>
+            <pubDate>Wed, 23 Sep 2026 07:48:33 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.12</sparkle:version>
+            <sparkle:shortVersionString>0.25.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.12/Osaurus-0.25.12.dmg" length="78613244" type="application/octet-stream" sparkle:edSignature="Z8cZfSIAOsHC60TWk25tAekICbvWkKUKdHKS42dTIO1F5QJAUCQ+TZ2xli49EvWNdb/8C/T5zESAWTVUmLBSAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- Fall back from an unavailable or hung Foundation core model (#2861) by @tpae
+- Decide Automation permission probes from the error code, not the localized text (#2858) (#2859) by @tpae
+
+## 🧰 Maintenance
+
+- Move the Raptor Product Hunt launch to Monday (#2860) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.11...0.25.12
+]]></description>
+        </item>
+        <item>
+            <title>0.25.11</title>
+            <pubDate>Tue, 22 Sep 2026 21:30:13 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.11</sparkle:version>
+            <sparkle:shortVersionString>0.25.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.11/Osaurus-0.25.11.dmg" length="78602541" type="application/octet-stream" sparkle:edSignature="tO+OZ0rvxCzsllXkPcxlZL6ll5w0GPTwEIoL23E6DTvWeEX8ruSQFNxTjDE0oyWGCWcRWyaOlQoIHTW5d8iNDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add two-phase Product Hunt dialogs for the Raptor launch (Sept 2026) (#2855) by @tpae
+
+## 🐛 Bug Fixes
+
+- resolve canonical MCP tool names within the originating provider (#2857) by @RaajeevChandran
+- Preserve null tool calls and prevent primitive JSON serialization crashes (#2854) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.10...0.25.11
+]]></description>
+        </item>
+        <item>
+            <title>0.25.10</title>
+            <pubDate>Tue, 22 Sep 2026 13:55:25 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.10</sparkle:version>
+            <sparkle:shortVersionString>0.25.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.10/Osaurus-0.25.10.dmg" length="78605302" type="application/octet-stream" sparkle:edSignature="gHNIJO8GCnqb3XwOFhiue3GFHTZrcnBmjkCfi/B23hCeSO3uukJr3dbQsq4pI+i+rBB+dGqZ+X3QNB619isSBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Accept osaurus://open\_from\_hf?model= as a Hugging Face model deep link (#2851) by @jjang-ai
+- Add "Use with Codex CLI" provider card; accept Codex's Responses input shapes (#2850) by @tpae
+- Pin vmlx-swift to 028943b7: learned post-answer resume rows with the history boundary kept beside them; oversized snapshots never written (#2846) by @jjang-ai
+- Build native Apple app tools into Osaurus with per-agent opt-in (#2835) by @tpae
+- Remove the SSD cache capacity popup from the chat (#2841) by @jjang-ai
+- Fix SSD cache sizing and current-chat capacity notices (#2836) by @jjang-ai
+- Add install-cohort/age retention telemetry (daily\_active + app\_launched dimensions) (#2833) by @tpae
+
+## 🚀 Features
+
+- added read only credit balance endpoint to the local api (#2840) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Codex CLI: advertise the context window the server keeps; a thread's prompt\_cache\_key is its session id (#2852) by @jjang-ai
+- fill missing properties on mcp tool schemas (#2849) by @RaajeevChandran
+- Keep progress visible across the engine tail and label it "Finishing up…" (#2848) by @tpae
+- Fix app hang from standardizedFileURL in LocalVisionEvidence (#2844) by @[sentry[bot]](https://github.com/apps/sentry)
+- Fix context compaction: chat-model fallback, visible failures, always-available Compact button (#2843) by @tpae
+- Keep channel chat tab live across follow-ups; add Focus Chat on Incoming Messages setting (#2838) by @tpae
+- fix model picker hover and favorite heart on bottom rows (#2837) by @RaajeevChandran
+- Scope output-complete relay to the owning chat step and reset it per model step (#2831) by @tpae
+- Fix app hang in ChatSession.sessionRouterCacheStats getter (#2830) by @[sentry[bot]](https://github.com/apps/sentry)
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.9...0.25.10
+]]></description>
+        </item>
+        <item>
+            <title>0.25.9</title>
+            <pubDate>Sat, 19 Sep 2026 16:12:47 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.9</sparkle:version>
+            <sparkle:shortVersionString>0.25.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.9/Osaurus-0.25.9.dmg" length="77814825" type="application/octet-stream" sparkle:edSignature="i+cawltTmfdb7Af7CsX55tgPd2XXI/H+d9J6xGPtYnerJnB1bJEyVdACW3FnQMLGjKDry+e6i3XKqCGudedOBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Recognize GPT-6 Astra and other new remote-provider models (#2826) by @tpae
+- Hide dispatch envelopes behind a compact source badge row (#2824) by @tpae
+
+## 🐛 Bug Fixes
+
+- Fix app hang in SelectableNSTextView.hitTest (#2827) by @[sentry[bot]](https://github.com/apps/sentry)
+- Show n8n pending approval card with preset allowlists (#2829) by @tpae
+- fix app hang from localization lookups in liveStatusLine (#2812) by @[sentry[bot]](https://github.com/apps/sentry)
+- Preserve reasoning choices on cold sends and delegated steps (#2822) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.8...0.25.9
+]]></description>
+        </item>
+        <item>
+            <title>0.25.8</title>
+            <pubDate>Fri, 18 Sep 2026 21:18:44 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.8</sparkle:version>
+            <sparkle:shortVersionString>0.25.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.8/Osaurus-0.25.8.dmg" length="77765976" type="application/octet-stream" sparkle:edSignature="z7iKkwkMJlZgXpPagF9C5zCSJjQCFHCmkMVi1qn1JhjSoGBDNgD0dly8BQkXw6HDPdBJHrGx+VRcU6sn21t0Dw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Pin Bonsai FP16 attention K/V with FP32 recurrent state (#2820) by @jjang-ai
+- Consume merged Bonsai loading and bounded media prefill (#2818) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Sandbox: attribute provisioning failures and stop the quit-time VM re-boot behind vmnet\_in\_use (#2819) by @tpae
+- Preserve persisted document text in chat and warmup (#2816) by @jjang-ai
+- fixed main thread hangs in the composer, markdown parsing and sidebar rows (#2817) by @RaajeevChandran
+- Share parent handoff policy with images and compaction (#2798) by @jjang-ai
+- Honor the loaded bundle sampling defaults with duplicate model names (#2814) by @jjang-ai
+- Respect no-tool execution requests before prefill (#2815) by @jjang-ai
+- Unify invoking-parent handoffs across local subagent kinds (#2796) by @jjang-ai
+- Preserve user media for explicit Gemma tool selection (#2806) by @jjang-ai
+- Propagate cancellation through buffered tool streams (#2813) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.7...0.25.8
+]]></description>
+        </item>
+        <item>
+            <title>0.25.7</title>
+            <pubDate>Fri, 18 Sep 2026 09:12:40 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.7</sparkle:version>
+            <sparkle:shortVersionString>0.25.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.7/Osaurus-0.25.7.dmg" length="77655056" type="application/octet-stream" sparkle:edSignature="whcC383Sp6NdHM0NhQNje9/URytN0ZaPItIvuH85AkOeB8Ev9/wc62By/KH4aPXSdL/r+kZvRThW5wO21nTMDA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Embed the Workspaces explainer in the tab's empty state; drop the intro dialog (#2811) by @tpae
+- Support Bonsai2 runtime and preserve native Qwen tool templates (#2808) by @jjang-ai
+
+## 🚀 Features
+
+- added number\_of\_agents property to agent\_created telemetry event (#2807) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Preserve typed MCP image results in Chat and agent history (#2805) by @jjang-ai
+- fixed tab strip jumping and overlapping the sidebar on window resize (#2802) by @RaajeevChandran
+- added don't show this again to the ssd cache limit reached notice (#2801) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.6...0.25.7
+]]></description>
+        </item>
+        <item>
+            <title>0.25.6</title>
+            <pubDate>Thu, 17 Sep 2026 15:23:00 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.6</sparkle:version>
+            <sparkle:shortVersionString>0.25.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.6/Osaurus-0.25.6.dmg" length="77629349" type="application/octet-stream" sparkle:edSignature="7C6IvQ3tYjegTrsbpJLBTs/DMx6iOelK75QdR8Men1d7bBLTruH6sbFtJmIFp05ofgv4ClLtp5jsiJ6DcDcMBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Gate Sparkle update checks on chat, not Settings (#2794) by @tpae
+- Unify file\_read/file\_write across document, image, and workbook formats (#2791) by @tpae
+
+## 🐛 Bug Fixes
+
+- warn before add model discards the agent creator draft (#2800) by @RaajeevChandran
+- fix history dialog stacking when the toolbar button is tapped repeatedly (#2799) by @RaajeevChandran
+- Show composer stuck chip only when a run is actually silent (#2795) by @tpae
+- fix computer use failing with the privacy filter on and losing its step log (#2797) by @RaajeevChandran
+- improved PII extraction flow (#2793) by @RaajeevChandran
+- Preserve complete native local tool-call batches (#2792) by @jjang-ai
+- fix: prevent Int overflow in CreditsTopUpSheet currentMicro (#2717) by @[sentry[bot]](https://github.com/apps/sentry)
+- Explain warning-pressure delegation refusal and qualify RAM opt-out (#2790) by @jjang-ai
+- Enforce model manifest compatibility and detect model updates (#2789) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.5...0.25.6
+]]></description>
+        </item>
+        <item>
+            <title>0.25.5</title>
+            <pubDate>Wed, 16 Sep 2026 21:37:04 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.5</sparkle:version>
+            <sparkle:shortVersionString>0.25.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.5/Osaurus-0.25.5.dmg" length="77395928" type="application/octet-stream" sparkle:edSignature="L8ZXDixcBAsfoAgGRj4f6ah3PLFeDe2/wbWwigAR41AM7yXfsN7s6BHqSxO/ZCW8IWm0oybjZPyVZ8F9cJCiCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Orchestrator polish and simplification (#2787) by @tpae
+- Default onboarding to Raptor 0.6 (#2782) by @tpae
+
+## 🐛 Bug Fixes
+
+- Make model repair verify files and report download progress (#2788) by @jjang-ai
+- Preserve local usage accounting and complete image chats cleanly (#2786) by @jjang-ai
+- Keep MTP opt-in and enforce runtime settings across Chat and API (#2785) by @jjang-ai
+- Fix resident child RAM admission and external model residency tracking (#2784) by @jjang-ai
+- Validate vision processors and preserve complete image/cache input (#2774) by @jjang-ai
+- Fix RAM admission measurement, capacity and token-budget contracts (#2752) by @jjang-ai
+- Bound idle model residency and preserve utility ownership (#2771) by @jjang-ai
+- Notify when SSD cache reaches its quota and clear indexed cache safely (#2783) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.4...0.25.5
+]]></description>
+        </item>
+        <item>
             <title>0.25.4</title>
             <pubDate>Tue, 15 Sep 2026 19:18:52 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

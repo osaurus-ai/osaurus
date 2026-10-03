@@ -10,8 +10,8 @@ Osaurus can create and edit images entirely on your Mac using local image models
 
 ## Setup
 
-- Models → Images → Models: browse and download on-device image model bundles, or import one from Hugging Face.
-- Models → Images → Settings: choose the default generation model and (separately) the default edit model, plus the permission and model load policy.
+- Settings… (⌘,) → Images → Image Models: browse and download on-device image model bundles, or import one from Hugging Face.
+- Settings… (⌘,) → Images → Defaults: choose the default generation model and (separately) the default edit model, the permission for image jobs and cloud video jobs, and the cloud video defaults. The **Image model load policy** is under Advanced.
 - Image models are large; they load on demand and can temporarily displace the resident chat model while a job runs.
 
 ## Using it in chat
@@ -27,5 +27,6 @@ The server exposes an OpenAI-compatible endpoint at `POST /v1/images/generations
 
 ## Notes
 
-- Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). For the Default assistant it lives under General settings → Subagents → Main Chat Capabilities → Image.
-- If no image model is installed, the tool is not offered — download one in Models → Images → Models first.
+- Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). The built-in Orchestrator has no image tool of its own — add an image-enabled agent to Settings → Orchestrator → Subagents → Allowed subagents and the Orchestrator delegates "generate an image of …" to it.
+- If no image model is installed, the tool is not offered — download one in Images → Image Models first.
+- Every image or video job is recorded in Settings… (⌘,) → Insights (**Audio & Media** scope tab, **Media** rows) with the prompt, size, step count and provider. Local MLX jobs are **Local**; Venice jobs are **Cloud**; Osaurus Cloud jobs appear as **Router** rows.

@@ -36,15 +36,23 @@ struct ModelResidencySection: View {
                 }
             }
 
-            SettingsSubsection(label: "Keep Model Loaded") {
+            SettingsSubsection(label: "Model Residency") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Picker("", selection: $draft.modelIdleResidencyPolicy) {
-                        ForEach(ModelIdleResidencyPolicy.presets, id: \.self) { policy in
-                            Text(policy.displayName).tag(policy)
+                    Toggle("Keep Model Loaded", isOn: $draft.modelIdleResidencyPolicy.keepsModelLoaded)
+                        .accessibilityIdentifier("server.residency.keepLoaded")
+                    if !draft.modelIdleResidencyPolicy.keepsModelLoaded {
+                        Picker("Unload After", selection: $draft.modelIdleResidencyPolicy) {
+                            ForEach(ModelIdleResidencyPolicy.presets.filter { $0 != .never }, id: \.self) { policy in
+                                Text(policy.displayName).tag(policy)
+                            }
+                            // Keep an existing custom timeout representable.
+                            if !ModelIdleResidencyPolicy.presets.contains(draft.modelIdleResidencyPolicy) {
+                                Text(draft.modelIdleResidencyPolicy.displayName).tag(draft.modelIdleResidencyPolicy)
+                            }
                         }
+                        .pickerStyle(.menu)
+                        .accessibilityIdentifier("server.residency.unloadAfter")
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
 
                     Text(draft.modelIdleResidencyPolicy.description)
                         .font(.system(size: 11))
@@ -52,5 +60,7 @@ struct ModelResidencySection: View {
                 }
             }
         }
+        .accessibilityIdentifier("server.residency")
+        .settingsLandingAnchor("server.residency")
     }
 }

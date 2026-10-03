@@ -128,6 +128,31 @@ struct RemoteReasoningPolicyTests {
         #expect(controls.thinking == ThinkingConfig(type: "disabled"))
     }
 
+    /// DeepSeek renamed V4.1-Flash to the versionless `deepseek-flash`
+    /// (2026-09-10). It keeps the DSV4 thinking contract, so the Off rail
+    /// must still translate to `thinking.disabled` instead of silently
+    /// re-enabling the model's default thinking.
+    @Test func controls_deepSeekFlashVersionlessId_disablesThinking() {
+        #expect(ModelFamilyNames.isDSV4Family("deepseek-flash"))
+        #expect(ModelFamilyNames.isDSV4Family("deepseek/deepseek-flash"))
+        #expect(ModelFamilyNames.isDSV4Family("DeepSeek-V4.1-Flash"))
+        #expect(!ModelFamilyNames.isDSV4Family("deepseek-chat"))
+        #expect(!ModelFamilyNames.isDSV4Family("deepseek-v3"))
+        #expect(
+            ModelProfileRegistry.profile(for: "deepseek-flash")?.displayName
+                == DSV4ReasoningProfile.displayName
+        )
+
+        let policy = RemoteReasoningPolicy.resolve(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-flash"
+        )
+        let controls = policy.controls(effort: "instruct")
+        #expect(controls.effort == nil)
+        #expect(controls.thinking == ThinkingConfig(type: "disabled"))
+    }
+
     @Test func controls_deepSeekMax_forwardsEffort() {
         let policy = RemoteReasoningPolicy.resolve(
             providerType: .openaiLegacy,

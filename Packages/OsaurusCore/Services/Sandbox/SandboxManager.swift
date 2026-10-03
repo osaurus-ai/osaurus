@@ -89,6 +89,15 @@
         private var containerManager: ContainerManager?
         private var linuxContainer: LinuxContainer?
         private var _removedByUser = false
+        /// `true` from a public `stopContainer()` (Sandbox tab Stop, quit
+        /// chain) until the next start. Lets `SandboxToolRegistrar` tell a
+        /// deliberate stop apart from a VM that died: only the latter is a
+        /// warm-restart candidate when the `.stopped` status edge arrives.
+        private var _stoppedExplicitly = false
+        public var stoppedExplicitly: Bool { _stoppedExplicitly }
+        /// Test seam: the singleton outlives each test, and only a real
+        /// container start clears the flag.
+        func resetExplicitStopForTests() { _stoppedExplicitly = false }
         /// Set to `true` by `provision()` when the most recent boot reused
         /// the on-disk `rootfs.ext4` (warm restart), `false` when it had to
         /// re-unpack the image (cold path). Read by
@@ -365,6 +374,14 @@
                 } else {
                     _status = .stopped
                 }
+                syncStatus()
+                return _status
+            }
+            if case .error = _status {
+                // `markRuntimeLost` flagged a dead VM whose SDK handle is
+                // still held. Keep `.error` so `_performStartContainer`
+                // takes its cleanup-then-reprovision branch instead of
+                // trusting the stale handle as `.running`.
                 syncStatus()
                 return _status
             }
@@ -1340,6 +1357,7 @@
         private func _performStartContainer() async throws {
             try await requireAvailabilityForOperation()
             guard !_removedByUser else { return }
+            _stoppedExplicitly = false
 
             switch await refreshStatus() {
             case .running, .starting:
@@ -1350,7 +1368,7 @@
                 await cleanupAfterFailure()
                 fallthrough
             case .stopped, .notProvisioned:
-                try acquireVMOwnershipIfNeeded()
+                try await acquireVMOwnershipIfNeeded()
                 _status = .starting
                 syncStatus()
                 do {
@@ -1365,6 +1383,9 @@
         }
 
         public func stopContainer() async throws {
+            // Mark before the status edge is published so the registrar's
+            // status sink observes the flag when it reacts to `.stopped`.
+            _stoppedExplicitly = true
             try await stopContainer(publishStoppedStatus: true)
         }
 
@@ -1433,7 +1454,8 @@
         public func restartContainer() async throws {
             try await stopContainer(publishStoppedStatus: false)
             _removedByUser = false
-            try acquireVMOwnershipIfNeeded()
+            _stoppedExplicitly = false
+            try await acquireVMOwnershipIfNeeded()
             _status = .starting
             syncStatus()
             do {
@@ -2926,6 +2948,36 @@
             }
         }
 
+        // MARK: - Runtime liveness
+
+        /// Cheap guest liveness check used when a provisioning exec failed
+        /// while the cached status still says `.running`. Returns `false`
+        /// when the VM object is gone or a trivial root exec cannot complete
+        /// within a short window — the post-sleep "VM died silently" case.
+        /// Seatbelt has no guest and is always considered alive.
+        public func probeRuntimeAlive() async -> Bool {
+            if SandboxBackend.current == .seatbelt { return _status.isRunning }
+            guard linuxContainer != nil else { return false }
+            do {
+                let result = try await exec(command: "true", timeout: 10)
+                return result.succeeded
+            } catch {
+                return false
+            }
+        }
+
+        /// Record that the running VM has been lost underneath us. Moves the
+        /// status to `.error` so the next `startContainer()` takes the
+        /// recovery branch (`cleanupAfterFailure` + fresh provision) instead
+        /// of short-circuiting on a cached `.running`.
+        public func markRuntimeLost(reason: String) async {
+            guard SandboxBackend.current == .virtualMachine else { return }
+            debugLog("[Sandbox] Runtime lost: \(reason)")
+            _status = .error(reason)
+            syncStatus()
+            await MainActor.run { State.shared.containerInfo = nil }
+        }
+
         // MARK: - Helpers
 
         func cleanupAfterFailure() async {
@@ -2948,12 +3000,14 @@
             releaseVMOwnership()
         }
 
-        private func acquireVMOwnershipIfNeeded() throws {
+        private func acquireVMOwnershipIfNeeded() async throws {
             guard SandboxBackend.current == .virtualMachine, vmOwnershipLease == nil else {
                 return
             }
             do {
-                vmOwnershipLease = try SandboxVMOwnershipLease.acquire()
+                vmOwnershipLease = try await SandboxVMOwnershipLease.acquire(
+                    waitingUpTo: SandboxVMOwnershipLease.defaultOwnerExitWait
+                )
             } catch let conflict as SandboxVMOwnershipLease.OwnershipConflict {
                 throw SandboxError.ownershipConflict(
                     conflict.errorDescription ?? "Sandbox VM is owned by another process"
@@ -3130,6 +3184,14 @@
                 }
                 debugLog("[Sandbox] Network not ready yet (attempt \(attempt))")
                 try? await Task.sleep(nanoseconds: sleepNanos)
+                // `stopContainer` cancels this probe. A cancelled task's
+                // `exec` and `Task.sleep` both return immediately, which
+                // turned the remainder of the 20 s window into a hot loop
+                // (thousands of attempts per second in the quit chain).
+                if Task.isCancelled {
+                    debugLog("[Sandbox] Network readiness probe cancelled after \(attempt) attempt(s)")
+                    return false
+                }
                 sleepNanos = min(sleepNanos * 2, 1_000_000_000)
             }
             debugLog("[Sandbox] Network readiness probe timed out after 20 s")
@@ -3285,16 +3347,16 @@
             if nsError.domain == NSCocoaErrorDomain,
                 let message = startFailureHints.cocoa[nsError.code]
             {
-                return SandboxError.startFailed(message)
+                return SandboxError.startFailed(message, underlying: error)
             }
             if nsError.domain == NSPOSIXErrorDomain,
                 let message = startFailureHints.posix[Int32(nsError.code)]
             {
-                return SandboxError.startFailed(message)
+                return SandboxError.startFailed(message, underlying: error)
             }
             let desc = String(describing: error)
             if let hit = startFailureHints.substrings.first(where: { desc.contains($0.needle) }) {
-                return SandboxError.startFailed(hit.message)
+                return SandboxError.startFailed(hit.message, underlying: error)
             }
             return error
         }
@@ -3929,6 +3991,76 @@
             return try? JSONDecoder().decode(Owner.self, from: data)
         }
 
+        /// How long `acquire(waitingUpTo:)` is willing to wait for a live
+        /// owner to exit. Sized for the app-update relaunch window: the
+        /// outgoing process's quit chain gives `stopContainer` 3 s and the
+        /// rest of its teardown a few more, and Sparkle can have the new
+        /// binary running before the old one has closed its lock fd.
+        static let defaultOwnerExitWait: TimeInterval = 8
+
+        /// `kill(pid, 0)` liveness: `true` unless the kernel says no such
+        /// process. EPERM means it exists but is not ours — still alive.
+        static func defaultIsProcessAlive(_ pid: Int32) -> Bool {
+            guard pid > 0 else { return false }
+            if kill(pid, 0) == 0 { return true }
+            return errno != ESRCH
+        }
+
+        /// Acquire, tolerating a previous owner that is on its way out.
+        ///
+        /// flock is released by the kernel the moment the owning process
+        /// exits, so a conflict whose owner is *dead* resolves on the next
+        /// attempt, and one whose owner is *alive* may resolve within a
+        /// few seconds if that process is mid-quit (the typical
+        /// update-relaunch race). Poll until `deadline` elapses, then
+        /// surface the conflict with the owner diagnostic. An owner that is
+        /// this very process (lock fd leaked without release) is never
+        /// waited on — that is a bug to surface, not a race.
+        static func acquire(
+            at url: URL = defaultURL,
+            waitingUpTo deadline: TimeInterval,
+            pollInterval: TimeInterval = 0.25,
+            isProcessAlive: (Int32) -> Bool = defaultIsProcessAlive
+        ) async throws -> SandboxVMOwnershipLease {
+            let start = Date()
+            var attempts = 0
+            while true {
+                attempts += 1
+                do {
+                    let lease = try acquire(at: url)
+                    if attempts > 1 {
+                        let elapsed = Date().timeIntervalSince(start)
+                        debugLog(
+                            "[Sandbox] vmnet lease acquired after \(attempts) attempts / "
+                                + String(format: "%.2fs", elapsed) + " (previous owner exited)"
+                        )
+                    }
+                    return lease
+                } catch let conflict as OwnershipConflict {
+                    if let owner = conflict.owner, owner.pid == getpid() {
+                        throw conflict
+                    }
+                    let elapsed = Date().timeIntervalSince(start)
+                    guard elapsed < deadline else {
+                        if attempts > 1 {
+                            debugLog(
+                                "[Sandbox] vmnet lease still held after \(attempts) attempts / \(Int(elapsed))s"
+                            )
+                        }
+                        throw conflict
+                    }
+                    // A dead owner means the kernel has (or is about to have)
+                    // dropped the lock — the recorded owner may simply be
+                    // stale metadata from a process that just exited. Poll
+                    // fast in that case; otherwise give a live owner time to
+                    // finish quitting.
+                    let ownerAlive = conflict.owner.map { isProcessAlive($0.pid) } ?? true
+                    let sleep = ownerAlive ? pollInterval : min(pollInterval, 0.05)
+                    try await Task.sleep(nanoseconds: UInt64(sleep * 1_000_000_000))
+                }
+            }
+        }
+
         private init(descriptor: Int32) {
             self.descriptor = descriptor
         }
@@ -3973,7 +4105,11 @@
         case unavailable
         case containerNotRunning
         case provisionFailed(String)
-        case startFailed(String)
+        /// A start failure rewritten with an actionable hint by
+        /// `friendlyError`. `underlying` keeps the original SDK/POSIX error
+        /// so telemetry can classify it (EEXIST vs EADDRINUSE vs GRPC) —
+        /// the hint string alone would collapse them all.
+        case startFailed(String, underlying: (any Error)? = nil)
         case stopFailed(String)
         case removeFailed(String)
         case userCreationFailed(String)
@@ -3991,7 +4127,7 @@
             case .unavailable: L("Sandbox is not available on this system")
             case .containerNotRunning: "Container is not running"
             case .provisionFailed(let msg): "Provisioning failed: \(msg)"
-            case .startFailed(let msg): "Container start failed: \(msg)"
+            case .startFailed(let msg, _): "Container start failed: \(msg)"
             case .stopFailed(let msg): "Container stop failed: \(msg)"
             case .removeFailed(let msg): "Container removal failed: \(msg)"
             case .userCreationFailed(let msg): "User creation failed: \(msg)"

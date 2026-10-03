@@ -192,10 +192,9 @@ final class ChatSessionsManager: ObservableObject {
             currentSessionId = nil
         }
         sessions.removeAll { $0.id == id }
-        // Drop the session's tracked sandbox changes + baseline snapshot
-        // (the DB rows cascade in deleteSession; this clears the in-memory
-        // cache, pending background-job records, and baseline clone).
-        Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
+        // Drop the session's file history and collect its now-unreferenced
+        // snapshot blobs.
+        Task { await FileChangeJournal.shared.purgeSession(id.uuidString) }
     }
 
     /// Delete every session owned by an agent. Strict ownership match, unlike
@@ -223,7 +222,7 @@ final class ChatSessionsManager: ObservableObject {
         }
         sessions.removeAll { idSet.contains($0.id) }
         for id in ids {
-            Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
+            Task { await FileChangeJournal.shared.purgeSession(id.uuidString) }
         }
         await withCheckedContinuation { continuation in
             ChatSessionStore.deleteBatch(ids: ids) {
@@ -277,6 +276,27 @@ final class ChatSessionsManager: ObservableObject {
         // Same live-instance sync as `rename` — see the note there.
         LiveChatSessionRegistry.shared.registeredSession(for: id)?.title = title
         upsertInMemory(session)
+    }
+
+    /// Phone chats saved before they were titled from their first message
+    /// all read "Osaurus Connect → <agent>", in History here and in the
+    /// phone's list. Retitles them once from what was asked; the transcript
+    /// is read off the main thread, and `updatedAt` is left alone.
+    func retitleLegacyPhoneChats() {
+        let legacyPrefix = "\(MobilePairingService.legacyKeyLabel) → "
+        let stale = sessions.filter {
+            $0.title.hasPrefix(legacyPrefix) && RemoteSessionContinuation.isFromPairedPhone($0)
+        }.map(\.id)
+        guard !stale.isEmpty else { return }
+        Task {
+            for id in stale {
+                guard let data = await ChatSessionStore.loadAsync(id: id) else { continue }
+                let title = ChatSessionData.generateTitle(from: data.turns)
+                guard title != "New Chat" else { continue }
+                renameQuietly(id: id, title: title)
+                ChatWindowManager.shared.syncOpenSessions(id: id) { $0.title = title }
+            }
+        }
     }
 
     /// Toggle a session's archive flag. Same in-memory-first lookup as

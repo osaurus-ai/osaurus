@@ -771,6 +771,93 @@ struct SubagentSessionAdmissionTests {
         #expect(await admission.snapshot().exclusive == 0)
     }
 
+    @Test("child-card Stop unwinds a parked recovery before the producer releases its gate")
+    func stopDuringParkedRecovery() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        let gate = MetalGate.makeForTesting()
+        await gate.acquire("producer", shared: false)
+        let interrupt = InterruptToken()
+        let probe = DirectResidencyProbe()
+        probe.setPlan(ResidencyPlan(shouldUnload: false, ramSafetyEnabled: true))
+        let preparation = await SubagentSession.prepare(
+            DirectResidencyKind(probe: probe), tool: "direct-residency-test",
+            scope: SubagentScope(sessionId: "parked-recovery", toolCallId: UUID().uuidString, agentId: Agent.defaultId)
+        )
+        guard case .ready(let prepared) = preparation else {
+            Issue.record("expected prepared child")
+            await gate.release("producer")
+            return
+        }
+        let deadline = Task {
+            try? await Task.sleep(for: .seconds(2))
+            await gate.release("producer")
+        }
+        let started = Date()
+        let result = await SubagentSession.runPrepared(
+            prepared,
+            presentation: SubagentRunPresentation(
+                feed: SubagentFeed(toolCallId: "parked-recovery", kindId: "direct-residency-test", title: "recovery"),
+                interrupt: interrupt, registerWithUI: false
+            ),
+            admissionController: admission,
+            postAdmissionLocalCapacityOverride: { _, _ in
+                let stop = Task {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    interrupt.interrupt()
+                }
+                do {
+                    try await gate.acquireCancellable("recovery", shared: false)
+                    await gate.release("recovery")
+                } catch {}
+                await stop.value
+                return 1
+            }
+        )
+        #expect(Date().timeIntervalSince(started) < 1)
+        #expect(ToolEnvelope.isError(result))
+        #expect(probe.snapshot().runs == 0)
+        #expect(await admission.snapshot().inPlace == 0)
+        deadline.cancel()
+        await deadline.value
+    }
+
+    @Test("host-headroom ambiguity drains sibling reservations and rechecks instead of refusing")
+    func siblingHeadroomDrainsBeforeRecheck() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        let probe = DirectResidencyProbe()
+        probe.setPlan(ResidencyPlan(shouldUnload: false, ramSafetyEnabled: true))
+        let preparation = await SubagentSession.prepare(
+            DirectResidencyKind(probe: probe), tool: "direct-residency-test",
+            scope: SubagentScope(sessionId: "sibling-recovery", toolCallId: UUID().uuidString, agentId: Agent.defaultId)
+        )
+        guard case .ready(let prepared) = preparation else {
+            Issue.record("expected prepared child")
+            return
+        }
+        let result = await SubagentSession.runPrepared(
+            prepared, admissionController: admission,
+            postAdmissionLocalCapacityOverride: { prepared, _ in
+                if await admission.snapshot().inPlace == 1 {
+                    #expect(await admission.reserveLocalInPlace(
+                        modelKey: prepared.admissionModelKey, requestedSlots: 1,
+                        slotCapacity: 2, timeoutSeconds: 0
+                    ) == .admitted(slots: 1))
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(50))
+                        await admission.releaseLocalInPlace(modelKey: prepared.admissionModelKey, slots: 1)
+                    }
+                } else {
+                    #expect(await admission.snapshot().exclusive == 1)
+                }
+                return 1
+            }
+        )
+        #expect(!ToolEnvelope.isError(result))
+        #expect(probe.snapshot().runs == 1)
+        #expect(await admission.snapshot().inPlace == 0)
+        #expect(await admission.snapshot().exclusive == 0)
+    }
+
     @Test("two prepared same-model children recover memory and release admission before the next")
     func preparedChildrenRecoverSequentially() async {
         let admission = SubagentAdmission(pollNanoseconds: 1_000_000)

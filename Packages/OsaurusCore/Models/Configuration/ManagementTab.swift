@@ -38,7 +38,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     public var tabs: [ManagementTab] {
         switch self {
         case .general:
-            [.settings, .chat, .voice, .themes, .credits, .workspaces, .identity, .permissions, .privacy]
+            [.settings, .chat, .voice, .themes, .credits, .workspaces, .connect, .identity, .permissions, .privacy]
         case .models: [.models, .providers, .imageGeneration]
         case .agents: [.orchestrator, .agents, .agentChannels]
         case .capabilities: [.search, .knowledge, .memory, .tools, .skills, .commands]
@@ -79,6 +79,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case identity
     case credits
     case workspaces
+    case connect
     case insights
 
     public var id: String { rawValue }
@@ -91,7 +92,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     /// The sidebar section this tab belongs to.
     public var section: ManagementSection {
         switch self {
-        case .settings, .chat, .voice, .themes, .credits, .workspaces, .identity, .permissions, .privacy:
+        case .settings, .chat, .voice, .themes, .credits, .workspaces, .connect, .identity, .permissions, .privacy:
             .general
         case .models, .providers, .imageGeneration: .models
         case .orchestrator, .agents, .agentChannels: .agents
@@ -103,12 +104,13 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
 
     /// Resolves a sidebar tab id, including legacy raw values whose destination
     /// has moved (`"dashboard"` → Credits, `"channels"` → Agent Channels,
-    /// `"storage"` → Privacy, which now hosts the storage-encryption panel).
+    /// `"storage"` → General, whose Advanced → Data & Storage subsection now
+    /// hosts the encryption and file-history controls).
     public static func resolved(from rawValue: String) -> ManagementTab? {
         switch rawValue {
         case "dashboard": .credits
         case "channels", "integrations", "agent-channels": .agentChannels
-        case "storage": .privacy
+        case "storage": .settings
         // Pre-rename tab id (Teams → Workspaces); keep old settings links working.
         case "teams": .workspaces
         default: ManagementTab(rawValue: rawValue)
@@ -119,6 +121,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .credits: "creditcard.fill"
         case .workspaces: "rectangle.3.group.fill"
+        case .connect: "iphone.radiowaves.left.and.right"
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
@@ -139,7 +142,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .permissions: "lock.shield.fill"
         case .computerUse: "cursorarrow.rays"
         case .browser: "globe"
-        case .imageGeneration: "photo.artframe"
+        case .imageGeneration: "photo.on.rectangle.angled"
         case .privacy: "hand.raised.fill"
         case .identity: "person.badge.key.fill"
         case .chat: "text.bubble.fill"
@@ -152,12 +155,13 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .credits: L("Credits")
         case .workspaces: L("Workspaces")
+        case .connect: L("Mobile")
         case .models: L("Local Models")
         case .providers: L("Providers")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
         case .sandbox: L("Sandbox")
-        case .tools: L("Tools")
+        case .tools: L("Tools & MCP")
         case .search: L("Web Search")
         case .skills: L("Skills")
         case .commands: L("Commands")
@@ -172,10 +176,10 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .permissions: L("Permissions")
         case .computerUse: L("Computer Use")
         case .browser: L("Browser Use")
-        case .imageGeneration: L("Media")
+        case .imageGeneration: L("Images")
         case .privacy: L("Privacy")
         case .identity: L("Identity")
-        case .chat: L("Chat")
+        case .chat: L("Conversation")
         case .settings: L("General")
         case .orchestrator: L("Orchestrator")
         }

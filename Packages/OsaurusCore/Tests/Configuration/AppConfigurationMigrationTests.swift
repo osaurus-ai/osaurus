@@ -28,6 +28,66 @@ import Testing
 @Suite(.serialized)
 struct AppConfigurationMigrationTests {
 
+    @Test("saved core-model choices survive reload without reviving legacy defaults")
+    func savedCoreModelChoiceSurvivesReload() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await MainActor.run {
+                let previousRoot = OsaurusPaths.overrideRoot
+                let previousConfig = AppConfiguration.shared.chatConfig
+                let root = try Self.setUpTempRoot()
+                defer {
+                    // Restore the singleton while writes still target this
+                    // disposable root, leaving the caller's files untouched.
+                    AppConfiguration.shared.updateChatConfig(previousConfig)
+                    OsaurusPaths.overrideRoot = previousRoot
+                    try? FileManager.default.removeItem(at: root)
+                }
+
+                var config = ChatConfiguration.default
+                config.coreModelName = nil
+                config.coreModelProvider = nil
+                config.autoGenerateChatTitles = false
+                config.generateFollowUpSuggestions = false
+
+                // A genuinely old file still imports its legacy core model.
+                try JSONEncoder().encode(config).write(to: OsaurusPaths.chatConfigFile())
+                try Self.writeMemory([
+                    "coreModelProvider": "legacy-provider",
+                    "coreModelName": "legacy-core",
+                ])
+                AppConfiguration.shared.reloadChatConfig()
+                #expect(AppConfiguration.shared.chatConfig.coreModelIdentifier == "legacy-provider/legacy-core")
+
+                for name in [nil, "local-core", "remote-core"] as [String?] {
+                    config.coreModelName = name
+                    config.coreModelProvider = name == "remote-core" ? "test-provider" : nil
+                    AppConfiguration.shared.updateChatConfig(config)
+                    let data = try Data(contentsOf: OsaurusPaths.chatConfigFile())
+                    let json = try #require(
+                        JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    )
+                    if name == nil {
+                        #expect(json["coreModelName"] is NSNull)
+                    } else {
+                        #expect(json["coreModelName"] as? String == name)
+                    }
+                    try Self.writeMemory([
+                        "coreModelProvider": "legacy-provider",
+                        "coreModelName": "legacy-core",
+                    ])
+                    for _ in 0 ..< 2 {
+                        AppConfiguration.shared.reloadChatConfig()
+                        let reloaded = AppConfiguration.shared.chatConfig
+                        #expect(reloaded.coreModelName == name)
+                        #expect(reloaded.coreModelProvider == config.coreModelProvider)
+                        #expect(!reloaded.autoGenerateChatTitles)
+                        #expect(!reloaded.generateFollowUpSuggestions)
+                    }
+                }
+            }
+        }
+    }
+
     @MainActor
     private static func setUpTempRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

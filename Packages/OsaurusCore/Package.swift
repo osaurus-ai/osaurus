@@ -298,9 +298,36 @@ let package = Package(
         // vmlx-swift#408 pins quantized-embedding output to bf16 under the
         // Gemma-4/DSV4 jang_affine mmap preserve branches (the last audited
         // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
+        // vmlx-swift#475 corrects GLM media prefill and ordered image history,
+        // and validates complete model-owned disk state before live restore.
+        // vmlx-swift#479 retains Gemma image and tool history during explicit
+        // tool selection, keeping rendered image slots aligned with pixels.
+        // Also preserves the Bonsai2 strict Hadamard/packed ternary loading,
+        // native Qwen template/schema handling and multimodal tool history.
+        // vmlx-swift#481 fuses exact packed-ternary expansion on Metal;
+        // #482 bounds Qwen3.5/Bonsai2 media language prefill while retaining
+        // full-prompt M-RoPE positions and complete KV/GDN companion state.
+        // vmlx-swift#484 uses FP16 Bonsai2 attention K/V after norms/RoPE,
+        // retaining FP32 GDN recurrence and isolating old cache precision.
+        // vmlx-swift#489 indexes linked SSD payloads, scopes quota retention
+        // to conversation chains, and reports current-chat capacity pressure.
+        // vmlx-swift#493 adds native MiMo V2.6 mixed-quant/media runtime,
+        // resident expert dispatch, and correct post-answer cache boundaries.
+        // vmlx-swift#508 fuses exact BF16 Spark GELU/multiply for large
+        // prefill shapes; short/decode shapes retain the reference expression.
+        // #512 validates persisted architecture state before granting SSD hits
+        // and serializes validation with MLX disk I/O. #513 honors validated
+        // max_tokens bundle aliases with max_new_tokens precedence.
+        // #529 adds GLM/Naive JANGH packed execution and model-owned cache restore.
+        // Naive remains single-sequence text; this pin does not claim universal speedups.
+        // Gather row scheduling includes affine expert prefill and partial-K
+        // bounds correction. This pin also consumes the Unicode/BPE ordering,
+        // quantization_config, and SDK-gated JACCL fixes merged after #518.
+        // GLM native history retains reasoning, tool metadata and argument order;
+        // text-only cache checkpoints use exact active-template prefix proofs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "5b0c8e6b8b29a7ead21fe785688bc0621580cc62"
+            revision: "6eb3a8163ad214cbf9125a7a62a3f465690752fb"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

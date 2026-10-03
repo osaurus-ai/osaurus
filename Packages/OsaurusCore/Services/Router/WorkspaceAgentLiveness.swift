@@ -218,7 +218,7 @@ enum WorkspaceAgentLiveness {
 
 // MARK: - Coalescing
 
-/// Shares one in-flight probe per agent so a `spawn_batch` fanning out to the
+/// Shares one in-flight probe per agent so a `spawn_agent` wave fanning out to the
 /// same teammate's agent N times asks the relay once.
 actor WorkspaceAgentLivenessCoalescer {
     static let shared = WorkspaceAgentLivenessCoalescer()

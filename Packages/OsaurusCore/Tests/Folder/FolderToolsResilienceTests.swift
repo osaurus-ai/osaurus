@@ -45,15 +45,6 @@ struct FolderToolsResilienceTests {
         EnvelopeAssertions.failureKind(result)
     }
 
-    private func withSession<T>(
-        _ sessionId: String = "folder-tools-\(UUID().uuidString)",
-        body: (String) async throws -> T
-    ) async throws -> T {
-        try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-            try await body(sessionId)
-        }
-    }
-
     // MARK: - file_read
 
     @Test func fileRead_missingPath() async throws {
@@ -279,7 +270,7 @@ struct FolderToolsResilienceTests {
         #expect(payload["content"] == nil)
         #expect(payload["start_line"] as? Int == 1)
         #expect(payload["end_line"] as? Int == 1)
-        #expect(payload["total_lines"] as? Int == 3)
+        #expect(payload["total_lines"] as? Int == 2)
         #expect(payload["total_lines_exact"] as? Bool == true)
         #expect(payload["truncated"] as? Bool == false)
         #expect(payload["raw_bytes_truncated"] as? Bool == false)
@@ -310,21 +301,25 @@ struct FolderToolsResilienceTests {
         #expect(FileManager.default.fileExists(atPath: path))
     }
 
-    @Test func fileWrite_rejectsWorkbookPackagesWithoutTouchingExistingFile() async throws {
+    @Test func fileWrite_rejectsLegacyWorkbookFormatsWithoutTouchingExistingFile() async throws {
+        // `.xlsx` is generated natively (see FileWriteDocumentFormatsTests);
+        // legacy binary spreadsheet formats have no writer and must refuse
+        // without clobbering the existing bytes.
         let root = tmpRoot()
-        let existing = root.appendingPathComponent("report.xlsx")
-        let original = Data([0x50, 0x4B, 0x03, 0x04, 0x00])
+        let existing = root.appendingPathComponent("report.xls")
+        let original = Data([0xD0, 0xCF, 0x11, 0xE0, 0x00])
         try original.write(to: existing)
 
         let tool = FileWriteTool(rootPath: root)
         let result = try await tool.execute(
-            argumentsJSON: #"{"path": "report.xlsx", "content": "not a workbook"}"#
+            argumentsJSON: #"{"path": "report.xls", "content": "not a workbook"}"#
         )
 
         #expect(ToolEnvelope.isError(result))
         #expect(failureKind(result) == "rejected")
         #expect(failureField(result) == "path")
-        #expect(result.contains("structured workbook"))
+        #expect(result.contains("spreadsheet format"))
+        #expect(result.contains(".xlsx"))
         let after = try Data(contentsOf: existing)
         #expect(after == original)
     }
@@ -346,13 +341,13 @@ struct FolderToolsResilienceTests {
     }
 
     @Test func fileWrite_rejectsBinaryDocumentPackagesWithoutTouchingExistingFile() async throws {
+        // `.docx`, `.pdf`, and `.pptx` are generated natively; everything below
+        // has no writer and must refuse without clobbering the existing bytes.
         let root = tmpRoot()
         let cases: [(name: String, bytes: [UInt8])] = [
-            ("report.pdf", [0x25, 0x50, 0x44, 0x46]),
-            ("report.docx", [0x50, 0x4B, 0x03, 0x04]),
             ("legacy.doc", [0xD0, 0xCF, 0x11, 0xE0]),
             ("bundle.rtfd", [0x50, 0x4B, 0x03, 0x04]),
-            ("deck.pptx", [0x50, 0x4B, 0x03, 0x04]),
+            ("deck.key", [0x50, 0x4B, 0x03, 0x04]),
             ("document.pages", [0x50, 0x4B, 0x03, 0x04]),
             ("document.odt", [0x50, 0x4B, 0x03, 0x04]),
         ]
@@ -376,62 +371,65 @@ struct FolderToolsResilienceTests {
     }
 
     @Test func fileWrite_dryRunPreviewsDiffWithoutWritingOrLogging() async throws {
-        await FileOperationLog.shared.clearAll()
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let root = tmpRoot()
         let path = root.appendingPathComponent("note.txt")
         try "alpha\nbeta\n".write(to: path, atomically: true, encoding: .utf8)
+        let sessionId = "resilience-\(UUID().uuidString)"
 
-        try await withSession { sessionId in
-            let tool = FileWriteTool(rootPath: root)
-            let result = try await tool.execute(
-                argumentsJSON: #"{"path": "note.txt", "content": "alpha\ngamma\n", "dry_run": true}"#
-            )
+        let result = try await env.run(
+            FileWriteTool(rootPath: root),
+            #"{"path": "note.txt", "content": "alpha\ngamma\n", "dry_run": true}"#,
+            sessionId: sessionId, folder: root)
 
-            #expect(ToolEnvelope.isSuccess(result))
-            let payload = try #require(EnvelopeAssertions.successPayload(result))
-            #expect(payload["kind"] as? String == "workspace_write_preview")
-            #expect(payload["dry_run"] as? Bool == true)
-            #expect(payload["applied"] as? Bool == false)
-            let diff = try #require(payload["diff"] as? String)
-            #expect(diff.contains("-beta"))
-            #expect(diff.contains("+gamma"))
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["kind"] as? String == "workspace_write_preview")
+        #expect(payload["dry_run"] as? Bool == true)
+        #expect(payload["applied"] as? Bool == false)
+        let diff = try #require(payload["diff"] as? String)
+        #expect(diff.contains("-beta"))
+        #expect(diff.contains("+gamma"))
 
-            let after = try String(contentsOf: path, encoding: .utf8)
-            #expect(after == "alpha\nbeta\n")
-            let operations = await FileOperationLog.shared.operations(for: sessionId)
-            #expect(operations.isEmpty)
-        }
+        let after = try String(contentsOf: path, encoding: .utf8)
+        #expect(after == "alpha\nbeta\n")
+        #expect(await env.journal.changeSets(for: sessionId).isEmpty)
     }
 
     @Test func fileWrite_applyLogsInspectableOperationHistory() async throws {
-        await FileOperationLog.shared.clearAll()
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let root = tmpRoot()
+        let sessionId = "resilience-\(UUID().uuidString)"
 
-        try await withSession { _ in
-            let write = FileWriteTool(rootPath: root)
-            let writeResult = try await write.execute(
-                argumentsJSON: "{\"path\": \"nested/report.md\", \"content\": \"# Report\\n\"}"
-            )
-            #expect(ToolEnvelope.isSuccess(writeResult))
-            let writePayload = try #require(EnvelopeAssertions.successPayload(writeResult))
-            #expect(writePayload["kind"] as? String == "workspace_write_result")
-            #expect(writePayload["operation_id"] as? String != nil)
-            let reference = try #require(writePayload["file_reference"] as? [String: Any])
-            #expect(reference["kind"] as? String == "workspace_file")
-            #expect(reference["path"] as? String == "nested/report.md")
-            #expect(reference["exportable"] as? Bool == false)
-            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("nested/report.md").path))
+        let writeResult = try await env.run(
+            FileWriteTool(rootPath: root),
+            "{\"path\": \"nested/report.md\", \"content\": \"# Report\\n\"}",
+            sessionId: sessionId, folder: root)
+        #expect(ToolEnvelope.isSuccess(writeResult))
+        let writePayload = try #require(EnvelopeAssertions.successPayload(writeResult))
+        #expect(writePayload["kind"] as? String == "workspace_write_result")
+        let opId = try #require(writePayload["operation_id"] as? String)
+        let reference = try #require(writePayload["file_reference"] as? [String: Any])
+        #expect(reference["kind"] as? String == "workspace_file")
+        #expect(reference["path"] as? String == "nested/report.md")
+        #expect(reference["exportable"] as? Bool == false)
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("nested/report.md").path))
 
-            let history = FileOperationHistoryTool(rootPath: root)
-            let historyResult = try await history.execute(argumentsJSON: #"{"limit": 5}"#)
-            #expect(ToolEnvelope.isSuccess(historyResult))
-            let historyPayload = try #require(EnvelopeAssertions.successPayload(historyResult))
-            #expect(historyPayload["kind"] as? String == "file_operation_history")
-            let entries = try #require(historyPayload["entries"] as? [[String: Any]])
-            #expect(entries.count == 1)
-            #expect(entries.first?["type"] as? String == "create")
-            #expect(entries.first?["path"] as? String == "nested/report.md")
-        }
+        let history = FileOperationHistoryTool(rootPath: root, journal: env.journal)
+        let historyResult = try await env.call(history, #"{"limit": 5}"#, sessionId: sessionId)
+        #expect(ToolEnvelope.isSuccess(historyResult))
+        let historyPayload = try #require(EnvelopeAssertions.successPayload(historyResult))
+        #expect(historyPayload["kind"] as? String == "file_operation_history")
+        let entries = try #require(historyPayload["entries"] as? [[String: Any]])
+        #expect(entries.count == 1)
+        #expect(entries.first?["id"] as? String == opId)
+        #expect(entries.first?["can_undo"] as? Bool == true)
+        let files = try #require(entries.first?["files"] as? [[String: Any]])
+        // The new parent directory is recorded too, so undo removes it.
+        let created = files.filter { $0["change"] as? String == "created" }.compactMap { $0["path"] as? String }
+        #expect(Set(created) == ["nested", "nested/report.md"])
     }
 
     @Test func fileWrite_appendBuildsLargeFilesAcrossBoundedCalls() async throws {
@@ -536,12 +534,18 @@ struct FolderToolsResilienceTests {
                 == .number(Double(WorkspaceToolContract.maxWriteContentCharacters))
         )
         #expect(WorkspaceToolContract.maxWriteContentCharacters >= 30_000)
+        guard case .some(.string(let description)) = content["description"] else {
+            Issue.record("file_write content description should be a string")
+            return
+        }
         #expect(
-            content["description"]
-                == .string(
-                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
-                )
+            description.hasPrefix(
+                "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
+            )
         )
+        #expect(description.contains(".xlsx"))
+        #expect(description.contains(".docx"))
+        #expect(description.contains(".pdf"))
         #expect(
             WorkspaceToolContract.recommendedWriteChunkCharacters
                 < WorkspaceToolContract.maxWriteContentCharacters
@@ -605,30 +609,29 @@ struct FolderToolsResilienceTests {
     }
 
     @Test func fileEdit_dryRunPreviewsDiffWithoutMutatingOrLogging() async throws {
-        await FileOperationLog.shared.clearAll()
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let root = tmpRoot()
         let path = root.appendingPathComponent("f.txt")
         try "hello world\n".write(to: path, atomically: true, encoding: .utf8)
+        let sessionId = "resilience-\(UUID().uuidString)"
 
-        try await withSession { sessionId in
-            let tool = FileEditTool(rootPath: root)
-            let result = try await tool.execute(
-                argumentsJSON: #"{"path": "f.txt", "old_string": "world", "new_string": "mars", "dry_run": true}"#
-            )
+        let result = try await env.run(
+            FileEditTool(rootPath: root),
+            #"{"path": "f.txt", "old_string": "world", "new_string": "mars", "dry_run": true}"#,
+            sessionId: sessionId, folder: root)
 
-            #expect(ToolEnvelope.isSuccess(result))
-            let payload = try #require(EnvelopeAssertions.successPayload(result))
-            #expect(payload["kind"] as? String == "workspace_write_preview")
-            #expect(payload["operation"] as? String == "file_edit")
-            let diff = try #require(payload["diff"] as? String)
-            #expect(diff.contains("-hello world"))
-            #expect(diff.contains("+hello mars"))
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["kind"] as? String == "workspace_write_preview")
+        #expect(payload["operation"] as? String == "file_edit")
+        let diff = try #require(payload["diff"] as? String)
+        #expect(diff.contains("-hello world"))
+        #expect(diff.contains("+hello mars"))
 
-            let after = try String(contentsOf: path, encoding: .utf8)
-            #expect(after == "hello world\n")
-            let operations = await FileOperationLog.shared.operations(for: sessionId)
-            #expect(operations.isEmpty)
-        }
+        let after = try String(contentsOf: path, encoding: .utf8)
+        #expect(after == "hello world\n")
+        #expect(await env.journal.changeSets(for: sessionId).isEmpty)
     }
 
     @Test func fileEdit_duplicateMatchReturnsStructuredArgumentError() async throws {
@@ -655,6 +658,62 @@ struct FolderToolsResilienceTests {
         #expect(failureKind(result) == "unavailable")
     }
 
+    // MARK: - file_edit argument hints
+
+    /// Observed live (Ornith 1.5 9B): `slide`/`sheet` sent at the top level
+    /// of `file_edit`. The call stays rejected, but the message now says
+    /// where the key belongs and that a plain text swap needs no `slide`.
+    @Test func fileEdit_topLevelDocumentKeyIsRejectedWithPlacementHint() async throws {
+        let tool = FileEditTool(rootPath: tmpRoot())
+        let outcome = await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: #"{"path":"deck.pptx","old_string":"Lisbon","new_string":"Lyon","slide":3}"#,
+            schema: tool.parameters, toolName: tool.name, hint: tool.argumentHint)
+        guard case .rejected(let envelope) = outcome else {
+            Issue.record("expected a rejection, got \(outcome)")
+            return
+        }
+        #expect(EnvelopeAssertions.failureField(envelope) == "slide")
+        let message = EnvelopeAssertions.failureMessage(envelope) ?? ""
+        #expect(message.contains("Unexpected property `slide`."), "\(message)")
+        #expect(message.contains(". `slide` belongs inside an `operations` entry"), "\(message)")
+        #expect(message.contains("\"op\": \"replace_text\""), "\(message)")
+        #expect(message.contains("needs no `slide`"), "\(message)")
+
+        // Keys without a hint keep the plain validator message.
+        let plain = await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: #"{"path":"a.txt","old_string":"x","new_string":"y","bogus":1}"#,
+            schema: tool.parameters, toolName: tool.name, hint: tool.argumentHint)
+        guard case .rejected(let plainEnvelope) = plain else {
+            Issue.record("expected a rejection, got \(plain)")
+            return
+        }
+        #expect(!(EnvelopeAssertions.failureMessage(plainEnvelope) ?? "").contains("belongs inside"))
+    }
+
+    /// A stringified `edits` array (the model double-encoded the JSON) is
+    /// unwrapped by coercion when it parses; a broken string is still
+    /// rejected with the plain "must be an array" message.
+    @Test func fileEdit_stringifiedEditsArrayIsUnwrappedWhenValid() async throws {
+        let tool = FileEditTool(rootPath: tmpRoot())
+        let valid = await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: #"{"path":"a.md","edits":"[{\"old_string\":\"x\",\"new_string\":\"y\"}]"}"#,
+            schema: tool.parameters, toolName: tool.name, hint: tool.argumentHint)
+        guard case .ready(let args) = valid else {
+            Issue.record("expected coercion to unwrap the stringified array, got \(valid)")
+            return
+        }
+        #expect(args.contains(#""edits":[{"#), "\(args)")
+
+        let broken = await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: #"{"path":"a.md","edits":"[{\"old_string\":\"x\",\"new_string\":\"y\"}"}"#,
+            schema: tool.parameters, toolName: tool.name, hint: tool.argumentHint)
+        guard case .rejected(let envelope) = broken else {
+            Issue.record("expected a rejection, got \(broken)")
+            return
+        }
+        #expect(EnvelopeAssertions.failureField(envelope) == "edits")
+    }
+
     // MARK: - file_undo
 
     /// Models routinely echo `path` alongside the `operation_id` they got
@@ -663,71 +722,94 @@ struct FolderToolsResilienceTests {
     /// spiralled into a blind full-file rewrite). Agreeing arguments are
     /// redundant, not ambiguous — the undo must run.
     @Test func fileUndo_operationIdWithAgreeingPathUndoes() async throws {
-        await FileOperationLog.shared.clearAll()
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let root = tmpRoot()
-        // performUndo resolves relative paths against the root recorded on
-        // the operation itself (written by the mutating tool at log time).
         let file = root.appendingPathComponent("CHANGELOG.md")
         try "original\n".write(to: file, atomically: true, encoding: .utf8)
+        let sessionId = "resilience-\(UUID().uuidString)"
 
-        try await withSession { _ in
-            let write = FileWriteTool(rootPath: root)
-            let writeResult = try await write.execute(
-                argumentsJSON: #"{"path": "CHANGELOG.md", "content": "clobbered\n"}"#
-            )
-            let opId = try #require(
-                EnvelopeAssertions.successPayload(writeResult)?["operation_id"] as? String
-            )
+        let writeResult = try await env.run(
+            FileWriteTool(rootPath: root), #"{"path": "CHANGELOG.md", "content": "clobbered\n"}"#,
+            sessionId: sessionId, folder: root)
+        let opId = try #require(
+            EnvelopeAssertions.successPayload(writeResult)?["operation_id"] as? String
+        )
 
-            let undo = FileUndoTool(rootPath: root)
-            let result = try await undo.execute(
-                argumentsJSON: #"{"operation_id": "\#(opId)", "path": "CHANGELOG.md"}"#
-            )
-            #expect(ToolEnvelope.isSuccess(result), "got: \(result)")
-            let payload = try #require(EnvelopeAssertions.successPayload(result))
-            #expect(payload["undone_count"] as? Int == 1)
-            let after = try String(contentsOf: file, encoding: .utf8)
-            #expect(after == "original\n")
-        }
+        let undo = FileUndoTool(rootPath: root, journal: env.journal)
+        let result = try await env.call(
+            undo, #"{"operation_id": "\#(opId)", "path": "CHANGELOG.md"}"#, sessionId: sessionId)
+        #expect(ToolEnvelope.isSuccess(result), "got: \(result)")
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["undone_count"] as? Int == 1)
+        #expect(payload["undone_operation_id"] as? String == opId)
+        #expect(payload["undone_tool"] as? String == "file_write")
+        #expect((payload["undone"] as? [[String: Any]])?.first?["path"] as? String == "CHANGELOG.md")
+        let after = try String(contentsOf: file, encoding: .utf8)
+        #expect(after == "original\n")
+
+        // A second undo of the same operation is refused, not re-applied.
+        let again = try await env.call(undo, #"{"operation_id": "\#(opId)"}"#, sessionId: sessionId)
+        #expect(ToolEnvelope.isError(again))
     }
 
     /// A genuine DISAGREEMENT (id belongs to one file, path names another)
     /// stays refused — but with a message that names the real file so the
     /// model can pick the right argument on the next call.
     @Test func fileUndo_operationIdWithConflictingPathIsRefusedWithDiagnosis() async throws {
-        await FileOperationLog.shared.clearAll()
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let root = tmpRoot()
         try "keep\n".write(
             to: root.appendingPathComponent("a.txt"),
             atomically: true,
             encoding: .utf8
         )
+        let sessionId = "resilience-\(UUID().uuidString)"
 
-        try await withSession { _ in
-            let write = FileWriteTool(rootPath: root)
-            let writeResult = try await write.execute(
-                argumentsJSON: #"{"path": "a.txt", "content": "changed\n"}"#
-            )
-            let opId = try #require(
-                EnvelopeAssertions.successPayload(writeResult)?["operation_id"] as? String
-            )
+        let writeResult = try await env.run(
+            FileWriteTool(rootPath: root), #"{"path": "a.txt", "content": "changed\n"}"#,
+            sessionId: sessionId, folder: root)
+        let opId = try #require(
+            EnvelopeAssertions.successPayload(writeResult)?["operation_id"] as? String
+        )
 
-            let undo = FileUndoTool(rootPath: root)
-            let result = try await undo.execute(
-                argumentsJSON: #"{"operation_id": "\#(opId)", "path": "other.txt"}"#
-            )
-            #expect(ToolEnvelope.isError(result))
-            #expect(failureKind(result) == "invalid_args")
-            let message = EnvelopeAssertions.failureMessage(result) ?? ""
-            #expect(message.contains("a.txt"))
-            #expect(message.contains("other.txt"))
-            // The operation must NOT have been undone by the refused call.
-            let after = try String(
-                contentsOf: root.appendingPathComponent("a.txt"),
-                encoding: .utf8
-            )
-            #expect(after == "changed\n")
-        }
+        let undo = FileUndoTool(rootPath: root, journal: env.journal)
+        let result = try await env.call(
+            undo, #"{"operation_id": "\#(opId)", "path": "other.txt"}"#, sessionId: sessionId)
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureKind(result) == "invalid_args")
+        let message = EnvelopeAssertions.failureMessage(result) ?? ""
+        #expect(message.contains("a.txt"))
+        #expect(message.contains("other.txt"))
+        // The operation must NOT have been undone by the refused call.
+        let after = try String(
+            contentsOf: root.appendingPathComponent("a.txt"),
+            encoding: .utf8
+        )
+        #expect(after == "changed\n")
+    }
+
+    /// Undo never overwrites a file the user edited after the agent's
+    /// change: it reports the conflict and leaves the file alone.
+    @Test func fileUndo_leavesFilesChangedSinceUntouched() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
+        let root = tmpRoot()
+        let file = root.appendingPathComponent("notes.txt")
+        try "v1\n".write(to: file, atomically: true, encoding: .utf8)
+        let sessionId = "resilience-\(UUID().uuidString)"
+
+        _ = try await env.run(
+            FileWriteTool(rootPath: root), #"{"path": "notes.txt", "content": "v2\n"}"#,
+            sessionId: sessionId, folder: root)
+        try "user edit\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let undo = FileUndoTool(rootPath: root, journal: env.journal)
+        let result = try await env.call(undo, "{}", sessionId: sessionId)
+        #expect(ToolEnvelope.isError(result))
+        #expect((EnvelopeAssertions.failureMessage(result) ?? "").contains("notes.txt"))
+        #expect(try String(contentsOf: file, encoding: .utf8) == "user edit\n")
     }
 
     // MARK: - file_tree

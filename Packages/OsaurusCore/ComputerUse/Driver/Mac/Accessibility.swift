@@ -1333,10 +1333,70 @@ struct MacAppError: Error, Sendable {
 /// app are blocking cross-process IPC that must never occupy the UI run
 /// loop (repeated bounded AX reads can otherwise beachball for the whole
 /// open budget). The poll honors task cancellation.
+/// Resolve an `open` identifier to a folder, when it is one: an absolute,
+/// `~`-relative, or `file://` path to an existing directory that is not a
+/// package (`.app` bundles and the like still open as apps). Files are never
+/// resolved: opening a file launches its default app, and a `.command` or
+/// shell script would run, which a navigation verb must not be able to do.
+func openableFolderURL(forOpenIdentifier identifier: String) -> URL? {
+    let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    let path: String
+    if trimmed.hasPrefix("file://"), let url = URL(string: trimmed), url.isFileURL {
+        path = url.path
+    } else if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
+        path = (trimmed as NSString).expandingTildeInPath
+    } else {
+        return nil
+    }
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+        isDirectory.boolValue,
+        !NSWorkspace.shared.isFilePackage(atPath: path)
+    else { return nil }
+    return URL(fileURLWithPath: path, isDirectory: true)
+}
+
+/// Open `folder` in a new frontmost Finder window. Navigating there by
+/// clicking the sidebar or posting shortcuts is the fragile part of every
+/// Finder task: with several Finder windows open, background input lands in
+/// whichever window macOS routes it to rather than the one being read.
+private func openFolderInFinder(_ folder: URL) async -> Result<MacAppInfo, MacAppError> {
+    let workspace = NSWorkspace.shared
+    guard let finderURL = workspace.urlForApplication(withBundleIdentifier: "com.apple.finder") else {
+        return .failure(MacAppError(message: "Finder not found"))
+    }
+    let config = NSWorkspace.OpenConfiguration()
+    config.activates = true
+    do {
+        let app = try await workspace.open([folder], withApplicationAt: finderURL, configuration: config)
+        // `config.activates` is a request macOS may decline for an app that is
+        // not itself frontmost (Osaurus usually isn't while Computer Use
+        // drives). Without an active Finder, shortcuts like cmd+shift+n posted
+        // afterwards silently miss; a traced run pressed it four times until an
+        // explicit `open Finder`, which activates, made the next press land.
+        await MainActor.run { _ = app.activate() }
+        let pid = app.processIdentifier
+        await AccessibilityManager.runOffMain {
+            AccessibilityManager.shared.prepareForAccessibility(pid: pid)
+        }
+        let ready = await waitUntilReady(pid: pid, requireFrontmost: true)
+        return .success(
+            MacAppInfo(pid: pid, bundleId: app.bundleIdentifier, name: app.localizedName ?? "Finder", ready: ready)
+        )
+    } catch {
+        return .failure(
+            MacAppError(message: "Failed to open folder \(folder.path): \(error.localizedDescription)")
+        )
+    }
+}
+
 func openApplication(
     identifier: String,
     background: Bool = true
 ) async -> Result<MacAppInfo, MacAppError> {
+    if let folder = openableFolderURL(forOpenIdentifier: identifier) {
+        return await openFolderInFinder(folder)
+    }
     let lowerId = identifier.lowercased()
 
     // Phase 1 — AppKit on the main actor: match an already-running app and

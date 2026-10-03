@@ -42,7 +42,7 @@ struct SpawnBatchDelegatedAdmissionTests {
             delegatedEstimate(ceiling: 8_192),
         ])
         #expect(envelope?.enforcedPositionCeiling == 24_000)
-        #expect(envelope?.boundedPositionBudget(policyCap: 65_536) == 24_000)
+        #expect(envelope?.boundedPositionBudget() == 24_000)
     }
 
     /// Heterogeneous jobs: one bare job bounded by seed+output, one
@@ -54,11 +54,11 @@ struct SpawnBatchDelegatedAdmissionTests {
         let bare = SubagentChildRequestEstimate(
             seedCharacters: 60_000, maxOutputTokens: 10_000)
         // Independent bound: ceil(60,000×3/8)=22,500 + 10,000 = 32,500.
-        #expect(bare.boundedPositionBudget(policyCap: nil) == 32_500)
+        #expect(bare.boundedPositionBudget() == 32_500)
         let delegated = delegatedEstimate(ceiling: 8_192)
 
         let envelope = SubagentChildRequestEstimate.waveEnvelope(of: [bare, delegated])
-        #expect(envelope?.boundedPositionBudget(policyCap: 65_536) == 32_500)
+        #expect(envelope?.boundedPositionBudget() == 32_500)
     }
 
     /// Fail closed for the whole group: an empty batch, a job with no

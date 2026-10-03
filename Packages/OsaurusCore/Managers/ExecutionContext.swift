@@ -138,9 +138,13 @@ public final class ExecutionContext: ObservableObject {
     /// model is re-applied in `prepare()` once picker items load.
     init(
         reattaching existing: ChatSessionData,
+        reusing liveSession: ChatSession? = nil,
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
-        workspace prepared: WorkspaceAgentRunClient.Prepared? = nil
+        workspace prepared: WorkspaceAgentRunClient.Prepared? = nil,
+        loadIntent: ModelLoadIntent = .interactive,
+        delegationBudget: DelegatedRunContract? = nil,
+        delegationModel: String? = nil
     ) {
         self.id = existing.id
         self.agentId = existing.agentId ?? Agent.defaultId
@@ -149,12 +153,22 @@ public final class ExecutionContext: ObservableObject {
         self.folderBookmark = folderBookmark
         self.folderPath = folderPath
 
-        let session = ChatSession()
+        // A tab/registry may already own this conversation. Reuse that exact
+        // object: hydrating a second writer lets tab-close save stale history
+        // over the dispatched turns. Its live edits outrank the disk snapshot.
+        precondition(liveSession == nil || liveSession?.sessionId == existing.id)
+        let session = liveSession ?? ChatSession()
         session.agentId = existing.agentId
+        session.loadIntent = loadIntent
+        // A resumed delegation (`spawn_agent` `continue`) re-applies the
+        // launcher's enforced contract so the follow-up turn is clamped and
+        // priced exactly like the first one.
+        session.delegationBudget = delegationBudget
+        session.delegationModel = existing.source == .delegation ? delegationModel : nil
         // Apply identity + history immediately so observers (e.g. the
         // BackgroundTaskState activity feed) see the existing turns from
         // the very first publish.
-        session.load(from: existing)
+        if liveSession == nil { session.load(from: existing) }
         if let prepared {
             // Reattaching to a shared-agent conversation: re-install the
             // Mode 2 binding (a fresh provider id after a re-pair is fine —
@@ -171,7 +185,7 @@ public final class ExecutionContext: ObservableObject {
         // `load(from:)` may have failed to restore the model if picker
         // items aren't loaded yet; `prepare()` re-applies after refresh.
         self.chatSession = session
-        self.pendingReattachSession = existing
+        self.pendingReattachSession = liveSession == nil ? existing : nil
     }
 
     /// Set when this context was built via `init(reattaching:)`. Lets
@@ -203,7 +217,7 @@ public final class ExecutionContext: ObservableObject {
         // picker items are populated — the load() call in init may have
         // fallen back to the agent default because the picker was empty.
         if let pending = pendingReattachSession {
-            chatSession.load(from: pending)
+            chatSession.restorePersistedModelSelection(pending.selectedModel)
             pendingReattachSession = nil
         }
         // Headless dispatches follow the agent's current default model on
@@ -273,14 +287,7 @@ public final class ExecutionContext: ObservableObject {
             print(
                 "[ExecutionContext] Dispatch folder could not be restored: \(path) — run proceeds with an explicit folder-unreadable preamble"
             )
-            return
-                "IMPORTANT — the configured folder for this task, '\(path)', could not "
-                + "be read (it is missing, not a directory, or macOS denied access). "
-                + "Do NOT inspect other directories in its place and do NOT report the "
-                + "folder as empty. Report this access problem as the outcome and stop; "
-                + "the user can restore access by re-picking the folder where it was "
-                + "set — the Watcher or Schedule that owns it, or the agent's Working "
-                + "Folder (chat folder chip / agent editor)."
+            return Self.folderUnreadablePreamble(path: path)
         }
         // This folder came from a background dispatch (Watcher / schedule /
         // plugin), not an interactive UI pick. Mark it so
@@ -289,6 +296,26 @@ public final class ExecutionContext: ObservableObject {
         // folder (the Voice Memo Watcher "empty folder" bug).
         await MainActor.run { chatSession.folderContextFromDispatchBookmark = true }
         return nil
+    }
+
+    /// Fixed fragments of the folder-unreadable preamble. Shared with
+    /// `DispatchEnvelope`, which strips the preamble for display, so the
+    /// producer and the parser can never drift apart. Byte-for-byte the
+    /// historical text.
+    nonisolated static let folderUnreadablePreamblePrefix = "IMPORTANT — the configured folder for this task, '"
+    nonisolated static let folderUnreadablePreambleSuffix =
+        "', could not "
+        + "be read (it is missing, not a directory, or macOS denied access). "
+        + "Do NOT inspect other directories in its place and do NOT report the "
+        + "folder as empty. Report this access problem as the outcome and stop; "
+        + "the user can restore access by re-picking the folder where it was "
+        + "set — the Watcher or Schedule that owns it, or the agent's Working "
+        + "Folder (chat folder chip / agent editor)."
+
+    /// The preamble prepended to a dispatched prompt when its named folder
+    /// could not be restored (see `activateFolderContextIfNeeded`).
+    nonisolated static func folderUnreadablePreamble(path: String) -> String {
+        folderUnreadablePreamblePrefix + path + folderUnreadablePreambleSuffix
     }
 
     /// Poll until execution completes or the task is cancelled.

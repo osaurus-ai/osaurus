@@ -290,6 +290,68 @@ struct OsaurusRouterAPIClientTests {
         }
     }
 
+    // MARK: - Announcements (unauthenticated feed)
+
+    /// The feed is public and IP rate-limited: no wallet headers may be
+    /// attached (the signer would otherwise leak the address on a call
+    /// that happens on every launch), and the version travels as a query
+    /// item so the router can filter by `min_app_version`.
+    @Test func announcements_isUnsignedAndCarriesAppVersion() async throws {
+        let client = try makeClient { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/announcements")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            #expect(query == [URLQueryItem(name: "app_version", value: "1.42.0")])
+            #expect(request.value(forHTTPHeaderField: "x-wallet-address") == nil)
+            #expect(request.value(forHTTPHeaderField: "x-wallet-timestamp") == nil)
+            #expect(request.value(forHTTPHeaderField: "x-wallet-signature") == nil)
+            return json(
+                #"{"server_time":"2026-10-02T10:00:00Z","announcements":[{"id":"a1","slug":"raptor-launch","title":"Raptor is live","body":"**Today** on Product Hunt.","body_format":"markdown","image_url":"https://cdn.osaurus.ai/raptor.png","ctas":[{"label":"Upvote","kind":"external_url","url":"https://www.producthunt.com/posts/osaurus","style":"primary"},{"label":"Credits","kind":"deeplink","url":"osaurus://settings?tab=credits"}],"starts_at":"2026-10-02T07:00:00Z","ends_at":"2026-10-03T07:00:00Z","priority":10}]}"#
+            )
+        }
+
+        let response = try await client.announcements(appVersion: "1.42.0")
+        #expect(response.serverTime == "2026-10-02T10:00:00Z")
+        #expect(response.announcements.count == 1)
+        let a = try #require(response.announcements.first)
+        #expect(a.slug == "raptor-launch")
+        #expect(a.priority == 10)
+        #expect(a.resolvedImageURL?.host == "cdn.osaurus.ai")
+        #expect(a.actionableCTAs.count == 2)
+        #expect(a.actionableCTAs[0].isPrimary)
+        #expect(a.actionableCTAs[1].isDeepLink)
+    }
+
+    @Test func announcements_omitsEmptyAppVersionAndMapsRateLimit() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.query == nil)
+            return (429, Data(#"{"error":{"code":"RATE_LIMITED","message":"slow down"}}"#.utf8),
+                ["content-type": "application/json", "retry-after": "120"])
+        }
+
+        do {
+            _ = try await client.announcements(appVersion: nil)
+            Issue.record("Expected rate-limited error")
+        } catch let error as OsaurusRouterAPIError {
+            guard case .rateLimited(let retryAfter) = error else {
+                Issue.record("Expected .rateLimited, got \(error)")
+                return
+            }
+            #expect(retryAfter == "120")
+        }
+    }
+
+    /// Insights must not record the public feed or health probe (no account
+    /// data leaves), but every signed control-plane call stays logged.
+    @Test func controlPlaneLogging_excludesUnauthenticatedProbes() {
+        #expect(!OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/announcements"))
+        #expect(!OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/health"))
+        #expect(!OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/v1/search"))
+        #expect(OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/credits/balance"))
+        #expect(OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/workspaces"))
+        #expect(OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: nil))
+    }
+
     private func makeClient(
         handler: @escaping @Sendable (URLRequest) throws -> (Int, Data, [String: String])
     ) throws -> OsaurusRouterAPIClient {

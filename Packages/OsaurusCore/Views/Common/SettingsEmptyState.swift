@@ -36,17 +36,32 @@ struct SettingsEmptyState: View {
     let primaryAction: Action
     var secondaryAction: Action? = nil
     let hasAppeared: Bool
+    /// Optional richer body rendered between the subtitle and the buttons
+    /// when a tab wants more than the example cards (e.g. the Workspaces
+    /// tab's interactive explainer). Shown in place of, not alongside, the
+    /// example cards.
+    var content: AnyView? = nil
+    /// Tighter header for tabs whose `content` carries the visual weight:
+    /// drops the glowing icon and closes up the vertical rhythm so the
+    /// body fits the pane without scrolling.
+    var compact: Bool = false
+    /// Fine print beneath the buttons (pricing, terms). Kept out of the
+    /// subtitle so the pitch stays short and the numbers get their own,
+    /// quieter line.
+    var footnote: String? = nil
 
     @State private var glowIntensity: CGFloat = 0.6
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: compact ? 16 : 24) {
             Spacer()
 
-            glowingIcon
-                .opacity(hasAppeared ? 1 : 0)
-                .scaleEffect(hasAppeared ? 1 : 0.8)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
+            if !compact {
+                glowingIcon
+                    .opacity(hasAppeared ? 1 : 0)
+                    .scaleEffect(hasAppeared ? 1 : 0.8)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
+            }
 
             VStack(spacing: 8) {
                 Text(LocalizedStringKey(title), bundle: .module)
@@ -57,23 +72,47 @@ struct SettingsEmptyState: View {
                     .font(.system(size: 14))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .lineSpacing(2)
+                    .lineLimit(compact ? 3 : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    // A comfortable measure: long subtitles wrap into two
+                    // balanced lines instead of one very long one.
+                    .frame(maxWidth: 560)
             }
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 15)
             .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
 
-            if !examples.isEmpty {
+            if let content {
+                content
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 20)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
+            } else if !examples.isEmpty {
                 exampleCards
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 20)
                     .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
             }
 
-            actionButtons
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 10)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.4), value: hasAppeared)
+            VStack(spacing: 10) {
+                actionButtons
+
+                if let footnote {
+                    // Already localized and formatted by the caller (it
+                    // carries live prices), so no second catalog lookup.
+                    Text(verbatim: footnote)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 560)
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 10)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.4), value: hasAppeared)
 
             Spacer()
         }

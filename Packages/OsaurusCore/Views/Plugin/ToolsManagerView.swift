@@ -2,10 +2,10 @@
 //  ToolsManagerView.swift
 //  osaurus
 //
-//  The Tools catalog: choose which tools agents can use and manage service
-//  connections. Organized as two tabs — All Tools (every usable tool,
-//  grouped by where it comes from, including user-created custom tools) and
-//  MCP (remote MCP services).
+//  Tools & MCP. Three tabs: Services (MCP services you've connected plus a
+//  browsable Directory of ones you can add — the default), All Tools (every
+//  usable tool grouped by where it comes from, with per-tool permissions and
+//  the Auto-Allow master switch), and Plugins (native plugin browser).
 //
 
 import AppKit
@@ -31,8 +31,11 @@ struct ToolsManagerView: View {
     /// Group keys the user has chosen to fully expand past the render cap.
     @State private var expandedToolGroups: Set<String> = []
 
-    @State private var selectedTab: ToolsTab = .all
+    @State private var selectedTab: ToolsTab = .services
     @State private var searchText: String = ""
+    /// Drives the Add Service sheet inside `ProvidersView`; owned here so the
+    /// header's primary button can open it.
+    @State private var showAddServiceSheet = false
     @State private var hasAppeared = false
     /// Guards against the redundant initial-refresh fan-out on appear
     /// (`.task(id:)` first run + `$plugins` subscribe emission). The `.task`
@@ -79,10 +82,10 @@ struct ToolsManagerView: View {
 
             Group {
                 switch selectedTab {
+                case .services:
+                    ProvidersView(showAddSheet: $showAddServiceSheet)
                 case .all:
                     allToolsTabContent
-                case .connections:
-                    ProvidersView()
                 case .nativePlugins:
                     NativePluginsBrowseView()
                 }
@@ -133,9 +136,15 @@ struct ToolsManagerView: View {
 
     private var headerBar: some View {
         ManagerHeaderWithTabs(
-            title: L("Tools"),
+            title: L("Tools & MCP"),
             subtitle: headerSubtitle
         ) {
+            if selectedTab == .services {
+                HeaderPrimaryButton("Add Service", icon: "plus") {
+                    showAddServiceSheet = true
+                }
+                .settingsLandingAnchor("tools.addService")
+            }
             HeaderIconButton(
                 "arrow.clockwise",
                 isLoading: isRefreshingInstalled,
@@ -164,10 +173,10 @@ struct ToolsManagerView: View {
 
     private var headerSubtitle: String {
         switch selectedTab {
+        case .services:
+            L("Connect services to give your agents more tools")
         case .all:
-            L("Choose which tools agents can use")
-        case .connections:
-            L("Connect services and troubleshoot the tools they provide")
+            L("Choose what each tool may do")
         case .nativePlugins:
             L("Browse and install native plugins")
         }
@@ -199,6 +208,12 @@ struct ToolsManagerView: View {
                     || !remoteGroups.isEmpty
                     || !custom.isEmpty
 
+                // Master permission switch sits above the per-tool policies it
+                // overrides, so the two are never configured in different tabs.
+                ToolAutoAllowToggle()
+                    .settingsLandingAnchor("tools.allTools")
+                    .padding(.top, 8)
+
                 if hasAnyTool {
                     filterToolbar
                         .padding(.top, 8)
@@ -209,7 +224,7 @@ struct ToolsManagerView: View {
                         icon: "wrench.and.screwdriver",
                         title: L("No tools yet"),
                         subtitle: searchText.isEmpty
-                            ? L("Install a plugin, add a connection, or create a custom tool to get started")
+                            ? L("Install a plugin, add a service, or create a custom tool to get started")
                             : L("Try a different search term")
                     )
                 } else if !hasAnyVisible {
@@ -691,9 +706,9 @@ struct ToolsManagerView: View {
 
     /// Honour one-shot navigation requests routed through
     /// `ManagementStateManager.pendingToolsSubTab` (e.g. the Claude plugin
-    /// install summary deep-linking to the Connections tab after OAuth or
+    /// install summary deep-linking to the Services tab after OAuth or
     /// bearer-token imports). Legacy raw values from before the
-    /// All / Connections / Custom rename are still accepted.
+    /// Services / All Tools / Plugins rename are still accepted.
     private func applyPendingSubTabRequest() {
         guard let raw = managementState.pendingToolsSubTab,
             let target = ToolsTab.resolved(from: raw)
@@ -969,7 +984,7 @@ private struct RemoteProviderToolsCard: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .accessibilityLabel(
-                    Text("Connection \(provider.name), \(tools.count) tools", bundle: .module))
+                    Text("Service \(provider.name), \(tools.count) tools", bundle: .module))
 
                 Menu {
                     Button(action: onDisconnect) {

@@ -75,17 +75,32 @@ import Foundation
         public let category: String
         public let backend: String
         public let phase: String
+        /// Closed error-class token (`SandboxToolRegistrar.failureErrorClass`).
+        /// Optional so samples persisted before the field existed still
+        /// decode.
+        public let errorClass: String?
+        /// Closed `SandboxToolRegistrar.RegistrationTrigger` raw value.
+        public let trigger: String?
+        /// `true` when the attempt was a first-run cold provision
+        /// (`setupComplete == false`), `false` for a warm restart.
+        public let coldStart: Bool?
 
         public init(
             recordedAt: Date = Date(),
             category: String,
             backend: String,
-            phase: String
+            phase: String,
+            errorClass: String? = nil,
+            trigger: String? = nil,
+            coldStart: Bool? = nil
         ) {
             self.recordedAt = recordedAt
             self.category = category
             self.backend = backend
             self.phase = phase
+            self.errorClass = errorClass
+            self.trigger = trigger
+            self.coldStart = coldStart
         }
     }
 
@@ -157,6 +172,24 @@ import Foundation
             encoder.outputFormatting = [.sortedKeys]
             guard let data = try? encoder.encode(samples) else { return }
             try? data.write(to: failureFileURL(), options: .atomic)
+        }
+
+        /// One-line, copy-pasteable digest of a failure sample for the
+        /// Sandbox settings panel so a user can self-report exactly what
+        /// the telemetry would have said. Tokens only — no message.
+        public static func failureSummary(
+            _ sample: SandboxStartupFailureSample,
+            now: Date = Date()
+        ) -> String {
+            var parts: [String] = [sample.category, sample.phase]
+            if let errorClass = sample.errorClass { parts.append(errorClass) }
+            if let trigger = sample.trigger { parts.append(trigger) }
+            if let coldStart = sample.coldStart { parts.append(coldStart ? "cold" : "warm") }
+            parts.append(sample.backend)
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            let when = formatter.localizedString(for: sample.recordedAt, relativeTo: now)
+            return "Last failure: " + parts.joined(separator: " · ") + " · \(when)"
         }
 
         /// Coarse, low-cardinality latency bucket for consent-gated

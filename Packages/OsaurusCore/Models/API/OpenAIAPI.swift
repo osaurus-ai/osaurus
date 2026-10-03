@@ -620,12 +620,14 @@ struct CompletionRequest: Decodable, Sendable {
     let topK: Int?
     let stop: [String]
     let stream: Bool?
+    let streamOptions: StreamOptions?
 
     private enum CodingKeys: String, CodingKey {
         case model, prompt, prefix, suffix, middle, temperature, stop, stream
         case maxTokens = "max_tokens"
         case topP = "top_p"
         case topK = "top_k"
+        case streamOptions = "stream_options"
     }
 
     init(from decoder: Decoder) throws {
@@ -653,6 +655,7 @@ struct CompletionRequest: Decodable, Sendable {
             stop = []
         }
         stream = try? c.decodeIfPresent(Bool.self, forKey: .stream)
+        streamOptions = try c.decodeIfPresent(StreamOptions.self, forKey: .streamOptions)
     }
 
     private static func decodeStringOrFirstArray(
@@ -721,6 +724,14 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// vmlx-swift's `CacheCoordinator` is content-addressed and discovers
     /// reusable prefixes autonomously.
     var session_id: String? = nil
+    /// Osaurus Connect: continue one of the Mac's own chat sessions — its
+    /// turns become the model context and the new turns are appended back
+    /// (docs/MOBILE_PROTOCOL.md §14.5). Owner callers only.
+    var osaurus_session_id: String? = nil
+    /// Osaurus Connect: the phone's name for this run. The owner's phone run
+    /// keeps going when its connection drops, and the phone rejoins it by
+    /// this id (docs/MOBILE_PROTOCOL.md §6.4). Owner callers only.
+    var osaurus_run_id: String? = nil
     /// Deterministic-sampling seed (OpenAI v1.x). When set, identical
     /// requests should yield identical completions on the same backend.
     var seed: Int? = nil
@@ -810,6 +821,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// already been rendered; it is not decoded from OpenAI JSON and is not
     /// forwarded to remote providers.
     var cacheStableSystemPrefix: String? = nil
+    /// Local admission contract, checked against exact prepared tokens before prefill.
+    var admissionPositionLimit: Int? = nil
+    /// Internal delegation ceiling, not a user output reservation. Never decoded from API JSON.
+    var admissionOutputTokensAreImplicit: Bool = false
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on
@@ -842,6 +857,12 @@ struct ChatCompletionRequest: Codable, Sendable {
         case seed, response_format, stream_options
         case logprobs, top_logprobs
         case enable_thinking, reasoning_effort
+    }
+
+    /// Osaurus Connect fields, decoded only: they belong to this Mac and are
+    /// never encoded into a request forwarded to a provider.
+    private enum OsaurusCodingKeys: String, CodingKey {
+        case osaurus_session_id, osaurus_run_id
     }
 
     func withModel(_ newModel: String) -> ChatCompletionRequest {
@@ -983,6 +1004,9 @@ extension ChatCompletionRequest {
         top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
         enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
         reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
+        let osaurus = try decoder.container(keyedBy: OsaurusCodingKeys.self)
+        osaurus_session_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_session_id)
+        osaurus_run_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_run_id)
     }
 }
 
@@ -1186,6 +1210,10 @@ struct ChatCompletionChunk: Codable, Sendable {
     /// Osaurus extension chunk for determinate local prefill progress. Emitted
     /// with empty choices before the first token when the runtime reports it.
     var osaurus_prefill: PrefillProgressState? = nil
+    /// Osaurus extension chunk on a hosted `/agents/{id}/run`: the small
+    /// files the agent shared with `share_artifact`, emitted once with empty
+    /// choices right before the finish chunk (see `RemoteRunArtifacts`).
+    var osaurus_artifacts: [RemoteRunArtifact]? = nil
 }
 
 // MARK: - Error Response
@@ -1269,7 +1297,9 @@ struct ToolFunction: Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(description, forKey: .description)
-        let params = parameters ?? .object(["type": .string("object"), "properties": .object([:])])
+        let params =
+            parameters?.withEmptyPropertiesIfMissing
+            ?? .object(["type": .string("object"), "properties": .object([:])])
         try container.encode(params, forKey: .parameters)
     }
 
@@ -1421,6 +1451,23 @@ public enum JSONValue: Codable, Sendable, Equatable {
 // MARK: - JSONValue Conversions
 
 extension JSONValue {
+    /// MCP allows an object schema to omit `properties` (common for no-arg
+    /// tools), but OpenAI-style validators reject a tool whose
+    /// `parameters.properties` is missing. Fills in `properties: {}` on a
+    /// top-level object schema; every other shape is returned unchanged.
+    var withEmptyPropertiesIfMissing: JSONValue {
+        guard case .object(var schema) = self,
+            case .string("object")? = schema["type"]
+        else { return self }
+        switch schema["properties"] {
+        case nil, .null?:
+            schema["properties"] = .object([:])
+            return .object(schema)
+        default:
+            return self
+        }
+    }
+
     /// Convert JSON Schema into the shape expected by local chat templates.
     ///
     /// Some local templates, notably Gemma-4's native tool template, treat

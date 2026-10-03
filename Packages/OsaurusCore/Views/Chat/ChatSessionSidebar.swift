@@ -2,7 +2,7 @@
 //  ChatSessionSidebar.swift
 //  osaurus
 //
-//  Sidebar showing chat session history
+//  The chat window's left rail: Agents | Projects lenses.
 //
 
 import AppKit
@@ -20,13 +20,11 @@ final class DeleteConfirmationPreference: ObservableObject {
 struct ChatSessionSidebar: View {
     /// Sessions to display (already filtered by agent if needed)
     let sessions: [ChatSessionData]
-    /// The window's currently-active agent. Tracked so the sidebar can
-    /// reset its filter / search state when the user switches agents
-    /// (or adopts a new one via `loadSession`); without this, a filter
-    /// applied in agent A would persist into agent B and surface a
-    /// confusing "no results" empty state.
+    /// The window's currently-active agent: the highlighted Agents row.
+    /// Switching it (row tap, tab switch, `loadSession`) marks the agent
+    /// seen and, unless the user is browsing a project, returns the rail
+    /// to the Agents lens.
     let agentId: UUID
-    let currentSessionId: UUID?
     /// True while the active chat was entered from its project's detail
     /// page (or started there via ⌘N). The Projects lens stays put when the
     /// agent changes for that reason: the user is browsing a project, not
@@ -36,28 +34,20 @@ struct ChatSessionSidebar: View {
     /// Live width of the rail, driven by the parent's resize handle so the
     /// inner content (titles, chips, rows) reflows to fill the chosen width.
     var width: CGFloat = SidebarStyle.width
+    /// Open a chat in the window's current tab (e.g. a workspace agent's
+    /// row resuming its last conversation).
     let onSelect: (ChatSessionData) -> Void
-    /// Start a new chat. The argument is the sidebar's selected project id
-    /// (nil when no project lens is active) so the fresh chat lands in the
-    /// project the user is currently looking at.
-    let onNewChat: (UUID?) -> Void
-    let onDelete: (UUID) -> Void
-    let onRename: (UUID, String) -> Void
-    let onSetArchived: (UUID, Bool) -> Void
-    let onSetPinned: (UUID, Bool) -> Void
-    /// Move a session into a project (nil = remove from its project).
-    let onSetProject: (UUID, UUID?) -> Void
     /// Delete a project: detaches member sessions, then removes the record.
     let onDeleteProject: (UUID) -> Void
-    /// Open a project's detail page in the window's content area.
+    /// Open a project in the window's content area.
     var onOpenProject: ((Project) -> Void)? = nil
-    let onExport: (ChatSessionData, ExportFormat) -> Void
+    /// The project on screen, if any: its row is the selected one on the
+    /// Projects lens, the way the active agent's row is on Agents.
+    var openProjectId: UUID? = nil
     /// Stop the live run driving the given session id. Rows only offer the
     /// control while `SessionActivityMonitor` reports the session active.
     var onStop: ((UUID) -> Void)? = nil
-    /// Optional callback for opening a session in a new window
-    var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
-    /// Open the session in a new tab of this window (browser-style).
+    /// Open a chat in a new tab of this window (browser-style).
     var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
     /// Select an agent for this window (agents-focused sidebar prototype —
     /// replaces the removed agent-selector pill; same effect as picking an
@@ -89,7 +79,9 @@ struct ChatSessionSidebar: View {
     /// Select a LAN-discovered agent: runs the pairing sheet on first pick,
     /// then connects — the same flow the removed agent pill drove.
     var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
-
+    /// Export formats offered by chat rows; the type lives here because the
+    /// sidebar has always been its home (`ChatSessionExportCoordinator`,
+    /// `ExportChooserSheet` and `ChatHistoryList` share it).
     enum ExportFormat {
         case markdown
         case pdf
@@ -122,166 +114,26 @@ struct ChatSessionSidebar: View {
     @ObservedObject private var workspacesService = WorkspacesService.shared
     /// Relay tunnel state for the user's own shared agents' rows.
     @ObservedObject private var relayManager = RelayTunnelManager.shared
-    /// Freshly imported session ids; their rows glow briefly and the list
-    /// scrolls the first one into view so the user can see where the
-    /// imports landed (they sort by original date, not to the top).
-    @ObservedObject private var importHighlight = ChatSessionImportHighlight.shared
     /// Agents that appeared during this app run and haven't been opened
     /// yet; their rows carry an accent ring and a "New" pill until tapped.
     @ObservedObject private var newAgentHighlight = NewAgentHighlightStore.shared
-    @State private var editingSessionId: UUID?
-    @State private var editingBuffer: String = ""
-    /// IDs the user has multi-selected (⌘-click to toggle, ⇧-click to
-    /// range-select). Empty means normal single-select navigation is active.
-    @State private var selectedIds: Set<UUID> = []
-    /// The row a ⇧-click range extends from. Set on every plain or ⌘ click.
-    @State private var selectionAnchorId: UUID?
-    @State private var searchQuery: String = ""
-    @State private var isFooterHovered = false
-    @State private var sourceFilter: SourceFilter = .all
-    @State private var hoveredFilter: SourceFilter?
-    /// Top-level sidebar lens: the flat chat list or the project browser.
-    @State private var selectedTab: SidebarTab = .chats
+    /// Top-level sidebar lens: who (agents) or where (projects). Past
+    /// chats live in the inspector on the right, scoped to the tab on
+    /// screen.
+    @State private var selectedTab: SidebarTab = .agents
+    /// The lens's search query (row 3 of the rail, like History's search).
+    /// Narrows the current lens by name; cleared when the lens changes.
+    @State private var navigatorQuery: String = ""
+    @FocusState private var isNavigatorSearchFocused: Bool
 
     enum SidebarTab: Hashable {
-        case chats
+        case agents
         case projects
-    }
-    /// Sessions whose message bodies match the current search query,
-    /// resolved asynchronously against the chat-history database (debounced
-    /// per keystroke). Merged with the synchronous title/metadata matching in
-    /// `filteredSessions` so search covers conversation content, not just
-    /// titles.
-    @State private var contentMatchedSessionIds: Set<UUID> = []
-    @State private var contentSearchTask: Task<Void, Never>?
-    /// True from query change until its (debounced) database lookup returns.
-    /// Drives the search field's trailing spinner.
-    @State private var isContentSearchInFlight: Bool = false
-    @FocusState private var isSearchFocused: Bool
-
-    // MARK: - Source Filter
-
-    /// Sidebar-local filter for `SessionSource` plus the archive lens.
-    /// Composes with the search query and the agent filter applied by the
-    /// caller. `.archived` is exclusive: it ignores source and shows only
-    /// archived sessions; every other case hides archived sessions.
-    enum SourceFilter: Hashable {
-        case all
-        case source(SessionSource)
-        case archived
-
-        var label: String {
-            switch self {
-            case .all: return "All"
-            case .source(let s): return s.shortLabel
-            case .archived: return "Archived"
-            }
-        }
-    }
-
-    private static let allSourceFilters: [SourceFilter] = [
-        .all,
-        .source(.chat),
-        .source(.plugin),
-        .source(.http),
-        .source(.channel),
-        .source(.schedule),
-        .source(.watcher),
-        .source(.selfSchedule),
-        .source(.imported),
-        .archived,
-    ]
-
-    // MARK: - Computed Properties
-
-    /// Sessions after applying source/archive filter and search query.
-    private var filteredSessions: [ChatSessionData] {
-        let byFilter: [ChatSessionData]
-        switch sourceFilter {
-        case .all:
-            byFilter = sessions.filter { !$0.archived }
-        case .source(let s):
-            byFilter = sessions.filter { $0.source == s && !$0.archived }
-        case .archived:
-            byFilter = sessions.filter { $0.archived }
-        }
-        guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return orderedForDisplay(byFilter)
-        }
-        let matched = byFilter.filter { session in
-            if SearchService.matches(query: searchQuery, in: session.title) { return true }
-            if let key = session.externalSessionKey,
-                SearchService.matches(query: searchQuery, in: key)
-            {
-                return true
-            }
-            // Full-text match over message bodies, resolved asynchronously
-            // into `contentMatchedSessionIds`.
-            if contentMatchedSessionIds.contains(session.id) { return true }
-            // Match capability labels so "vision" / "code" finds tagged chats.
-            return session.capabilities.contains { cap in
-                SearchService.matches(query: searchQuery, in: cap.label)
-            }
-        }
-        return orderedForDisplay(matched)
-    }
-
-    /// Stable partition floating active (running / waiting-for-input)
-    /// sessions to the very top, then pinned sessions, while preserving the
-    /// incoming (recency-descending) order within each group. Display-only:
-    /// `updatedAt` and persistence are untouched. The `.archived` lens keeps
-    /// its own order — pins/activity are a default-view concern — but
-    /// partitioning there too is harmless and keeps the rule uniform.
-    private func orderedForDisplay(_ list: [ChatSessionData]) -> [ChatSessionData] {
-        SessionActivityOrdering.ordered(
-            list,
-            activeIds: Set(activityMonitor.statuses.keys)
-        )
-    }
-
-    /// Debounced full-text lookup for the search query. The in-memory
-    /// sessions carry metadata only (turns are never loaded for the list), so
-    /// content matching goes to the chat-history database.
-    private func scheduleContentSearch(_ query: String) {
-        contentSearchTask?.cancel()
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else {
-            contentMatchedSessionIds = []
-            isContentSearchInFlight = false
-            return
-        }
-        isContentSearchInFlight = true
-        contentSearchTask = Task { @MainActor in
-            // Debounce so fast typing doesn't scan the database per keystroke.
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            let ids = await ChatSessionStore.sessionIds(withContentContaining: trimmed)
-            // A cancelled task must not clear the flag owned by its successor.
-            guard !Task.isCancelled else { return }
-            contentMatchedSessionIds = ids
-            isContentSearchInFlight = false
-        }
-    }
-
-    /// Source-filter chips shown above the list. Hides chips with no
-    /// matching sessions so the rail does not render dead buckets.
-    /// `.all` is always shown; `.archived` only when the agent has at
-    /// least one archived session.
-    private var visibleSourceFilters: [SourceFilter] {
-        let activeSources = Set(sessions.filter { !$0.archived }.map(\.source))
-        let hasArchived = sessions.contains { $0.archived }
-        return Self.allSourceFilters.filter { filter in
-            switch filter {
-            case .all: return true
-            case .source(let s): return activeSources.contains(s)
-            case .archived: return hasArchived
-            }
-        }
     }
 
     var body: some View {
         SidebarContainer(attachedEdge: .leading, topPadding: 40, width: width) {
-            // Chats | Projects lens switcher, above the section header so
+            // Agents | Projects lens switcher, above the section header so
             // the lens is the first thing the eye lands on. As the first
             // child it owns the window-control clearance the header used to
             // provide (the container's 40pt only clears the traffic lights).
@@ -292,40 +144,35 @@ struct ChatSessionSidebar: View {
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            // Header with New Chat button
+            // Header row (count + the lens's one action) and the search
+            // row: the same two rows the inspector's panes have.
             sidebarHeader
+            navigatorSearchRow
 
-            if selectedTab == .projects {
+            switch selectedTab {
+            case .agents:
+                // One row per agent; tapping selects it for this window.
+                // The window's tabs and the inspector's History follow.
+                agentListView
+            case .projects:
                 // Project browser: one row per project; opening one shows
                 // the project detail page in the window's content area.
                 projectListView
-            } else {
-                // Prototype: agents-focused sidebar. One row per agent;
-                // tapping selects it for this window (what the removed
-                // agent-selector pill used to do). The chat-history UI
-                // (search, filters, session list) is parked, unreferenced,
-                // pending the next iteration of this idea.
-                agentListView
             }
 
             // Settings lives at the foot of the sidebar (moved out of the
             // title bar so it stays tabs + chat controls).
             sidebarFooter
         }
-        // Adopting a new agent (via the dropdown's switchAgent or the
-        // sidebar's loadSession) is a context change — wipe per-window
-        // filter state so the new agent starts on "All" with an empty
-        // search instead of inheriting the previous agent's lens.
-        .animation(theme.animationQuick(), value: selectedIds)
-        .onChange(of: searchQuery) { _, query in
-            scheduleContentSearch(query)
+        // Switching lenses is a context change: the query belonged to
+        // the previous list.
+        .onChange(of: selectedTab) { _, _ in
+            navigatorQuery = ""
         }
         .onChange(of: agentId) { _, newAgentId in
-            sourceFilter = .all
-            searchQuery = ""
-            hoveredFilter = nil
-            if !keepsProjectsLens { selectedTab = .chats }
-            clearSelection()
+            // Browsing a project keeps the Projects lens; otherwise the
+            // rail returns to the agent just picked.
+            if !keepsProjectsLens { selectedTab = .agents }
             // Opening an agent by any route (row tap, tab switch, deep link)
             // is "seen": the new-agent ring comes off.
             if workspaceAgentAddress == nil {
@@ -344,14 +191,6 @@ struct ChatSessionSidebar: View {
                 newAgentHighlight.markSeen(localAgentId: agentId)
             }
         }
-        // Switching lenses is a context change like an agent switch: the
-        // inner filter/search/selection state belongs to the previous lens.
-        .onChange(of: selectedTab) { _, _ in
-            sourceFilter = .all
-            searchQuery = ""
-            hoveredFilter = nil
-            clearSelection()
-        }
         // Deep link from the "What's New" projects announcement: flip the
         // lens to Projects so the user lands on the new feature. The mutation
         // is deferred to the next runloop tick: assigning `selectedTab`
@@ -368,6 +207,21 @@ struct ChatSessionSidebar: View {
         }
     }
 
+    /// Trimmed query; empty means the lens shows everything.
+    private var trimmedNavigatorQuery: String {
+        navigatorQuery.trimmingCharacters(in: .whitespaces)
+    }
+
+    private var isFilteringNavigator: Bool { !trimmedNavigatorQuery.isEmpty }
+
+    /// Pure name filter shared by every navigator list (testable): keeps
+    /// the items whose name matches `query` the way the chat search does.
+    nonisolated static func filterByName<T>(_ items: [T], query: String, name: (T) -> String) -> [T] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return items }
+        return items.filter { SearchService.matches(query: trimmed, in: name($0)) }
+    }
+
     private func revealProjectsTab() {
         DispatchQueue.main.async {
             selectedTab = .projects
@@ -377,46 +231,16 @@ struct ChatSessionSidebar: View {
 
     // MARK: - Tab Bar
 
-    /// Two-segment lens switcher styled like the source filter chips:
+    /// Lens switcher shared with the right rail (`SidebarLensBar`):
     /// equal-width segments, accent-tinted when selected.
     private var sidebarTabBar: some View {
-        HStack(spacing: 4) {
-            // Prototype: the primary lens lists AGENTS (the `.chats` case is
-            // kept as the enum value to avoid churning all the lens-reset
-            // logic while the idea is validated).
-            tabSegment(.chats, label: "Agents", icon: "person.2")
-            tabSegment(.projects, label: "Projects", icon: "folder")
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
+        SidebarLensBar(
+            selection: $selectedTab,
+            segments: [
+                .init(value: .agents, label: "Agents", icon: "person.2"),
+                .init(value: .projects, label: "Projects", icon: "folder"),
+            ]
         )
-    }
-
-    private func tabSegment(_ tab: SidebarTab, label: String, icon: String) -> some View {
-        let isSelected = selectedTab == tab
-        return Button {
-            withAnimation(theme.animationQuick()) {
-                selectedTab = tab
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-            }
-            .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) : .clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Project List
@@ -424,16 +248,20 @@ struct ChatSessionSidebar: View {
     /// The Projects tab's top level: one row per project. Tapping a row
     /// drills into that project's chats.
     private var projectListView: some View {
-        Group {
+        let projects = Self.filterByName(projectManager.projects, query: navigatorQuery, name: \.name)
+        return Group {
             if projectManager.projects.isEmpty {
                 projectsEmptyState
+            } else if projects.isEmpty {
+                SidebarEmptyState(icon: "magnifyingglass", title: "No projects match")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(projectManager.projects) { project in
+                        ForEach(projects) { project in
                             ProjectRow(
                                 project: project,
                                 sessionCount: sessions.filter { $0.projectId == project.id }.count,
+                                isSelected: project.id == openProjectId,
                                 onOpen: {
                                     onOpenProject?(project)
                                 },
@@ -451,21 +279,10 @@ struct ChatSessionSidebar: View {
         }
     }
 
-    /// Empty state for the Projects tab. Mirrors the Chats tab's
-    /// `emptyState` (centered icon + label) for visual consistency; the
+    /// Empty state for the Projects tab, in the rails' shared idiom; the
     /// explainer of what a project is lives in the New Project dialog.
     private var projectsEmptyState: some View {
-        VStack(spacing: 8) {
-            Spacer()
-            Image(systemName: "folder")
-                .font(.system(size: 28))
-                .foregroundColor(theme.secondaryText.opacity(0.5))
-            Text("No projects yet", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText.opacity(0.7))
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
+        SidebarEmptyState(icon: "folder", title: "No projects yet")
     }
 
     // MARK: - Project CRUD
@@ -585,505 +402,81 @@ struct ChatSessionSidebar: View {
         )
     }
 
-    // MARK: - Source Filter Rail
-
-    private var sourceFilterRail: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(visibleSourceFilters, id: \.self) { filter in
-                    sourceFilterChip(filter)
-                }
-            }
-        }
-    }
-
-    /// Capsule pill chip styled to match `AgentPill` in the chat header:
-    /// ghost (transparent) when unselected, accent-tinted when selected,
-    /// with a subtle hover fill to telegraph clickability. Source chips
-    /// also surface their `SessionSource.iconName` so the rail is
-    /// glanceable in the same way the per-row source badge is.
-    private func sourceFilterChip(_ filter: SourceFilter) -> some View {
-        let isSelected = sourceFilter == filter
-        let isHovered = hoveredFilter == filter
-        let shape = Capsule(style: .continuous)
-        return Button {
-            withAnimation(theme.animationQuick()) {
-                sourceFilter = filter
-            }
-        } label: {
-            chipLabel(filter, isSelected: isSelected)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(shape.fill(chipFill(isSelected: isSelected, isHovered: isHovered)))
-                .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            if hovering {
-                hoveredFilter = filter
-            } else if hoveredFilter == filter {
-                // Guard prevents a stale `false` callback (after the cursor
-                // already moved onto another chip and set `hoveredFilter`
-                // to that one) from clearing the new hover.
-                hoveredFilter = nil
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func chipLabel(_ filter: SourceFilter, isSelected: Bool) -> some View {
-        HStack(spacing: 4) {
-            if case .source(let s) = filter {
-                Image(systemName: s.iconName)
-                    .font(.system(size: 9.5, weight: .semibold))
-            } else if case .archived = filter {
-                Image(systemName: "archivebox.fill")
-                    .font(.system(size: 9.5, weight: .semibold))
-            }
-            Text(LocalizedStringKey(filter.label), bundle: .module)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-        }
-        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-    }
-
-    /// Fill semantics for `sourceFilterChip` in one place so the design
-    /// rule (selected wins over hovered, both win over the ghost default)
-    /// stays obvious.
-    private func chipFill(isSelected: Bool, isHovered: Bool) -> Color {
-        if isSelected { return theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) }
-        if isHovered { return theme.secondaryBackground.opacity(0.5) }
-        return .clear
-    }
-
-    /// Exits edit mode without saving. The row's local buffer is dropped,
-    /// matching the Esc behavior.
-    private func dismissEditing() {
-        editingSessionId = nil
-        editingBuffer = ""
-    }
-
-    // MARK: - Multi-Select
-
-    /// Routes a row tap by the modifier keys held at click time. ⌘ toggles
-    /// the row in the multi-selection and ⇧ extends a contiguous range from
-    /// the anchor. With no modifier: while a selection is active a plain click
-    /// toggles the row (so a chat can be deselected as easily as it was
-    /// selected); otherwise it navigates to the chat as usual.
-    private func handleTap(_ session: ChatSessionData) {
-        let flags = NSEvent.modifierFlags
-        if flags.contains(.command) {
-            toggleSelection(session.id)
-        } else if flags.contains(.shift) {
-            extendSelection(to: session.id)
-        } else if !selectedIds.isEmpty {
-            toggleSelection(session.id)
-        } else {
-            selectionAnchorId = session.id
-            handleSelect(session)
-        }
-    }
-
-    private func toggleSelection(_ id: UUID) {
-        if selectedIds.contains(id) {
-            selectedIds.remove(id)
-        } else {
-            selectedIds.insert(id)
-        }
-        selectionAnchorId = id
-    }
-
-    /// Adds every row between the anchor and `id` (inclusive) in the
-    /// currently-visible order. Falls back to a single toggle when there is
-    /// no usable anchor yet.
-    private func extendSelection(to id: UUID) {
-        let ids = filteredSessions.map(\.id)
-        guard
-            let anchor = selectionAnchorId ?? currentSessionId,
-            let anchorIndex = ids.firstIndex(of: anchor),
-            let targetIndex = ids.firstIndex(of: id)
-        else {
-            selectedIds.insert(id)
-            selectionAnchorId = id
-            return
-        }
-        let range = anchorIndex <= targetIndex ? anchorIndex...targetIndex : targetIndex...anchorIndex
-        selectedIds.formUnion(ids[range])
-    }
-
-    private func clearSelection() {
-        selectedIds.removeAll()
-        selectionAnchorId = nil
-    }
-
-    // MARK: - Navigate-Away Rename Guard
-
-    private func handleSelect(_ session: ChatSessionData) {
-        guard let editingId = editingSessionId, editingId != session.id else {
-            onSelect(session)
-            return
-        }
-        let original = sessions.first { $0.id == editingId }?.title ?? ""
-        let trimmed = editingBuffer.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, trimmed != original else {
-            // No real change — drop the buffer and switch right away.
-            dismissEditing()
-            onSelect(session)
-            return
-        }
-        presentUnsavedRenameAlert(
-            editingId: editingId,
-            oldTitle: original,
-            newTitle: trimmed,
-            pending: session
-        )
-    }
-
-    private func presentUnsavedRenameAlert(
-        editingId: UUID,
-        oldTitle: String,
-        newTitle: String,
-        pending: ChatSessionData
-    ) {
-        let requestId = UUID()
-        let scope = alertScope
-        ThemedAlertCenter.shared.present(
-            ThemedAlertRequest(
-                id: requestId,
-                title: "Save Renamed Title?",
-                message: L(
-                    "You were renaming a conversation titled \"\(oldTitle)\" to \"\(newTitle)\" but haven't saved it yet."
-                ),
-                buttons: [
-                    .destructive(L("Discard")) {
-                        dismissEditing()
-                        onSelect(pending)
-                    },
-                    .primary(L("Save")) {
-                        onRename(editingId, newTitle)
-                        dismissEditing()
-                        onSelect(pending)
-                    },
-                ],
-                onDismiss: {
-                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-                }
-            ),
-            scope: scope
-        )
-    }
-
-    // MARK: - Import Guide
-
-    /// Entry point for the header's Import button. First-time users get a
-    /// themed guide explaining how to obtain an export from each provider;
-    /// the persisted "don't show again" toggle skips straight to the panel.
-    private func requestImport() {
-        let scope = alertScope
-        let startImport = {
-            ChatSessionImportCoordinator.run(
-                agentId: agentId == Agent.defaultId ? nil : agentId,
-                scope: scope,
-                source: .sidebar,
-                // A single-conversation import opens immediately so the
-                // user isn't left hunting the list for it.
-                onOpen: { onSelect($0) }
-            )
-        }
-        if ImportGuidePreference.shared.skip {
-            startImport()
-            return
-        }
-        let requestId = UUID()
-        let sheet = ImportGuideSheet {
-            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-            startImport()
-        }
-        ThemedAlertCenter.shared.present(
-            ThemedAlertRequest(
-                id: requestId,
-                title: "Import Conversations",
-                message: nil,
-                buttons: [.cancel(L("Cancel"))],
-                showsCloseButton: true,
-                customContent: AnyView(sheet),
-                width: 470,
-                onDismiss: {
-                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-                }
-            ),
-            scope: scope
-        )
-    }
-
     // MARK: - Footer
 
+    /// Settings at the foot of the rail, in the row anatomy: the glyph sits
+    /// in the 26pt avatar column so the label lines up with the row titles
+    /// above, and a hairline separates it from the list.
     private var sidebarFooter: some View {
-        Button {
-            AppDelegate.shared?.showManagementWindow(initialTab: nil)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 13, weight: .medium))
-                Text("Settings", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                Spacer()
+        VStack(spacing: 0) {
+            Divider().opacity(0.4).padding(.horizontal, 12)
+            SidebarFooterRow(icon: "gearshape", title: "Settings") {
+                AppDelegate.shared?.showManagementWindow(initialTab: nil)
             }
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .padding(.vertical, 8)
-            .background(SidebarRowBackground(isSelected: false, isHovered: isFooterHovered))
-            .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .onHover { hovering in
-            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) { isFooterHovered = hovering }
-        }
-        .localizedHelp("Settings")
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
     }
 
-    // MARK: - Header
+    // MARK: - Header and search rows
 
+    /// Row 2 of the rail, the same `SidebarHeaderRow` the inspector's panes
+    /// use: what the lens holds on the left ("8 agents", "3 projects"),
+    /// the lens's one create action on the right. Both lenses use the
+    /// same `plus`; what it creates is the lens.
     private var sidebarHeader: some View {
-        HStack {
-            // No title: the lens tab bar directly above already names the
-            // list, so the header is just the trailing action button.
-            Spacer()
-
-            if selectedTab == .projects {
-                Button {
-                    requestNewProject()
-                } label: {
-                    // folder.badge.plus is a wider glyph than the square-based
-                    // header icons; one point down keeps it optically equal.
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp("New Project")
-            }
-
-            // Agents lens: a single plus that opens agent creation in the
-            // management window. Import moved to the chat-history panel;
-            // New Chat is covered by picking an agent (fresh chat) and the
-            // (currently hidden) tab strip's own plus.
-            if selectedTab == .chats {
-                Button {
+        SidebarHeaderRow(summary: navigatorSummary) {
+            switch selectedTab {
+            case .agents:
+                // Agent creation is a full form, so it opens in Settings ›
+                // Agents. New Chat and Import live in the inspector's
+                // History pane.
+                SidebarHeaderIconButton(icon: "plus", help: "New Agent", size: 14) {
                     AppDelegate.shared?.showManagementWindow(
                         initialTab: .agents, deeplinkCreateAgent: true)
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
                 }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp("New Agent")
+            case .projects:
+                SidebarHeaderIconButton(icon: "plus", help: "New Project", size: 14) {
+                    requestNewProject()
+                }
             }
         }
-        .padding(.horizontal, 16)
-        // No top padding: the tab bar directly above already supplies the
-        // spacing. A 20pt top here was leftover from when the header was the
-        // first element and produced a dead gap under the tab bar.
-        .padding(.top, 2)
+    }
+
+    private var navigatorSummary: String {
+        switch selectedTab {
+        case .agents:
+            let count = agentRowCount
+            return L("\(count) agents")
+        case .projects:
+            let count = projectManager.projects.count
+            return L("\(count) projects")
+        }
+    }
+
+    /// Everyone the Agents lens lists: local agents, teammates' shared
+    /// agents on loaded rosters (the user's own mirrors are already counted
+    /// as local), orphaned workspace pairings, direct shares and network
+    /// peers.
+    private var agentRowCount: Int {
+        let local = agentManager.agents.count
+        let teammates = rosterStore.rosters.reduce(0) { total, roster in
+            total + roster.agents.filter { localAgent(sharedAs: $0.agentAddress.lowercased()) == nil }.count
+        }
+        let orphaned = orphanedWorkspacePairings.values.reduce(0) { $0 + $1.count }
+        return local + teammates + orphaned + directlySharedAgents.count + visibleDiscoveredAgents.count
+    }
+
+    /// Row 3: search, same field and insets as the History pane's.
+    private var navigatorSearchRow: some View {
+        SidebarSearchField(
+            text: $navigatorQuery,
+            placeholder: selectedTab == .agents ? "Search agents…" : "Search projects…",
+            isFocused: $isNavigatorSearchFocused
+        )
+        .frame(minHeight: 28)
+        .padding(.horizontal, 12)
         .padding(.bottom, 8)
-    }
-
-    // MARK: - Selection Action Bar
-
-    /// Batch actions for the current multi-selection: archive, delete, and a
-    /// trailing clear. Mirrors the per-row menu's destructive-delete flow but
-    /// operates on every selected id at once.
-    private var selectionActionBar: some View {
-        HStack(spacing: 8) {
-            Text("\(selectedIds.count) selected", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-
-            Spacer(minLength: 4)
-
-            if !projectManager.projects.isEmpty {
-                Menu {
-                    moveToProjectButtons(currentProjectId: nil) { projectId in
-                        moveSelected(to: projectId)
-                    }
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
-                        .background(
-                            RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
-                                .fill(theme.secondaryBackground.opacity(0.5))
-                        )
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                // Menus tint their label with the control accent (blue) on
-                // macOS regardless of the label's own foregroundColor; force
-                // the same neutral tint the sibling buttons use.
-                .tint(theme.secondaryText)
-                .fixedSize()
-                .localizedHelp("Move to Project")
-            }
-            selectionBarButton(icon: "archivebox", help: "Archive", tint: theme.secondaryText) {
-                archiveSelected()
-            }
-            selectionBarButton(icon: "trash", help: "Delete", tint: .red) {
-                requestDeleteSelected()
-            }
-            selectionBarButton(icon: "xmark", help: "Clear Selection", tint: theme.secondaryText) {
-                clearSelection()
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous)
-                .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.10))
-        )
-    }
-
-    private func selectionBarButton(
-        icon: String,
-        help: LocalizedStringKey,
-        tint: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(tint)
-                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
-                .background(
-                    RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(0.5))
-                )
-        }
-        .buttonStyle(.plain)
-        .localizedHelp(help)
-    }
-
-    // MARK: - Batch Operations
-
-    /// Shared "move to project" menu items: one row per project plus a
-    /// trailing "Remove from Project". `currentProjectId` marks the checked
-    /// row when the menu acts on a single session (nil for batch menus).
-    @ViewBuilder
-    func moveToProjectButtons(
-        currentProjectId: UUID?,
-        onMove: @escaping (UUID?) -> Void
-    ) -> some View {
-        ForEach(projectManager.projects) { project in
-            Button {
-                onMove(project.id)
-            } label: {
-                if project.id == currentProjectId {
-                    Label { Text(verbatim: project.name) } icon: { Image(systemName: "checkmark") }
-                } else {
-                    Text(verbatim: project.name)
-                }
-            }
-        }
-        Divider()
-        Button {
-            onMove(nil)
-        } label: {
-            Text("Remove from Project", bundle: .module)
-        }
-    }
-
-    /// Moves every selected session into `projectId` and clears the
-    /// selection. Non-destructive, so no confirm.
-    private func moveSelected(to projectId: UUID?) {
-        for id in selectedIds {
-            onSetProject(id, projectId)
-        }
-        clearSelection()
-    }
-
-    /// Archives every selected session (idempotent per row) and clears the
-    /// selection. Archiving is non-destructive, so it skips the confirm.
-    private func archiveSelected() {
-        for id in selectedIds {
-            onSetArchived(id, true)
-        }
-        clearSelection()
-    }
-
-    /// Confirms once, then deletes every selected session. Honors the
-    /// per-session "don't ask again" opt-out just like the single-row flow.
-    private func requestDeleteSelected() {
-        let ids = selectedIds
-        guard !ids.isEmpty else { return }
-        if DeleteConfirmationPreference.shared.skipForSession {
-            performDelete(ids)
-            return
-        }
-        let requestId = UUID()
-        let scope = alertScope
-        let accessory = AnyView(DontAskAgainToggle())
-        ThemedAlertCenter.shared.present(
-            ThemedAlertRequest(
-                id: requestId,
-                title: "Delete Conversations?",
-                message: L("\(ids.count) conversations will be removed permanently. This can't be undone."),
-                accessory: accessory,
-                buttons: [
-                    .cancel(L("Cancel")),
-                    .destructive(L("Delete")) { performDelete(ids) },
-                ],
-                onDismiss: {
-                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-                }
-            ),
-            scope: scope
-        )
-    }
-
-    private func performDelete(_ ids: Set<UUID>) {
-        for id in ids {
-            onDelete(id)
-        }
-        clearSelection()
-    }
-
-    // MARK: - Empty State
-
-    /// Interim state while the async content lookup is still running and no
-    /// title/metadata match is visible yet. Prevents a premature "No matches
-    /// found" flash before the search process has actually finished.
-    private var searchingPlaceholder: some View {
-        VStack(spacing: 12) {
-            Spacer()
-            ProgressView()
-                .controlSize(.small)
-            Text("Searching conversations…", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText.opacity(0.8))
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Spacer()
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 28))
-                .foregroundColor(theme.secondaryText.opacity(0.5))
-            Text("No conversations yet", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText.opacity(0.7))
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Agent List (prototype)
@@ -1091,6 +484,41 @@ struct ChatSessionSidebar: View {
     /// Agents-focused sidebar: one row per local agent, active row
     /// highlighted, tap to make it this window's agent.
     private var agentListView: some View {
+        Group {
+            if isFilteringNavigator, !hasAgentMatches {
+                SidebarEmptyState(icon: "magnifyingglass", title: "No agents match")
+            } else {
+                agentList
+            }
+        }
+    }
+
+    /// Whether any row in any section survives the current query.
+    private var hasAgentMatches: Bool {
+        if !filteredLocalAgents.isEmpty || !directlySharedAgents.isEmpty || !visibleDiscoveredAgents.isEmpty {
+            return true
+        }
+        if rosterStore.rosters.contains(where: { !filteredRosterMembers($0).isEmpty }) { return true }
+        return orphanedWorkspacePairings.values.contains { !$0.isEmpty }
+    }
+
+    /// Local agents after the query (drag order is only live unfiltered).
+    private var filteredLocalAgents: [Agent] {
+        Self.filterByName(displayedAgents, query: navigatorQuery, name: \.displayName)
+    }
+
+    /// A roster's members after the query, by the name their row shows.
+    private func filteredRosterMembers(
+        _ roster: WorkspaceRosterStore.WorkspaceRoster
+    ) -> [OsaurusRouterWorkspaceAgent] {
+        Self.filterByName(roster.agents, query: navigatorQuery) { member in
+            SharedAgentIdentity.resolve(
+                address: member.agentAddress.lowercased(), workspaceId: roster.workspace.id
+            ).name
+        }
+    }
+
+    private var agentList: some View {
         ScrollView {
             // Plain VStack: every row needs a live frame for drag-to-reorder
             // hit testing, and the agent list is small.
@@ -1098,7 +526,7 @@ struct ChatSessionSidebar: View {
                 // Background runs (scheduled / API / channel / delegated)
                 // are tabs of their agent, not rows here; each agent row
                 // rolls its live work up into a ring + status line.
-                ForEach(displayedAgents) { agent in
+                ForEach(filteredLocalAgents) { agent in
                     let activity = activityStatus(for: agent)
                     AgentSidebarRow(
                         agent: agent,
@@ -1107,13 +535,6 @@ struct ChatSessionSidebar: View {
                         // is active.
                         isSelected: agent.id == agentId && workspaceAgentAddress == nil
                             && activeDiscoveredAgentId == nil,
-                        // The selected agent's row reflects the session the
-                        // window is showing (the active tab's chat), so the
-                        // sidebar always answers "which chat is this?".
-                        currentSessionTitle: agent.id == agentId && workspaceAgentAddress == nil
-                            && activeDiscoveredAgentId == nil
-                            ? sessions.first(where: { $0.id == currentSessionId })?.title
-                            : nil,
                         activityStatus: activity,
                         activityStep: activity == nil ? nil : activityStep(for: agent),
                         sharedWorkspaceNames: sharedWorkspaceNames(for: agent),
@@ -1138,7 +559,9 @@ struct ChatSessionSidebar: View {
                             }
                         },
                         onStop: activity == nil ? nil : { stopActivity(for: agent) },
-                        isReorderable: !agent.isBuiltIn,
+                        // A filtered list is not the real order: no reordering
+                        // until the query clears.
+                        isReorderable: !agent.isBuiltIn && !isFilteringNavigator,
                         isDragging: draggingAgentId == agent.id,
                         dragOffset: draggingAgentId == agent.id ? agentDragOffset : 0,
                         onDragChanged: { handleAgentDrag(agent.id, translation: $0) },
@@ -1198,7 +621,7 @@ struct ChatSessionSidebar: View {
     /// live roster membership, so a workspace agent never flashes under
     /// "Shared with you" before the roster loads or while Router is off.
     private var directlySharedAgents: [RemoteAgent] {
-        remoteAgentManager.remoteAgents
+        let shared = remoteAgentManager.remoteAgents
             .filter { remote in
                 let address = remote.agentAddress.lowercased()
                 return Self.isDirectlyShared(
@@ -1208,6 +631,7 @@ struct ChatSessionSidebar: View {
                 )
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return Self.filterByName(shared, query: navigatorQuery, name: \.name)
     }
 
     /// Pure partition rule (testable): a pairing is "shared with you"
@@ -1232,9 +656,6 @@ struct ChatSessionSidebar: View {
                 RemoteAgentSidebarRow(
                     agent: remote,
                     isSelected: isWorkspaceRowSelected(address: address, workspaceId: ""),
-                    currentSessionTitle: isWorkspaceRowSelected(address: address, workspaceId: "")
-                        ? sessions.first(where: { $0.id == currentSessionId })?.title
-                        : nil,
                     activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: ""),
                     isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
                     // Same tab / history / connect flow as a team agent; the
@@ -1260,9 +681,10 @@ struct ChatSessionSidebar: View {
         let pairedAddresses = Set(
             remoteAgentManager.remoteAgents.map { $0.agentAddress.lowercased() }
         )
-        return discoveredAgents
+        let visible = discoveredAgents
             .filter { Self.isVisibleDiscovered($0, pairedAddresses: pairedAddresses) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return Self.filterByName(visible, query: navigatorQuery, name: \.name)
     }
 
     /// Pure partition rule (testable): a discovered peer renders under
@@ -1289,9 +711,6 @@ struct ChatSessionSidebar: View {
                 DiscoveredAgentSidebarRow(
                     agent: agent,
                     isSelected: activeDiscoveredAgentId == agent.id,
-                    currentSessionTitle: activeDiscoveredAgentId == agent.id
-                        ? sessions.first(where: { $0.id == currentSessionId })?.title
-                        : nil,
                     onSelect: { onSelectDiscoveredAgent?(agent) }
                 )
             }
@@ -1337,10 +756,15 @@ struct ChatSessionSidebar: View {
     /// section for their workspace so they stay reachable — never demoted to
     /// "Shared with you".
     private var orphanedWorkspacePairings: [String: [RemoteAgent]] {
-        Self.orphanedWorkspacePairings(
+        let grouped = Self.orphanedWorkspacePairings(
             remoteAgentManager.remoteAgents,
             loadedRosterIds: Set(rosterStore.rosters.map(\.id))
         )
+        guard isFilteringNavigator else { return grouped }
+        return grouped.compactMapValues { pairings in
+            let kept = Self.filterByName(pairings, query: navigatorQuery, name: \.name)
+            return kept.isEmpty ? nil : kept
+        }
     }
 
     /// Pure partition rule (testable): workspace-attributed pairings grouped
@@ -1363,7 +787,11 @@ struct ChatSessionSidebar: View {
     private var workspaceSections: some View {
         let routerOn = remoteProviderManager.isOsaurusRouterEnabled
         ForEach(rosterStore.rosters) { roster in
-            workspaceSection(roster)
+            // While searching, a workspace with no matching member has no
+            // reason to show its header.
+            if !isFilteringNavigator || !filteredRosterMembers(roster).isEmpty {
+                workspaceSection(roster)
+            }
         }
         // Orphaned workspace pairings (no loaded roster): one section each,
         // named after the workspace when Settings knows it.
@@ -1376,7 +804,7 @@ struct ChatSessionSidebar: View {
                     title: name ?? L("Workspace"),
                     help: L("Workspace")
                 )
-                if !routerOn {
+                if !routerOn, !isFilteringNavigator {
                     workspaceStateRow(
                         icon: "bolt.slash.fill",
                         text: L("Osaurus Router is off — shared agents can't be reached."),
@@ -1389,9 +817,6 @@ struct ChatSessionSidebar: View {
                     RemoteAgentSidebarRow(
                         agent: remote,
                         isSelected: isWorkspaceRowSelected(address: address, workspaceId: workspaceId),
-                        currentSessionTitle: isWorkspaceRowSelected(address: address, workspaceId: workspaceId)
-                            ? sessions.first(where: { $0.id == currentSessionId })?.title
-                            : nil,
                         activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: workspaceId),
                         isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
                         onSelect: {
@@ -1403,8 +828,11 @@ struct ChatSessionSidebar: View {
                 }
             }
         }
-        // Section-level states when there is no roster to show.
-        if rosterStore.rosters.isEmpty {
+        // Section-level states when there is no roster to show (explainers
+        // are not search results, so they step aside while filtering).
+        if isFilteringNavigator {
+            EmptyView()
+        } else if rosterStore.rosters.isEmpty {
             if !routerOn, !workspacesService.workspaces.isEmpty || !orphanedWorkspacePairings.isEmpty {
                 // Router off but Settings knows workspaces: explain once
                 // (orphan sections above already carry the row).
@@ -1498,7 +926,7 @@ struct ChatSessionSidebar: View {
 
     @ViewBuilder
     private func workspaceSection(_ roster: WorkspaceRosterStore.WorkspaceRoster) -> some View {
-        let members = roster.agents
+        let members = filteredRosterMembers(roster)
         let workspace = roster.workspace
         VStack(alignment: .leading, spacing: 2) {
             sidebarSectionHeader(
@@ -1522,16 +950,14 @@ struct ChatSessionSidebar: View {
                     if let mine = identity.localAgent {
                         // The user's own shared agent: same row shape, a
                         // "local" badge instead of relay presence, and
-                        // selection routes to the local agent itself. The
-                        // canonical row in the Agents list above carries the
-                        // current-session title; this mirror highlights when
-                        // the agent is active so both read as one selection.
+                        // selection routes to the local agent itself; this
+                        // mirror highlights when the agent is active so both
+                        // rows read as one selection.
                         WorkspaceAgentSidebarRow(
                             identity: identity,
                             workspaceId: workspace.id,
                             status: ownAgentStatus(mine),
                             isSelected: mine.id == agentId && workspaceAgentAddress == nil,
-                            currentSessionTitle: nil,
                             activityStatus: activityStatus(for: mine),
                             onSelect: { onSelectAgent?(mine.id) },
                             onOpenSettings: {
@@ -1549,9 +975,6 @@ struct ChatSessionSidebar: View {
                             workspaceId: workspace.id,
                             status: teammateAgentStatus(address: address, workspaceId: workspace.id),
                             isSelected: selected,
-                            currentSessionTitle: selected
-                                ? sessions.first(where: { $0.id == currentSessionId })?.title
-                                : nil,
                             activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: workspace.id),
                             isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
                             onSelect: {
@@ -1822,95 +1245,6 @@ struct ChatSessionSidebar: View {
             taskManager.cancelTask(mirror.id)
         }
     }
-
-    // MARK: - Session List
-
-    private var sessionList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(filteredSessions) { session in
-                        SessionRow(
-                            session: session,
-                            agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
-                            isSelected: session.id == currentSessionId,
-                            isMultiSelected: selectedIds.contains(session.id),
-                            isImportHighlighted: importHighlight.sessionIds.contains(session.id),
-                            activityStatus: activityMonitor.statuses[session.id],
-                            isEditing: editingSessionId == session.id,
-                            onSelect: {
-                                handleTap(session)
-                            },
-                            onStartRename: {
-                                if editingSessionId != nil && editingSessionId != session.id {
-                                    dismissEditing()
-                                }
-                                editingSessionId = session.id
-                                editingBuffer = session.title
-                            },
-                            onConfirmRename: { newTitle in
-                                let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
-                                if !trimmed.isEmpty {
-                                    onRename(session.id, trimmed)
-                                }
-                                editingSessionId = nil
-                            },
-                            onCancelRename: {
-                                editingSessionId = nil
-                            },
-                            onBufferChange: { editingBuffer = $0 },
-                            onDelete: {
-                                if editingSessionId != nil {
-                                    dismissEditing()
-                                }
-                                onDelete(session.id)
-                            },
-                            onToggleArchive: {
-                                onSetArchived(session.id, !session.archived)
-                            },
-                            onTogglePin: {
-                                onSetPinned(session.id, !session.pinned)
-                            },
-                            projects: projectManager.projects,
-                            onSetProject: { projectId in
-                                onSetProject(session.id, projectId)
-                            },
-                            onExport: { format in
-                                onExport(session, format)
-                            },
-                            onStop: onStop.map { stop in
-                                { stop(session.id) }
-                            },
-                            onOpenInNewWindow: onOpenInNewWindow != nil
-                                ? {
-                                    onOpenInNewWindow?(session)
-                                } : nil,
-                            onOpenInNewTab: onOpenInNewTab != nil
-                                ? {
-                                    onOpenInNewTab?(session)
-                                } : nil
-                        )
-                        .id(session.id)
-                    }
-                }
-                .padding(.vertical, 8)
-                .padding(.horizontal, 8)
-                // Rows glide (rather than teleport) when a run starts/ends
-                // and the active-first partition reorders the list.
-                .animation(theme.springAnimation(responseMultiplier: 0.9), value: filteredSessions.map(\.id))
-            }
-            .scrollIndicators(.hidden)
-            .onChange(of: importHighlight.sessionIds) { _, ids in
-                // Bring the topmost freshly imported row into view; the
-                // glow only helps if the row is on screen.
-                guard let target = filteredSessions.first(where: { ids.contains($0.id) })
-                else { return }
-                withAnimation(.easeInOut(duration: 0.35)) {
-                    proxy.scrollTo(target.id, anchor: .center)
-                }
-            }
-        }
-    }
 }
 
 // MARK: - Agent Row (prototype)
@@ -1920,9 +1254,6 @@ struct ChatSessionSidebar: View {
 private struct AgentSidebarRow: View {
     let agent: Agent
     let isSelected: Bool
-    /// Title of the session currently open for this agent (selected row
-    /// only); shown as the subtitle so the row tracks the active chat.
-    var currentSessionTitle: String? = nil
     /// Live activity rolled up from the agent's sessions: `.working`
     /// animates the avatar ring exactly like the old session rows.
     var activityStatus: SessionActivityMonitor.Status? = nil
@@ -2008,8 +1339,9 @@ private struct AgentSidebarRow: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Live status wins over the session title / role caption:
-                // the row is the agents bar's real-time readout.
+                // Subtitle = live status, else the role caption. The chat
+                // itself is named by the tab strip and the History pane,
+                // so the row stays about the agent.
                 if let activityStatus {
                     Text(liveStatusLine(activityStatus))
                         .font(.system(size: 10, weight: activityStatus == .waitingForInput ? .semibold : .regular))
@@ -2018,11 +1350,6 @@ private struct AgentSidebarRow: View {
                         )
                         .lineLimit(1)
                         .contentTransition(.opacity)
-                } else if let currentSessionTitle {
-                    Text(currentSessionTitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.accentColor.opacity(0.9))
-                        .lineLimit(1)
                 } else if agent.isBuiltIn {
                     Text("Orchestrator", bundle: .module)
                         .font(.system(size: 10))
@@ -2124,11 +1451,11 @@ private struct AgentSidebarRow: View {
     private var agentContextMenu: some View {
         if let onNewChat {
             Button(action: onNewChat) {
-                Label(L("New Chat"), systemImage: "plus.bubble")
+                Label(LCached("New Chat"), systemImage: "plus.bubble")
             }
         }
         Button(action: openAgentSettings) {
-            Label(L("Open Settings"), systemImage: "gearshape")
+            Label(LCached("Open Settings"), systemImage: "gearshape")
         }
         if !shareableWorkspaces.isEmpty, let onShareToWorkspace {
             Menu {
@@ -2136,7 +1463,7 @@ private struct AgentSidebarRow: View {
                     Button(workspace.name) { onShareToWorkspace(workspace) }
                 }
             } label: {
-                Label(L("Share to Workspace…"), systemImage: "person.2.fill")
+                Label(LCached("Share to Workspace…"), systemImage: "person.2.fill")
             }
         }
         if !sharedWorkspaces.isEmpty, let onUnshareFromWorkspace {
@@ -2145,7 +1472,7 @@ private struct AgentSidebarRow: View {
                 Button(role: .destructive) {
                     onUnshareFromWorkspace(workspace)
                 } label: {
-                    Label(String(format: L("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
+                    Label(String(format: LCached("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
                 }
             }
         }
@@ -2155,12 +1482,12 @@ private struct AgentSidebarRow: View {
     private func liveStatusLine(_ status: SessionActivityMonitor.Status) -> String {
         switch status {
         case .waitingForInput:
-            return L("Needs your input")
+            return LCached("Needs your input")
         case .working:
             if let step = activityStep?.trimmingCharacters(in: .whitespacesAndNewlines), !step.isEmpty {
-                return "\(L("Working")) · \(step)"
+                return "\(LCached("Working")) · \(step)"
             }
-            return L("Working…")
+            return LCached("Working…")
         }
     }
 }
@@ -2223,7 +1550,6 @@ private struct WorkspaceAgentSidebarRow: View {
     let workspaceId: String
     let status: SharedAgentStatus
     let isSelected: Bool
-    var currentSessionTitle: String? = nil
     var activityStatus: SessionActivityMonitor.Status? = nil
     /// Appeared on the roster during this app run and not opened yet.
     var isNew: Bool = false
@@ -2396,9 +1722,6 @@ private struct WorkspaceAgentSidebarRow: View {
             } else if reason != nil {
                 Text("Couldn't connect", bundle: .module)
                     .foregroundColor(theme.warningColor.opacity(0.9))
-            } else if let currentSessionTitle {
-                Text(currentSessionTitle)
-                    .foregroundColor(theme.accentColor.opacity(0.9))
             } else {
                 Text(verbatim: status.shortLabel)
                     .foregroundColor(theme.secondaryText.opacity(0.85))
@@ -2407,13 +1730,8 @@ private struct WorkspaceAgentSidebarRow: View {
             Text(verbatim: status.shortLabel)
                 .foregroundColor(theme.secondaryText.opacity(0.85))
         case .ready, .readOnlyTeammate:
-            if let currentSessionTitle {
-                Text(currentSessionTitle)
-                    .foregroundColor(theme.accentColor.opacity(0.9))
-            } else {
-                Text(verbatim: isMine ? localLabel : ownerAndModelLabel)
-                    .foregroundColor(theme.secondaryText.opacity(0.85))
-            }
+            Text(verbatim: isMine ? localLabel : ownerAndModelLabel)
+                .foregroundColor(theme.secondaryText.opacity(0.85))
         }
     }
 
@@ -2533,7 +1851,6 @@ private struct SharedAgentStatusDot: View {
 private struct RemoteAgentSidebarRow: View {
     let agent: RemoteAgent
     let isSelected: Bool
-    var currentSessionTitle: String? = nil
     var activityStatus: SessionActivityMonitor.Status? = nil
     /// Paired during this app run and not opened yet.
     var isNew: Bool = false
@@ -2583,12 +1900,7 @@ private struct RemoteAgentSidebarRow: View {
                 // The section header already says "Shared with you"; a row
                 // with no note or model shows no subtitle, like a local
                 // custom agent without a role caption.
-                if let currentSessionTitle {
-                    Text(currentSessionTitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.accentColor.opacity(0.9))
-                        .lineLimit(1)
-                } else if let subtitleLabel {
+                if let subtitleLabel {
                     Text(verbatim: subtitleLabel)
                         .font(.system(size: 10))
                         .foregroundColor(theme.secondaryText.opacity(0.85))
@@ -2690,7 +2002,6 @@ private struct RemoteAgentSidebarRow: View {
 private struct DiscoveredAgentSidebarRow: View {
     let agent: DiscoveredAgent
     let isSelected: Bool
-    var currentSessionTitle: String? = nil
     let onSelect: () -> Void
 
     @Environment(\.theme) private var theme
@@ -2737,11 +2048,6 @@ private struct DiscoveredAgentSidebarRow: View {
                     Text("Needs upgrade for encrypted chat", bundle: .module)
                         .font(.system(size: 10))
                         .foregroundColor(theme.warningColor)
-                        .lineLimit(1)
-                } else if let currentSessionTitle {
-                    Text(currentSessionTitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.accentColor.opacity(0.9))
                         .lineLimit(1)
                 } else if let subtitleLabel {
                     Text(verbatim: subtitleLabel)
@@ -2810,11 +2116,13 @@ private struct DiscoveredAgentSidebarRow: View {
 
 // MARK: - Project Row
 
-/// Row in the Projects tab's top-level list. Mirrors `SessionRow`'s hover
-/// and background treatment; the trailing count keeps membership glanceable.
+/// Row in the Projects lens. Same anatomy as `AgentSidebarRow`: 26pt
+/// circle, 12pt name, 10pt caption ("3 chats"), `SidebarRowBackground`
+/// selected while the project is the one on screen.
 private struct ProjectRow: View {
     let project: Project
     let sessionCount: Int
+    let isSelected: Bool
     let onOpen: () -> Void
     let onRename: () -> Void
     let onEditInstructions: () -> Void
@@ -2828,9 +2136,9 @@ private struct ProjectRow: View {
             ZStack {
                 Circle()
                     .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.12))
-                    .frame(width: 24, height: 24)
+                    .frame(width: 26, height: 26)
                 Image(systemName: "folder.fill")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.accentColor)
             }
 
@@ -2839,33 +2147,16 @@ private struct ProjectRow: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
-                if !project.instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("Has instructions", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.secondaryText.opacity(0.85))
-                        .lineLimit(1)
-                }
+                Text(L("\(sessionCount) chats"))
+                    .font(.system(size: 10))
+                    .foregroundColor(isSelected ? theme.accentColor.opacity(0.9) : theme.secondaryText.opacity(0.85))
+                    .lineLimit(1)
             }
-
-            Spacer()
-
-            Text(verbatim: "\(sessionCount)")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(theme.secondaryText.opacity(theme.isDark ? 0.16 : 0.12))
-                )
-
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(theme.secondaryText.opacity(isHovered ? 0.9 : 0.5))
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(SidebarRowBackground(isSelected: false, isHovered: isHovered))
+        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
         .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .onTapGesture(perform: onOpen)
@@ -2874,12 +2165,58 @@ private struct ProjectRow: View {
                 isHovered = hovering
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
             Button(action: onRename) { Text("Rename", bundle: .module) }
             Button(action: onEditInstructions) { Text("Edit Instructions…", bundle: .module) }
             Divider()
             Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }
         }
+    }
+}
+
+// MARK: - Footer Row
+
+/// A row-shaped button (icon in the avatar column, 12pt label, the rows'
+/// hover fill). Hover is cleared whenever the window stops being key, so
+/// clicking through to another window never leaves the row lit.
+private struct SidebarFooterRow: View {
+    let icon: String
+    let title: LocalizedStringKey
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @Environment(\.controlActiveState) private var controlActiveState
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 26, height: 26)
+                Text(title, bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(SidebarRowBackground(isSelected: false, isHovered: isHovered))
+            .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .onHover { hovering in
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) { isHovered = hovering }
+        }
+        .onChange(of: controlActiveState) { _, state in
+            if state != .key { isHovered = false }
+        }
+        .localizedHelp(title)
     }
 }
 
@@ -2921,9 +2258,12 @@ private struct SessionRow: View {
     var onOpenInNewWindow: (() -> Void)? = nil
     /// Optional callback for opening in a new tab of the current window
     var onOpenInNewTab: (() -> Void)? = nil
+    /// Open this chat with its File Changes inspector showing.
+    var onShowFileChanges: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @Environment(\.themedAlertScope) private var alertScope
+    @ObservedObject private var fileChanges = FileChangeSummaryStore.shared
     @State private var isHovered = false
     @State private var showActionsPopover = false
     /// Drill-in page state for the actions popover: false shows the main
@@ -3012,6 +2352,10 @@ private struct SessionRow: View {
 
                         if !session.capabilities.isEmpty {
                             capabilityBadges
+                        }
+
+                        if let summary = fileChanges.summary(for: session.id), summary.setCount > 0 {
+                            fileChangesBadge(summary)
                         }
                     }
 
@@ -3367,6 +2711,41 @@ private struct SessionRow: View {
         }
     }
 
+    /// File history badge: outstanding changed files (or a dimmed icon when
+    /// every change was reverted). Opens the chat's File Changes inspector.
+    private func fileChangesBadge(_ summary: FileChangeSessionSummary) -> some View {
+        let active = summary.outstandingFiles > 0
+        let color = active ? theme.accentColor : theme.tertiaryText
+        return Button {
+            onShowFileChanges?()
+        } label: {
+            HStack(spacing: 2) {
+                Image(systemName: "plus.forwardslash.minus")
+                    .font(.system(size: 7.5, weight: .bold))
+                if active {
+                    Text(verbatim: "\(summary.outstandingFiles)")
+                        .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                }
+            }
+            .foregroundColor(color)
+            .padding(.horizontal, 4)
+            .frame(height: 14)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(color.opacity(theme.isDark ? 0.16 : 0.12))
+            )
+        }
+        .buttonStyle(.plain)
+        .help(
+            active
+                ? (summary.outstandingFiles == 1
+                    ? Text("1 file changed in this chat", bundle: .module)
+                    : Text("\(summary.outstandingFiles) files changed in this chat", bundle: .module))
+                : Text("File changes in this chat were reverted", bundle: .module)
+        )
+        .accessibilityLabel(Text("Show file changes", bundle: .module))
+    }
+
     private func capabilityIcon(_ cap: SessionCapability) -> some View {
         Image(systemName: cap.iconName)
             .font(.system(size: 8.5, weight: .semibold))
@@ -3383,8 +2762,15 @@ private struct SessionRow: View {
 
     /// Compact icon-only badge that surfaces the session's `SessionSource`
     /// (plugin / http / schedule / watcher). Chat-source rows hide it.
+    /// A chat from the paired iPhone. Stored as a `.workspace` row (it runs
+    /// through the shared-agent path), but it is the owner's own chat, not a
+    /// teammate's, and is shown as the iPhone's.
+    private var isFromPairedPhone: Bool {
+        RemoteSessionContinuation.isFromPairedPhone(session)
+    }
+
     private var sourceBadge: some View {
-        Image(systemName: session.source.iconName)
+        Image(systemName: isFromPairedPhone ? "iphone" : session.source.iconName)
             .font(.system(size: 8.5, weight: .semibold))
             .foregroundColor(sourceBadgeColor)
             .frame(width: 14, height: 14)
@@ -3399,6 +2785,12 @@ private struct SessionRow: View {
     /// dimension is glanceable without expanding the row.
     private var metadataLine: String {
         var parts: [String] = [formatRelativeDate(session.updatedAt)]
+        // A phone chat's key is the pairing key's nonce plus the phone's own
+        // id: noise to a reader, so it names the iPhone and stops there.
+        if isFromPairedPhone {
+            parts.append("via iPhone")
+            return parts.joined(separator: " · ")
+        }
         let pluginName = session.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
         if let origin = session.source.originLabel(pluginDisplayName: pluginName) {
             parts.append(origin)
@@ -3453,6 +2845,9 @@ private struct SessionRow: View {
         case .delegation:
             return Text("Orchestrator", bundle: .module)
         case .workspace:
+            if isFromPairedPhone {
+                return Text("Mobile", bundle: .module)
+            }
             if let caller = session.workspace?.callerLabel {
                 return Text(verbatim: "Workspace · \(caller)")
             }
@@ -3746,25 +3141,17 @@ struct DontAskAgainToggle: View {
             ChatSessionSidebar(
                 sessions: [],
                 agentId: Agent.defaultId,
-                currentSessionId: nil,
                 onSelect: { _ in },
-                onNewChat: { _ in },
-                onDelete: { _ in },
-                onRename: { _, _ in },
-                onSetArchived: { _, _ in },
-                onSetPinned: { _, _ in },
-                onSetProject: { _, _ in },
-                onDeleteProject: { _ in },
-                onExport: { _, _ in }
+                onDeleteProject: { _ in }
             )
             .frame(height: 400)
         }
     }
 #endif
 
-// MARK: - History List (dialog)
+// MARK: - History List (inspector pane)
 
-/// The chat list the sidebar used to show, hosted by the History dialog:
+/// The chat list behind the inspector's History pane (`ChatHistoryPaneView`):
 /// search (title, metadata and full-text over message bodies) above the
 /// same `SessionRow`s with activity rings, capability badges and the
 /// per-row actions popover. Reuses the sidebar's private row types.
@@ -3802,6 +3189,14 @@ struct ChatHistoryList: View {
     var capabilityFilter: Set<SessionCapability> = []
     /// Resets the dialog's source / archived lenses from the empty state.
     var onClearFilters: (() -> Void)? = nil
+    /// Cap on the list's height. The dialog capped it at 360pt; the
+    /// inspector's History pane passes nil so the list fills the rail.
+    var listMaxHeight: CGFloat? = 360
+    /// Control shown at the trailing end of the search row (the host's
+    /// Filter button), so search and filter form one row.
+    var searchAccessory: AnyView? = nil
+    /// Hint under "No chats yet": whose chats the host lists.
+    var emptyHint: LocalizedStringKey = "Chats with this agent appear here."
 
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
@@ -3864,12 +3259,17 @@ struct ChatHistoryList: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            SidebarSearchField(
-                text: $searchQuery,
-                placeholder: "Search chats...",
-                isFocused: $isSearchFocused,
-                isSearching: isContentSearchInFlight
-            )
+            HStack(spacing: 8) {
+                SidebarSearchField(
+                    text: $searchQuery,
+                    placeholder: "Search chats...",
+                    isFocused: $isSearchFocused,
+                    isSearching: isContentSearchInFlight
+                )
+                if let searchAccessory {
+                    searchAccessory
+                }
+            }
 
             if !selectedIds.isEmpty {
                 selectionActionBar
@@ -3877,7 +3277,11 @@ struct ChatHistoryList: View {
             }
 
             if sessions.isEmpty {
-                placeholder(icon: "bubble.left.and.bubble.right", text: "No chats yet")
+                SidebarEmptyState(
+                    icon: "bubble.left.and.bubble.right",
+                    title: "No chats yet",
+                    hint: emptyHint
+                )
             } else if filteredSessions.isEmpty, isContentSearchInFlight {
                 placeholder(icon: nil, text: "Searching conversations…")
             } else if filteredSessions.isEmpty, hasActiveFilter,
@@ -3907,7 +3311,7 @@ struct ChatHistoryList: View {
                 SidebarNoResultsView(searchQuery: searchQuery) {
                     withAnimation(theme.animationQuick()) { searchQuery = "" }
                 }
-                .frame(maxHeight: 360)
+                .frame(maxHeight: listMaxHeight ?? .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
@@ -3939,7 +3343,11 @@ struct ChatHistoryList: View {
                                 onExport: { onExport(session, $0) },
                                 onStop: onStop.map { stop in { stop(session.id) } },
                                 onOpenInNewWindow: onOpenInNewWindow.map { open in { open(session) } },
-                                onOpenInNewTab: onOpenInNewTab.map { open in { open(session) } }
+                                onOpenInNewTab: onOpenInNewTab.map { open in { open(session) } },
+                                onShowFileChanges: {
+                                    onSelect(session)
+                                    FileChangeSummaryStore.requestPanel(sessionId: session.id.uuidString)
+                                }
                             )
                             .id(session.id)
                         }
@@ -3950,7 +3358,7 @@ struct ChatHistoryList: View {
                         value: filteredSessions.map(\.id))
                 }
                 .scrollIndicators(.hidden)
-                .frame(maxHeight: 360)
+                .frame(maxHeight: listMaxHeight ?? .infinity)
             }
         }
         .animation(theme.animationQuick(), value: selectedIds)

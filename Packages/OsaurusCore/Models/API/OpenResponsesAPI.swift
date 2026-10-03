@@ -12,7 +12,12 @@ import Foundation
 
 /// Reasoning configuration for reasoning models.
 public struct OpenResponsesReasoningConfig: Codable, Sendable {
-    public let effort: String
+    /// Optional on the wire: the Responses API defaults it server-side, and
+    /// real clients rely on that — Codex CLI sends `reasoning: {summary: …}`
+    /// with no `effort` for models it has no metadata for. Requiring it
+    /// rejected every Codex turn against `/v1/responses` with
+    /// "missing required key `effort` at reasoning".
+    public let effort: String?
     /// Requests a human-readable reasoning summary, streamed as
     /// `response.reasoning_summary_text.delta` events. Without it the
     /// Responses API returns only the opaque `encrypted_content` blob, so the
@@ -24,7 +29,7 @@ public struct OpenResponsesReasoningConfig: Codable, Sendable {
     /// same reasoning continuity as the Codex client.
     public let context: String?
 
-    public init(effort: String, summary: String? = nil, context: String? = nil) {
+    public init(effort: String?, summary: String? = nil, context: String? = nil) {
         self.effort = effort
         self.summary = summary
         self.context = context
@@ -308,10 +313,11 @@ public enum OpenResponsesMessageContent: Codable, Sendable {
             return text
         case .parts(let parts):
             return parts.compactMap { part in
-                if case .inputText(let textPart) = part {
-                    return textPart.text
+                switch part {
+                case .inputText(let textPart): return textPart.text
+                case .outputText(let textPart): return textPart.text
+                case .inputImage: return nil
                 }
-                return nil
             }.joined(separator: "\n")
         }
     }
@@ -321,6 +327,12 @@ public enum OpenResponsesMessageContent: Codable, Sendable {
 public enum OpenResponsesContentPart: Codable, Sendable {
     case inputText(OpenResponsesInputTextPart)
     case inputImage(OpenResponsesInputImagePart)
+    /// A prior assistant message replayed as input. Responses clients echo
+    /// the model's own `message` items back verbatim, so their content parts
+    /// arrive as `output_text`, not `input_text`. Codex CLI does this on every
+    /// resumed thread; rejecting the part failed the whole `input` array.
+    /// Kept as its own case so re-encoding preserves the original type.
+    case outputText(OpenResponsesOutputText)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -335,6 +347,8 @@ public enum OpenResponsesContentPart: Codable, Sendable {
             self = .inputText(try OpenResponsesInputTextPart(from: decoder))
         case "input_image":
             self = .inputImage(try OpenResponsesInputImagePart(from: decoder))
+        case "output_text":
+            self = .outputText(try OpenResponsesOutputText(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type,
@@ -349,6 +363,8 @@ public enum OpenResponsesContentPart: Codable, Sendable {
         case .inputText(let part):
             try part.encode(to: encoder)
         case .inputImage(let part):
+            try part.encode(to: encoder)
+        case .outputText(let part):
             try part.encode(to: encoder)
         }
     }
@@ -392,6 +408,8 @@ extension OpenResponsesMessageContent {
         for part in parts {
             switch part {
             case .inputText(let textPart):
+                converted.append(.text(textPart.text))
+            case .outputText(let textPart):
                 converted.append(.text(textPart.text))
             case .inputImage(let imagePart):
                 guard let imageURL = imagePart.image_url, !imageURL.isEmpty else {
@@ -522,7 +540,10 @@ public struct OpenResponsesTool: Codable, Sendable {
         try container.encode(type, forKey: .type)
         try container.encodeIfPresent(name, forKey: .name)
         try container.encodeIfPresent(description, forKey: .description)
-        try container.encodeIfPresent(parameters, forKey: .parameters)
+        let parameters =
+            parameters?.withEmptyPropertiesIfMissing
+            ?? .object(["type": .string("object"), "properties": .object([:])])
+        try container.encode(parameters, forKey: .parameters)
         try container.encodeIfPresent(strict, forKey: .strict)
     }
 }
@@ -810,12 +831,16 @@ public struct OpenResponsesRefusal: Codable, Sendable {
 public struct OpenResponsesFunctionCall: Codable, Sendable {
     public let type: String
     public let id: String
-    public let status: OpenResponsesItemStatus
+    /// Always set on items Osaurus emits. Optional on decode because the
+    /// Responses API makes it optional on *input* items, and Codex CLI echoes
+    /// prior `function_call`s back without it — requiring it failed every
+    /// Codex follow-up turn after a tool call ("wrong type at input").
+    public let status: OpenResponsesItemStatus?
     public let call_id: String
     public let name: String
     public let arguments: String
 
-    public init(id: String, status: OpenResponsesItemStatus, callId: String, name: String, arguments: String) {
+    public init(id: String, status: OpenResponsesItemStatus?, callId: String, name: String, arguments: String) {
         self.type = "function_call"
         self.id = id
         self.status = status
@@ -1231,7 +1256,16 @@ extension OpenResponsesRequest {
             n: nil,
             tools: openAITools,
             tool_choice: openAIToolChoice,
-            session_id: nil
+            // Codex CLI sends its thread id as `prompt_cache_key` on every
+            // turn of a thread. That is the conversation identity the local
+            // runtime keys on: the disk-cache chain (so a thread's own resume
+            // rows outlive other chats' rows under a tight cap), frozen
+            // memory prefixes, and tool-state scoping. Without it every turn
+            // was its own chat and a Codex thread had no chain at all.
+            session_id: prompt_cache_key.flatMap { key in
+                let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
         )
         request.reasoning_effort = reasoning?.effort
         return request

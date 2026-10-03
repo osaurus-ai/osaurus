@@ -52,6 +52,24 @@ struct OsaurusGuideTests {
     }
 
     @Test
+    func topics_quoteTheSettingsShortcutAndCurrentSidebarNames() {
+        let corpus = OsaurusGuide.topics.map(\.body).joined(separator: "\n")
+        #expect(corpus.contains("⌘,"), "guide should tell the user Settings… is ⌘,")
+        #expect(!corpus.contains("⌘⇧M"))
+        #expect(!corpus.contains("Cmd+Shift+M"))
+        #expect(!corpus.contains("Cloud Models"))
+        #expect(!corpus.contains("Tools → Available"))
+        #expect(!corpus.contains("Generation defaults"))
+    }
+
+    @Test
+    func providersOverview_usesTheSidebarTitleAndKeepsTheOldAlias() throws {
+        let entry = try #require(SettingsSearchIndex.entries.first { $0.id == "providers.overview" })
+        #expect(entry.title == "Providers")
+        #expect(SettingsSearchIndex.search("cloud models").contains { $0.id == "providers.overview" })
+    }
+
+    @Test
     func topics_coverTheCoreFeatureAreas() {
         let ids = Set(OsaurusGuide.topics.map { $0.id })
         // The prompt and onboarding rely on these existing. Adding topics is
@@ -62,7 +80,7 @@ struct OsaurusGuideTests {
             "server-api", "settings", "voice", "themes", "channels",
             "automation", "privacy-storage", "troubleshooting",
             "commands", "images", "watchers", "agent-db", "knowledge",
-            "identity",
+            "identity", "orchestrator", "config", "workspaces",
         ] {
             #expect(ids.contains(required), "guide topic `\(required)` missing")
         }
@@ -229,5 +247,41 @@ struct OsaurusHelpToolTests {
         let noContextDict = try parse(noContext)
         #expect(noContextDict["ok"] as? Bool == false)
         #expect(noContextDict["kind"] as? String == "unavailable")
+    }
+}
+
+// MARK: - `find` relaxed lookup
+
+/// Raptor 0.6.1 live row (Orchestrator, "Where is the setting to turn off
+/// memory?"): `osaurus_help find "turn off memory"` returned no matches
+/// because the catalog matcher wants every token inside one title/keyword,
+/// so the model fell back to `topics` → `read`. The tool now retries with
+/// intent/state words stripped and reports the query that matched.
+struct OsaurusHelpFindRelaxedTests {
+
+    @Test
+    func naturalToggleAsk_fallsBackToTheCatalogRow() {
+        let strict = SettingsSearchIndex.search("turn off memory")
+        #expect(strict.isEmpty, "strict matcher unexpectedly matched; relaxed pass is untested")
+        let lookup = OsaurusHelpTool.findSettings("turn off memory")
+        #expect(lookup.relaxedQuery == "memory")
+        #expect(lookup.entries.contains { $0.id == "memory.settings.enabled" })
+        #expect(lookup.entries.contains { $0.id == "memory.settings" })
+    }
+
+    @Test
+    func strictHitIsReturnedUnchangedAndNotMarkedRelaxed() {
+        let lookup = OsaurusHelpTool.findSettings("disable memory")
+        #expect(lookup.relaxedQuery == nil)
+        #expect(lookup.entries.contains { $0.id == "memory.settings.enabled" })
+    }
+
+    @Test
+    func onlyIntentWords_orNoRelaxedHit_stayEmptyWithoutInventingAMatch() {
+        #expect(OsaurusHelpTool.findSettings("turn off the").entries.isEmpty)
+        #expect(OsaurusHelpTool.findSettings("turn off the").relaxedQuery == nil)
+        let nonsense = OsaurusHelpTool.findSettings("turn off flux capacitor")
+        #expect(nonsense.entries.isEmpty)
+        #expect(nonsense.relaxedQuery == nil)
     }
 }

@@ -1,0 +1,55 @@
+{
+  "id": "ram_admission.ram-off-does-not-reclaim",
+  "domain": "subagent",
+  "label": "RAM policy replay: ram-off-does-not-reclaim",
+  "query": "Replay explicit host facts through production planner, recovery and one persistent reservation actor.",
+  "notes": "Deterministic injected facts; not physical 16GB or live inference proof.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "ram_admission",
+      "ramAdmission": {
+        "scenario": {
+          "localJobs": 1,
+          "remoteJobs": 0,
+          "agentLimit": 1,
+          "engineLimit": 1,
+          "batching": true,
+          "ramSafety": false,
+          "steps": [
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472
+              },
+              "after": null,
+              "reclaimSucceeds": false
+            }
+          ]
+        },
+        "expected": [
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false
+          }
+        ]
+      }
+    }
+  }
+}

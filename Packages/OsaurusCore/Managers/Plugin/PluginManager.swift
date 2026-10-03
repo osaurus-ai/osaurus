@@ -399,7 +399,44 @@ final class PluginManager {
     /// any context.
     nonisolated static let supersededPluginIds: Set<String> = [
         "osaurus.search", "osaurus.browser",
+        // Apple app plugins → built-in `AppleApps/` tool families, toggled per
+        // custom agent under Abilities → Tools (one picker group per app).
+        "osaurus.calendar", "osaurus.reminders", "osaurus.contacts", "osaurus.notes",
+        "osaurus.mail", "osaurus.messages", "osaurus.maps", "osaurus.music",
     ]
+
+    /// Apple app plugin ids specifically (subset of `supersededPluginIds`),
+    /// derived from `AppleApp.supersededPluginId` so the two lists cannot drift.
+    nonisolated static var supersededAppleAppPluginIds: Set<String> {
+        Set(AppleApp.allCases.compactMap(\.supersededPluginId))
+    }
+
+    /// Superseded Apple app plugins whose install folder is still present
+    /// under `Tools/` (superseded plugins are skipped at load but their
+    /// folders stay until the user removes them). This is the ground truth
+    /// the `manualToolNames` migration keys off: a legacy name like `play`
+    /// or `send_message` is only rewritten when the plugin that shipped it
+    /// was actually installed. Synchronous file I/O — call off the main
+    /// actor. `root` is a test seam.
+    nonisolated static func installedSupersededAppleAppPluginIds(
+        toolsRoot root: URL? = nil
+    ) -> Set<String> {
+        let root = root ?? ToolsPaths.toolsRootDirectory()
+        let fm = FileManager.default
+        var installed: Set<String> = []
+        for pluginId in supersededAppleAppPluginIds {
+            let dir = root.appendingPathComponent(pluginId, isDirectory: true)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            // A plugin folder with at least one version directory (or the
+            // `current` symlink) counts; an empty leftover folder does not.
+            let entries = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+            if entries.contains(where: { $0 == "current" || SemanticVersion.parse($0) != nil }) {
+                installed.insert(pluginId)
+            }
+        }
+        return installed
+    }
 
     /// Drops superseded plugins from a scan result BEFORE any dlopen. Also
     /// removes their verification failures (e.g. a missing consent marker)
@@ -432,7 +469,9 @@ final class PluginManager {
         switch pluginId {
         case "osaurus.search": return .search
         case "osaurus.browser": return .browser
-        default: return nil
+        default:
+            // Apple app plugins live on as per-agent groups in the Tools picker.
+            return supersededAppleAppPluginIds.contains(pluginId) ? .agents : nil
         }
     }
 

@@ -146,6 +146,10 @@ struct ModelPickerView: View {
     /// selects among models the user already has.
     var footerActions: [ModelPickerFooterAction] = []
     let onDismiss: () -> Void
+    /// Replaces the default "Add Model" action (dismiss + jump to the Models
+    /// tab). Hosts that would lose unsaved state on that tab switch use this
+    /// to confirm with the user before navigating.
+    var onAddModel: (() -> Void)? = nil
 
     @State private var searchText = ""
     /// Tracks IME composition so the placeholder hides while composing.
@@ -303,14 +307,14 @@ struct ModelPickerView: View {
         )
     }
 
-    private static func mediaPrivacyLabel(_ value: String) -> String {
+    static func mediaPrivacyLabel(_ value: String) -> String {
         value
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: "-", with: " ")
             .capitalized
     }
 
-    private static func mediaDetails(_ model: MediaModelInfo) -> String? {
+    static func mediaDetails(_ model: MediaModelInfo) -> String? {
         let constraints = model.constraints
         var details: [String] = []
         if !constraints.aspectRatios.isEmpty {
@@ -566,6 +570,10 @@ struct ModelPickerView: View {
             }
 
             Button(action: {
+                if let onAddModel {
+                    onAddModel()
+                    return
+                }
                 onDismiss()
                 Task { @MainActor in
                     try? await Task.sleepForPopoverDismiss()

@@ -85,6 +85,8 @@ final class AgentChannelInboundRelay {
     private let auditLog: AgentChannelAuditLog
     private let taskManager: BackgroundTaskManager
     private let activityCenter: AgentChannelInboundActivityCenter
+    private let focusPreference: AgentChannelInboundFocusPreference
+    private let revealTask: @MainActor (UUID) -> Void
     private var activePartitions = Set<String>()
 
     init(
@@ -92,13 +94,27 @@ final class AgentChannelInboundRelay {
         safetyGate: ChannelRemoteSafetyGate = .shared,
         auditLog: AgentChannelAuditLog = .shared,
         taskManager: BackgroundTaskManager = .shared,
-        activityCenter: AgentChannelInboundActivityCenter = .shared
+        activityCenter: AgentChannelInboundActivityCenter = .shared,
+        focusPreference: AgentChannelInboundFocusPreference = .shared,
+        revealTask: @escaping @MainActor (UUID) -> Void = { ChatWindowManager.shared.revealTask($0) }
     ) {
         self.substrate = substrate
         self.safetyGate = safetyGate
         self.auditLog = auditLog
         self.taskManager = taskManager
         self.activityCenter = activityCenter
+        self.focusPreference = focusPreference
+        self.revealTask = revealTask
+    }
+
+    /// Settings → Channels → Incoming → Focus Chat on Incoming Messages: when
+    /// enabled, every inbound message brings its conversation forward (focus
+    /// the tab, order the chat window front, open one if none is up). Off by
+    /// default; a monitoring/dedicated machine turns it on to see each
+    /// channel activation as it happens.
+    func revealConversationIfPreferred(taskId: UUID) {
+        guard focusPreference.isEnabled else { return }
+        revealTask(taskId)
     }
 
     func submit(_ request: AgentChannelInboundRelayRequest) async -> AgentChannelInboundRelaySubmission {
@@ -284,12 +300,24 @@ final class AgentChannelInboundRelay {
                     message: message
                 )
                 if let refusal, request.settings.autoReplyEnabled, let responder = request.reply {
-                    try? await responder(refusal)
+                    let activity = Self.replyActivity(for: request, agentId: agentId, sessionId: partition.sessionId)
+                    do {
+                        try await responder(refusal)
+                        activity.finish(
+                            contentLength: refusal.utf8.count, outcome: "refusal_sent", error: nil,
+                            extraDetails: ["reason": "dispatch_unavailable"])
+                    } catch {
+                        activity.finish(
+                            contentLength: refusal.utf8.count, outcome: "failed",
+                            error: error.localizedDescription, extraDetails: ["reason": "dispatch_unavailable"])
+                    }
                 }
                 return
             }
             taskId = handle.id
         }
+
+        revealConversationIfPreferred(taskId: taskId)
 
         let terminal = await waitForReply(taskId: taskId, runStartedAt: runStartedAt)
         switch terminal {
@@ -317,6 +345,10 @@ final class AgentChannelInboundRelay {
             let sanitized = ChannelRemoteSafetyGate.sanitizeResult(
                 ChannelRemoteResultPayload(text: text)
             )
+            // Activity log: the reply is about to leave this Mac for the
+            // provider. Captured before the send so attribution reads the
+            // caller's task-locals; written once the attempt settles.
+            let replyActivity = Self.replyActivity(for: request, agentId: agentId, sessionId: taskId)
             do {
                 try await responder(sanitized.text)
                 var metadata = [
@@ -342,6 +374,12 @@ final class AgentChannelInboundRelay {
                     if sent > 0 { metadata["artifacts_sent"] = "\(sent)" }
                     if failed > 0 { metadata["artifacts_failed"] = "\(failed)" }
                 }
+                replyActivity.finish(
+                    contentLength: sanitized.text.utf8.count,
+                    outcome: awaitingClarification ? "replied_awaiting_clarification" : "replied",
+                    error: nil,
+                    extraDetails: metadata
+                )
                 await auditLog.record(
                     AgentChannelAuditEvent(
                         kind: .replySent,
@@ -359,6 +397,12 @@ final class AgentChannelInboundRelay {
                     stage: .replySent
                 )
             } catch {
+                replyActivity.finish(
+                    contentLength: sanitized.text.utf8.count,
+                    outcome: "failed",
+                    error: error.localizedDescription,
+                    extraDetails: [:]
+                )
                 await recordFailure(
                     request,
                     agentId: agentId,
@@ -417,6 +461,11 @@ final class AgentChannelInboundRelay {
         return max(0, applicable.count - maxPreloadedPluginTools)
     }
 
+    /// Header of the attachment trailer appended to the channel content.
+    /// Shared with `ChannelMessageEnvelope`, which splits the trailer off for
+    /// display, so the producer and the parser can never drift apart.
+    nonisolated static let attachmentContextHeader = "Attachments supplied by the channel (untrusted metadata):"
+
     private static func attachmentContext(_ attachments: [AgentChannelStoredAttachment]) -> String {
         guard !attachments.isEmpty else { return "" }
         let lines = attachments.map { attachment in
@@ -428,7 +477,7 @@ final class AgentChannelInboundRelay {
             return "- \(attachment.kind.rawValue): \(attachment.providerId)"
                 + (details.isEmpty ? "" : " (\(details))")
         }
-        return "\n\nAttachments supplied by the channel (untrusted metadata):\n"
+        return "\n\n" + attachmentContextHeader + "\n"
             + lines.joined(separator: "\n")
     }
 
@@ -536,6 +585,53 @@ final class AgentChannelInboundRelay {
             else { return false }
             return seenPaths.insert(artifact.hostPath).inserted
         }
+    }
+
+    // MARK: - Activity log (auto-reply egress)
+
+    /// One auto-reply about to leave this Mac. Resolves the connection and
+    /// attribution up-front; `finish` writes the Insights row once.
+    struct ReplyActivity: Sendable {
+        let connection: AgentChannelConnection?
+        let connectionId: String
+        let roomId: String
+        let threadId: String?
+        let attribution: InsightsService.ActivityAttribution
+        let started = Date()
+
+        func finish(contentLength: Int, outcome: String, error: String?, extraDetails: [String: String]) {
+            ChannelActivityLogger.logDelivery(
+                connection: connection,
+                connectionId: connectionId,
+                roomId: roomId,
+                threadId: threadId,
+                contentLength: contentLength,
+                outcome: outcome,
+                trigger: .autoReply,
+                error: error,
+                durationMs: Date().timeIntervalSince(started) * 1000,
+                attribution: attribution,
+                source: .channel,
+                extraDetails: extraDetails
+            )
+        }
+    }
+
+    static func replyActivity(
+        for request: AgentChannelInboundRelayRequest,
+        agentId: UUID?,
+        sessionId: UUID,
+        connection: AgentChannelConnection? = nil
+    ) -> ReplyActivity {
+        let resolved = connection
+            ?? (try? AgentChannelConnectionService.shared.resolvedConnectionView(id: request.connectionId))
+        return ReplyActivity(
+            connection: resolved,
+            connectionId: request.connectionId,
+            roomId: request.providerRoute.conversationId,
+            threadId: request.providerRoute.threadId,
+            attribution: InsightsService.ActivityAttribution(agentId: agentId, sessionId: sessionId)
+        )
     }
 
     private func recordFailure(

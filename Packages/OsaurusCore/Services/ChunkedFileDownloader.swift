@@ -262,7 +262,8 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             manifestURL: manifestURL,
             destination: destination,
             expectedSize: total,
-            expectedSHA256: metadata.sha256
+            expectedSHA256: metadata.sha256,
+            checkCancellation: { try self.checkPause() }
         )
     }
 
@@ -381,7 +382,8 @@ final class ChunkedFileDownloader: @unchecked Sendable {
         manifestURL: URL,
         destination: URL,
         expectedSize: Int64,
-        expectedSHA256: String?
+        expectedSHA256: String?,
+        checkCancellation: @escaping @Sendable () throws -> Void
     ) async throws {
         let fm = FileManager.default
         let actual =
@@ -403,9 +405,14 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             // Detached: hashing a multi-gigabyte file is seconds of blocking
             // file I/O, which must not tie up the caller's (possibly main)
             // executor. Same pattern as `SandboxManager.verifySHA256Async`.
-            let digest = try await Task.detached(priority: .userInitiated) {
-                try hashFile(at: partURL)
-            }.value
+            let hashing = Task.detached(priority: .userInitiated) {
+                try hashFile(at: partURL, checkCancellation: checkCancellation)
+            }
+            let digest = try await withTaskCancellationHandler {
+                try await hashing.value
+            } onCancel: {
+                hashing.cancel()
+            }
             guard digest == expectedSHA256 else {
                 try? fm.removeItem(at: partURL)
                 try? fm.removeItem(at: manifestURL)
@@ -419,16 +426,17 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             }
         }
 
-        try? fm.removeItem(at: destination)
-        try fm.moveItem(at: partURL, to: destination)
+        try checkCancellation()
+        try ModelFileIntegrity.commit(staged: partURL, to: destination)
         try? fm.removeItem(at: manifestURL)
     }
 
-    private static func hashFile(at url: URL) throws -> String {
+    private static func hashFile(at url: URL, checkCancellation: () throws -> Void) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hasher = SHA256()
         while let block = try handle.read(upToCount: 4 * 1024 * 1024), !block.isEmpty {
+            try checkCancellation()
             hasher.update(data: block)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -578,7 +586,7 @@ private final class Counter: @unchecked Sendable {
 /// Exactly one request is in flight per lane, so the per-request state below
 /// needs no queue — only a lock, since the delegate callbacks land on a
 /// `URLSession` thread.
-private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var handle: FileHandle?
     private var expected: Int64 = 0
@@ -587,9 +595,11 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
     private var continuation: CheckedContinuation<Void, Error>?
     private var failure: Error?
 
-    private lazy var session: URLSession = {
-        GlobalProxySettings.makeSession(base: .default, delegate: self)
-    }()
+    // The lane is terminal after invalidation. Session construction and task
+    // creation share the state lock so cancellation cannot invalidate a session
+    // between the admission check and dataTask(with:).
+    private var session: URLSession?
+    private var invalidated = false
 
     func fetch(
         url: URL,
@@ -604,18 +614,45 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
 
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             lock.lock()
+            guard !invalidated else {
+                lock.unlock()
+                c.resume(throwing: CancellationError())
+                return
+            }
+            let session: URLSession
+            if let existing = self.session {
+                session = existing
+            } else {
+                session = GlobalProxySettings.makeSession(base: .default, delegate: self)
+                self.session = session
+            }
             self.handle = handle
             self.expected = expected
             self.onBytes = onBytes
             self.received = 0
             self.failure = nil
             self.continuation = c
+            let task = session.dataTask(with: request)
             lock.unlock()
-            session.dataTask(with: request).resume()
+            // Cancellation after task creation is a normal URLSession task
+            // cancellation. Never hold the lane lock while resuming callbacks.
+            task.resume()
         }
     }
 
-    func invalidate() { session.invalidateAndCancel() }
+    func invalidate() {
+        lock.lock()
+        guard !invalidated else {
+            lock.unlock()
+            return
+        }
+        invalidated = true
+        let session = self.session
+        lock.unlock()
+        // Do not eagerly create a session merely to invalidate an unused lane.
+        // Completion of an admitted task still owns its continuation.
+        session?.invalidateAndCancel()
+    }
 
     private func setFailure(_ error: Error) {
         lock.lock()

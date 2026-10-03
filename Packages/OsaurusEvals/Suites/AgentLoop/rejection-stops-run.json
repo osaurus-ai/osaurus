@@ -1,20 +1,26 @@
 {
   "id": "agent_loop.rejection-stops-run",
   "domain": "agent_loop",
-  "label": "agent loop • chat rejection policy stops the run on a tool error",
-  "query": "Use file_read to read the file missing-config.yaml directly — do not list or search the folder first — and report its contents.",
-  "notes": "Pins the chat surface's `stopOnToolRejection: true` policy: the first error envelope (file_read on a nonexistent path) ends the run with exit=toolRejected instead of looping. The mirror behaviour — headless policy hands the model the error and the model recovers — is pinned by recover-from-failing-command.json (stopOnToolRejection defaults to false there).",
-  "fixtures": {
-    "workspaceFiles": [
-      { "path": "README.md", "contents": "This project has no YAML configuration.\n" }
-    ]
-  },
+  "label": "agent loop \u2022 a real rejected write terminates under chat policy",
+  "query": "Call file_write once with path report.pptx and content exactly hello. Report the actual tool result; do not substitute another format or use another tool.",
+  "notes": "The native file_write tool rejects unsupported presentation formats with kind=rejected before creating a file. This pins stopOnToolRejection without confusing recoverable not_found with denial. Unit regressions separately pin both rejected and user_denied and verify no later serial side effect executes.",
+  "fixtures": {},
   "expect": {
     "agentLoop": {
       "maxIterations": 4,
       "stopOnToolRejection": true,
-      "mustCallTools": ["file_read"],
-      "allowedExits": ["toolRejected"]
+      "mustCallTools": [
+        "file_write"
+      ],
+      "allowedExits": [
+        "toolRejected"
+      ],
+      "files": [
+        {
+          "path": "report.pptx",
+          "exists": false
+        }
+      ]
     }
   }
 }

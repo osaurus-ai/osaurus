@@ -11,6 +11,24 @@
 
 import Foundation
 
+/// How much of the most recent real request's prompt came back from a cache
+/// tier instead of being prefilled. `restoredTokens == 0` is a cold request.
+public struct CacheRestoreSummary: Equatable, Sendable {
+    public let modelName: String
+    public let restoredTokens: Int
+    public let promptTokens: Int
+    /// The tier that served the restore, as the runtime names it
+    /// (`paged`, `disk`), or nil when nothing was restored.
+    public let detail: String?
+
+    public init(modelName: String, restoredTokens: Int, promptTokens: Int, detail: String?) {
+        self.modelName = modelName
+        self.restoredTokens = max(0, restoredTokens)
+        self.promptTokens = max(0, promptTokens)
+        self.detail = detail
+    }
+}
+
 /// Snapshot of `BatchEngine` diagnostics aggregated across every
 /// resolved engine in `MLXBatchAdapter.Registry`. Decoupled from the
 /// MLX layer so SwiftUI views can render it without importing
@@ -64,6 +82,39 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
     /// this IS a per-instance counter, so summing is correct.
     public let diskL2Evictions: Int
 
+    /// Bytes of the boundaries counted in `diskL2Evictions`. Per-instance
+    /// counter, summed.
+    public let diskL2EvictedBytes: Int
+
+    /// Quota passes that removed at least one boundary. Per-instance counter,
+    /// summed.
+    public let diskL2QuotaPasses: Int
+
+    /// Wall time of the most recent quota pass that found the cache over its
+    /// cap, in milliseconds; 0 until there has been one. A reading, not a
+    /// counter: aggregation selects the newest process-monotonic pass tick.
+    public let diskL2LastQuotaPassMs: Double
+
+    /// Index writes that failed after their files were on disk. Per-instance
+    /// counter, summed.
+    public let diskL2FailedIndexWrites: Int
+
+    /// Quota passes that reported the cap as too small for the conversation in
+    /// progress. Historical per-instance count, summed across models and
+    /// retained after unload. This is NOT the identity of the live event.
+    public let diskL2PressureEventSeq: Int
+
+    /// What the most recent pressure event was, as the runtime names it, or
+    /// nil when there has been none on a loaded model. With several models
+    /// loaded it is selected by the engine's process-monotonic event tick.
+    public let diskL2PressureKind: String?
+
+    /// The chat (session id) the most recent pressure event was about, or nil.
+    public let diskL2PressureChainId: String?
+
+    /// The most recent real request's cache restore, or nil before the first.
+    public let lastCacheRestore: CacheRestoreSummary?
+
     /// Fraction of the configured quota currently in use, or nil when no quota
     /// is configured. Drives the chat footer's cache readout and its warning.
     public var diskL2UsedFraction: Double? {
@@ -98,11 +149,27 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         ssmCompanionReDerives: Int = 0,
         diskL2PayloadBytes: Int = 0,
         diskL2MaxBytes: Int = 0,
-        diskL2Evictions: Int = 0
+        diskL2Evictions: Int = 0,
+        diskL2EvictedBytes: Int = 0,
+        diskL2QuotaPasses: Int = 0,
+        diskL2LastQuotaPassMs: Double = 0,
+        diskL2FailedIndexWrites: Int = 0,
+        diskL2PressureEventSeq: Int = 0,
+        diskL2PressureKind: String? = nil,
+        diskL2PressureChainId: String? = nil,
+        lastCacheRestore: CacheRestoreSummary? = nil
     ) {
         self.diskL2PayloadBytes = max(0, diskL2PayloadBytes)
         self.diskL2MaxBytes = max(0, diskL2MaxBytes)
         self.diskL2Evictions = max(0, diskL2Evictions)
+        self.diskL2EvictedBytes = max(0, diskL2EvictedBytes)
+        self.diskL2QuotaPasses = max(0, diskL2QuotaPasses)
+        self.diskL2LastQuotaPassMs = max(0, diskL2LastQuotaPassMs)
+        self.diskL2FailedIndexWrites = max(0, diskL2FailedIndexWrites)
+        self.diskL2PressureEventSeq = max(0, diskL2PressureEventSeq)
+        self.diskL2PressureKind = diskL2PressureKind
+        self.diskL2PressureChainId = diskL2PressureChainId
+        self.lastCacheRestore = lastCacheRestore
         self.pendingCount = pendingCount
         self.activeCount = activeCount
         self.activeHighWatermark = activeHighWatermark
@@ -155,6 +222,13 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
     /// and survives a model unload. The byte gauges deliberately do NOT live
     /// here: they are an instantaneous root-wide reading, not something to add up.
     var diskL2Evictions: Int = 0
+    /// The disk quota's other per-instance counters, retained the same way.
+    /// The last pass time and the pressure kind are readings, not counters,
+    /// and stay live-only like the byte gauges.
+    var diskL2EvictedBytes: Int = 0
+    var diskL2QuotaPasses: Int = 0
+    var diskL2FailedIndexWrites: Int = 0
+    var diskL2PressureEventSeq: Int = 0
 
     init(
         activeHighWatermark: Int = 0,
@@ -169,9 +243,17 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
         ssmCompanionHits: Int = 0,
         ssmCompanionMisses: Int = 0,
         ssmCompanionReDerives: Int = 0,
-        diskL2Evictions: Int = 0
+        diskL2Evictions: Int = 0,
+        diskL2EvictedBytes: Int = 0,
+        diskL2QuotaPasses: Int = 0,
+        diskL2FailedIndexWrites: Int = 0,
+        diskL2PressureEventSeq: Int = 0
     ) {
         self.diskL2Evictions = max(0, diskL2Evictions)
+        self.diskL2EvictedBytes = max(0, diskL2EvictedBytes)
+        self.diskL2QuotaPasses = max(0, diskL2QuotaPasses)
+        self.diskL2FailedIndexWrites = max(0, diskL2FailedIndexWrites)
+        self.diskL2PressureEventSeq = max(0, diskL2PressureEventSeq)
         self.activeHighWatermark = max(0, activeHighWatermark)
         self.decodeSplitCount = max(0, decodeSplitCount)
         self.turboQuantCompressions = max(0, turboQuantCompressions)
@@ -200,7 +282,11 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
             ssmCompanionHits: snapshot.ssmCompanionHits,
             ssmCompanionMisses: snapshot.ssmCompanionMisses,
             ssmCompanionReDerives: snapshot.ssmCompanionReDerives,
-            diskL2Evictions: snapshot.diskL2Evictions
+            diskL2Evictions: snapshot.diskL2Evictions,
+            diskL2EvictedBytes: snapshot.diskL2EvictedBytes,
+            diskL2QuotaPasses: snapshot.diskL2QuotaPasses,
+            diskL2FailedIndexWrites: snapshot.diskL2FailedIndexWrites,
+            diskL2PressureEventSeq: snapshot.diskL2PressureEventSeq
         )
     }
 
@@ -230,6 +316,16 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
             other.ssmCompanionReDerives
         )
         diskL2Evictions = Self.saturatingAdd(diskL2Evictions, other.diskL2Evictions)
+        diskL2EvictedBytes = Self.saturatingAdd(diskL2EvictedBytes, other.diskL2EvictedBytes)
+        diskL2QuotaPasses = Self.saturatingAdd(diskL2QuotaPasses, other.diskL2QuotaPasses)
+        diskL2FailedIndexWrites = Self.saturatingAdd(
+            diskL2FailedIndexWrites,
+            other.diskL2FailedIndexWrites
+        )
+        diskL2PressureEventSeq = Self.saturatingAdd(
+            diskL2PressureEventSeq,
+            other.diskL2PressureEventSeq
+        )
     }
 
     func mergingCounters(into live: BatchDiagnosticsSnapshot) -> BatchDiagnosticsSnapshot {
@@ -265,7 +361,16 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
             // adding successive readings together would be meaningless.
             diskL2PayloadBytes: live.diskL2PayloadBytes,
             diskL2MaxBytes: live.diskL2MaxBytes,
-            diskL2Evictions: merged.diskL2Evictions
+            diskL2Evictions: merged.diskL2Evictions,
+            diskL2EvictedBytes: merged.diskL2EvictedBytes,
+            diskL2QuotaPasses: merged.diskL2QuotaPasses,
+            // Readings, like the byte figures: taken from the LIVE snapshot.
+            diskL2LastQuotaPassMs: live.diskL2LastQuotaPassMs,
+            diskL2FailedIndexWrites: merged.diskL2FailedIndexWrites,
+            diskL2PressureEventSeq: merged.diskL2PressureEventSeq,
+            diskL2PressureKind: live.diskL2PressureKind,
+            diskL2PressureChainId: live.diskL2PressureChainId,
+            lastCacheRestore: live.lastCacheRestore
         )
     }
 

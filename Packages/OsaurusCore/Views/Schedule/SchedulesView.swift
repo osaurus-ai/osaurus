@@ -2031,12 +2031,13 @@ private struct AgentPicker: View {
 
     private var selectedAgentDescription: String? {
         if let option = selectedWorkspaceOption {
-            return String(format: L("Workspace agent · %@"), option.subtitle)
+            let purpose = AgentDescriptionPolicy.normalized(option.description ?? "")
+            return purpose.isEmpty ? option.subtitle : "\(option.subtitle) — \(purpose)"
         }
         if selectedAgentId == nil {
             return L("Uses the default system behavior")
         }
-        let desc = selectedAgent?.description ?? ""
+        let desc = selectedAgent?.routingDescription ?? ""
         return desc.isEmpty ? nil : desc
     }
 
@@ -2136,7 +2137,7 @@ private struct AgentPicker: View {
                     ForEach(agents, id: \.id) { agent in
                         AgentOptionRow(
                             name: agent.name,
-                            description: agent.description,
+                            description: agent.routingDescription,
                             isSelected: selectedAgentId == agent.id,
                             action: {
                                 selectedTarget = .local(agent.id)
@@ -2171,7 +2172,7 @@ private struct AgentPicker: View {
                 }
             }
             .padding(8)
-            .frame(minWidth: 280)
+            .frame(width: 360)
             .background(theme.cardBackground)
         }
     }

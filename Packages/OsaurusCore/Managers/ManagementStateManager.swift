@@ -90,6 +90,11 @@ public final class ManagementStateManager: ObservableObject {
     /// this and resets it to nil after applying.
     @Published public var memorySubTabRequest: String?
 
+    /// One-shot request to focus a specific sub-tab inside `PrivacyView`
+    /// (raw value of `PrivacyTab`, e.g. "storage"). `PrivacyView` observes
+    /// this and resets it to nil after applying.
+    @Published public var privacySubTabRequest: String?
+
     /// One-shot request to focus a specific sub-tab inside `ImageGenerationView`
     /// (raw value of `ImageGenerationTab`, e.g. "Models"). `ImageGenerationView`
     /// observes this and resets it to nil after applying.
@@ -114,6 +119,38 @@ public final class ManagementStateManager: ObservableObject {
     /// on the Models tab — e.g. from a What's New announcement CTA.
     /// `ModelDownloadView` observes this and resets it to nil after applying.
     @Published public var pendingModelDetailId: String?
+
+    /// A Hugging Face model link to apply on the Models tab: prefill the
+    /// search with the repo, make sure it is in the catalog, and pin the
+    /// Catalog list so the card is visible. Delivered through shared state
+    /// rather than by rebuilding the management window's hosting controller:
+    /// that rebuild orphans any SwiftUI sheet that is up (the linked model's
+    /// own detail sheet, after the previous link) and traps inside SwiftUI
+    /// on the next window resize (Sentry APPLE-MACOS-EF, reproduced live
+    /// with two consecutive links). `ModelDownloadView` consumes and clears.
+    public struct ModelDeepLinkRequest: Equatable, Sendable {
+        public let modelId: String
+        public let file: String?
+        /// Distinguishes two links to the same repo in a row.
+        public let id: UUID
+
+        public init(modelId: String, file: String?) {
+            self.modelId = modelId
+            self.file = file
+            self.id = UUID()
+        }
+    }
+    @Published public var pendingModelDeepLink: ModelDeepLinkRequest?
+
+    /// One-shot request to pop the Hugging Face token sheet on the Models
+    /// tab. Set by the deep-link handler when the Hub answered 401/403 for
+    /// the linked repo. `HuggingFaceTokenCard` observes this and resets it.
+    @Published public var pendingHuggingFaceTokenPrompt: Bool = false
+
+    /// Repo id to re-resolve once a token has been saved from that prompt,
+    /// so the user lands on the model they clicked instead of an empty
+    /// search. Cleared by `HuggingFaceTokenCard` after the retry.
+    @Published public var pendingDeepLinkRetryModelId: String?
 
     /// One-shot request to pop the "Add Collection" sheet on the Knowledge
     /// tab — e.g. from the project page's Add Collection shortcut, so the
@@ -152,13 +189,6 @@ public final class ManagementStateManager: ObservableObject {
     /// `AgentsView` observes this and resets it to nil after presenting.
     @Published public var pendingTemplateImportText: String?
 
-    /// One-shot request to open the New Workspace sheet, which is the
-    /// "Start free trial" flow (name, billing interval, then Stripe Checkout
-    /// in the browser) — e.g. from the Workspaces intro dialog's CTA.
-    /// `WorkspacesView` observes this and resets it to false once the
-    /// router and identity gates let it present.
-    @Published public var pendingCreateWorkspace: Bool = false
-
     /// One-shot request to reveal a project's shared memory — the namespace
     /// key (`project-<uuid>`). `MemoryView` observes this, switches to its
     /// Agents subtab, opens the project's context preview, and resets it to
@@ -187,7 +217,7 @@ public final class ManagementStateManager: ObservableObject {
     /// One-shot request to open the MCP provider add sheet prefilled with a
     /// draft — used when the API provider connect test detects that the
     /// pasted URL is actually an MCP server and redirects the user to
-    /// Tools > Connections. `ProvidersView` observes this and resets it to
+    /// Tools & MCP > Services. `ProvidersView` observes this and resets it to
     /// nil after presenting the sheet. The token only lives in memory here;
     /// it reaches the Keychain when the user saves the provider.
     @Published public var pendingMCPProviderDraft: MCPProviderDraft?

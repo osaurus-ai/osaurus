@@ -53,7 +53,7 @@ public enum RemoteProviderMCPDetection {
     /// base URL has been identified as an MCP server.
     public static func guidance() -> String {
         L(
-            "This URL answers like an MCP server, not a chat completions API. Add it under Tools > Connections instead of as an API provider."
+            "This URL answers like an MCP server, not a chat completions API. Add it under Tools & MCP > Services instead of as an API provider."
         )
     }
 }

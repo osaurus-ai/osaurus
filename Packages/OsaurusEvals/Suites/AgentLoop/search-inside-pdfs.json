@@ -1,0 +1,52 @@
+{
+  "id": "agent_loop.search-inside-pdfs",
+  "domain": "agent_loop",
+  "label": "agent loop • find which PDF mentions a term with file_search (document content search)",
+  "query": "There are several contract PDFs in this folder. Which contract mentions Zanzibar? Use a content search rather than opening every file.",
+  "notes": "file_search now searches inside PDF/DOCX/PPTX/XLSX via the document adapters and reports page locators. The right shape is one file_search call, not a file_read sweep or shell grep/pdftotext.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "contracts/contract-a.pdf",
+        "contentsFromFixture": "Documents/contract-a.pdf"
+      },
+      {
+        "path": "contracts/contract-b.pdf",
+        "contentsFromFixture": "Documents/contract-b.pdf"
+      },
+      {
+        "path": "contracts/contract-c.pdf",
+        "contentsFromFixture": "Documents/contract-c.pdf"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "maxToolCalls": 4,
+      "mustCallTools": [
+        "file_search"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "noToolErrors": true,
+      "toolUsageAudit": [
+        {
+          "tool": "file_search",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "Zanzibar"
+        },
+        {
+          "tool": "file_read",
+          "maxCalls": 1
+        }
+      ],
+      "finalTextContains": [
+        "contract-b"
+      ]
+    }
+  }
+}

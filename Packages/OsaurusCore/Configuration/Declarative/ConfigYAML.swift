@@ -225,6 +225,11 @@ public enum ConfigYAML {
             if path == "default_agent", keyString == "disable_tools" {
                 continue
             }
+            // `active_agent` is the legacy spelling of `new_chat_agent`; the
+            // document decoder reads both.
+            if path.isEmpty, keyString == OsaurusConfigDocument.legacyNewChatAgentKey {
+                continue
+            }
             if !known.contains(keyString) {
                 var message = "Unknown key `\(keyString)` at \(display)."
                 if path.isEmpty, ["server", "chat", "app"].contains(keyString) {
@@ -291,6 +296,8 @@ public enum ConfigYAML {
         "mcp": "mcp_servers",
         "mcps": "mcp_servers",
         "knowledge": "knowledge_collections",
+        "default_chat_agent": "new_chat_agent",
+        "chat_agent": "new_chat_agent",
         // Schedule vocabulary models pick up from prose ("run on a daily
         // cadence at 08:00"); the real keys are too far for edit distance.
         "cadence": "frequency",

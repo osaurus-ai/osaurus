@@ -68,7 +68,8 @@ struct RemoteProviderManagerRefreshTests {
 
             manager.testFetchModelsOverride = { _ in ["new-a", "new-b"] }
 
-            await manager.refetchModels(providerId: provider.id)
+            let refreshed = await manager.refetchModels(providerId: provider.id)
+            #expect(refreshed)
 
             let updated = manager.providerStates[provider.id]?.discoveredModels ?? []
             #expect(updated == ["new-a", "new-b"])
@@ -93,7 +94,8 @@ struct RemoteProviderManagerRefreshTests {
 
             manager.testFetchModelsOverride = { _ in ["new-model"] }
 
-            await manager.refetchModels(providerId: provider.id)
+            let refreshed = await manager.refetchModels(providerId: provider.id)
+            #expect(refreshed)
 
             #expect(await service.getRawModels() == ["new-model"])
         }
@@ -110,7 +112,8 @@ struct RemoteProviderManagerRefreshTests {
             defer { NotificationCenter.default.removeObserver(observer) }
 
             manager.testFetchModelsOverride = { _ in ["same-model"] }
-            await manager.refetchModels(providerId: provider.id)
+            let refreshed = await manager.refetchModels(providerId: provider.id)
+            #expect(refreshed)
 
             try? await Task.sleep(nanoseconds: 10_000_000)
             #expect(counter.value == 0)
@@ -126,7 +129,8 @@ struct RemoteProviderManagerRefreshTests {
             struct Boom: Error {}
             manager.testFetchModelsOverride = { _ in throw Boom() }
 
-            await manager.refetchModels(providerId: provider.id)
+            let refreshed = await manager.refetchModels(providerId: provider.id)
+            #expect(!refreshed)
 
             let state = manager.providerStates[provider.id]
             #expect(state?.discoveredModels == ["keep-me"])
@@ -184,7 +188,8 @@ struct RemoteProviderManagerRefreshTests {
                 return ["should-not-be-fetched"]
             }
 
-            await manager.refetchModels(providerId: provider.id)
+            let refreshed = await manager.refetchModels(providerId: provider.id)
+            #expect(!refreshed)
             #expect(counter.value == 0)
         }
     }

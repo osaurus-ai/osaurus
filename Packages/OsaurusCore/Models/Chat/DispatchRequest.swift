@@ -72,7 +72,7 @@ public struct DispatchRequest: Sendable {
     public let loadIntent: ModelLoadIntent
 
     /// True when this dispatch is a TRUE agent delegation (an orchestrating
-    /// agent's `spawn_agent` / `spawn_batch` call). Derived from `source` —
+    /// agent's `spawn_agent` call). Derived from `source` —
     /// delegation always dispatches with `source: .delegation` — so there is
     /// exactly one source of truth. The dispatcher binds the source as
     /// `ChatExecutionContext.currentSessionSource` for the run (and

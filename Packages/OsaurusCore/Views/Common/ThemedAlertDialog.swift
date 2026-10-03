@@ -106,8 +106,8 @@ public final class ThemedAlertCenter: ObservableObject {
 
     /// True when ANY scope currently owns an alert. Read-only occupancy
     /// signal for callers that must not stack a new dialog on top of an
-    /// existing one anywhere in the app (e.g. the one-time Product Hunt
-    /// launch dialog defers to the next activation instead).
+    /// existing one anywhere in the app (e.g. router announcement dialogs
+    /// defer to the next activation instead).
     public var hasAnyActiveAlert: Bool {
         stacksByScope.values.contains { !$0.isEmpty }
     }
@@ -160,9 +160,8 @@ public struct ThemedAlertRequest: Identifiable {
     public let message: String?
     /// Optional asset-catalog images (module bundle) rendered side by side
     /// above the title in place of the standard SF Symbol circle. Use for
-    /// announcement-style dialogs that carry their own artwork (e.g. the
-    /// Product Hunt launch dinosaur + kitty). Empty keeps the existing icon
-    /// header for every other alert.
+    /// announcement-style dialogs that ship their own bundled artwork. Empty
+    /// keeps the existing icon header for every other alert.
     public let headerImageNames: [String]
     /// Accessibility description for the header artwork as a whole. Ignored
     /// when no header images are set.
@@ -502,11 +501,16 @@ private struct ThemedAlertDialogContent: View {
         return buttons.filter { $0.role != .cancel }
     }
 
+    /// Index of the inline button that takes the accent style and Return.
+    /// With the corner X shown, an explicit role-nil action (e.g. an
+    /// announcement's single call-to-action) still reads as primary; only
+    /// the "nothing but cancel" chooser case yields no primary (`-1`).
     private var inlinePrimaryIndex: Int {
+        if let explicit = inlineButtons.firstIndex(where: { $0.role == nil }) {
+            return explicit
+        }
         if showsCloseButton { return -1 }
-        return inlineButtons.firstIndex { $0.role == nil }
-            ?? inlineButtons.firstIndex { $0.role == .destructive }
-            ?? 0
+        return inlineButtons.firstIndex { $0.role == .destructive } ?? 0
     }
 
     private func closeButton(_ cancel: AlertButtonConfig) -> some View {

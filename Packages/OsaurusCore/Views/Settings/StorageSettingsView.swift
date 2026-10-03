@@ -63,6 +63,7 @@ public struct StorageSettingsView: View {
             tradeoffsCard
             actionsCard
             footnote
+            FileHistoryRetentionSection()
         }
     }
 

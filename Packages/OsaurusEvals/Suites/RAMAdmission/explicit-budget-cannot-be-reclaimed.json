@@ -1,0 +1,55 @@
+{
+  "id": "ram_admission.explicit-budget-cannot-be-reclaimed",
+  "domain": "subagent",
+  "label": "RAM policy replay: explicit-budget-cannot-be-reclaimed",
+  "query": "Replay explicit host facts through production planner, recovery and one persistent reservation actor.",
+  "notes": "Deterministic injected facts; not physical 16GB or live inference proof.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "ram_admission",
+      "ramAdmission": {
+        "scenario": {
+          "localJobs": 1,
+          "remoteJobs": 0,
+          "agentLimit": 1,
+          "engineLimit": 1,
+          "batching": true,
+          "ramSafety": true,
+          "steps": [
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 3758096384,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 5899232198,
+                "reserveBytes": 3221225472
+              },
+              "after": null,
+              "reclaimSucceeds": false
+            }
+          ]
+        },
+        "expected": [
+          {
+            "capacity": 0,
+            "width": 0,
+            "weightCharge": 0,
+            "limitingFactors": [
+              "memoryCapacity"
+            ],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [],
+            "remainingReservations": 0,
+            "reservationError": false
+          }
+        ]
+      }
+    }
+  }
+}

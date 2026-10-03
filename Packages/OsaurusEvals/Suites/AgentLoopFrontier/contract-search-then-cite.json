@@ -1,0 +1,54 @@
+{
+  "id": "frontier.contract-search-then-cite",
+  "domain": "agent_loop",
+  "label": "frontier • search a folder of PDFs, then open only the hit and quote the clause",
+  "query": "In the contracts folder, find which agreement involves Zanzibar, then name the counterparty and the delivery port from that contract. Do not open contracts that do not match.",
+  "notes": "file_search over document content narrows to one PDF (a folder listing first is fine); reading unrelated contracts or shell/pdftotext detours fail the audit. Scored on tool discipline plus facts that only exist inside the matching PDF.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "contracts/contract-a.pdf",
+        "contentsFromFixture": "Documents/contract-a.pdf"
+      },
+      {
+        "path": "contracts/contract-b.pdf",
+        "contentsFromFixture": "Documents/contract-b.pdf"
+      },
+      {
+        "path": "contracts/contract-c.pdf",
+        "contentsFromFixture": "Documents/contract-c.pdf"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxToolCalls": 5,
+      "mustCallTools": [
+        "file_search"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "noToolErrors": true,
+      "toolUsageAudit": [
+        {
+          "tool": "file_read",
+          "maxCalls": 2,
+          "maxErrors": 0
+        },
+        {
+          "tool": "file_search",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "Zanzibar"
+        }
+      ],
+      "finalTextContains": [
+        "contract-b",
+        "Spice Cooperative"
+      ]
+    }
+  }
+}

@@ -1,18 +1,20 @@
 {
   "id": "subagent.spawn-not-spawnable-refused",
   "domain": "subagent",
-  "label": "Subagent • spawn refuses a non-spawnable agent",
+  "label": "Subagent \u2022 spawn refuses a non-spawnable agent",
   "query": "Spawn an agent that is not on the spawnable allow-list.",
-  "notes": "Negative guard, model-independent. Spawning an agent that isn't on the per-agent spawnable allow-list must be refused at resolve time (reject-before-evict) with a `rejected` envelope — never a silent run. Because the case EXPECTS `rejected`, the availability-skip rule does NOT fire (it only skips UNexpected availability envelopes), so this scores normally on every host and every model. Pins the spawn allow-list gate that survives the model override.",
+  "notes": "Negative guard, model-independent. Spawning an agent that isn't on the per-agent spawnable allow-list must be refused at resolve time (reject-before-evict) with a `rejected` envelope \u2014 never a silent run. Because the case EXPECTS `rejected`, the availability-skip rule does NOT fire (it only skips UNexpected availability envelopes), so this scores normally on every host and every model. Pins the spawn allow-list gate that survives the model override. Uses a canonical fixture UUID outside the allowed target pool so name lookup cannot fail before the production allow-list rejection is exercised.",
   "fixtures": {},
   "expect": {
     "subagent": {
       "lane": "spawn",
-      "agent": "ghost-not-spawnable-eval",
+      "agent": "B71AC5EA-0491-4F2B-91A3-8DB0CF829E67",
       "input": "You should never run.",
       "expectSuccess": false,
       "expectEnvelopeKind": "rejected",
-      "summaryContains": ["not spawnable"]
+      "summaryContains": [
+        "not spawnable"
+      ]
     }
   }
 }

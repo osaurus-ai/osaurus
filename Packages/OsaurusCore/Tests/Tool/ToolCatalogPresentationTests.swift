@@ -262,15 +262,22 @@ struct ToolCatalogPresentationTests {
     func legacyToolsSubTabRawValuesResolveToNewTabs() {
         #expect(ToolsTab.resolved(from: "Available") == .all)
         #expect(ToolsTab.resolved(from: "available") == .all)
-        #expect(ToolsTab.resolved(from: "Remote") == .connections)
-        #expect(ToolsTab.resolved(from: "remote") == .connections)
+        #expect(ToolsTab.resolved(from: "Remote") == .services)
+        #expect(ToolsTab.resolved(from: "remote") == .services)
         // The Custom tab was retired; its tools now live as a section on the
         // All Tools tab, so its legacy deep links resolve there.
         #expect(ToolsTab.resolved(from: "Sandbox") == .all)
         #expect(ToolsTab.resolved(from: "sandbox") == .all)
         #expect(ToolsTab.resolved(from: "Custom") == .all)
         #expect(ToolsTab.resolved(from: "All") == .all)
-        #expect(ToolsTab.resolved(from: "Connections") == .connections)
+        // Pre-"Services" names for the MCP tab.
+        #expect(ToolsTab.resolved(from: "Connections") == .services)
+        #expect(ToolsTab.resolved(from: "MCP") == .services)
+        #expect(ToolsTab.resolved(from: "Services") == .services)
+        #expect(ToolsTab.resolved(from: "Plugins") == .nativePlugins)
+        #expect(ToolsTab.resolved(from: "Native Plugins") == .nativePlugins)
         #expect(ToolsTab.resolved(from: "bogus") == nil)
+        // Services is the default, first tab.
+        #expect(ToolsTab.allCases.first == .services)
     }
 }

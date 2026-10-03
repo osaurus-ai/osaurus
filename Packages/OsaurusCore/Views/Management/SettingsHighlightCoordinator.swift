@@ -67,6 +67,15 @@ extension View {
     }
 }
 
+/// Registered by rendered controls, so a scroll container need not duplicate
+/// the settings catalog to distinguish a control from a section destination.
+struct SettingsLandingAnchorsKey: PreferenceKey {
+    static let defaultValue: Set<String> = []
+    static func reduce(value: inout Set<String>, nextValue: () -> Set<String>) {
+        value.formUnion(nextValue())
+    }
+}
+
 private struct SettingsLandingAnchorModifier: ViewModifier {
     let anchorId: String
     @Environment(\.settingsLandingPending) private var pending
@@ -74,6 +83,7 @@ private struct SettingsLandingAnchorModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .id(anchorId)
+            .preference(key: SettingsLandingAnchorsKey.self, value: [anchorId])
             .settingsSearchHighlight(pending == anchorId)
     }
 }

@@ -165,7 +165,8 @@ struct FloatingInputCard: View {
     /// progress / result rows inside the Context Budget popover.
     var compactionState: ContextCompactionUIState = .idle
     /// True when the manual "Compact conversation" action is applicable:
-    /// utilization crossed the threshold and there's an uncovered older span.
+    /// there's an uncovered older span a summary could reclaim (no
+    /// utilization gate — the button is available whenever it can do work).
     var canCompactConversation: Bool = false
     /// Invoked by the popover's "Compact conversation" button.
     var onCompactConversation: (() -> Void)? = nil
@@ -314,6 +315,8 @@ struct FloatingInputCard: View {
     // MARK: - Slash Command State
 
     private var slashRegistry = SlashCommandRegistry.shared
+    /// Bumped when off-main bundle evidence lands so media gates re-evaluate.
+    @State private var mediaEvidenceGeneration = 0
     @State private var slashSelectedIndex: Int = 0
     /// Slash query the user dismissed with Escape. Suppresses the popup for
     /// that exact query so the typed text survives; cleared as soon as the
@@ -446,6 +449,9 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
+    @State private var modelPickerCardSize = CGSize(width: 532, height: 280)
+    @State private var showCloudModelBrowser = false
+    @ObservedObject private var chatModelFavorites = FavoriteModelsStore.shared
     @State private var showImageSizePicker = false
     /// Width available to the toggle-chip region (the space between the model
     /// chip and the meta cluster). Measured cheaply via `onGeometryChange` and
@@ -465,50 +471,13 @@ struct FloatingInputCard: View {
     /// showing the control there would advertise speculation it cannot do.
     /// Sourced from the engine's own per-model status, never from the name.
     @State private var nativeMTPCapableModels: Set<String> = []
-    /// Metadata-scoped default, independent of whether a real MTP head exists.
-    @State private var nativeMTPDefaultOffModels: Set<String> = []
     /// Resident models whose bundle metadata explicitly blocks manual MTP.
     /// Kept separate from capability: the head still exists, but presenting
     /// selectable depths would lie because the runtime must stay AR-only.
     @State private var nativeMTPManuallyBlockedModels: Set<String> = []
     /// Mirrors `mtp.mode` / `mtp.draftTokenLimit` so the row renders the value
     /// that is actually saved rather than a local guess.
-    @State private var nativeMTPSelection: String = "auto"
-
-    // MARK: - SSD Cache Quota Notice
-
-    @State private var ssdWarningSnapshot: DiskCacheQuotaSnapshot?
-    @State private var ssdClearInProgress = false
-    @State private var ssdClearResult: String?
-    @State private var ssdCacheSettings = ServerRuntimeSettingsStore.snapshot().cache
-
-
-    // MARK: - RAM Tight-Fit State
-
-    /// Latest candidate-load RAM projection for the selected local model.
-    /// Nil when no fresh local load is projected. Kept separately from
-    /// runtime phase: a queued chat run does not establish a load.
-    @State private var pendingLoadFeasibility: ModelRuntime.RAMFeasibility?
-    /// Live swap-pressure classification for the resident model's episode.
-    /// Fed by the same 2 s memory tick as the tight-fit banner; advisory
-    /// only — never alters model, sampler, or cache behavior.
-    @State private var swapPressure: SwapPressureMonitor.State?
-    /// Dismissal is scoped to the severity it was dismissed at: the banner
-    /// returns if pressure worsens, and the episode's end re-arms it.
-    @State private var swapBannerDismissedAtSeverity: SwapPressureMonitor.Severity?
-    /// The banner's Unload is in flight: the runtime is draining leases and
-    /// tearing the model down through the guarded lifecycle (Stop-equivalent
-    /// session preparation first, then the timed runtime unload).
-    @State private var swapUnloadInFlight = false
-    /// A refused unload (the model stayed resident behind an active request
-    /// after the lease-drain timeout) is reported in the banner, not dropped.
-    @State private var swapUnloadFailure: String?
-    @State private var memoryWarningPhase: MemoryWarningState.Phase = .unloaded
-    @State private var memoryWarningModel: String?
-    @State private var memoryPredictionAcknowledged: MemoryWarningState.Prediction?
-    @State private var memorySendCheckInFlight = false
-    @State private var memoryAssessmentTicket = UUID()
-    @State private var memoryContextGeneration = UUID()
+    @State private var nativeMTPSelection: String = "off"
 
     // MARK: - MTP Bundle-Layout Advisory State
 
@@ -646,10 +615,6 @@ struct FloatingInputCard: View {
         // let the inline notice explain, instead of silently degrading to a
         // tool-less chat that can't configure anything.
         guard !configContextTooSmall else { return false }
-
-        // Estimates require an explicit acknowledgement, not a permanent
-        // disabled Send button. Runtime admission remains authoritative.
-        guard !memorySendCheckInFlight else { return false }
 
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasContent = hasText || !pendingAttachments.isEmpty
@@ -836,17 +801,8 @@ struct FloatingInputCard: View {
 
     private var mainContent: some View {
         VStack(spacing: 12) {
-            // RAM tight-fit banner is a real row above the selector row (not a
-            // floating overlay) so it sits directly above the model picker
-            // chip it refers to and can never overlap the chip or token count.
             if !showVoiceOverlay {
-                // RAM/swap warnings are safety signals. An advisory model-
-                // continuity warning must never hide them when both states
-                // happen to be active at the same time.
-                ramPressureRow
-                swapPressureRow
                 mtpLayoutAdvisoryRow
-                ssdQuotaWarningRow
                 modelSwitchContinuityRow
             }
 
@@ -924,56 +880,56 @@ struct FloatingInputCard: View {
     }
 
     private var composerContent: some View {
-                VStack(spacing: 4) {
-                    // Slash command popup — appears above the input card
-                    if showSlashPopup {
-                        SlashCommandPopup(
-                            commands: slashFilteredCommands,
-                            selectedIndex: $slashSelectedIndex,
-                            onSelect: applySlashCommand
-                        )
-                        .padding(.horizontal, 20)
-                        .transition(
-                            .asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
-                                removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
-                            )
-                        )
-                    }
-
-                    // "@" file menu popup — appears above the input card
-                    atFileMenuPopupView
-
-                    inputCard
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 20)
-                        .onDrop(of: dropAcceptedTypes, isTargeted: $isDragOver) { providers in
-                            handleFileDrop(providers)
-                        }
-                }
+        VStack(spacing: 4) {
+            // Slash command popup — appears above the input card
+            if showSlashPopup {
+                SlashCommandPopup(
+                    commands: slashFilteredCommands,
+                    selectedIndex: $slashSelectedIndex,
+                    onSelect: applySlashCommand
+                )
+                .padding(.horizontal, 20)
                 .transition(
                     .asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.98)),
-                        removal: .opacity.combined(with: .scale(scale: 0.98))
+                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                        removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
                     )
                 )
-                .onChange(of: composerText.text) { _, newValue in
-                    onDraftChange?(newValue)
-                    // Reset popup selection whenever the typed query changes.
-                    // Attached here (inside the text observation scope) so the
-                    // change is detected on scope re-renders — the card itself
-                    // no longer re-renders per keystroke.
-                    slashSelectedIndex = 0
-                    atSelectedIndex = 0
-                    // Typing after an Escape-dismissal re-arms the slash popup
-                    if dismissedSlashQuery != nil, activeSlashQuery != dismissedSlashQuery {
-                        dismissedSlashQuery = nil
-                    }
-                    // Re-list the "@" menu off the main actor for the new query.
-                    // (folds in the registry sync so it costs no extra body chain
-                    // link — the whole chain is at the type-checker's limit.)
-                    refreshAtMenu()
+            }
+
+            // "@" file menu popup — appears above the input card
+            atFileMenuPopupView
+
+            inputCard
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+                .onDrop(of: dropAcceptedTypes, isTargeted: $isDragOver) { providers in
+                    handleFileDrop(providers)
                 }
+        }
+        .transition(
+            .asymmetric(
+                insertion: .opacity.combined(with: .scale(scale: 0.98)),
+                removal: .opacity.combined(with: .scale(scale: 0.98))
+            )
+        )
+        .onChange(of: composerText.text) { _, newValue in
+            onDraftChange?(newValue)
+            // Reset popup selection whenever the typed query changes.
+            // Attached here (inside the text observation scope) so the
+            // change is detected on scope re-renders — the card itself
+            // no longer re-renders per keystroke.
+            slashSelectedIndex = 0
+            atSelectedIndex = 0
+            // Typing after an Escape-dismissal re-arms the slash popup
+            if dismissedSlashQuery != nil, activeSlashQuery != dismissedSlashQuery {
+                dismissedSlashQuery = nil
+            }
+            // Re-list the "@" menu off the main actor for the new query.
+            // (folds in the registry sync so it costs no extra body chain
+            // link — the whole chain is at the type-checker's limit.)
+            refreshAtMenu()
+        }
     }
 
     var body: some View {
@@ -984,9 +940,13 @@ struct FloatingInputCard: View {
             // than chip visibility because the chip stays hidden until a
             // balance has been fetched — this task is what performs that
             // first fetch, and it re-fires on the connectivity-recovery edge.
+            // Passive chrome: a balance fetched in the last five minutes is
+            // kept (the billed-summary frames keep it current between
+            // fetches), and every composer mounting at once shares one
+            // request.
             .task(id: creditsChipAvailable) {
                 if creditsChipAvailable {
-                    await accountService.refreshBalance()
+                    await accountService.refreshBalance(ifOlderThan: 300)
                 }
             }
             // Float the configuration-context error ABOVE the card as an
@@ -995,32 +955,6 @@ struct FloatingInputCard: View {
             // fully above it via the `.top` alignment guide.
             .overlay(alignment: .top) {
                 configContextErrorOverlay
-            }
-            .onReceive(
-                NotificationCenter.default.publisher(for: ServerRuntimeSettingsStore.didSaveNotification)
-                    .receive(on: DispatchQueue.main)
-            ) { _ in
-                let latest = ServerRuntimeSettingsStore.snapshot().cache
-                if ssdCacheSettings != latest {
-                    ssdCacheSettings = latest
-                    ssdWarningSnapshot = nil
-                    ssdClearResult = nil
-                }
-            }
-            .task(id: ssdQuotaNoticePollContext) {
-                while !Task.isCancelled {
-                    if canPresentSSDQuotaNotice, ssdWarningSnapshot == nil {
-                        let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots(matching: ssdCacheSettings)
-                        guard !Task.isCancelled else { return }
-                        if canPresentSSDQuotaNotice,
-                            let snapshot = snapshots.first(where: { DiskCacheQuotaNotices.shared.claim($0) })
-                        {
-                            ssdWarningSnapshot = snapshot
-                            ssdClearResult = nil
-                        }
-                    }
-                    try? await Task.sleep(for: .seconds(3))
-                }
             }
             .overlay(alignment: .top) {
                 // Cache-only lookup: this is a view body, and the blocking
@@ -1032,8 +966,8 @@ struct FloatingInputCard: View {
                     modelID: selectedModel.flatMap {
                         ModelManager.findInstalledModelFromCache(named: $0)?.id
                     },
-                    sessionID: inputHistoryKey)
-                {
+                    sessionID: inputHistoryKey
+                ) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(L("Preparing this model for efficient loading. This may take a while."))
                             .font(.callout.weight(.semibold))
@@ -1043,7 +977,10 @@ struct FloatingInputCard: View {
                         if progress.stage == .verifying {
                             Text(L("Verifying model data before replacement…")).font(.caption)
                         } else {
-                            ProgressView(value: Double(progress.copiedBytes), total: Double(max(1, progress.totalBytes)))
+                            ProgressView(
+                                value: Double(progress.copiedBytes),
+                                total: Double(max(1, progress.totalBytes))
+                            )
                         }
                     }
                     .padding(14)
@@ -1055,27 +992,13 @@ struct FloatingInputCard: View {
             }
             .animation(.easeOut(duration: 0.2), value: configContextTooSmall)
             .modifier(
-                RAMTightFitModifier(
-                    severity: ramPressureSeverity,
-                    selectedModel: selectedModel,
-                    refresh: refreshLoadFeasibility
+                MTPLayoutAdvisoryRearmModifier(
+                    rearm: rearmMTPLayoutAdvisory,
+                    refresh: refreshMTPLayoutAdvisory
                 )
             )
-            .modifier(
-                MTPLayoutAdvisoryRearmModifier(rearm: rearmMTPLayoutAdvisory)
-            )
             .onChange(of: selectedModel) { _, _ in
-                memoryContextGeneration = UUID()
-                memoryPredictionAcknowledged = nil
-            }
-            .onChange(of: inputHistoryKey) { old, _ in
-                memoryContextGeneration = UUID()
-                // First Send assigns a new session id. That is not navigation
-                // away from the selection the user just acknowledged.
-                if old != nil { memoryPredictionAcknowledged = nil }
-            }
-            .onChange(of: warmupController.selectedModelResident) { _, _ in
-                refreshLoadFeasibility()
+                refreshMTPLayoutAdvisory()
             }
             .onAppear {
                 // Execution choices are mutually exclusive in both behavior
@@ -1084,7 +1007,7 @@ struct FloatingInputCard: View {
                 if isSandboxEnabled {
                     folderState.clearFolder()
                 }
-                refreshLoadFeasibility()
+                refreshMTPLayoutAdvisory()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
                 if text.isEmpty { onWillRehydrate?() }
                 localText = text
@@ -1145,6 +1068,9 @@ struct FloatingInputCard: View {
                     lastVoiceActivityTime = Date()
                     startVoiceInput()
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: LocalVisionEvidence.evidenceReady)) { _ in
+                mediaEvidenceGeneration &+= 1
             }
             .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
                 // Reload voice config when settings change
@@ -1355,10 +1281,7 @@ fileprivate func voiceDebugLog(
 
 // MARK: - Voice Debug Observers
 
-/// Groups the RAM tight-fit banner overlay and its refresh triggers into one
-/// modifier so the already-enormous `FloatingInputCard.body` chain doesn't
-/// gain four more inference nodes (the type-checker times out otherwise).
-/// The RAM tight-fit banner's full popover silhouette: a rounded rectangle
+/// Shared informational-banner silhouette: a rounded rectangle
 /// whose bottom edge flows into a downward pointer triangle as one continuous
 /// path, so stroking it draws a single unbroken border around banner and
 /// pointer alike (no border line across the triangle's flat top).
@@ -1417,28 +1340,6 @@ private struct RAMBannerShape: Shape {
     }
 }
 
-private struct RAMTightFitModifier: ViewModifier {
-    let severity: ModelRuntime.RAMFeasibility.LoadPressureSeverity
-    let selectedModel: String?
-    let refresh: () -> Void
-
-    func body(content: Content) -> some View {
-        content
-            // The tight-fit banner itself is an in-flow row above the model
-            // picker chip (`ramPressureRow`); this modifier only owns the
-            // refresh triggers and the show/hide animation.
-            .animation(.easeOut(duration: 0.2), value: severity)
-            .onChange(of: selectedModel) { _, _ in
-                refresh()
-            }
-            // 2s host-memory tick: re-projects the tight-fit assessment so
-            // the warn/block banner clears on its own as RAM frees.
-            .onReceive(SystemMonitorService.shared.$memoryUsage) { _ in
-                refresh()
-            }
-    }
-}
-
 /// Re-arms the MTP bundle-layout advisory when the local model set changes:
 /// a delete and a completed download both post `.localModelsChanged`, so a
 /// freshly re-downloaded bundle re-evaluates (and clears the notice) on its
@@ -1446,9 +1347,13 @@ private struct RAMTightFitModifier: ViewModifier {
 /// whatever context finished the filesystem work.
 private struct MTPLayoutAdvisoryRearmModifier: ViewModifier {
     let rearm: () -> Void
+    let refresh: () -> Void
 
     func body(content: Content) -> some View {
         content
+            // Retry cache-only discovery if the initial local catalog scan
+            // has not landed. The advisory memo avoids repeat bundle scans.
+            .onReceive(SystemMonitorService.shared.$memoryUsage) { _ in refresh() }
             .onReceive(
                 NotificationCenter.default.publisher(for: .localModelsChanged)
                     .receive(on: RunLoop.main)
@@ -1987,35 +1892,16 @@ extension FloatingInputCard {
 
     private func syncAndSend() {
         guard canSend else { return }
-        let message = localText
-        let selection = selectedModel
-        let session = inputHistoryKey
-        let contextGeneration = memoryContextGeneration
-        let attachments = pendingAttachments.map(\.id)
-        guard localMemoryWarningsApplyToSelectedModel, let model = selection,
-            let canonical = ModelManager.findInstalledModelFromCache(named: model)?.name
-        else {
-            commitSend(message)
-            return
+        // Sending under a model-switch advisory accepts the new model, so the
+        // advisory has nothing left to ask.
+        if modelSwitchContinuityWarning != nil {
+            withAnimation(.easeOut(duration: 0.2)) {
+                onDismissModelSwitchContinuityWarning?()
+            }
         }
-        memorySendCheckInFlight = true
-        memoryAssessmentTicket = UUID()
-        Task { @MainActor in
-            let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
-            let phase = await ModelRuntime.shared.memoryWarningPhase(forCanonicalName: canonical)
-            memorySendCheckInFlight = false
-            // A delayed check must never send a different selection, edited
-            // draft, changed attachments, or a different conversation.
-            guard selectedModel == selection, inputHistoryKey == session,
-                memoryContextGeneration == contextGeneration,
-                localText == message, pendingAttachments.map(\.id) == attachments,
-                canSend
-            else { return }
-            applyMemoryAssessment(assessment, phase: phase, canonical: canonical)
-            refreshSwapPressure()
-            if case .predicted = resolvedMemoryWarning { return }
-            commitSend(message)
-        }
+        // The runtime owns admission and actual load failures. Host swap must
+        // never add a second Send/acknowledgment gate.
+        commitSend(localText)
     }
 
     private func commitSend(_ message: String) {
@@ -2294,7 +2180,7 @@ extension FloatingInputCard {
                 )
                 break
             }
-            showModelPicker = true
+            openModelPicker()
         case "agent":
             NotificationCenter.default.post(
                 name: .chatToolbarOpenAgentPicker,
@@ -2623,11 +2509,11 @@ extension FloatingInputCard {
             ),
             // Depth controls speculation, not the user's sampling settings.
             help: manuallyBlocked
-                ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
-                : nativeMTPDefaultOffModels.contains(identity)
-                ? L("Flash Next starts with speculative decoding Off. You can select Auto or a maximum depth of 1–3 explicitly. Your configured sampling stays in effect.")
+                ? L(
+                    "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
+                )
                 : L(
-                    "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
+                    "Speculative decoding starts Off. Select Auto or a maximum depth of 1–3 explicitly. The runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
                 )
         )
     }
@@ -2637,13 +2523,13 @@ extension FloatingInputCard {
         _ mtp: VMLXServerMTPSettings
     ) -> String {
         if mtp.mode == .off { return "off" }
-        if mtp.mode == .forceOn, let depth = mtp.explicitDepth, (1...3).contains(depth) {
+        if mtp.mode == .forceOn, let depth = mtp.explicitDepth, (1 ... 3).contains(depth) {
             return String(depth)
         }
         // Legacy saved state: the old buttons wrote auto + draftTokenLimit,
         // which never activated anything. Render it as the depth it claimed
         // so the migration to a real press is one click, not a mystery.
-        if let limit = mtp.draftTokenLimit, (1...3).contains(limit) { return String(limit) }
+        if let limit = mtp.draftTokenLimit, (1 ... 3).contains(limit) { return String(limit) }
         return "auto"
     }
 
@@ -2652,33 +2538,11 @@ extension FloatingInputCard {
     ///
     /// Depth-only changes apply to the next request; changes that require a
     /// different loaded model graph follow the guarded reload lifecycle.
-    /// UserDefaults key: the user pressed an MTP segment themselves at least
-    /// once. From that point the family default logic never touches the
-    /// setting again — their choice outranks the Qwen family d3 default.
-    private static let mtpSegmentUserChoseKey = NativeMTPSelectionDefault.userChoseKey
-    /// UserDefaults key: the CURRENT saved segment was written by the
-    /// Qwen family default, not by a person. Only a state we wrote is
-    /// ours to revert when the selection leaves the family.
-    private static let mtpSegmentFamilyDefaultKey = NativeMTPSelectionDefault.familyDefaultKey
-
-    private func applyNativeMTPSegment(_ segment: String, userInitiated: Bool = true) {
-        if userInitiated {
-            UserDefaults.standard.set(true, forKey: Self.mtpSegmentUserChoseKey)
-            UserDefaults.standard.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
-        }
-        let modelAtSelection = selectedModel
-        let mtpAtSelection = ServerController.runtimeSettingsForConfigureTool().settings.mtp
-        nativeMTPSelection = segment
+    private func applyNativeMTPSegment(_ segment: String) {
         Task { @MainActor in
-            // Read the latest document when the task actually runs: a delayed
-            // default must not replay unrelated stale settings or beat a click.
+            // Read the latest settings when the task executes; only an
+            // explicit control action writes MTP. Selection is read-only.
             var settings = ServerController.runtimeSettingsForConfigureTool().settings
-            if !userInitiated {
-                guard selectedModel == modelAtSelection,
-                    !UserDefaults.standard.bool(forKey: Self.mtpSegmentUserChoseKey),
-                    settings.mtp == mtpAtSelection
-                else { return }
-            }
             switch segment {
             case "off":
                 settings.mtp.mode = .off
@@ -2689,45 +2553,15 @@ extension FloatingInputCard {
                 settings.mtp.draftTokenLimit = nil
                 settings.mtp.explicitDepth = nil
             default:
-                // Explicit depth is a manual ACTIVATION contract, not an auto
-                // hint: forceOn + explicitDepth activates a tensor-complete MTP
-                // head without measured tuning (the engine validates family and
-                // tensor evidence and fails closed otherwise, e.g. JANG_1L).
-                // Sampling stays independent of the depth selection.
-                // The old wiring (auto + draftTokenLimit) selected a depth in the
-                // UI while the engine stayed autoregressive.
+                guard let depth = Int(segment), (1...3).contains(depth) else { return }
                 settings.mtp.mode = .forceOn
-                settings.mtp.explicitDepth = Int(segment)
+                settings.mtp.explicitDepth = depth
                 settings.mtp.draftTokenLimit = nil
             }
-            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(
-                settings,
-                mtpSelectionIsFamilyDefault: !userInitiated
-            )
-        }
-    }
-
-    /// Flash Next starts Off; eligible Qwen27B retains D3. Selectors remain
-    /// available for real heads, and an explicit choice always wins.
-    /// Only a value owned by this default may be reverted on leaving the family.
-    private func applyNativeMTPDefaultDepthIfNeeded(eligible: Bool, startsOff: Bool) {
-        let defaults = UserDefaults.standard
-        let mtp = ServerController.runtimeSettingsForConfigureTool().settings.mtp
-        switch NativeMTPSelectionDefault.action(
-            settings: mtp,
-            eligible: eligible,
-            startsOff: startsOff,
-            userHasChosen: defaults.bool(forKey: Self.mtpSegmentUserChoseKey),
-            ownsCurrentValue: defaults.bool(forKey: Self.mtpSegmentFamilyDefaultKey)
-        ) {
-        case .keep:
-            return
-        case .selectOff:
-            applyNativeMTPSegment("off", userInitiated: false)
-        case .selectDepthThree:
-            applyNativeMTPSegment("3", userInitiated: false)
-        case .restoreAuto:
-            applyNativeMTPSegment("auto", userInitiated: false)
+            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings)
+            // A rejected save must not leave an optimistic segment displayed.
+            nativeMTPSelection = Self.nativeMTPSegment(
+                ServerController.runtimeSettingsForConfigureTool().settings.mtp)
         }
     }
 
@@ -2746,12 +2580,13 @@ extension FloatingInputCard {
                 summaries.filter {
                     Self.statusIndicatesNativeMTPHead($0.nativeMTPStatus)
                 }
-                .map { Self.mtpIdentity($0.name) })
+                .map { Self.mtpIdentity($0.name) }
+            )
             // Early, by-WEIGHT capability for models still LOADING, so the
             // depth row appears during warmup instead of minutes later.
             // Weight-based (configs lie: JANG_1L has no `mtp` field; a 27B
-            // index omitted its mtp.* tensors) and family-gated to the
-            // Flash-Next/27B targets — other families are untouched. File-only
+            // index omitted its mtp.* tensors) and gated by the engine
+            // launch policy, shared with pre-load selection. File-only
             // inspection, run off-main.
             let loadingNames = await ModelRuntime.shared.loadingModelNames()
             if !loadingNames.isEmpty {
@@ -2770,7 +2605,8 @@ extension FloatingInputCard {
                 // so without this the whole warmup would show depth segments
                 // the engine will refuse.
                 nativeMTPManuallyBlockedModels.formUnion(
-                    early.filter(\.isBlocked).map { Self.mtpIdentity($0.name) })
+                    early.filter(\.isBlocked).map { Self.mtpIdentity($0.name) }
+                )
             }
             let residentIdentities = Set(summaries.map { Self.mtpIdentity($0.name) })
             nativeMTPManuallyBlockedModels.subtract(residentIdentities)
@@ -2833,18 +2669,18 @@ extension FloatingInputCard {
         )
     }
 
-    /// Effective thinking state for toggle-only reasoning models, shown as a
-    /// brain glyph on the model chip (accent while on, muted while off) so
-    /// the state stays visible at a glance beside the footer control and the
-    /// picker's Model Options row. Nil hides the glyph: models with a
-    /// segmented effort suffix, models without a thinking toggle, and Mode 2
-    /// remote-agent runs — the remote agent owns its generation config
+    /// Effective thinking state for toggle-only reasoning models, exposed in
+    /// the model chip's tooltip and accessibility value. Nil omits this detail
+    /// for models with a segmented effort suffix, models without a thinking
+    /// toggle, and Mode 2 remote-agent runs — the remote agent owns its generation config
     /// server-side, so a local state readout would mislead.
     private var inlineThinkingEnabled: Bool? {
         guard let model = selectedModel,
             !isRemoteAgentRun,
             inlineReasoningSuffix == nil,
-            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+            let option = ModelProfileRegistry.profile(for: model)?.thinkingOption,
+            activeProfileOptions.contains(where: { $0.id == option.id }),
+            thinkingPresentationIsReady(for: model)
         else { return nil }
         return effectiveThinkingEnabled(for: model)
     }
@@ -2865,6 +2701,11 @@ extension FloatingInputCard {
             modelOptions: activeModelOptions,
             capability: LocalReasoningCapability.capability(forModelId: model)
         )
+    }
+
+    private func thinkingPresentationIsReady(for model: String) -> Bool {
+        ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions) != nil
+            || LocalReasoningCapability.capabilityForPresentation(forModelId: model) != nil
     }
 
     private var selectorRow: some View {
@@ -2997,10 +2838,10 @@ extension FloatingInputCard {
             // change/refresh/clear affordances). The Default (configuration)
             // agent keeps its quiet indicator. Hidden in Mode 2.
             if !isRemoteAgentRun {
-                if isDefaultConfigAgent {
-                    configurationOnlyChip(compact: compact)
-                } else if folderState.hasActiveFolder {
+                if folderState.hasActiveFolder {
                     folderContextChip(compact: compact)
+                } else if isDefaultConfigAgent {
+                    configurationOnlyChip(compact: compact)
                 }
             }
 
@@ -3023,8 +2864,9 @@ extension FloatingInputCard {
         // A remote agent's run (workspace or directly shared) never draws
         // from this Mac's wallet, so the personal balance is noise there.
         let showCredits = showCreditsChip && !remoteConnectionPending && !isRemoteAgentRun
-        // Team-agent chat: the run is billed to the workspace pool (relayed
-        // live by the host), so show that spend explicitly rather than the
+        // Pool-billed chat — a teammate's agent (billed by its host, relayed
+        // live) or one of this Mac's own shared agents with "Bill the
+        // workspace pool" on: show that spend explicitly rather than the
         // personal wallet, which this session never draws from.
         if let workspacePoolLabel, !remoteConnectionPending {
             FloatingWorkspacePoolChip(
@@ -3070,7 +2912,9 @@ extension FloatingInputCard {
                 breakdown: { budget.breakdown },
                 compactionState: compactionState,
                 canCompact: canCompactConversation && !isStreaming,
-                onCompact: onCompactConversation
+                onCompact: onCompactConversation,
+                currentSessionKey: inputHistoryKey?.uuidString,
+                currentModel: selectedModel
             )
         }
     }
@@ -3128,21 +2972,21 @@ extension FloatingInputCard {
     private var isSelectedModelLocal: Bool {
         guard let id = selectedModel else { return false }
         // Cache-only lookup: this getter runs in view-body context (and on
-        // every 2s memory tick via `refreshLoadFeasibility`), where the
+        // model selection and residency updates), where the
         // blocking `findInstalledModel(named:)` can park on a cold-cache
         // disk scan for seconds and hang the app.
         return ModelManager.findInstalledMLXModelFromCache(named: id) != nil
     }
 
-    nonisolated static func localMemoryWarningsApply(
+    nonisolated static func localBundleAdvisoriesApply(
         isSelectedModelLocal: Bool,
         isRemoteAgentRun: Bool
     ) -> Bool {
         isSelectedModelLocal && !isRemoteAgentRun
     }
 
-    private var localMemoryWarningsApplyToSelectedModel: Bool {
-        Self.localMemoryWarningsApply(
+    private var localBundleAdvisoriesApplyToSelectedModel: Bool {
+        Self.localBundleAdvisoriesApply(
             isSelectedModelLocal: isSelectedModelLocal,
             isRemoteAgentRun: isRemoteAgentRun
         )
@@ -3168,17 +3012,17 @@ extension FloatingInputCard {
         /// load state is knowable.
         let isLocalModelRun: Bool
         let selectedModel: String?
+        let modelDetails: String
         @ObservedObject var warmupController: ChatWarmupController
 
         func body(content: Content) -> some View {
-            content.help(
-                isDeprecated
-                    ? String(
-                        localized: "This model is outdated. Click to switch to a newer version.",
-                        bundle: .module
-                    )
-                    : helpText
-            )
+            let status = isDeprecated
+                ? String(
+                    localized: "This model is outdated. Click to switch to a newer version.",
+                    bundle: .module
+                )
+                : helpText
+            content.help([status, modelDetails].filter { !$0.isEmpty }.joined(separator: "\n"))
         }
 
         private var helpText: String {
@@ -3226,9 +3070,41 @@ extension FloatingInputCard {
         )
     }
 
+    private func openModelPicker() {
+        guard !showModelPicker else { return }
+        cachedPickerItems = pickerItems
+        modelPickerCardSize = ChatModelPickerCard.initialSize(
+            providers: chatPickerProviders,
+            selectedModel: selectedModel,
+            optionsControl: modelPickerOptionsControl
+        )
+        showModelPicker = true
+    }
+
+    /// Keep the pill visually simple while retaining the removed badges'
+    /// thinking and input-capability information for hover and VoiceOver.
+    private var modelSelectorDetails: String {
+        var details: [String] = []
+        if let thinkingOn = inlineThinkingEnabled {
+            if inlineThinkingUsesNativeDefault {
+                details.append([L("Thinking"), L("Default")].joined(separator: ": "))
+            } else {
+                details.append(thinkingOn ? L("Thinking on") : L("Thinking off"))
+            }
+        }
+        if selectedPickerItem?.isVLM == true {
+            details.append(L("Vision"))
+        }
+        if mediaCapabilities.supportsAudio {
+            details.append(L("Audio Input"))
+        }
+        return details.joined(separator: "\n")
+    }
+
     private var interactiveModelSelectorChip: some View {
         SelectorChip(isActive: showModelPicker) {
-            showModelPicker.toggle()
+            if showModelPicker { dismissModelPicker() }
+            else { openModelPicker() }
         } content: {
             HStack(spacing: 6) {
                 if isSelectedModelDeprecated {
@@ -3244,7 +3120,7 @@ extension FloatingInputCard {
                         .frame(width: 6, height: 6)
                 }
 
-                // Model name with metadata badges
+                // Model name and reasoning text, without suffix icons.
                 if let option = selectedPickerItem {
                     HStack(spacing: 4) {
                         Text(option.displayName)
@@ -3265,53 +3141,6 @@ extension FloatingInputCard {
                                 .lineLimit(1)
                         }
 
-                        // Toggle-only thinking state as a glyph: accent while
-                        // on, muted while off. The interactive control remains
-                        // directly available in both the footer and picker.
-                        if let thinkingOn = inlineThinkingEnabled {
-                            Image(systemName: "brain")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
-                                .foregroundColor(
-                                    inlineThinkingUsesNativeDefault
-                                        ? theme.secondaryText
-                                        : thinkingOn ? theme.accentColor : theme.tertiaryText.opacity(0.55)
-                                )
-                                .localizedHelp(
-                                    inlineThinkingUsesNativeDefault
-                                        ? "Default" : (thinkingOn ? "Thinking on" : "Thinking off")
-                                )
-                                .accessibilityLabel(Text("Thinking", bundle: .module))
-                                .accessibilityValue(
-                                    inlineThinkingUsesNativeDefault
-                                        ? Text("Default", bundle: .module)
-                                        : thinkingOn
-                                            ? Text("On", bundle: .module)
-                                            : Text("Off", bundle: .module)
-                                )
-                        }
-
-                        // Show VLM indicator
-                        if option.isVLM {
-                            Image(systemName: "eye")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 3))
-                                .foregroundColor(theme.accentColor)
-                        }
-
-                        // Audio indicator. The eye was the only modality
-                        // glyph here, so a Nemotron Omni / Gemma-4 E2B-E4B /
-                        // Gemma-4 12B bundle described itself as vision-only
-                        // on the one surface the user reads before typing —
-                        // while the composer beneath it was already
-                        // accepting `.wav`. Same capability source as the
-                        // attach button, so the two cannot disagree.
-                        if mediaCapabilities.supportsAudio {
-                            Image(systemName: "waveform")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 3))
-                                .foregroundColor(theme.accentColor)
-                                .localizedHelp("Audio Input")
-                                .accessibilityLabel(Text("Audio Input", bundle: .module))
-                        }
-
                         if !isCompact, let params = option.parameterCount {
                             Text(params)
                                 .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
@@ -3329,29 +3158,46 @@ extension FloatingInputCard {
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                         .foregroundColor(theme.secondaryText)
                 }
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
             }
         }
+        .accessibilityValue(Text(verbatim: modelSelectorDetails))
         // Chip-wide hover target: the 6px dot alone is too small to hover.
         .modifier(
             ModelWarmupHelp(
                 isDeprecated: isSelectedModelDeprecated,
                 isLocalModelRun: isSelectedModelLocal && !isRemoteAgentRun,
                 selectedModel: selectedModel,
+                modelDetails: modelSelectorDetails,
                 warmupController: warmupController
             )
         )
-        .popover(isPresented: $showModelPicker, arrowEdge: .top) {
-            ModelPickerView(
-                options: cachedPickerItems,
+        .anchoredCard(isPresented: $showModelPicker, size: modelPickerCardSize, accessibilityLabel: L("Model picker")) {
+            ChatModelPickerCard(
+                providers: chatPickerProviders,
                 selectedModel: $selectedModel,
-                agentId: agentId,
                 optionsControl: modelPickerOptionsControl,
-                onDismiss: dismissModelPicker
+                onExploreLocal: {
+                    dismissModelPicker()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .models)
+                },
+                onExploreCloud: {
+                    dismissModelPicker()
+                    DispatchQueue.main.async { showCloudModelBrowser = true }
+                },
+                onSizeChange: { modelPickerCardSize = $0 }
             )
+        }
+        .sheet(isPresented: $showCloudModelBrowser) {
+            CloudModelBrowserDialog(
+                options: cloudPickerItems,
+                selectedModel: $selectedModel,
+                onDismiss: { showCloudModelBrowser = false },
+                onManageCloud: {
+                    showCloudModelBrowser = false
+                    AppDelegate.shared?.showManagementWindow(initialTab: .credits)
+                }
+            )
+            .environment(\.theme, theme)
         }
         .onChange(of: showModelPicker) { _, isShowing in
             if isShowing {
@@ -3361,6 +3207,13 @@ extension FloatingInputCard {
                 // view; a stale set would hide the depth row on a capable
                 // model, which reads as "this model has no MTP".
                 refreshNativeMTPState()
+                Task {
+                    await RemoteProviderManager.shared.refreshConnectedProviders()
+                    await ModelPickerItemCache.shared.buildModelPickerItems()
+                    _ = await Task.detached(priority: .utility) {
+                        ExternalModelLocator.pruneMissing()
+                    }.value
+                }
             }
         }
         .onChange(of: pickerItems) { _, newItems in
@@ -3369,6 +3222,22 @@ extension FloatingInputCard {
                 cachedPickerItems = newItems
             }
         }
+    }
+
+    private var cloudPickerItems: [ModelPickerItem] {
+        pickerItems.filter {
+            if case .remote(_, let providerID) = $0.source {
+                return providerID == RemoteProviderManager.osaurusRouterProviderId
+            }
+            return false
+        }
+    }
+
+    private var chatPickerProviders: [ChatModelPickerProvider] {
+        let shortlist = Set(cachedPickerItems.filter {
+            chatModelFavorites.isFavorite($0.favoriteKey) || $0.id == selectedModel
+        }.map(\.id))
+        return ChatModelPickerProvider.groups(from: cachedPickerItems, cloudModelIDs: shortlist)
     }
 
     /// Inline "Model Options" section for the model popover: the semantic
@@ -3408,7 +3277,7 @@ extension FloatingInputCard {
         // MTP lives in GLOBAL server settings, not the per-model option store,
         // because the depth is consumed when the model loads. Render it from
         // there so the row cannot disagree with what the engine will do.
-        var values = activeModelOptions
+        var values = ModelProfileRegistry.normalizedOptions(for: model, persisted: activeModelOptions)
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
             let identity = Self.mtpIdentity(model)
@@ -3416,7 +3285,7 @@ extension FloatingInputCard {
                 nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
             )
             displayDefaults[Self.nativeMTPOptionID] = .string(
-                nativeMTPDefaultOffModels.contains(identity) ? "off" : "auto"
+                "off"
             )
         }
 
@@ -3431,7 +3300,7 @@ extension FloatingInputCard {
                 // per-model would persist a value the load path never reads.
                 if optionId == Self.nativeMTPOptionID {
                     DispatchQueue.main.async {
-                        applyNativeMTPSegment(newValue?.stringValue ?? "auto")
+                        applyNativeMTPSegment(newValue?.stringValue ?? "off")
                     }
                     return
                 }
@@ -3441,7 +3310,11 @@ extension FloatingInputCard {
                 // resizing the anchor during the popover's own update
                 // crashes NSPopover.
                 DispatchQueue.main.async {
+                    guard selectedModel == model else { return }
                     var updated = activeModelOptions
+                    if optionId == "reasoningEffort" {
+                        updated.removeValue(forKey: "disableThinking")
+                    }
                     if let newValue {
                         updated[optionId] = newValue
                     } else {
@@ -3468,7 +3341,9 @@ extension FloatingInputCard {
     /// server-side, so a local toggle wouldn't reach it.
     private func modelPickerThinkingControl(for model: String) -> ModelPickerThinkingControl? {
         guard !isRemoteAgentRun,
-            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+            let option = ModelProfileRegistry.profile(for: model)?.thinkingOption,
+            activeProfileOptions.contains(where: { $0.id == option.id }),
+            thinkingPresentationIsReady(for: model)
         else { return nil }
         let explicitEnabled = ModelProfileRegistry.thinkingEnabled(
             for: model,
@@ -3494,6 +3369,7 @@ extension FloatingInputCard {
     /// the picker row. Inverted profiles such as `disableThinking` must never
     /// toggle their raw persisted boolean directly.
     private func persistThinkingOverride(_ enabled: Bool?, for model: String) {
+        guard selectedModel == model else { return }
         guard let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption else {
             return
         }
@@ -3549,10 +3425,11 @@ extension FloatingInputCard {
         agentId ?? Agent.defaultId
     }
 
-    /// The built-in Default ("Osaurus") agent is a configuration-only
-    /// surface: it configures Osaurus and never uses the sandbox or a
-    /// working folder, so we hide those chips and show a quiet
-    /// "Configuration" indicator instead.
+    /// The built-in Default ("Osaurus") agent is the Orchestrator: it
+    /// configures Osaurus and delegates work. It never uses the sandbox, so
+    /// the sandbox chip is hidden; it shows a quiet "Orchestrator" indicator
+    /// until a working folder is attached (read-only for itself, inherited
+    /// by folder-less subagents).
     private var isDefaultConfigAgent: Bool {
         effectiveAgentId == Agent.defaultId
     }
@@ -3565,82 +3442,6 @@ extension FloatingInputCard {
     private var configContextTooSmall: Bool {
         guard isDefaultConfigAgent, let model = selectedModel else { return false }
         return ContextSizeResolver.resolve(modelId: model).sizeClass.disablesTools
-    }
-
-    // MARK: - RAM Tight-Fit Gate
-
-    private var ramPressureSeverity: ModelRuntime.RAMFeasibility.LoadPressureSeverity {
-        if case .predicted(let prediction) = resolvedMemoryWarning { return prediction.severity }
-        return .none
-    }
-
-    private var resolvedMemoryWarning: MemoryWarningState {
-        guard localMemoryWarningsApplyToSelectedModel,
-            let canonical = ModelManager.findInstalledModelFromCache(named: selectedModel ?? "")?.name,
-            memoryWarningModel == canonical
-        else { return .none }
-        return MemoryWarningState.resolve(
-            canonicalModel: canonical, phase: memoryWarningPhase,
-            assessment: pendingLoadFeasibility, swap: swapPressure,
-            acknowledged: memoryPredictionAcknowledged,
-            dismissedSwapSeverity: swapBannerDismissedAtSeverity)
-    }
-
-    private func applyMemoryAssessment(
-        _ assessment: ModelRuntime.RAMFeasibility?, phase: MemoryWarningState.Phase, canonical: String
-    ) {
-        if memoryWarningModel != canonical || memoryWarningPhase != phase {
-            print("[Osaurus][MemoryWarning] model=\(canonical) phase=\(phase)")
-            memoryPredictionAcknowledged = nil
-            swapBannerDismissedAtSeverity = nil
-            swapUnloadFailure = nil
-        }
-        memoryWarningModel = canonical
-        memoryWarningPhase = phase
-        // Ignore timestamp-only churn from the two-second monitor tick.
-        if MemoryWarningState.predictionSeverity(pendingLoadFeasibility)
-            != MemoryWarningState.predictionSeverity(assessment)
-            || pendingLoadFeasibility?.requiredAvailableBytes != assessment?.requiredAvailableBytes
-            || pendingLoadFeasibility?.availableMemoryBytes != assessment?.availableMemoryBytes
-            || pendingLoadFeasibility?.hardLimitBytes != assessment?.hardLimitBytes
-            || pendingLoadFeasibility?.modelName != assessment?.modelName
-        { pendingLoadFeasibility = assessment }
-        if MemoryWarningState.predictionSeverity(assessment) == .none && swapPressure?.emulated != true {
-            memoryPredictionAcknowledged = nil
-        }
-    }
-
-    /// Re-project the selected model's load feasibility. Called on appear,
-    /// on model change, and on `SystemMonitorService`'s 2s memory tick — the
-    /// tick is what auto-clears the warn/block state when RAM frees. The
-    /// runtime memoizes the bundle-size scan, so steady-state re-checks cost
-    /// one actor hop and a `vm_statistics64` read.
-    private func refreshLoadFeasibility() {
-        refreshSwapPressure()
-        // Rides the same triggers (appear, model change, 2s tick); the
-        // per-selection memo inside makes tick calls a string compare.
-        refreshMTPLayoutAdvisory()
-        guard !memorySendCheckInFlight else { return }
-        let ticket = UUID()
-        memoryAssessmentTicket = ticket
-        guard localMemoryWarningsApplyToSelectedModel, let model = selectedModel else {
-            if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
-            memoryWarningModel = nil
-            memoryPredictionAcknowledged = nil
-            return
-        }
-        guard let canonical = ModelManager.findInstalledModelFromCache(named: model)?.name else { return }
-        Task { @MainActor in
-            let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
-            let phase = await ModelRuntime.shared.memoryWarningPhase(forCanonicalName: canonical)
-            guard memoryAssessmentTicket == ticket else { return }
-            // The selection may have moved while we were on the runtime actor.
-            guard selectedModel == model, localMemoryWarningsApplyToSelectedModel else {
-                // Ignore stale work; never clear a newer selection's warning.
-                return
-            }
-            applyMemoryAssessment(assessment, phase: phase, canonical: canonical)
-        }
     }
 
     private var isSandboxAvailable: Bool {
@@ -3845,12 +3646,12 @@ extension FloatingInputCard {
     }
 
     /// Whether this composer's folder picks/clears should write through to
-    /// the agent's sticky working folder. False for the Default agent (it
-    /// never carries a folder) and for a remote teammate run (the folder
-    /// belongs to the remote host's agent, not the local hosting agent —
-    /// same rule `ChatSession` applies to model pins).
+    /// the agent's sticky working folder (the Orchestrator's lands in
+    /// `DefaultAgentConfiguration`). False for a remote teammate run (the
+    /// folder belongs to the remote host's agent, not the local hosting
+    /// agent — same rule `ChatSession` applies to model pins).
     private var persistsWorkingFolderToAgent: Bool {
-        !isDefaultConfigAgent && !isRemoteAgentRun
+        !isRemoteAgentRun
     }
 
     /// Write the chip's current folder onto the agent.
@@ -3935,102 +3736,102 @@ extension FloatingInputCard {
         // loading pulse), so hover-in/out and pulse ticks re-render only this
         // chip's subtree — not the whole card body.
         HoverScope { isSandboxHovered in
-        Button(action: handleSandboxChipTap) {
-            HStack(spacing: 5) {
+            Button(action: handleSandboxChipTap) {
+                HStack(spacing: 5) {
+                    if isSandboxFailed {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.red)
+                    } else if isSandboxLoading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .scaleEffect(0.6)
+                            .frame(width: 8, height: 8)
+                            .tint(Color.orange)
+                    } else if isSandboxEnabled && isSandboxRunning {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                    }
+
+                    Image(systemName: isSandboxEnabled ? "shippingbox.fill" : "shippingbox")
+                        .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                        .foregroundColor(sandboxChipAccent)
+
+                    // Keep the label whenever it's carrying live status the icon
+                    // alone can't convey ("Downloading runtime…", a failure), even
+                    // in the compact row; otherwise collapse to the box icon.
+                    if !compact || isSandboxLoading || isSandboxFailed {
+                        Text(sandboxChipLabel, bundle: .module)
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                            .foregroundColor(
+                                isSandboxFailed
+                                    ? .red
+                                    : (isSandboxEnabled
+                                        ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
+                                        : theme.tertiaryText)
+                            )
+                            .lineLimit(1)
+                            .fixedSize()
+                            .modifier(PulsingOpacity(active: isSandboxLoading))
+                    }
+
+                    // Inline cold-path download/unpack progress.
+                    if let pct = sandboxProgressPercent {
+                        Text(verbatim: "\(pct)%")
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .monospacedDigit()
+                    }
+
+                    // Network-off badge: only meaningful once the sandbox is
+                    // settled, so suppress it while loading or failed (those
+                    // states own the leading indicator + accent color).
+                    if isSandboxNetworkDisabled && !isSandboxLoading && !isSandboxFailed {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .accessibilityLabel(Text("Outbound network disabled", bundle: .module))
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(sandboxChipBackground(isSandboxHovered: isSandboxHovered))
+                .clipShape(Capsule())
+                .overlay(sandboxChipBorder(isSandboxHovered: isSandboxHovered))
+                .shadow(
+                    color: isSandboxFailed
+                        ? Color.red.opacity(0.15)
+                        : (isSandboxEnabled && isSandboxRunning
+                            ? Color.green.opacity(0.12)
+                            : (isSandboxHovered ? theme.accentColor.opacity(0.1) : .clear)),
+                    radius: 4,
+                    x: 0,
+                    y: 1
+                )
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            // Intentionally NOT `.disabled(isSandboxLoading)` — the chip
+            // stays tappable during provisioning so the user can click
+            // through to the Sandbox settings tab and watch the journey
+            // unfold. Toggling on/off is intercepted by
+            // `handleSandboxChipTap` in that state.
+            .help(sandboxHelpText)
+            .contextMenu {
                 if isSandboxFailed {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.red)
-                } else if isSandboxLoading {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .scaleEffect(0.6)
-                        .frame(width: 8, height: 8)
-                        .tint(Color.orange)
-                } else if isSandboxEnabled && isSandboxRunning {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
+                    Button {
+                        retrySandbox()
+                    } label: {
+                        Text("Retry Sandbox", bundle: .module)
+                    }
                 }
-
-                Image(systemName: isSandboxEnabled ? "shippingbox.fill" : "shippingbox")
-                    .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                    .foregroundColor(sandboxChipAccent)
-
-                // Keep the label whenever it's carrying live status the icon
-                // alone can't convey ("Downloading runtime…", a failure), even
-                // in the compact row; otherwise collapse to the box icon.
-                if !compact || isSandboxLoading || isSandboxFailed {
-                    Text(sandboxChipLabel, bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(
-                            isSandboxFailed
-                                ? .red
-                                : (isSandboxEnabled
-                                    ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
-                                    : theme.tertiaryText)
-                        )
-                        .lineLimit(1)
-                        .fixedSize()
-                        .modifier(PulsingOpacity(active: isSandboxLoading))
-                }
-
-                // Inline cold-path download/unpack progress.
-                if let pct = sandboxProgressPercent {
-                    Text(verbatim: "\(pct)%")
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .monospacedDigit()
-                }
-
-                // Network-off badge: only meaningful once the sandbox is
-                // settled, so suppress it while loading or failed (those
-                // states own the leading indicator + accent color).
-                if isSandboxNetworkDisabled && !isSandboxLoading && !isSandboxFailed {
-                    Image(systemName: "wifi.slash")
-                        .font(.system(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                        .foregroundColor(.orange)
-                        .accessibilityLabel(Text("Outbound network disabled", bundle: .module))
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(sandboxChipBackground(isSandboxHovered: isSandboxHovered))
-            .clipShape(Capsule())
-            .overlay(sandboxChipBorder(isSandboxHovered: isSandboxHovered))
-            .shadow(
-                color: isSandboxFailed
-                    ? Color.red.opacity(0.15)
-                    : (isSandboxEnabled && isSandboxRunning
-                        ? Color.green.opacity(0.12)
-                        : (isSandboxHovered ? theme.accentColor.opacity(0.1) : .clear)),
-                radius: 4,
-                x: 0,
-                y: 1
-            )
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        // Intentionally NOT `.disabled(isSandboxLoading)` — the chip
-        // stays tappable during provisioning so the user can click
-        // through to the Sandbox settings tab and watch the journey
-        // unfold. Toggling on/off is intercepted by
-        // `handleSandboxChipTap` in that state.
-        .help(sandboxHelpText)
-        .contextMenu {
-            if isSandboxFailed {
                 Button {
-                    retrySandbox()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
                 } label: {
-                    Text("Retry Sandbox", bundle: .module)
+                    Text("Open Sandbox Settings", bundle: .module)
                 }
             }
-            Button {
-                AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
-            } label: {
-                Text("Open Sandbox Settings", bundle: .module)
-            }
-        }
         }
     }
 
@@ -4146,78 +3947,78 @@ extension FloatingInputCard {
         // HoverScope owns the hover flag and ClipboardPulseSweep owns the
         // arrival-pulse animation state, so neither re-renders the card body.
         HoverScope { isClipboardHovered in
-        Button(action: attachClipboardSnippet) {
-            clipboardChipLabel(compact: compact)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(theme.secondaryBackground.opacity(isClipboardHovered ? 0.95 : 0.8))
-                )
-                .clipShape(Capsule())
-                .overlay(
-                    // main static border
-                    Capsule()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    theme.glassEdgeLight.opacity(isClipboardHovered ? 0.25 : 0.15),
-                                    theme.accentColor.opacity(isClipboardHovered ? 0.6 : 0.15),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .modifier(
-                    ClipboardPulseSweep(
-                        hovered: isClipboardHovered,
-                        trigger: clipboardService.hasNewContent
+            Button(action: attachClipboardSnippet) {
+                clipboardChipLabel(compact: compact)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(theme.secondaryBackground.opacity(isClipboardHovered ? 0.95 : 0.8))
                     )
-                )
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .help(Text(localized: "Attach snippet from \(clipboardService.lastSourceApp ?? "clipboard")"))
-        .contextMenu {
-            Button {
-                clipboardService.markAsRead()
-            } label: {
-                Text("Dismiss", bundle: .module)
+                    .clipShape(Capsule())
+                    .overlay(
+                        // main static border
+                        Capsule()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        theme.glassEdgeLight.opacity(isClipboardHovered ? 0.25 : 0.15),
+                                        theme.accentColor.opacity(isClipboardHovered ? 0.6 : 0.15),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1
+                            )
+                    )
+                    .modifier(
+                        ClipboardPulseSweep(
+                            hovered: isClipboardHovered,
+                            trigger: clipboardService.hasNewContent
+                        )
+                    )
             }
-            Divider()
-            if let content = clipboardService.currentContent {
-                switch content {
-                case .text(let text):
-                    Button {
-                        if text.utf8.count >= Self.pastedContentThreshold {
-                            withAnimation(theme.springAnimation()) {
-                                pendingAttachments.append(.pastedContent(text))
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .help(Text(localized: "Attach snippet from \(clipboardService.lastSourceApp ?? "clipboard")"))
+            .contextMenu {
+                Button {
+                    clipboardService.markAsRead()
+                } label: {
+                    Text("Dismiss", bundle: .module)
+                }
+                Divider()
+                if let content = clipboardService.currentContent {
+                    switch content {
+                    case .text(let text):
+                        Button {
+                            if text.utf8.count >= Self.pastedContentThreshold {
+                                withAnimation(theme.springAnimation()) {
+                                    pendingAttachments.append(.pastedContent(text))
+                                }
+                            } else {
+                                localText += text
                             }
-                        } else {
-                            localText += text
+                            clipboardService.markAsRead()
+                        } label: {
+                            Text("Paste to Input", bundle: .module)
                         }
-                        clipboardService.markAsRead()
-                    } label: {
-                        Text("Paste to Input", bundle: .module)
-                    }
-                case .file:
-                    Button {
-                        attachClipboardSnippet()
-                    } label: {
-                        Text("Attach File", bundle: .module)
-                    }
-                case .image:
-                    Button {
-                        attachClipboardSnippet()
-                    } label: {
-                        Text("Attach Image", bundle: .module)
+                    case .file:
+                        Button {
+                            attachClipboardSnippet()
+                        } label: {
+                            Text("Attach File", bundle: .module)
+                        }
+                    case .image:
+                        Button {
+                            attachClipboardSnippet()
+                        } label: {
+                            Text("Attach Image", bundle: .module)
+                        }
                     }
                 }
             }
-        }
-        .transition(.scale(scale: 0.8).combined(with: .opacity))
+            .transition(.scale(scale: 0.8).combined(with: .opacity))
         }
     }
 
@@ -4410,94 +4211,23 @@ extension FloatingInputCard {
     /// the banner into a cramped container.
     private static let ramBannerWidth: CGFloat = 320
 
-    /// In-flow wrapper for `ramPressureBanner`: a fixed-width, popover-style
-    /// toast at the top of the composer stack, left-aligned with the model
-    /// picker chip it refers to (same 20pt leading inset), with the pointer
-    /// fixed near the banner's left so it lands on the front of the chip
-    /// regardless of the chip's width. The config-context error (still a
-    /// floating overlay) wins when both apply.
-    @ViewBuilder
-    private var ramPressureRow: some View {
-        if localMemoryWarningsApplyToSelectedModel,
-            !configContextTooSmall, case .predicted(let prediction) = resolvedMemoryWarning
-        {
-            ramPressureBanner(prediction, pointerCenterX: 28)
-                .frame(width: Self.ramBannerWidth, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 20)
-                .padding(.top, 8)
-                // The pointer is inside the banner's frame now; the negative
-                // padding cancels most of the stack spacing + selector row top
-                // padding so the pointer tip sits ~4pt above the chip.
-                .padding(.bottom, -16)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-        }
-    }
-
-    /// Prediction only; selecting or acknowledging never initiates a load.
-    private func ramPressureBanner(
-        _ prediction: MemoryWarningState.Prediction,
-        pointerCenterX: CGFloat
-    ) -> some View {
-        let tint: Color = prediction.severity == .block ? .red : .orange
-        let modelName = selectedPickerItem?.displayName ?? prediction.model
-        let neededGB = Self.formatGigabytes(prediction.requiredBytes)
-        let clampedX = min(
-            max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
-            Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
-        )
-        let shape = RAMBannerShape(pointerCenterX: clampedX)
-
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Loading \(modelName) may cause swapping or run out of memory.", bundle: .module)
-                .foregroundColor(theme.primaryText)
-            if prediction.simulated {
-                Text("Memory-risk prediction (simulated). No model is loaded by this warning.", bundle: .module)
-                    .foregroundColor(theme.secondaryText)
-            } else {
-                Text("Estimated load and cache allowance: ~\(neededGB) GB. Close other apps or choose a smaller model.", bundle: .module)
-                    .foregroundColor(theme.secondaryText)
-            }
-            Text("Use Anyway keeps this selection. Loading starts only when you send; runtime safety settings still apply.", bundle: .module)
-                .foregroundColor(theme.secondaryText)
-            swapPrimaryButton(String(localized: "Use Anyway", bundle: .module), tint: tint) {
-                memoryPredictionAcknowledged = prediction
-            }
-            swapTextButton(String(localized: "Choose Another Model", bundle: .module)) {
-                showModelPicker = true
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.leading, 14)
-        .padding(.trailing, 14)
-        .padding(.top, 9)
-        // The shape's bottom edge sits above the pointer, so reserve its
-        // height inside the frame.
-        .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
-        .background(
-            ZStack {
-                shape.fill(.regularMaterial)
-                shape.fill(tint.opacity(0.12))
-            }
-        )
-        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("memory-warning.predicted")
-    }
-
     // MARK: - Model-Switch Continuity Banner
 
     @ViewBuilder
     private var modelSwitchContinuityRow: some View {
         if let warning = modelSwitchContinuityWarning {
-            let previous = pickerItems.first { $0.id == warning.previousModelId }?.displayName
+            let previous =
+                pickerItems.first { $0.id == warning.previousModelId }?.displayName
                 ?? warning.previousModelId
-            let next = pickerItems.first { $0.id == warning.newModelId }?.displayName
+            let next =
+                pickerItems.first { $0.id == warning.newModelId }?.displayName
                 ?? warning.newModelId
-            modelSwitchContinuityBanner(previous: previous, next: next, pointerCenterX: 28)
+            modelSwitchContinuityBanner(
+                previousModelId: warning.previousModelId,
+                previous: previous,
+                next: next,
+                pointerCenterX: 28
+            )
                 .frame(width: Self.ramBannerWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 20)
@@ -4508,6 +4238,7 @@ extension FloatingInputCard {
     }
 
     private func modelSwitchContinuityBanner(
+        previousModelId: String,
         previous: String,
         next: String,
         pointerCenterX: CGFloat
@@ -4537,14 +4268,18 @@ extension FloatingInputCard {
             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
             .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 10) {
-                swapPrimaryButton(String(localized: "Start New Chat", bundle: .module), tint: tint) {
-                    onDismissModelSwitchContinuityWarning?()
-                    onClearChat?()
-                }
-                swapTextButton(String(localized: "Continue with This Model", bundle: .module)) {
+                // Switching back clears the advisory in the session's model
+                // sink. Dismiss explicitly too, since that sink skips changes
+                // made while a model is loading.
+                bannerPrimaryButton(String(localized: "Keep Using \(previous)", bundle: .module), tint: tint) {
                     withAnimation(.easeOut(duration: 0.2)) {
+                        selectedModel = previousModelId
                         onDismissModelSwitchContinuityWarning?()
                     }
+                }
+                bannerTextButton(String(localized: "Start New Chat", bundle: .module)) {
+                    onDismissModelSwitchContinuityWarning?()
+                    onClearChat?()
                 }
             }
             .frame(maxWidth: .infinity)
@@ -4570,233 +4305,11 @@ extension FloatingInputCard {
         )
     }
 
-    // MARK: - Swap-Pressure Banner
-
-    /// Re-sample the swap-pressure monitor on the same 2 s tick as the
-    /// tight-fit re-check. State only changes when the banner's content
-    /// would, so idle ticks don't re-render the card.
-    private func refreshSwapPressure() {
-        guard localMemoryWarningsApplyToSelectedModel else {
-            if swapPressure != nil { swapPressure = nil }
-            if swapBannerDismissedAtSeverity != nil { swapBannerDismissedAtSeverity = nil }
-            return
-        }
-        let state = SwapPressureMonitor.shared.currentState()
-        if let old = swapPressure,
-            old.modelName != state.modelName || old.emulated != state.emulated
-                || state.episodeElapsedSeconds < old.episodeElapsedSeconds
-                || state.baselineUsedBytes != old.baselineUsedBytes
-        {
-            swapBannerDismissedAtSeverity = nil
-        }
-        if state.severity == .none {
-            if swapPressure != nil { swapPressure = nil }
-            // Episode ended — a dismissal has served its purpose.
-            if swapBannerDismissedAtSeverity != nil { swapBannerDismissedAtSeverity = nil }
-            return
-        }
-        if swapPressure != state { swapPressure = state }
-    }
-
-    /// In-flow wrapper mirroring `ramPressureRow`. Suppressed while the RAM
-    /// tight-fit banner is visible (one popover at a time; the RAM banner
-    /// carries the more actionable message), and while dismissed at a
-    /// severity that has not worsened.
-    @ViewBuilder
-    private var swapPressureRow: some View {
-        if localMemoryWarningsApplyToSelectedModel,
-            !configContextTooSmall,
-            let swap = swapPressure, swap.severity != .none,
-            showMeasuredMemoryWarning
-        {
-            swapPressureBanner(swap, pointerCenterX: 28)
-                .frame(width: Self.ramBannerWidth, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 20)
-                .padding(.top, 8)
-                .padding(.bottom, -16)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-        }
-    }
-
-    private var showMeasuredMemoryWarning: Bool {
-        switch resolvedMemoryWarning {
-        case .loading, .loaded: true
-        case .none, .predicted: false
-        }
-    }
-
-    /// Same popover silhouette, tints, and typography as the tight-fit
-    /// banner. Orange = the episode coincided with swap growth (generation
-    /// may slow); red = heavy growth (slowdown expected). Wording stays
-    /// cautious — swap is host-wide, so this reports coincidence, not blame.
-    /// Emulated states — the designer/QA simulation via OSAURUS_SWAP_EMULATE
-    /// or the debug/swap-emulate flag file — are labeled so screenshots stay
-    /// honest.
-    private func swapPressureBanner(
-        _ swap: SwapPressureMonitor.State,
-        pointerCenterX: CGFloat
-    ) -> some View {
-        let critical = swap.severity == .critical
-        let tint: Color = critical ? .red : .orange
-        let modelLabel =
-            swap.modelName ?? selectedPickerItem?.displayName ?? String(localized: "this model")
-
-        // Full sentences per phase rather than an interpolated verb: the
-        // verb-plus-name word order doesn't survive translation (German
-        // splits the verb around the model name).
-        //
-        // The sentence names swap GROWTH ("Swap increased by N GB") and
-        // carries the measured figure. "Low on memory" was tried and reads as
-        // the RAM tight-fit warning; "started swapping" was tried and is
-        // wrong on a machine that already had swap before the episode — the
-        // monitor measures growth over the episode baseline, so the copy
-        // states exactly that. Severity rides the trailing clause
-        // (will/may slow). Translations must keep the GB slot before the
-        // model slot — both are %@ and swapping them swaps the VALUES.
-        let loading = memoryWarningPhase == .loading
-        let peakGB = Self.formatGigabytes(max(0, swap.peakGrowthBytes))
-        let message: Text
-        switch (critical, loading) {
-        case (true, true):
-            message = Text(
-                "Swap increased by \(peakGB) GB while loading \(modelLabel), so responses will be slower.",
-                bundle: .module)
-        case (true, false):
-            message = Text(
-                "Swap increased by \(peakGB) GB while running \(modelLabel), so responses will be slower.",
-                bundle: .module)
-        case (false, true):
-            message = Text(
-                "Swap increased by \(peakGB) GB while loading \(modelLabel), so responses may slow down.",
-                bundle: .module)
-        case (false, false):
-            message = Text(
-                "Swap increased by \(peakGB) GB while running \(modelLabel), so responses may slow down.",
-                bundle: .module)
-        }
-        var tip: Text =
-            critical
-            ? Text("Closing other apps usually speeds things back up.", bundle: .module)
-            : Text("Closing other apps helps.", bundle: .module)
-        if swap.emulated {
-            tip = tip + Text(verbatim: "  ") + Text("(simulated)", bundle: .module)
-        }
-
-        let clampedX = min(
-            max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
-            Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
-        )
-        let shape = RAMBannerShape(pointerCenterX: clampedX)
-
-        return VStack(alignment: .leading, spacing: 10) {
-            (Text(Image(systemName: critical
-                ? "externaldrive.fill.badge.exclamationmark" : "externaldrive.badge.timemachine"))
-                .foregroundColor(tint)
-                + Text(verbatim: "  ")
-                + message.foregroundColor(theme.primaryText))
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .fixedSize(horizontal: false, vertical: true)
-            tip.foregroundColor(theme.secondaryText)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(spacing: 10) {
-                swapPrimaryButton(
-                    swapUnloadInFlight
-                        ? String(localized: "Unloading…", bundle: .module)
-                        : (loading ? String(localized: "Cancel Loading", bundle: .module)
-                            : String(localized: "Unload Model", bundle: .module)),
-                    tint: tint
-                ) {
-                    // Use the canonical runtime key for BOTH states. A picker
-                    // catalog id can resolve a resident but miss loadingTasks.
-                    // Simulated Model is never a real unload target.
-                    let target = memoryWarningModel
-                    guard let target, !swapUnloadInFlight else { return }
-                    guard ModelManager.findInstalledModelFromCache(named: selectedModel ?? "")?.name == target
-                    else { return }
-                    swapUnloadInFlight = true
-                    swapUnloadFailure = nil
-                    Task {
-                        // Same guarded path as the cache inspector: every chat
-                        // session on this model is put through its Stop
-                        // lifecycle first (no successful-run follow-up can
-                        // reload it), then the runtime unload runs with the
-                        // lease-drain timeout. A refusal keeps the model
-                        // resident and is shown here instead of being dropped.
-                        let didUnload = await MLXService.shared.unloadRuntimeModel(named: target)
-                        swapUnloadInFlight = false
-                        guard memoryWarningModel == target else { return }
-                        refreshLoadFeasibility()
-                        if !didUnload {
-                            swapUnloadFailure = String(
-                                localized:
-                                    "Couldn't unload \(target) because it is still in use. Stop its active request and try again.",
-                                bundle: .module
-                            )
-                        }
-                    }
-                }
-                .disabled(swapUnloadInFlight)
-                if let swapUnloadFailure {
-                    Text(verbatim: swapUnloadFailure)
-                        .foregroundColor(theme.secondaryText)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                HStack(spacing: 18) {
-                    swapTextButton(loading ? String(localized: "Continue Loading", bundle: .module)
-                        : String(localized: "Keep Running", bundle: .module)) {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            swapBannerDismissedAtSeverity = swap.severity
-                        }
-                    }
-                    // The see-for-yourself affordance: the banner reports a
-                    // host-wide condition, so the user gets the tool that
-                    // shows the whole host.
-                    swapTextButton(String(localized: "Activity Monitor", bundle: .module)) {
-                        // `open(_:)` blocks the caller on the LaunchServices
-                        // XPC round-trip, and this fires from a button action
-                        // on the main thread while the host is already under
-                        // memory pressure — exactly when that round-trip is
-                        // slowest. The completion-handler form returns
-                        // immediately and launches in the background.
-                        NSWorkspace.shared.openApplication(
-                            at: URL(fileURLWithPath:
-                                "/System/Applications/Utilities/Activity Monitor.app"),
-                            configuration: NSWorkspace.OpenConfiguration(),
-                            completionHandler: nil
-                        )
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 2)
-        }
-        .padding(.leading, 14)
-        .padding(.trailing, 14)
-        .padding(.top, 12)
-        .padding(.bottom, 12 + RAMBannerShape.pointerHeight)
-        .background(
-            ZStack {
-                shape.fill(.regularMaterial)
-                shape.fill(tint.opacity(0.12))
-            }
-        )
-        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
-        // The banner is a container: its label is the swap message, and the
-        // buttons inside keep their own labels (Unload Model / Keep Running /
-        // Activity Monitor) instead of inheriting that sentence.
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(message)
-        .accessibilityIdentifier(loading ? "memory-warning.loading" : "memory-warning.loaded")
-    }
-
-    /// Filled CTA for the swap banner's primary action, tinted to match the
-    /// banner severity.
-    private func swapPrimaryButton(
-        _ title: String, tint: Color, action: @escaping () -> Void
+    /// Filled primary action shared by the remaining informational banners.
+    private func bannerPrimaryButton(
+        _ title: String,
+        tint: Color,
+        action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Text(verbatim: title)
@@ -4808,15 +4321,13 @@ extension FloatingInputCard {
                 .background(Capsule().fill(tint.opacity(0.85)))
                 .contentShape(Capsule())
         }
-        // The banner's own accessibilityLabel (the swap message) otherwise
-        // shadows every button inside it: assistive tech heard the same
-        // sentence for Unload, Keep Running and Activity Monitor.
+        // Keep the button label independent of its containing banner.
         .accessibilityLabel(Text(verbatim: title))
         .buttonStyle(.plain)
     }
 
-    /// Borderless secondary action for the swap banner, plain text only.
-    private func swapTextButton(_ title: String, action: @escaping () -> Void) -> some View {
+    /// Borderless secondary action for informational banners.
+    private func bannerTextButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(verbatim: title)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
@@ -4837,7 +4348,7 @@ extension FloatingInputCard {
     /// file stats + small JSON parses), so it runs once per pick — off the
     /// main actor — not on every 2s memory tick.
     ///
-    /// Advisory only, per the memory-pressure advisory's charter: it never
+    /// Advisory only: it never
     /// refuses, never caps, never blocks a load. The bundle keeps loading
     /// exactly as before; this just tells the user a re-download exists.
     private func refreshMTPLayoutAdvisory() {
@@ -4850,7 +4361,7 @@ extension FloatingInputCard {
         // reports "not local" for a bundle that IS local, so the 2s tick
         // keeps retrying (two memoized dictionary reads) until the scan
         // lands or the selection really is remote.
-        guard localMemoryWarningsApplyToSelectedModel,
+        guard localBundleAdvisoriesApplyToSelectedModel,
             let model = selectedModel,
             let installed = ModelManager.findInstalledMLXModelFromCache(named: model)
         else {
@@ -4878,18 +4389,10 @@ extension FloatingInputCard {
             // Selection must expose the controls before Send. This reads only
             // bundle metadata/headers; it neither loads nor warms the model.
             let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
-            let defaultEligible = NativeMTPSelectionDefault.isEligible(
-                bundleDirectory: bundleDir)
-            let startsOff = NativeMTPSelectionDefault.startsOff(bundleDirectory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
                 let identity = Self.mtpIdentity(model)
-                if startsOff {
-                    nativeMTPDefaultOffModels.insert(identity)
-                } else {
-                    nativeMTPDefaultOffModels.remove(identity)
-                }
                 if let capability, capability.bundleHasMTP, capability.isTargetMTPFamily {
                     nativeMTPCapableModels.insert(identity)
                     if capability.isBlocked {
@@ -4901,7 +4404,6 @@ extension FloatingInputCard {
                     nativeMTPCapableModels.remove(identity)
                     nativeMTPManuallyBlockedModels.remove(identity)
                 }
-                applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible, startsOff: startsOff)
                 // Shown once per bundle per improper-state fingerprint: a
                 // dismissed state stays quiet across relaunches, while a
                 // DIFFERENT improper state re-arms the notice.
@@ -4924,104 +4426,11 @@ extension FloatingInputCard {
         refreshMTPLayoutAdvisory()
     }
 
-    /// SwiftUI tasks retain the view values from their launch. Restart when a
-    /// same-model chat or presentation gate changes, not just the model name.
-    private var ssdQuotaNoticePollContext: SSDQuotaNoticePollContext {
-        SSDQuotaNoticePollContext(
-            model: selectedModel,
-            session: inputHistoryKey,
-            eligible: canPresentSSDQuotaNotice,
-            cacheSettings: ssdCacheSettings
-        )
-    }
-
-    private var canPresentSSDQuotaNotice: Bool {
-        guard ModelRuntime.cacheDiskDirectoryOverride(for: ssdCacheSettings) != nil,
-            isSelectedModelLocal, !isRemoteAgentRun, !isStreaming,
-            !configContextTooSmall, modelSwitchContinuityWarning == nil,
-            mtpLayoutAdvisory == nil, !ThemedAlertCenter.shared.hasAnyActiveAlert,
-            let windowId, ChatWindowManager.shared.isChatWindowActive(id: windowId),
-            ChatWindowManager.shared.windowState(id: windowId)?.session.sessionId == inputHistoryKey
-        else { return false }
-        // On main the RAM/swap notices still exist; don't compete with them.
-        if localMemoryWarningsApplyToSelectedModel {
-            if case .predicted = resolvedMemoryWarning { return false }
-            if showMeasuredMemoryWarning, let swap = swapPressure, swap.severity != .none { return false }
-        }
-        return alignmentPreparation.progress(
-            modelID: selectedModel.flatMap { ModelManager.findInstalledModelFromCache(named: $0)?.id },
-            sessionID: inputHistoryKey
-        ) == nil
-    }
-
-    @ViewBuilder
-    private var ssdQuotaWarningRow: some View {
-        if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("SSD cache limit reached", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                if ssdClearResult == nil {
-                    Text(
-                        verbatim: String(
-                            format: L(
-                                "The SSD cache reached its %@ limit. Removing older cached data to make room can make replies slower to start. Clearing frees cache space, but the next reply may need to rebuild it."
-                            ),
-                            snapshot.usage.maxLabel
-                        )
-                    )
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                if let ssdClearResult {
-                    Text(verbatim: ssdClearResult).font(.caption)
-                }
-                swapPrimaryButton(
-                    String(localized: "Clear SSD Cache", bundle: .module),
-                    tint: .orange
-                ) {
-                    ssdClearInProgress = true
-                    ssdClearResult = nil
-                    Task {
-                        let result = await ModelRuntime.shared.clearDiskCaches(directory: snapshot.directory)
-                        if ssdWarningSnapshot?.key == snapshot.key {
-                            ssdClearResult =
-                                result.error
-                                ?? String(
-                                    format: L("Cleared %@"),
-                                    DiskCacheUsage.format(bytes: result.reclaimedBytes)
-                                )
-                        }
-                        ssdClearInProgress = false
-                    }
-                }
-                .disabled(ssdClearInProgress || isStreaming)
-                if ssdClearInProgress { ProgressView().controlSize(.small) }
-                swapTextButton(String(localized: "Dismiss", bundle: .module)) {
-                    ssdWarningSnapshot = nil
-                    ssdClearResult = nil
-                }
-                .disabled(ssdClearInProgress)
-            }
-            .padding(14)
-            .background(RAMBannerShape(pointerCenterX: 28).fill(.regularMaterial))
-            .overlay(RAMBannerShape(pointerCenterX: 28).stroke(Color.orange.opacity(0.45), lineWidth: 1))
-            .frame(width: Self.ramBannerWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 20)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("ssd-quota-warning")
-        }
-    }
-
-    /// In-flow wrapper mirroring `swapPressureRow`. One banner at a time:
-    /// RAM tight-fit, swap pressure, and the model-switch continuity notice
-    /// all outrank this (they are about the CURRENT session's health; this
-    /// one is stable and will still be true after they clear).
+    /// The model-switch notice takes precedence over the bundle-layout advisory.
     @ViewBuilder
     private var mtpLayoutAdvisoryRow: some View {
-        if localMemoryWarningsApplyToSelectedModel,
+        if localBundleAdvisoriesApplyToSelectedModel,
             !configContextTooSmall,
-            resolvedMemoryWarning == .none,
             modelSwitchContinuityWarning == nil,
             let advisory = mtpLayoutAdvisory
         {
@@ -5035,8 +4444,7 @@ extension FloatingInputCard {
         }
     }
 
-    /// Same popover silhouette, tints, and typography as the swap-pressure
-    /// banner. Always orange: both severities are advisories about a
+    /// Always orange: both severities are advisories about a
     /// superseded bundle layout, never about a broken session.
     private func mtpLayoutAdvisoryBanner(
         _ advisory: MTPLayoutAdvisory,
@@ -5068,13 +4476,13 @@ extension FloatingInputCard {
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 10) {
-                    swapPrimaryButton(
+                    bannerPrimaryButton(
                         String(localized: "Delete & Re-download", bundle: .module),
                         tint: .red
                     ) {
                         performMTPAdvisoryRedownload()
                     }
-                    swapTextButton(String(localized: "Cancel", bundle: .module)) {
+                    bannerTextButton(String(localized: "Cancel", bundle: .module)) {
                         withAnimation(.easeOut(duration: 0.2)) {
                             mtpAdvisoryConfirmingRedownload = false
                         }
@@ -5087,7 +4495,7 @@ extension FloatingInputCard {
                     .foregroundColor(tint)
                     + Text(verbatim: "  ")
                     + Text(verbatim: advisory.warningText)
-                        .foregroundColor(theme.primaryText))
+                    .foregroundColor(theme.primaryText))
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .fixedSize(horizontal: false, vertical: true)
                 Text(verbatim: advisory.reassuranceText)
@@ -5095,14 +4503,15 @@ extension FloatingInputCard {
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 10) {
-                    swapPrimaryButton(
-                        String(localized: "Re-download", bundle: .module), tint: tint
+                    bannerPrimaryButton(
+                        String(localized: "Re-download", bundle: .module),
+                        tint: tint
                     ) {
                         withAnimation(.easeOut(duration: 0.2)) {
                             mtpAdvisoryConfirmingRedownload = true
                         }
                     }
-                    swapTextButton(String(localized: "Skip", bundle: .module)) {
+                    bannerTextButton(String(localized: "Skip", bundle: .module)) {
                         MTPLayoutAdvisoryDismissals.recordDismissal(advisory.fingerprint)
                         withAnimation(.easeOut(duration: 0.2)) {
                             mtpLayoutAdvisory = nil
@@ -5125,6 +4534,7 @@ extension FloatingInputCard {
         )
         .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(verbatim: advisory.shortLabel))
     }
 
@@ -5158,11 +4568,6 @@ extension FloatingInputCard {
         }
     }
 
-    /// One-decimal GB formatting for the RAM banner (e.g. "12.4").
-    private static func formatGigabytes(_ bytes: Int64) -> String {
-        String(format: "%.1f", Double(bytes) / 1_073_741_824.0)
-    }
-
     /// Compact, floating toast shown above the card when the Default agent's
     /// selected model is too small to run configuration. Names the model +
     /// window and offers a one-tap jump to the model picker so the fix is
@@ -5188,7 +4593,7 @@ extension FloatingInputCard {
             .fixedSize(horizontal: false, vertical: true)
 
             Button {
-                showModelPicker = true
+                openModelPicker()
             } label: {
                 Text("Choose model", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
@@ -5441,12 +4846,19 @@ extension FloatingInputCard {
         // about audio, so the picker advertised "image supported" and greyed
         // out every .wav. `hasAudioTensors` is memoized for exactly this
         // getter's no-disk-IO rule.
+        //
+        // Bundle evidence comes from the cache-only snapshot; a pending read
+        // resolves as text-only until `evidenceReady` bumps the generation
+        // below and this getter re-runs. The audio bit comes from the same
+        // snapshot so no branch here can fall through to a synchronous read.
+        _ = mediaEvidenceGeneration
+        let snapshot = localModel?.mediaCapabilitiesSnapshot
         return ModelMediaCapabilities.composerDescriptor(
             modelId: selectedModel,
             fallbackSupportsImages: supportsImages,
             localModelType: localModel?.modelType,
-            localHasAudioTensors: localModel?.hasAudioTensors ?? false,
-            localCapabilities: localModel?.mediaCapabilities
+            localHasAudioTensors: snapshot?.supportsAudio ?? false,
+            localCapabilities: snapshot
         )
     }
 
@@ -5787,16 +5199,16 @@ extension FloatingInputCard {
             if let media = selectedMediaPickerItem?.mediaModel {
                 catalogMediaComposerChips(media)
             } else {
-        HStack(spacing: 6) {
-            sizeSelector
-            stepsChip
-            cfgChip
-            seedChip
-            if imageCapabilities?.imageEdit == true {
-                strengthChip
+                HStack(spacing: 6) {
+                    sizeSelector
+                    stepsChip
+                    cfgChip
+                    seedChip
+                    if imageCapabilities?.imageEdit == true {
+                        strengthChip
+                    }
+                }
             }
-        }
-    }
         }
     }
 
@@ -6488,34 +5900,7 @@ extension FloatingInputCard {
     /// Streaming + a queued message present: pressing this stops the
     /// current run and dispatches the queued payload immediately.
     private var sendNowButton: some View {
-        SendNowButton(action: checkMemoryAndSendQueuedNow)
-            .disabled(memorySendCheckInFlight)
-    }
-
-    private func checkMemoryAndSendQueuedNow() {
-        guard !memorySendCheckInFlight, let pending = queuedSend else { return }
-        let selection = selectedModel
-        let contextGeneration = memoryContextGeneration
-        guard localMemoryWarningsApplyToSelectedModel, let model = selection,
-            let canonical = ModelManager.findInstalledModelFromCache(named: model)?.name
-        else {
-            dispatchQueuedNow()
-            return
-        }
-        memorySendCheckInFlight = true
-        memoryAssessmentTicket = UUID()
-        Task { @MainActor in
-            let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
-            let phase = await ModelRuntime.shared.memoryWarningPhase(forCanonicalName: canonical)
-            memorySendCheckInFlight = false
-            guard selectedModel == selection, memoryContextGeneration == contextGeneration,
-                queuedSend == pending
-            else { return }
-            applyMemoryAssessment(assessment, phase: phase, canonical: canonical)
-            refreshSwapPressure()
-            if case .predicted = resolvedMemoryWarning { return }
-            dispatchQueuedNow()
-        }
+        SendNowButton(action: dispatchQueuedNow)
     }
 
     private func dispatchQueuedNow() {
@@ -7005,7 +6390,10 @@ extension NSImage {
 /// larger values for its heavier look.
 private struct PopoverCardModifier: ViewModifier {
     var cornerRadius: CGFloat = 10
+    var backgroundColor: Color? = nil
     var accentOpacity: (dark: Double, light: Double) = (0.04, 0.03)
+    var borderColor: Color? = nil
+    var borderWidth: CGFloat = 1
     var borderOpacity: Double = 0.12
     var shadowOpacity: Double = 0.2
     var shadowRadius: CGFloat = 16
@@ -7017,38 +6405,46 @@ private struct PopoverCardModifier: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
             .background {
-                ZStack {
-                    if theme.glassEnabled {
-                        shape.fill(.ultraThinMaterial)
+                if let backgroundColor {
+                    shape.fill(backgroundColor)
+                } else {
+                    ZStack {
+                        if theme.glassEnabled {
+                            shape.fill(.ultraThinMaterial)
+                        }
+                        shape.fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(
+                                    theme.isDark ? accentOpacity.dark : accentOpacity.light
+                                ),
+                                .clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                        .clipShape(shape)
                     }
-                    shape.fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
-                    LinearGradient(
-                        colors: [
-                            theme.accentColor.opacity(
-                                theme.isDark ? accentOpacity.dark : accentOpacity.light
-                            ),
-                            .clear,
-                        ],
-                        startPoint: .top,
-                        endPoint: .center
-                    )
-                    .clipShape(shape)
                 }
             }
             .clipShape(shape)
-            .overlay(
-                shape.strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(0.2),
-                            theme.primaryBorder.opacity(borderOpacity),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-            )
+            .overlay {
+                if let borderColor {
+                    shape.strokeBorder(borderColor, lineWidth: borderWidth)
+                } else {
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(0.2),
+                                theme.primaryBorder.opacity(borderOpacity),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+                }
+            }
             .shadow(
                 color: theme.shadowColor.opacity(shadowOpacity),
                 radius: shadowRadius,
@@ -7063,7 +6459,10 @@ private extension View {
     /// border, soft shadow). Tunable for the heavier model-options panel.
     func popoverCard(
         cornerRadius: CGFloat = 10,
+        backgroundColor: Color? = nil,
         accentOpacity: (dark: Double, light: Double) = (0.04, 0.03),
+        borderColor: Color? = nil,
+        borderWidth: CGFloat = 1,
         borderOpacity: Double = 0.12,
         shadowOpacity: Double = 0.2,
         shadowRadius: CGFloat = 16,
@@ -7072,7 +6471,10 @@ private extension View {
         modifier(
             PopoverCardModifier(
                 cornerRadius: cornerRadius,
+                backgroundColor: backgroundColor,
                 accentOpacity: accentOpacity,
+                borderColor: borderColor,
+                borderWidth: borderWidth,
                 borderOpacity: borderOpacity,
                 shadowOpacity: shadowOpacity,
                 shadowRadius: shadowRadius,
@@ -7157,20 +6559,16 @@ private struct ContextBreakdownPopover: View {
     /// Session compaction state — drives the inline progress / result row.
     var compactionState: ContextCompactionUIState = .idle
     /// True when the manual "Compact conversation" button should show
-    /// (utilization past threshold, an uncovered older span exists, and no
-    /// turn is streaming).
+    /// (an uncovered older span exists and no turn is streaming).
     var canCompact: Bool = false
     var onCompact: (() -> Void)? = nil
     /// Live disk-cache usage for the footer readout. nil when the disk cache is
     /// off or no quota is configured, in which case the section is hidden
     /// entirely rather than rendering a meaningless 0 GB.
     var diskCache: DiskCacheUsage? = nil
-
-    /// Non-nil only while the HOST is out of memory badly enough to be the
-    /// reason generation is slow. Advisory only — nothing here gates a load or
-    /// caps anything; it exists so a user is not left concluding the model is
-    /// broken when their Mac is thrashing.
-    var memoryPressure: MemoryPressureAdvisory? = nil
+    /// The chat this chip belongs to; the disk-cache note is shown only when
+    /// the cap took this chat's rows.
+    var currentSessionKey: String? = nil
 
     /// Fraction of the configured quota at which the footer starts warning.
     static let diskCacheWarnFraction: Double = 0.75
@@ -7364,13 +6762,6 @@ private struct ContextBreakdownPopover: View {
                 diskCacheSection(diskCache)
             }
 
-            // Only present when the machine is genuinely struggling, so this
-            // adds nothing to the panel on a healthy Mac.
-            if let memoryPressure {
-                divider
-                memoryPressureSection(memoryPressure)
-            }
-
             if showsCompactionSection {
                 divider
                 compactionSection
@@ -7402,7 +6793,7 @@ private struct ContextBreakdownPopover: View {
         .pointingHandCursor()
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .localizedHelp("Open Management → Server → Cache → Context Window Cap")
+        .localizedHelp("Open Settings… (⌘,) → Server → Settings → Cache → Context Window Cap")
     }
 
     // MARK: - Disk cache
@@ -7417,7 +6808,9 @@ private struct ContextBreakdownPopover: View {
     /// instead of inferred.
     private func diskCacheSection(_ usage: DiskCacheUsage) -> some View {
         let fraction = usage.usedFraction
-        let warn = fraction >= Self.diskCacheWarnFraction
+        // A full cache is an LRU's steady state, not a problem; the tint and
+        // the note appear only when the cap took THIS chat's saved progress.
+        let warn = usage.pressureAffects(session: currentSessionKey)
         let tint = warn ? theme.warningColor : theme.accentColor
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -7439,43 +6832,11 @@ private struct ContextBreakdownPopover: View {
                 .frame(height: 4)
             }
             if warn, usage.maxBytes > 0 {
-                Text(verbatim: usage.warningText)
+                Text(verbatim: usage.pressureText)
                     .font(.system(size: 9))
                     .foregroundColor(tint)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    // MARK: - Host memory pressure
-
-    /// Shown when the Mac itself is out of memory badly enough to be the
-    /// reason generation is crawling.
-    ///
-    /// Built from a real report: a 64 GB M3 Max running a 35B-A3B bundle sat
-    /// at 9.3 tok/s with 254 MB of free RAM, 13 of the model's own 27 GB
-    /// living in the compressor, and ~300k page decompressions every two
-    /// seconds. The app reported the slow number and said nothing about why,
-    /// so the reasonable conclusion was that the model or the runtime was
-    /// broken. Neither was.
-    ///
-    /// Advisory only. It never blocks a load, never caps a size, never
-    /// refuses generation — the user decides what to quit.
-    private func memoryPressureSection(_ advisory: MemoryPressureAdvisory) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                sectionEyebrow("Memory")
-                Spacer(minLength: 0)
-                Text(verbatim: advisory.shortLabel)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.warningColor)
-            }
-            Text(verbatim: advisory.warningText)
-                .font(.system(size: 9))
-                .foregroundColor(theme.warningColor)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -7494,9 +6855,30 @@ private struct ContextBreakdownPopover: View {
         }
     }
 
+    /// Helper copy naming the model the next compaction run will use:
+    /// the configured compaction model, else the chat's current model
+    /// (`ContextCompactionService.effectiveModelIdentifier`). Read
+    /// per-render from the in-memory config cache — no file I/O.
+    private var compactionHelperText: String {
+        let configured = ContextCompactionService.configuredModelIdentifier()
+        if ContextCompactionService.usesChatModelFallback(configured: configured) {
+            return L(
+                "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Conversation → Advanced → Compaction Model."
+            )
+        }
+        let name = configured.map(Self.shortModelName) ?? ""
+        return L("Summarizes older messages with \(name) to free up context. The visible chat is unchanged.")
+    }
+
+    /// `provider/model` → `model`; a bare id stays as is.
+    private static func shortModelName(_ identifier: String) -> String {
+        identifier.split(separator: "/", maxSplits: 1).last.map(String.init) ?? identifier
+    }
+
     @ViewBuilder
     private var compactionSection: some View {
         VStack(alignment: .leading, spacing: 7) {
+            sectionEyebrow("Compaction")
             switch compactionState {
             case .running(let phase):
                 HStack(spacing: 7) {
@@ -7539,13 +6921,10 @@ private struct ContextBreakdownPopover: View {
                 if canCompact {
                     VStack(alignment: .leading, spacing: 5) {
                         compactButton(label: L("Compact conversation"))
-                        Text(
-                            "Summarizes older messages with your compaction model to free up context. The visible chat is unchanged.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 9.5))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                        Text(verbatim: compactionHelperText)
+                            .font(.system(size: 9.5))
+                            .foregroundColor(theme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -7942,8 +7321,15 @@ private struct ContextBreakdownPopover: View {
 
 // MARK: - Wallet Popover
 
-/// The composer wallet panel, styled to match `ContextBreakdownPopover`
-/// (rounded glass card, 11pt headers, hairline dividers, monospaced values).
+private enum WalletCardStyle {
+    static let shadowRadius: CGFloat = 16
+    static let shadowOffsetY: CGFloat = 8
+    // Leave room for the blur to fade out before the native window edge.
+    static let shadowPadding = 3 * shadowRadius + abs(shadowOffsetY)
+}
+
+/// The composer wallet panel, presented in the same arrowless, themed card
+/// as the model picker, aligned to the trailing edge of its credits chip.
 /// Opens from the credits chip as a hover preview or a pinned click-through
 /// panel: balance hero, per-session router spend, recent account activity
 /// (model requests + ledger transactions), and Add credits / View all actions.
@@ -7961,9 +7347,13 @@ private struct WalletPopover: View {
     let isAttention: Bool
     let onAddCredits: () -> Void
     let onViewAll: () -> Void
+    let onHeightChange: (CGFloat) -> Void
 
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @Environment(\.theme) private var theme
+    @Environment(\.anchoredCardMetrics) private var cardMetrics
+
+    private var subduedTextColor: Color { theme.isDark ? theme.tertiaryText : theme.secondaryText }
 
     /// Shared so each row doesn't allocate a formatter; relative labels like
     /// "3h ago" only need minute resolution.
@@ -7982,6 +7372,41 @@ private struct WalletPopover: View {
     }
 
     var body: some View {
+        ScrollView {
+            walletContent
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                    ceil(geometry.size.height)
+                } action: { height in
+                    onHeightChange(height)
+                }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: cardMetrics?.visibleSize.width ?? 272, height: cardMetrics?.visibleSize.height)
+        .popoverCard(
+            cornerRadius: 16,
+            backgroundColor: theme.secondaryBackground,
+            borderColor: theme.primaryBorder.opacity(theme.borderOpacity),
+            borderWidth: theme.defaultBorderWidth,
+            shadowRadius: WalletCardStyle.shadowRadius,
+            shadowOffsetY: WalletCardStyle.shadowOffsetY
+        )
+        .task {
+            await accountService.refreshBalance()
+            await accountService.refreshUsage(reset: true)
+            await accountService.refreshTransactions(reset: true)
+            await accountService.refreshWebUsage(reset: true)
+            await accountService.refreshWebSettings()
+        }
+        // A billed turn settled while the popover is open: refetch the
+        // activity rows. Only fires while this view is mounted, so a closed
+        // wallet costs nothing per turn.
+        .onChange(of: accountService.usageRevision) { _, _ in
+            Task { await accountService.refreshUsage(reset: true) }
+        }
+    }
+
+    private var walletContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let sessionSpend {
@@ -8003,20 +7428,11 @@ private struct WalletPopover: View {
             divider
             footerActions
         }
-        .frame(width: 272)
-        .popoverCard()
-        .task {
-            await accountService.refreshBalance()
-            await accountService.refreshUsage(reset: true)
-            await accountService.refreshTransactions(reset: true)
-            await accountService.refreshWebUsage(reset: true)
-            await accountService.refreshWebSettings()
-        }
     }
 
     // MARK: Sections
 
-    /// Hero balance over a soft accent wash — the "card face" of the wallet.
+    /// Hero balance at the top of the wallet.
     private var header: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
@@ -8069,25 +7485,18 @@ private struct WalletPopover: View {
             if accountService.isFrozen {
                 Text("Account paused - add credits to resume.", bundle: .module)
                     .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(subduedTextColor)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Available balance", bundle: .module)
                     .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(subduedTextColor)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 11)
-        .background(
-            LinearGradient(
-                colors: [theme.accentColor.opacity(0.10), theme.accentColor.opacity(0.02)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
     }
 
     private func sessionSpendRow(_ spend: String, cachedLabel: String?) -> some View {
@@ -8119,7 +7528,9 @@ private struct WalletPopover: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(theme.secondaryText)
                 }
-                .accessibilityLabel(Text("Prompt cache: \(cachedLabel) input tokens served from cache", bundle: .module))
+                .accessibilityLabel(
+                    Text("Prompt cache: \(cachedLabel) input tokens served from cache", bundle: .module)
+                )
             }
         }
         .padding(.horizontal, 14)
@@ -8175,7 +7586,7 @@ private struct WalletPopover: View {
         VStack(alignment: .leading, spacing: 9) {
             Text("Recent activity", bundle: .module)
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(subduedTextColor)
                 .textCase(.uppercase)
                 .kerning(0.8)
 
@@ -8201,7 +7612,7 @@ private struct WalletPopover: View {
                 .foregroundColor(theme.tertiaryText.opacity(0.7))
             Text("No activity yet", bundle: .module)
                 .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(subduedTextColor)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.vertical, 6)
@@ -8238,7 +7649,7 @@ private struct WalletPopover: View {
                 if let timeLabel = timeLabel(for: row) {
                     Text(verbatim: timeLabel)
                         .font(.system(size: 9))
-                        .foregroundColor(theme.tertiaryText)
+                        .foregroundColor(subduedTextColor)
                 }
             }
 
@@ -9194,7 +8605,12 @@ private struct FloatingWorkspacePoolChip: View {
 
     private var accessibilityText: String {
         if let full = balance.map({ OsaurusRouter.formatMicroAsCredits($0.balanceMicro) }) {
-            return String(format: L("%@ left in %@'s workspace pool. %@ spent this session."), full, workspaceName, spendDisplay)
+            return String(
+                format: L("%@ left in %@'s workspace pool. %@ spent this session."),
+                full,
+                workspaceName,
+                spendDisplay
+            )
         }
         return String(format: L("%@'s workspace pool. %@ spent this session."), workspaceName, spendDisplay)
     }
@@ -9225,6 +8641,9 @@ private struct FloatingCreditsChip: View {
     /// True when the wallet panel was opened by click; hover exit no longer
     /// dismisses it, only outside-click / an action does.
     @State private var walletPanelPinned = false
+    @State private var walletHover = HoverPreviewPresence()
+    /// Measured before the first presentation, then updated as activity loads.
+    @State private var walletPanelHeight: CGFloat = 0
     @State private var balanceHoverTask: Task<Void, Never>?
     /// Delayed dismiss for the hover-opened wallet panel. Gives the cursor a
     /// grace period to travel from the chip into the panel (which lives in its
@@ -9385,6 +8804,7 @@ private struct FloatingCreditsChip: View {
         }
         .accessibilityLabel(creditsHelpText)
         .onHover { hovering in
+            walletHover.isOverTrigger = hovering
             balanceHoverTask?.cancel()
             // Empty state: the chip is a direct "Add credits" CTA (click opens
             // the top-up sheet), so no hover preview — surfacing the wallet
@@ -9404,7 +8824,15 @@ private struct FloatingCreditsChip: View {
                 scheduleWalletDismiss()
             }
         }
-        .popover(isPresented: $showWalletPanel, arrowEdge: .top) {
+        .anchoredCard(
+            isPresented: $showWalletPanel,
+            size: CGSize(width: 272, height: walletPanelHeight),
+            alignment: .trailing,
+            constrainToWindow: true,
+            takesFocus: walletPanelPinned,
+            shadowPadding: WalletCardStyle.shadowPadding,
+            accessibilityLabel: L("Credits")
+        ) {
             WalletPopover(
                 sessionSpend: isRouterBilledSession ? sessionSpendDisplay : nil,
                 sessionCachedInputLabel: isRouterBilledSession ? sessionCachedInputLabel : nil,
@@ -9416,22 +8844,39 @@ private struct FloatingCreditsChip: View {
                 onViewAll: {
                     closeWalletPanel()
                     AppDelegate.shared?.showManagementWindow(initialTab: .credits)
-                }
+                },
+                onHeightChange: { walletPanelHeight = $0 }
             )
-            // Keep the panel alive while the cursor is over it, so the user
-            // can travel from the chip and click Add credits / View all.
+            // The native drawing window includes the shadow, which overlaps
+            // the source pill. Include that transparent margin in hover only,
+            // or opening the preview can steal hover and immediately dismiss it.
+            // Undo the padding after tracking so card layout/measurement stay put.
+            .padding(WalletCardStyle.shadowPadding)
+            .contentShape(Rectangle())
             .onHover { hovering in
+                walletHover.isOverPanel = hovering
                 if hovering {
                     walletDismissTask?.cancel()
                 } else if !walletPanelPinned {
                     scheduleWalletDismiss()
                 }
             }
+            .padding(-WalletCardStyle.shadowPadding)
         }
         .onChange(of: showWalletPanel) { _, isShown in
             // Outside-click dismissal flips the binding directly; unpin so the
             // next hover preview behaves normally.
-            if !isShown { walletPanelPinned = false }
+            if !isShown {
+                walletHover.isOverPanel = false
+                walletPanelPinned = false
+                walletPanelHeight = 0
+                balanceHoverTask?.cancel()
+                walletDismissTask?.cancel()
+            }
+        }
+        .onDisappear {
+            balanceHoverTask?.cancel()
+            walletDismissTask?.cancel()
         }
     }
 
@@ -9504,9 +8949,12 @@ private struct FloatingCreditsChip: View {
     private func scheduleWalletDismiss() {
         balanceHoverTask?.cancel()
         walletDismissTask?.cancel()
+        guard walletHover.shouldDismiss(isPinned: walletPanelPinned) else { return }
         walletDismissTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                walletHover.shouldDismiss(isPinned: walletPanelPinned)
+            else { return }
             showWalletPanel = false
         }
     }
@@ -9529,84 +8977,29 @@ private struct FloatingContextChip: View {
     /// Read the shared disk-cache gauge. Returns nil when no quota is
     /// configured (disk cache off), so the popover hides the section rather
     /// than showing a meaningless 0 GB.
-    static func readDiskCacheUsage() async -> DiskCacheUsage? {
-        // Preferred source: a resident model's coordinator, which reports both
-        // the live payload bytes and the cap it is actually enforcing.
-        if let snapshot = await MLXBatchAdapter.snapshotDiagnostics(),
-            snapshot.diskL2MaxBytes > 0
-        {
+    nonisolated static func readDiskCacheUsage(model: String?, session: String?) async -> DiskCacheUsage? {
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let directory = ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
+        let dir = ModelRuntime.diskCacheDirectoryForDisplay(for: settings.cache)
+        let volume = DiskCacheVolumeSnapshot.read(directory: dir)
+        guard directory != nil else {
             return DiskCacheUsage(
-                usedBytes: snapshot.diskL2PayloadBytes,
-                maxBytes: snapshot.diskL2MaxBytes,
-                evictions: snapshot.diskL2Evictions)
+                usedBytes: Int(clamping: volume.ownBytes ?? 0), maxBytes: 0,
+                evictions: 0, isDisabled: true
+            )
         }
-        // Fallback: nothing resident. The coordinator-backed figures only
-        // exist while a model is loaded, so gating the whole row on them made
-        // the cache readout VANISH on an idle chat — which reads as the
-        // feature being missing rather than merely unmeasured. The cache is
-        // still on disk and still capped, so report it from disk and settings.
-        guard let settings = ServerRuntimeSettingsStore.load() else { return nil }
-        // Measure the directory the RUNTIME caps, not the default one.
-        // `OsaurusPaths.diskKVCacheUsageBytes()` hardcodes the default path, so
-        // with a custom Disk Cache Directory configured it would report the size
-        // of a directory that is not the one being evicted — a plausible-looking
-        // number about the wrong thing. Resolve the override the same way
-        // `ModelRuntime` does.
-        let dir =
-            ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
-            ?? OsaurusPaths.diskKVCache()
-        // A tier the USER switched off still gets a row, reading "· Off".
-        // Returning nil here instead made the readout vanish the moment
-        // someone unticked Disk Cache — the exact failure the comment above
-        // describes for an idle chat ("reads as the feature being missing"),
-        // and it left `isDisabled` reachable only from the host-aware
-        // free-disk decision. The state was built and then never rendered.
-        guard settings.cache.blockDisk.enabled else {
-            return DiskCacheUsage(
-                usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
-                maxBytes: 0,
-                evictions: 0,
-                isDisabled: true)
+        if let snapshot = await ModelRuntime.shared.diskCacheQuotaSnapshots(
+            matching: settings.cache, modelName: model, session: session
+        ).first {
+            return snapshot.usage
         }
-        // Resolve the cap the same way the coordinator does.
-        //
-        // This used to report ONLY an explicit `maxSizeGB`, on the reasoning
-        // that an unset size could not be known without a resident model. That
-        // is no longer true, and after the percent migration `maxSizeGB` is nil
-        // on every install — so the bar would have rendered "used · Auto" with
-        // no cap and no percentage while a real cap was being enforced, which
-        // is a worse lie than the guess it was avoiding. A share of a volume we
-        // can measure IS the number, computed by the same function that builds
-        // CacheCoordinatorConfig.
-        var resolvedGB = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
-            percent: settings.cache.blockDisk.maxSizePercent,
-            legacyGB: settings.cache.blockDisk.maxSizeGB,
-            directory: dir)
-        // The share is not the last word: `applyHostAwareDiskCacheCeiling`
-        // additionally bounds the cap to a quarter of the free bytes. Measured
-        // live, 10% of a 3.7 TB volume resolved to 372 GB while the coordinator
-        // enforced 242 GB, because only 969 GB was free. Reporting the
-        // unbounded number would make the bar's denominator disagree with the
-        // cap that is actually evicting.
-        var tierDisabled = false
-        if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
-            let decision = ModelRuntime.hostAwareDiskCacheDecision(
-                configuredCapGB: resolvedGB, freeBytes: freeBytes)
-            tierDisabled = !decision.enabled
-            resolvedGB = decision.enabled ? decision.capGB : 0
-        }
-        // Still honest when the volume cannot be measured: the resolver falls
-        // back to the floor, which is a real enforced cap, not a guess.
-        //
-        // `isDisabled` is carried separately so a switched-off tier renders as
-        // "Off" rather than "Auto" — a zero cap and an unknown cap are both
-        // maxBytes 0, and calling the former "Auto" tells the user their cache
-        // is being sized for them when it is not running at all.
+        // No resident model: report indexed ownership, not unrelated files in the directory.
+        guard let ownBytes = volume.ownBytes else { return nil }
+        let resolution = ModelRuntime.diskCacheCap(for: settings.cache, directory: dir)
         return DiskCacheUsage(
-            usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
-            maxBytes: Int(resolvedGB * 1_073_741_824),
-            evictions: 0,
-            isDisabled: tierDisabled)
+            usedBytes: Int(clamping: ownBytes), maxBytes: Int(clamping: resolution.capBytes),
+            evictions: 0
+        )
     }
 
     let displayTokens: Int
@@ -9625,6 +9018,10 @@ private struct FloatingContextChip: View {
     var compactionState: ContextCompactionUIState = .idle
     var canCompact: Bool = false
     var onCompact: (() -> Void)? = nil
+    /// The chat this chip belongs to. The disk-cache note is shown only when
+    /// the cap had to take THIS chat's saved progress.
+    var currentSessionKey: String? = nil
+    var currentModel: String? = nil
 
     @Environment(\.theme) private var theme
 
@@ -9641,13 +9038,6 @@ private struct FloatingContextChip: View {
     /// Live disk-cache reading, refreshed only while the popover is open so an
     /// idle chat does not poll the cache index on a timer.
     @State private var diskCacheUsage: DiskCacheUsage?
-    /// Previous host-memory reading. The signal is a RATE, so the first poll
-    /// can only establish a baseline — there is nothing to compare it against
-    /// yet, and inventing a rate from one sample would be fiction.
-    @State private var previousMemorySample: HostMemorySample?
-    /// Non-nil only while the machine is actually struggling.
-    @State private var memoryAdvisory: MemoryPressureAdvisory?
-
     var body: some View {
         let warningColor: Color? =
             isHardOverflow ? .red : (isNearLimit ? .orange : nil)
@@ -9701,12 +9091,14 @@ private struct FloatingContextChip: View {
                 ? String(
                     localized:
                         "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model.",
-                    bundle: .module)
+                    bundle: .module
+                )
                 : isNearLimit
                     ? String(
                         localized:
                             "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality.",
-                        bundle: .module)
+                        bundle: .module
+                    )
                     : String(localized: "Context used: \(tokenText) tokens", bundle: .module)
         )
         .accessibilityLabel(
@@ -9733,25 +9125,24 @@ private struct FloatingContextChip: View {
                 canCompact: canCompact,
                 onCompact: onCompact,
                 diskCache: diskCacheUsage,
-                memoryPressure: memoryAdvisory
+                currentSessionKey: currentSessionKey
             )
-            .task(id: showContextBreakdown) {
+            .task(id: SSDQuotaNoticePollContext(
+                model: currentModel,
+                session: currentSessionKey.flatMap(UUID.init(uuidString:)),
+                eligible: showContextBreakdown
+            )) {
                 // Poll while open. The cache index is a small SQLite read, but
                 // it is still I/O, so it runs off the main actor and stops as
                 // soon as the popover closes.
                 guard showContextBreakdown else { return }
-                // A stale baseline from a previous opening would produce a
-                // rate averaged over however long the popover was shut.
-                previousMemorySample = nil
                 while !Task.isCancelled {
-                    diskCacheUsage = await Self.readDiskCacheUsage()
-                    if let current = HostMemoryPressureProbe.sample() {
-                        if let previous = previousMemorySample {
-                            memoryAdvisory = MemoryPressureAdvisory.evaluate(
-                                previous: previous, current: current)
-                        }
-                        previousMemorySample = current
-                    }
+                    let model = currentModel, session = currentSessionKey
+                    let reading = await Task.detached(priority: .utility) {
+                        await Self.readDiskCacheUsage(model: model, session: session)
+                    }.value
+                    guard !Task.isCancelled else { return }
+                    diskCacheUsage = reading
                     try? await Task.sleep(for: .seconds(2))
                 }
             }

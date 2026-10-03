@@ -217,12 +217,12 @@ final class WorkspaceAgentRunClient {
             }
         }
 
-        if let name = metadata?.name ?? metadata?.description, !name.isEmpty {
+        if let metadata {
             RemoteAgentManager.shared.updateLiveMetadata(
                 forAddress: ref.agentAddress,
-                name: metadata?.name,
-                description: metadata?.description,
-                avatar: metadata?.avatar,
+                name: metadata.name,
+                description: metadata.description,
+                avatar: metadata.avatar,
                 providerId: paired.providerId
             )
         }

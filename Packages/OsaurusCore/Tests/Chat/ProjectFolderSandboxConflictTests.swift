@@ -356,19 +356,29 @@ struct ProjectFolderSandboxConflictTests {
         }
     }
 
-    @Test("Default agent and a reopened history session never adopt a working folder")
-    func agentWorkingFolder_skipsDefaultAgentAndLoadedSessions() async throws {
+    @Test("Orchestrator adopts its own working folder; a reopened history session never does")
+    func agentWorkingFolder_orchestratorAdoptsAndLoadedSessionsSkip() async throws {
         try await ChatHistoryTestStorage.run {
             let folder = try makeFolder()
             defer { try? FileManager.default.removeItem(at: folder) }
 
-            // Default agent: the manager refuses the write, the window seeds nothing.
+            // Orchestrator: its folder persists in DefaultAgentConfiguration and
+            // seeds a fresh Orchestrator chat like any custom agent's folder.
+            let before = DefaultAgentConfigurationStore.load()
+            defer { DefaultAgentConfigurationStore.save(before) }
             AgentManager.shared.updateWorkingFolder(
                 for: Agent.defaultId, bookmark: nil, path: folder.path)
             let defaultWindow = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
-            #expect(defaultWindow.adoptAgentWorkingFolder() == nil)
-            #expect(!defaultWindow.session.folderState.hasActiveFolder)
-            #expect(defaultWindow.session.folderState.pendingRestore == nil)
+            #expect(defaultWindow.session.folderFromAgentDefault)
+            let defaultContext = await defaultWindow.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(defaultContext?.rootPath, folder))
+            defaultWindow.session.folderState.clearFolder()
+
+            // Without a stored folder the Orchestrator seeds nothing.
+            AgentManager.shared.updateWorkingFolder(for: Agent.defaultId, bookmark: nil, path: nil)
+            let bareWindow = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            #expect(bareWindow.adoptAgentWorkingFolder() == nil)
+            #expect(!bareWindow.session.folderState.hasActiveFolder)
 
             // A session reopened from history keeps its own (empty) folder
             // state even when the agent has since gained a working folder.

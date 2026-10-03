@@ -136,13 +136,21 @@ enum ConfigApplier {
 
     // MARK: - Same-turn spawn activation
 
-    /// The launching chat conversation's effective `spawn_agent` target pool
+    /// The launching conversation's effective `spawn_agent` target pool
     /// (self excluded), or `nil` when this apply does not run inside a live
-    /// interactive chat turn (CLI, HTTP, delegation, schedules).
+    /// `ChatSession` turn (CLI / bare HTTP completion with no session bound).
+    ///
+    /// Every `ChatSession.send` turn binds `currentChatSessionBox` and its
+    /// loop drains `CapabilityLoadBuffer` after `osaurus_config`, whatever
+    /// the session's `source`. So an owner's phone / App Intent "Ask
+    /// Osaurus" dispatch (`.http`, loopback or paired-phone reviewer) gets
+    /// the same "create an agent, then `spawn_agent` it in this turn" the
+    /// in-app chat gets — the addendum promises it for both. Surfaces that
+    /// cannot get an apply approved never reach here (`OsaurusConfigTool`
+    /// denies before applying).
     @MainActor
     private static func liveChatSpawnPool() -> [UUID]? {
-        guard let session = ChatExecutionContext.currentChatSessionBox?.session,
-            session.source == .chat
+        guard let session = ChatExecutionContext.currentChatSessionBox?.session
         else { return nil }
         // A nil session agent binds to the Default agent (main chat).
         return effectiveSpawnableAgentIDs(for: session.agentId ?? Agent.defaultId)
@@ -175,8 +183,7 @@ enum ConfigApplier {
     private static func stageSpawnToolsIfPoolGrew(baseline: [UUID]?) async {
         guard let baseline else { return }
         let staged: [Tool] = await MainActor.run {
-            guard let session = ChatExecutionContext.currentChatSessionBox?.session,
-                session.source == .chat
+            guard let session = ChatExecutionContext.currentChatSessionBox?.session
             else { return [] }
             let launchingAgentId = session.agentId ?? Agent.defaultId
             let allowedAgentIDs = effectiveSpawnableAgentIDs(for: launchingAgentId)
@@ -187,11 +194,16 @@ enum ConfigApplier {
             let allowedAgentNames = allowedAgentIDs.compactMap {
                 AgentManager.shared.agent(for: $0)?.name
             }
+            let descriptions = allowedAgentIDs.compactMap { id -> SpawnAgentDescriptor? in
+                guard let agent = AgentManager.shared.agent(for: id) else { return nil }
+                let routing = agent.routingDescription
+                return SpawnAgentDescriptor(
+                    id: agent.id, name: agent.name, description: routing.isEmpty ? nil : routing,
+                    modelId: agent.defaultModel, isLocal: nil, providerName: nil
+                )
+            }
             let baseSpecs = ToolRegistry.shared.specs(
-                forTools: [
-                    SubagentCapabilityRegistry.spawnAgentToolName,
-                    SubagentCapabilityRegistry.spawnBatchToolName,
-                ]
+                forTools: [SubagentCapabilityRegistry.spawnAgentToolName]
             )
             let byName = Dictionary(
                 uniqueKeysWithValues: baseSpecs.map { ($0.function.name, $0) }
@@ -207,45 +219,21 @@ enum ConfigApplier {
                 perAgentEnabled: workspaceCaps.spawnDelegationEnabled,
                 perAgentTargets: workspaceCaps.spawnableWorkspaceAgents
             )
-            let allowedWorkspaceAddresses = allowedWorkspaceAgents.map(\.agentAddress)
+            let workspaceDescriptions = SpawnDescriptors.resolveForPreview(
+                agentIDs: [], launcherModelOverride: nil, workspaceAgents: allowedWorkspaceAgents
+            ).workspaceAgents
+            let allowedWorkspaceAddresses = workspaceDescriptions.map(\.ref.agentAddress)
             let allNames =
-                allowedAgentNames + allowedWorkspaceAgents.map { AgentTargetResolver.displayName(for: $0) }
+                allowedAgentNames + workspaceDescriptions.map(\.name)
             if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
                 specs.append(
                     SpawnAgentTool.constrainedSpec(
                         spawnAgent,
                         allowedAgentIDs: allowedAgentIDs,
                         allowedAgentNames: allNames,
-                        allowedWorkspaceAddresses: allowedWorkspaceAddresses
-                    )
-                )
-            }
-            if let spawnBatch = byName[SubagentCapabilityRegistry.spawnBatchToolName] {
-                let isDefault = launchingAgentId == Agent.defaultId
-                let config = SubagentConfigurationStore.snapshot()
-                let caps = AgentManager.shared.effectiveCapabilities(for: launchingAgentId)
-                let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
-                    isDefault: isDefault,
-                    config: config,
-                    perAgentEnabled: caps.spawnDelegationEnabled,
-                    perAgentModelTargets: caps.spawnableModelNames
-                )
-                let maxParallel = SubagentToolVisibility.effectiveBudgets(
-                    isDefault: isDefault,
-                    config: config,
-                    settings: AgentManager.shared.agent(for: launchingAgentId)?.settings,
-                    sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
-                        for: ServerRuntimeSettingsStore.snapshot()
-                    )
-                ).normalized.maxParallelSpawns
-                specs.append(
-                    SpawnBatchTool.constrainedSpec(
-                        spawnBatch,
-                        allowedAgentIDs: allowedAgentIDs,
-                        allowedAgentNames: allNames,
-                        allowedModelIds: allowedModelIds,
                         allowedWorkspaceAddresses: allowedWorkspaceAddresses,
-                        maxParallel: maxParallel
+                        agents: descriptions,
+                        workspaceAgents: workspaceDescriptions
                     )
                 )
             }
@@ -327,9 +315,12 @@ enum ConfigApplier {
 
     @MainActor
     private static func applyActiveAgent(_ name: String) -> ConfigApplyResult {
+        // `new_chat_agent` sets which agent NEW chats open with — and only
+        // that. The foreground window's agent (`activeAgentId`) is the
+        // user's browsing position and is left alone.
         if name.lowercased() == "default" {
-            AgentManager.shared.setActiveAgent(Agent.defaultId)
-            return ConfigApplyResult(section: "active_agent", target: "default", status: .done)
+            AgentManager.shared.setNewChatAgent(Agent.defaultId)
+            return ConfigApplyResult(section: ConfigSectionID.activeAgent.rawValue, target: "default", status: .done)
         }
         guard
             let agent = AgentManager.shared.agents.first(where: {
@@ -337,11 +328,11 @@ enum ConfigApplier {
             })
         else {
             return ConfigApplyResult(
-                section: "active_agent", target: name, status: .failed,
+                section: ConfigSectionID.activeAgent.rawValue, target: name, status: .failed,
                 message: "No agent named `\(name)` found.")
         }
-        AgentManager.shared.setActiveAgent(agent.id)
-        return ConfigApplyResult(section: "active_agent", target: agent.name, status: .done)
+        AgentManager.shared.setNewChatAgent(agent.id)
+        return ConfigApplyResult(section: ConfigSectionID.activeAgent.rawValue, target: agent.name, status: .done)
     }
 
     // MARK: - Agents
@@ -356,11 +347,31 @@ enum ConfigApplier {
             let result: ConfigApplyResult = await MainActor.run {
                 var entry = entry
                 let existing = AgentManager.shared.agents.first {
-                    !$0.isBuiltIn && $0.name.lowercased() == entry.name.lowercased()
+                    !$0.isBuiltIn && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        == entry.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 }
-                // Mark the match BEFORE model resolution so a failed entry
-                // never exposes its existing agent to prune deletion.
+                // Every validation failure must preserve an existing match
+                // during prune, including invalid templates.
                 if let agent = existing { matchedIds.insert(agent.id) }
+                // `template:` seeds description + prompt for a one-line
+                // agent; explicit fields in the entry still win.
+                if let rawTemplate = entry.template?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !rawTemplate.isEmpty
+                {
+                    guard let template = AgentStarterTemplate(rawValue: rawTemplate.lowercased()),
+                        template != .blank
+                    else {
+                        return ConfigApplyResult(
+                            section: "agents", target: entry.name, status: .failed,
+                            message: "template: `\(rawTemplate)` is not a starter template. Valid: "
+                                + AgentStarterTemplate.configTemplateIds.joined(separator: ", ") + ".")
+                    }
+                    if entry.systemPrompt?.isEmpty ?? true { entry.systemPrompt = template.systemPrompt }
+                    if entry.description?.isEmpty ?? true { entry.description = template.routingDescription }
+                }
+                if let description = entry.description {
+                    entry.description = AgentDescriptionPolicy.normalized(description)
+                }
                 let rawModel = entry.model.valueOrNil?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if let raw = rawModel, !raw.isEmpty {
@@ -401,11 +412,19 @@ enum ConfigApplier {
                         status: outcome.needsUserAction ? .needsUserAction : .done,
                         message: outcome.notes.isEmpty ? nil : outcome.notes.joined(separator: " "))
                 } else {
+                    // The live chat can have a selected model without any
+                    // persisted default (for example on first launch). Carry
+                    // that model into the worker instead of creating a target
+                    // that disappears from the next turn's runnable pool.
+                    let chatModel = ChatExecutionContext.currentChatSessionBox?.session?
+                        .selectedModel?.trimmingCharacters(in: .whitespacesAndNewlines)
                     var agent = AgentManager.shared.create(
                         name: entry.name,
                         description: entry.description ?? "",
                         systemPrompt: entry.systemPrompt ?? "",
-                        defaultModel: entry.model.valueOrNil,
+                        defaultModel: entry.model.valueOrNil
+                            ?? (chatModel?.isEmpty == false ? chatModel : nil)
+                            ?? AgentManager.shared.orchestratorModelForNewAgents(),
                         temperature: entry.temperature.valueOrNil.map(Float.init),
                         maxTokens: entry.maxTokens.valueOrNil
                     )
@@ -648,6 +667,9 @@ enum ConfigApplier {
         if let v = caps.selfSchedulingEnabled { agent.settings.selfSchedulingEnabled = v }
         if let v = caps.computerUseEnabled { agent.settings.computerUseEnabled = v }
         if let v = caps.browserUseEnabled { agent.settings.browserUseEnabled = v }
+        if let apps = ConfigPlanner.appleApps(from: caps) { agent.settings.enabledAppleApps = apps }
+        if let v = caps.imageEnabled { agent.settings.imageEnabled = v }
+        if let v = caps.applescriptEnabled { agent.settings.appleScriptEnabled = v }
         if let v = caps.speakEnabled { agent.settings.speakEnabled = v }
         if let v = caps.renderChartEnabled { agent.settings.renderChartEnabled = v }
     }
@@ -730,34 +752,45 @@ enum ConfigApplier {
         if let keys = desired.spawnableWorkspaceAgents {
             var refs: [WorkspaceAgentRef] = []
             for key in keys {
-                guard let ref = WorkspaceAgentRef(key: key.trimmingCharacters(in: .whitespacesAndNewlines))
-                else {
+                switch resolveWorkspaceAgentKey(key) {
+                case .success(let ref):
+                    refs.append(ref)
+                case .failure(let message):
                     return ConfigApplyResult(
                         section: "delegation", target: "delegation", status: .failed,
-                        message:
-                            "spawnable_workspace_agents: `\(key)` is not a `<workspace_id>:<0x-address>` key.")
+                        message: "spawnable_workspace_agents: " + message)
                 }
-                refs.append(ref)
             }
             resolvedWorkspaceRefs = refs
         }
+        // Per-workspace auto-join: accept the workspace id or its name.
+        var workspaceAutoJoin: [(id: String, enabled: Bool)] = []
+        for (key, enabled) in desired.workspaceAutoJoin ?? [:] {
+            guard let id = resolveWorkspaceId(key) else {
+                return ConfigApplyResult(
+                    section: "delegation", target: "delegation", status: .failed,
+                    message: "workspace_auto_join: no workspace named or identified by `\(key)`.")
+            }
+            workspaceAutoJoin.append((id, enabled))
+        }
+        let hints = desired.removedKeyHints
         _ = SubagentConfigurationStore.mutate { config in
             if let v = desired.localTextEnabled { config.localTextDelegationEnabled = v }
-            if let v = desired.imageEnabled { config.imageDelegationEnabled = v }
-            if let v = desired.videoEnabled { config.videoDelegationEnabled = v }
-            if let v = desired.applescriptEnabled { config.appleScriptDelegationEnabled = v }
             if let raw = desired.applescriptExecutionMode,
                 let mode = ConfigAppBehaviorEnums.applescriptMode(forKey: raw)
             {
                 config.defaultAppleScriptExecutionMode = mode
             }
             if let ids = resolvedAgentIDs { config.spawnableAgentIDs = ids }
-            if let models = desired.spawnableModels { config.spawnableModelNames = models }
-            if let refs = resolvedWorkspaceRefs { config.spawnableWorkspaceAgents = refs }
-            if let raw = desired.spawnToolAccess,
-                let access = SpawnToolAccess(rawValue: raw.lowercased())
-            {
-                config.spawnToolAccess = access
+            if let refs = resolvedWorkspaceRefs {
+                config.spawnableWorkspaceAgents = refs
+                // Listing a shared agent explicitly clears its removal
+                // tombstone; the remaining pool members that were dropped
+                // stay removed (and stop auto-joining).
+                for ref in refs { config.removedWorkspaceAgents.removeAll { $0 == ref } }
+            }
+            for (id, enabled) in workspaceAutoJoin {
+                config.setWorkspaceAutoJoin(enabled, workspaceId: id)
             }
             for (kind, raw) in desired.permissionDefaults ?? [:] {
                 guard let policy = SubagentPermissionPolicy(rawValue: raw.lowercased()) else {
@@ -767,7 +800,6 @@ enum ConfigApplier {
             }
             if let v = desired.budgetMaxTokens { config.budgets.maxDelegateTokens = v }
             if let v = desired.budgetMaxTurns { config.budgets.maxDelegateTurns = v }
-            if let v = desired.budgetMaxToolCalls { config.budgets.maxToolCalls = v }
             if let v = desired.budgetMaxSeconds { config.budgets.maxElapsedSeconds = v }
             if let v = desired.budgetMaxParallelSpawns { config.budgets.maxParallelSpawns = v }
             if let v = desired.budgetMaxRemoteParallelSpawns {
@@ -776,7 +808,55 @@ enum ConfigApplier {
             if let v = desired.ramSafetyPreflight { config.ramSafetyPreflightEnabled = v }
             if let v = desired.coexistenceEnabled { config.subagentCoexistenceEnabled = v }
         }
-        return ConfigApplyResult(section: "delegation", target: "delegation", status: .done)
+        return ConfigApplyResult(
+            section: "delegation", target: "delegation", status: .done,
+            message: hints.isEmpty ? nil : hints.joined(separator: " "))
+    }
+
+    /// Resolve one `spawnable_workspace_agents` entry: the durable
+    /// `<workspace_id>:<0x-address>` key, a `Name@Workspace` form, a bare
+    /// `0x…` address, or a unique shared-agent display name.
+    enum WorkspaceKeyResolution {
+        case success(WorkspaceAgentRef)
+        case failure(String)
+    }
+
+    @MainActor
+    static func resolveWorkspaceAgentKey(_ raw: String) -> WorkspaceKeyResolution {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let ref = WorkspaceAgentRef(key: trimmed) { return .success(ref) }
+        switch AgentTargetResolver.resolve(trimmed, scope: .localAndWorkspace) {
+        case .success(.workspace(let ref)):
+            return .success(ref)
+        case .success(.local):
+            return .failure(
+                "`\(raw)` is one of this Osaurus's own agents; list it under spawnable_agents.")
+        case .failure(.ambiguous(let forms)):
+            return .failure(
+                "`\(raw)` matches more than one shared agent; use one of: "
+                    + forms.map { "`\($0)`" }.joined(separator: ", ") + ".")
+        case .failure(.notFound):
+            return .failure(
+                "`\(raw)` is not a shared agent on any workspace you belong to. Use "
+                    + "`Name@Workspace` or `<workspace_id>:<0x-address>`.")
+        }
+    }
+
+    /// Workspace id for a `delegation.workspace_auto_join` key (id or display name).
+    @MainActor
+    static func resolveWorkspaceId(_ raw: String) -> String? {
+        let folded = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !folded.isEmpty else { return nil }
+        for roster in WorkspaceRosterStore.shared.rosters {
+            if roster.id.lowercased() == folded { return roster.id }
+            if roster.workspace.name.trimmingCharacters(in: .whitespaces).lowercased() == folded {
+                return roster.id
+            }
+        }
+        // Unknown to the roster right now (cold start / offline): accept an
+        // id-shaped key verbatim so a document applied before the first
+        // roster poll still records the user's choice.
+        return folded.contains(" ") ? nil : folded
     }
 
     // MARK: - Commands (Wave 3c)
@@ -1149,7 +1229,7 @@ enum ConfigApplier {
                     results.append(
                         ConfigApplyResult(
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
-                            message: "Finish sign-in / token entry in Settings → Tools → Remote."))
+                            message: "Finish sign-in / token entry in Settings → Tools & MCP → Services."))
                 } else {
                     results.append(
                         ConfigApplyResult(
@@ -1223,7 +1303,7 @@ enum ConfigApplier {
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
                             message: "Registered, but could not store secret env "
                                 + storeFailures.joined(separator: ", ")
-                                + " — Keychain unavailable; set them in Settings → Tools → Remote."))
+                                + " — Keychain unavailable; set them in Settings → Tools & MCP → Services."))
                 }
             } else {
                 guard let url = entry.url else {
@@ -1269,7 +1349,7 @@ enum ConfigApplier {
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
                             message: "Registered. Finish "
                                 + (auth == .oauth ? "sign-in" : "token entry")
-                                + " in Settings → Tools → Remote."))
+                                + " in Settings → Tools & MCP → Services."))
                 } else {
                     results.append(
                         ConfigApplyResult(section: "mcp_servers", target: entry.name, status: .done))
@@ -1325,7 +1405,7 @@ enum ConfigApplier {
                 results.append(
                     ConfigApplyResult(
                         section: "plugins", target: pluginId, status: .needsUserAction,
-                        message: "Installed. Needs secrets in Settings → Plugins → Secrets: "
+                        message: "Installed. Needs secrets in Settings… (⌘,) → Tools & MCP → Plugins (Configure Secrets on the plugin card): "
                             + missingSecretLabels.joined(separator: ", ")))
             }
         }
@@ -1563,6 +1643,14 @@ enum ConfigApplier {
         }
     }
 
+    /// What a phone run is told for an existing provider whose key only the
+    /// Mac can take: the model relays it, so it names where to go.
+    static func credentialsNeedTheMac(providerName: String) -> String {
+        "The API key for '\(providerName)' has to be entered on the Mac: Osaurus → Settings → "
+            + "Providers. It was not requested from the phone and nothing was stored; tell the user "
+            + "to add it there, then this provider will work."
+    }
+
     /// Existing provider whose secret is missing: open the credential sheet
     /// in rotate mode (same preset card and fields Settings' "rotate key"
     /// shows) and persist the outcome through the manager. Secrets never
@@ -1573,6 +1661,14 @@ enum ConfigApplier {
         let request = ProviderCredentialRequest(
             provider: provider, providerName: provider.name,
             mode: .rotate(existingId: provider.id))
+        // From the paired phone there is nobody at this Mac to type the key:
+        // the panel would hold the run with nothing on the phone saying why.
+        // Leave it for the Mac and say so.
+        if ChatExecutionContext.hasRemoteReviewer {
+            return ConfigApplyResult(
+                section: "providers", target: entryName, status: .needsUserAction,
+                message: Self.credentialsNeedTheMac(providerName: provider.name))
+        }
         let outcome = await ProviderCredentialPromptService.requestCredentials(request)
         if Task.isCancelled {
             return ConfigApplyResult(
@@ -1680,6 +1776,38 @@ enum ConfigApplier {
                 providerType: .osaurus, providerName: entry.name, mode: .addNew)
         }
 
+        // See `requestCredentials(forExisting:)`: no Mac panel for a phone run.
+        // A preset that takes no key (e.g. Ollama) needs nothing from the
+        // panel, so it is created here as the panel path would with a blank
+        // key. Everything else names the step the Mac has to do.
+        if ChatExecutionContext.hasRemoteReviewer {
+            if case .preset = resolution, request.instructions.storageAuthType == .none {
+                let id = await MainActor.run {
+                    buildAndAddProvider(
+                        entry: entry,
+                        resolution: resolution,
+                        storageAuthType: .none,
+                        extraFields: nil,
+                        apiKey: nil,
+                        oauthTokens: nil)
+                }
+                return ProviderAddOutcome(
+                    result: ConfigApplyResult(section: "providers", target: entry.name, status: .done),
+                    createdProviderId: id)
+            }
+            let step: String
+            switch resolution {
+            case .preset: step = "its API key has to be entered"
+            case .codexOAuth: step = "it needs a sign-in"
+            case .osaurusAgent: step = "it needs pairing"
+            }
+            return ProviderAddOutcome(
+                result: ConfigApplyResult(
+                    section: "providers", target: entry.name, status: .needsUserAction,
+                    message: "'\(entry.name)' was not added: \(step) on the Mac, which can't be done "
+                        + "from the phone. Tell the user to add it in Osaurus → Settings → Providers "
+                        + "on their Mac, or to run this setup from the Mac."))
+        }
         let outcome = await ProviderCredentialPromptService.requestCredentials(request)
         if Task.isCancelled {
             return ProviderAddOutcome(

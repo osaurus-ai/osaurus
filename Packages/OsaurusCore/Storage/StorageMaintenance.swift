@@ -45,6 +45,8 @@ public actor StorageMaintenance {
     public func start() {
         guard timerTask == nil else { return }
         loadState()
+        // Temp copies of history blobs from the previous run are stale now.
+        FileObjectStore.removeTempExports()
         timerTask = Task.detached(priority: .background) { [weak self] in
             // Run once a few seconds after launch (don't fight startup
             // contention) then every 30 minutes after.
@@ -72,9 +74,17 @@ public actor StorageMaintenance {
     // MARK: - Tick
 
     private func tick() async {
+        await runFileHistoryRetention()
         await runOptimize(force: false)
         await runWALCheckpoint(force: false)
         await runVacuum(force: false)
+    }
+
+    /// Cheap (index scan + store size), so it runs every tick; the user's
+    /// retention choice can change at any time.
+    private func runFileHistoryRetention() async {
+        let policy = await MainActor.run { ChatConfigurationStore.load().fileHistoryRetention }
+        await FileChangeJournal.shared.performMaintenance(policy)
     }
 
     private func runOptimize(force: Bool) async {

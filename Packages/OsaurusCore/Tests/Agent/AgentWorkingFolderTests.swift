@@ -9,7 +9,8 @@
 //    • `updateWorkingFolder` / `clearWorkingFolder` round-trip through
 //      `AgentStore` (JSON on disk under the test root) and the in-memory
 //      snapshot `workingFolder(for:)` reads.
-//    • The Default agent never carries a folder (no-op write, nil read).
+//    • The Orchestrator's folder is stored in `DefaultAgentConfiguration`
+//      (the built-in Agent record itself stays folder-free).
 //    • `BackgroundTaskManager.resolveDispatchFolder` uses the request's own
 //      folder when it names one and falls back to the agent's working folder
 //      otherwise — so a Schedule/Watcher without a folder, a self-schedule,
@@ -138,13 +139,23 @@ struct AgentWorkingFolderTests {
         }
     }
 
-    @Test("Default agent never carries a working folder")
-    func defaultAgent_isNoop() async throws {
+    @Test("Orchestrator folder lives in DefaultAgentConfiguration, not on the built-in Agent record")
+    func defaultAgent_storesFolderInConfiguration() async throws {
         try await ChatHistoryTestStorage.run {
+            let before = DefaultAgentConfigurationStore.load()
+            defer { DefaultAgentConfigurationStore.save(before) }
+
             AgentManager.shared.updateWorkingFolder(
                 for: Agent.defaultId, bookmark: Data([7]), path: "/tmp/default")
-            #expect(AgentManager.shared.workingFolder(for: Agent.defaultId) == nil)
+            let folder = AgentManager.shared.workingFolder(for: Agent.defaultId)
+            #expect(folder?.bookmark == Data([7]))
+            #expect(folder?.path == "/tmp/default")
+            #expect(DefaultAgentConfigurationStore.load().workingFolderPath == "/tmp/default")
+            // The built-in Agent record itself stays folder-free.
             #expect(AgentManager.shared.agent(for: Agent.defaultId)?.workingFolderBookmark == nil)
+
+            AgentManager.shared.updateWorkingFolder(for: Agent.defaultId, bookmark: nil, path: nil)
+            #expect(AgentManager.shared.workingFolder(for: Agent.defaultId) == nil)
         }
     }
 

@@ -162,15 +162,39 @@ enum AppleScriptExecutor {
         return heartbeatTimer != nil
     }
 
+    /// Longest a request may sit queued behind other scripts before its
+    /// caller is resumed with `.timedOut` (the request is then skipped, never
+    /// executed). Kept separate from `timeout`, which measures the script's
+    /// own run time from the moment it starts executing — otherwise a batch
+    /// of queued sends would all "time out" while a single slow one holds the
+    /// serial queue, and the later ones would still run after their callers
+    /// gave up.
+    static let maxQueueWaitSeconds: TimeInterval = 120
+
     /// Compile + execute `source` on the serial execution queue, bounded by
     /// `timeout`. Always returns a structured result (never throws); a timeout
     /// yields `.timedOut` and the in-flight (or not-yet-started) work is
     /// abandoned — a queued request that times out before it runs is skipped so
     /// the caller never has a script execute after it gave up.
+    ///
+    /// The `timeout` clock starts when the script begins executing, not when
+    /// it is enqueued; queue wait is bounded by `maxQueueWaitSeconds` (or the
+    /// caller's `queueWait`).
+    ///
+    /// `skipIf` is consulted on the serial queue right before the script would
+    /// start: when it returns `true` the run is abandoned unexecuted and the
+    /// caller is resumed with `.timedOut` (message
+    /// `skippedBeforeStartMessage`). Callers whose Swift task was cancelled
+    /// while queued use it so a send/mutation never fires after the user
+    /// stopped the turn.
+    static let skippedBeforeStartMessage = "The AppleScript was cancelled before it ran."
+
     static func run(
         source: String,
         language: AppleScriptLanguage = .appleScript,
-        timeout: TimeInterval = defaultTimeoutSeconds
+        timeout: TimeInterval = defaultTimeoutSeconds,
+        queueWait: TimeInterval = maxQueueWaitSeconds,
+        skipIf: (@Sendable () -> Bool)? = nil
     ) async -> AppleScriptExecutionResult {
         await withCheckedContinuation {
             (continuation: CheckedContinuation<AppleScriptExecutionResult, Never>) in
@@ -186,7 +210,31 @@ enum AppleScriptExecutor {
                 // If the watchdog already resumed the caller (timed out while
                 // this was queued behind another script), skip the work — don't
                 // run a script the caller no longer wants.
-                guard !resumer.isResumed else { return }
+                if let skipIf, skipIf() {
+                    resumer.resume(
+                        AppleScriptExecutionResult(
+                            status: .timedOut, output: nil, errorNumber: nil,
+                            errorMessage: skippedBeforeStartMessage
+                        )
+                    )
+                    return
+                }
+                guard resumer.markStarted() else { return }
+                // Execution watchdog: armed now, so a script's budget is its
+                // own run time.
+                if timeout > 0, timeout.isFinite {
+                    DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
+                        resumer.resume(
+                            AppleScriptExecutionResult(
+                                status: .timedOut,
+                                output: nil,
+                                errorNumber: nil,
+                                errorMessage:
+                                    "The AppleScript did not finish within \(Int(timeout))s and was stopped."
+                            )
+                        )
+                    }
+                }
                 // Fresh autorelease pool per run: the OSA components and AE
                 // descriptors are autoreleased, and this queue's thread is
                 // long-lived across many runs.
@@ -199,15 +247,18 @@ enum AppleScriptExecutor {
                 resumer.resume(result)
             }
 
-            if timeout > 0, timeout.isFinite {
-                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
+            // Queue-wait watchdog: only fires if the worker has not started
+            // yet (a started run is governed by its own watchdog above).
+            if queueWait > 0, queueWait.isFinite {
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + queueWait) {
+                    guard !resumer.hasStarted else { return }
                     resumer.resume(
                         AppleScriptExecutionResult(
                             status: .timedOut,
                             output: nil,
                             errorNumber: nil,
                             errorMessage:
-                                "The AppleScript did not finish within \(Int(timeout))s and was stopped."
+                                "The AppleScript waited \(Int(queueWait))s behind another script and was not run."
                         )
                     )
                 }
@@ -610,6 +661,8 @@ private final class AppleScriptSingleResume: @unchecked Sendable {
         self.continuation = continuation
     }
 
+    private var started = false
+
     /// Whether the continuation has already been resumed (by the worker or the
     /// timeout watchdog). Read by the serial queue to skip work for a request
     /// that timed out while queued.
@@ -617,6 +670,23 @@ private final class AppleScriptSingleResume: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return resumed
+    }
+
+    /// Whether the worker began executing the script.
+    var hasStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return started
+    }
+
+    /// Mark the script as executing. Returns `false` (and leaves the flag
+    /// clear) when the caller was already resumed — the worker must skip.
+    func markStarted() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if resumed { return false }
+        started = true
+        return true
     }
 
     func resume(_ result: AppleScriptExecutionResult) {

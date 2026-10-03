@@ -1023,6 +1023,17 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Context-menu Copy and Edit > Copy prefer the cross-block selection
+    /// (see `copyCrossSelectionIfActive`).
+    override func copy(_ sender: Any?) {
+        if copyCrossSelectionIfActive() { return }
+        super.copy(sender)
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        crossSelectionEnablesCopy(item) || super.validateUserInterfaceItem(item)
+    }
+
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result { needsDisplay = true }
@@ -1049,17 +1060,7 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // if point is not in bounds, not us
         guard NSPointInRect(point, bounds) else { return nil }
-
-        // find character index for the point
-        guard let lm = layoutManager, let tc = textContainer else { return self }
-        let charIndex = lm.characterIndex(for: point, in: tc, fractionOfDistanceBetweenInsertionPoints: nil)
-
-        // if charIndex is at the very end of storage, it might be an empty trailing area.
-        // in that case, we still return self so you can click to focus/select.
-        if charIndex >= textStorage?.length ?? 0 { return self }
-
         return self
     }
 

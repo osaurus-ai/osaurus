@@ -1,0 +1,41 @@
+{
+  "id": "agent_loop.read-pptx-directly",
+  "domain": "agent_loop",
+  "label": "agent loop • read a PowerPoint deck with file_read (no unzip)",
+  "query": "What is the key risk named in deck.pptx, and which cities are in phase two?",
+  "notes": "PPTX slide text comes back through file_read's extraction path. Regression guard against `shell_run unzip` on OOXML packages.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "deck.pptx",
+        "contentsFromFixture": "Documents/deck.pptx"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "maxToolCalls": 3,
+      "mustCallTools": [
+        "file_read"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "noToolErrors": true,
+      "toolUsageAudit": [
+        {
+          "tool": "file_read",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "deck.pptx"
+        }
+      ],
+      "finalTextContains": [
+        "Madrid",
+        "Porto"
+      ]
+    }
+  }
+}

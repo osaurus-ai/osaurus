@@ -132,7 +132,9 @@ public actor KnowledgeSearchService {
             )
             do {
                 let text = hit.headingPath.isEmpty ? hit.content : hit.headingPath + "\n" + hit.content
-                _ = try await db.addDocument(text: text, id: id)
+                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("knowledge_index") {
+                    try await db.addDocument(text: text, id: id)
+                }
                 chunkKeyMap[id.uuidString] = (hit.collectionId, hit.relPath, hit.chunkIndex)
             } catch {
                 KnowledgeLogger.search.error("indexChunks failed for \(hit.compositeKey): \(error)")
@@ -211,11 +213,13 @@ public actor KnowledgeSearchService {
                 do {
                     KnowledgeDebugLog.log("service.search", "db.search START (embeds query + ANN) collection=\(collectionId)")
                     let tVec = KnowledgeDebugLog.now()
-                    let results = try await db.search(
-                        query: .text(query),
-                        numResults: fetchCount,
-                        threshold: Self.defaultSearchThreshold
-                    )
+                    let results = try await MediaActivityLogger.$embeddingPurpose.withValue("knowledge_search") {
+                        try await db.search(
+                            query: .text(query),
+                            numResults: fetchCount,
+                            threshold: Self.defaultSearchThreshold
+                        )
+                    }
                     KnowledgeDebugLog.log(
                         "service.search",
                         "db.search DONE \(results.count) result(s) in \(KnowledgeDebugLog.ms(since: tVec))ms"

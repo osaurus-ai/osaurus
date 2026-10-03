@@ -109,9 +109,10 @@ enum SubagentPreparationResult: Sendable {
 }
 
 /// Presentation/interrupt plumbing for one prepared run. Normal single-worker
-/// calls let the host create and register these values. `spawn_batch` supplies
-/// an unregistered child feed and the batch's shared interrupt token so one
-/// visible parent row owns Stop while sibling runs remain isolated.
+/// calls let the host create and register these values. A `spawn_agent` wave
+/// (several calls in one message) supplies an unregistered child feed and the
+/// wave's shared interrupt token so one visible parent row owns Stop while
+/// sibling runs remain isolated.
 struct SubagentRunPresentation: Sendable {
     let feed: SubagentFeed
     let interrupt: InterruptToken
@@ -161,7 +162,7 @@ public enum SubagentSession {
     /// The ordinary host historically registered those only after preparation,
     /// which meant a direct spawn panel had no run-owned Stop path.
     ///
-    /// This is deliberately opt-in (spawn_agent / spawn_model only) so kinds
+    /// This is deliberately opt-in (spawn_agent only) so kinds
     /// whose existing presentation contract starts after preparation do not
     /// change behavior.
     static func runWithVisiblePreparation(
@@ -278,7 +279,7 @@ public enum SubagentSession {
                     )
                 }
             }
-            _ = await runPrepared(
+            let completedEnvelope = await runPrepared(
                 prepared,
                 presentation: SubagentRunPresentation(
                     feed: feed,
@@ -304,27 +305,46 @@ public enum SubagentSession {
                 title: title,
                 success: success,
                 summary: summary,
+                completedEnvelope: completedEnvelope,
                 to: parentSession
             )
         }
 
-        return ToolEnvelope.success(
-            tool: tool,
-            result: [
-                "dispatched": true,
-                "background": true,
-                "helper": title,
-                "note":
-                    "The helper is running in the background. Its result will arrive as a "
-                    + "follow-up message in this conversation — do not wait, poll, or "
-                    + "re-dispatch the same task. Tell the user the helper will report back.",
-            ]
-        )
+        return backgroundAck(tool: tool, helper: title, sessionId: kind.plannedSessionId)
+    }
+
+    /// The acknowledgment a `background: true` spawn returns. Carries the
+    /// worker's `session_id` when the kind knows it ahead of the run (a
+    /// delegated agent or workspace worker), so the parent can `continue`
+    /// with it or name it before the report-back arrives.
+    public static func backgroundAck(tool: String, helper: String, sessionId: UUID?) -> String {
+        var result: [String: Any] = [
+            "dispatched": true,
+            "background": true,
+            "helper": helper,
+            "note":
+                "The helper is running in the background. Its result will arrive as a "
+                + "follow-up message in this conversation — do not wait, poll, or "
+                + "re-dispatch the same task. Tell the user the helper will report back.",
+        ]
+        if let sessionId {
+            result["session_id"] = sessionId.uuidString
+        }
+        return ToolEnvelope.success(tool: tool, result: result)
+    }
+
+    /// Whether `envelope` is a background acknowledgment (as opposed to a
+    /// settled `spawn_result` or a failure).
+    public static func isBackgroundAck(_ envelope: String) -> Bool {
+        guard ToolEnvelope.isSuccess(envelope),
+            let payload = ToolEnvelope.resultPayload(envelope) as? [String: Any]
+        else { return false }
+        return payload["dispatched"] as? Bool == true && payload["background"] as? Bool == true
     }
 
     /// Resolve and authorize a kind without admitting it or changing model
     /// residency. This is the reject-before-load boundary used by both the
-    /// compatibility tools and `spawn_batch`.
+    /// single spawn and the wave gate.
     static func prepare(
         _ kind: any SubagentKind,
         tool: String,
@@ -591,7 +611,12 @@ public enum SubagentSession {
             // Process-wide admission: the TaskLocal guard above only covers one
             // task tree; parallel tool calls can reach here concurrently.
             if admissionClass == .localInPlace {
-                let capacity = await localInPlaceCapacityDecision(for: prepared).capacity
+                let initialDecision = OwnedSubagentOperation {
+                    await localInPlaceCapacityDecision(for: prepared)
+                }
+                let capacity = (try? await initialDecision.value(
+                    cancellationRequested: { interrupt.isInterrupted }
+                ))?.capacity ?? 0
                 let reservation = await admissionController.reserveLocalInPlace(
                     modelKey: admissionModelKey,
                     requestedSlots: 1,
@@ -930,23 +955,96 @@ public enum SubagentSession {
             }
 
             if refreshedClass == .localInPlace {
-                let refreshedCapacity: Int
-                var memoryDiagnostics: [String: Any] = [:]
-                if let postAdmissionLocalCapacityOverride {
-                    refreshedCapacity =
-                        await postAdmissionLocalCapacityOverride(
-                            prepared,
-                            currentPlan
+                let recoveryPlan = currentPlan
+                let recovery = OwnedSubagentOperation {
+                    if let postAdmissionLocalCapacityOverride {
+                        return LocalInPlaceCapacityDecision(
+                            capacity: await postAdmissionLocalCapacityOverride(prepared, recoveryPlan)
                         )
-                } else {
-                    let decision = await localInPlaceCapacityDecision(
+                    }
+                    return await localInPlaceCapacityDecision(
                         for: prepared,
-                        residencyPlan: currentPlan,
+                        residencyPlan: recoveryPlan,
                         rejectUnsafeSingleRun: true
                     )
-                    refreshedCapacity = decision.capacity
-                    memoryDiagnostics = decision.plan?.memoryDiagnostics ?? [:]
                 }
+                var decision = try? await recovery.value(
+                    cancellationRequested: { interrupt.isInterrupted }
+                )
+                // Host headroom is additional capacity; reservations include
+                // both materialized bytes and future growth. If siblings make
+                // that conservative aggregate comparison fail, drain them and
+                // resample under a writer lease instead of refunding guessed
+                // bytes or declaring a permanent refusal.
+                let occupied = await admissionController.snapshot().inPlace
+                if admissionHeldSlots > 0,
+                    occupied > admissionHeldSlots,
+                    (decision?.capacity ?? 0) <= occupied - admissionHeldSlots,
+                    !interrupt.isInterrupted, !Task.isCancelled
+                {
+                    await admissionController.releaseLocalInPlace(
+                        modelKey: admissionModelKey, slots: admissionHeldSlots
+                    )
+                    admissionHeld = false
+                    admissionHeldSlots = 0
+                    let drain = await admissionController.admit(
+                        .localExclusive, modelKey: admissionModelKey,
+                        onWait: { [feed] active in
+                            feed.emitPhase("waiting for local GPU", detail: active)
+                        },
+                        cancellationRequested: { interrupt.isInterrupted }
+                    )
+                    switch drain {
+                    case .admitted:
+                        admissionClass = .localExclusive
+                        admissionHeld = true
+                    case .cancelled, .timedOut:
+                        let cancelled = interrupt.isInterrupted || Task.isCancelled
+                        let message = cancelled
+                            ? "Run was cancelled while waiting for RAM-safety admission."
+                            : "Local work did not drain before the RAM-safety admission timeout."
+                        if presentation.finishFeed { feed.finish(success: false, summary: message) }
+                        return ToolEnvelope.failure(
+                            kind: cancelled ? .userDenied : .unavailable,
+                            message: message, tool: prepared.tool, retryable: !cancelled,
+                            metadata: ["admission": cancelled ? "cancelled" : "timeout"]
+                        )
+                    }
+                    let isolatedRecovery = OwnedSubagentOperation {
+                        try await prepared.kind.validateExecutionAuthority(
+                            prepared.scope, resolved: prepared.resolved
+                        )
+                        let plan = try await replanningKind.refreshedResidencyPlanAfterAdmission(
+                            for: prepared.resolved
+                        )
+                        if prepared.kind.admissionClass(prepared.resolved) != .localInPlace {
+                            return LocalInPlaceCapacityDecision(capacity: 1)
+                        }
+                        if let postAdmissionLocalCapacityOverride {
+                            return LocalInPlaceCapacityDecision(
+                                capacity: await postAdmissionLocalCapacityOverride(prepared, plan)
+                            )
+                        }
+                        return await localInPlaceCapacityDecision(
+                            for: prepared, residencyPlan: plan, rejectUnsafeSingleRun: true
+                        )
+                    }
+                    do {
+                        decision = try await isolatedRecovery.value(
+                            cancellationRequested: { interrupt.isInterrupted }
+                        )
+                    } catch {
+                        await admissionController.release(admissionClass, modelKey: admissionModelKey)
+                        admissionHeld = false
+                        let envelope = envelope(for: error, tool: prepared.tool)
+                        if presentation.finishFeed {
+                            feed.finish(success: false, summary: ToolEnvelope.failureMessage(envelope))
+                        }
+                        return envelope
+                    }
+                }
+                let refreshedCapacity = decision?.capacity ?? 0
+                let memoryDiagnostics = decision?.plan?.memoryDiagnostics ?? [:]
 
                 // Memory recovery may wait for the GPU gate. Stop during
                 // that wait must settle as cancellation before any child runs.
@@ -980,7 +1078,16 @@ public enum SubagentSession {
                         )
                     admissionHeld = admissionHeldSlots > 0
                 }
-                if refreshedCapacity == 0 || !admissionHeld {
+                if refreshedCapacity > 0, !admissionHeld {
+                    let message = "Local batching capacity changed while waiting for admission. Retry after the running child finishes."
+                    if presentation.finishFeed { feed.finish(success: false, summary: message) }
+                    return ToolEnvelope.failure(
+                        kind: .unavailable, message: message, tool: prepared.tool,
+                        retryable: true,
+                        metadata: ["admission": "capacity_changed", "refreshed_capacity": refreshedCapacity]
+                    )
+                }
+                if refreshedCapacity == 0 {
                     if admissionHeld {
                         await admissionController.release(
                             admissionClass,
@@ -1003,7 +1110,11 @@ public enum SubagentSession {
                         + "current memory and batching limits after the fresh memory "
                         + "check. Do not retry this turn — tell the user the "
                         + "delegation could not run; it may succeed after memory or "
-                        + "settings change."
+                        + "settings change. The user can disable Check memory before "
+                        + "delegating in Settings → Orchestrator → Local Models & Memory "
+                        + "to bypass the delegation RAM check, accepting possible allocation "
+                        + "failure or a crash. Separate Server Memory Safety load budgets "
+                        + "and explicit concurrency limits still apply."
                     if presentation.finishFeed {
                         feed.finish(success: false, summary: message)
                     }
@@ -1036,33 +1147,35 @@ public enum SubagentSession {
                 prepared.scope.sessionId
             ) {
                 try await ChatExecutionContext.$currentAgentId.withValue(prepared.scope.agentId) {
-                    try await ChatExecutionContext.$currentEnableThinking.withValue(
-                        prepared.scope.enableThinking
-                    ) {
-                        try await ChatExecutionContext.$currentToolCallId.withValue(
-                            prepared.scope.toolCallId
+                    try await ChatExecutionContext.$currentReasoningEffort.withValue(prepared.scope.reasoningEffort) {
+                        try await ChatExecutionContext.$currentEnableThinking.withValue(
+                            prepared.scope.enableThinking
                         ) {
-                            try await SubagentSession.$activeKindId.withValue(
-                                prepared.kind.capability.id
+                            try await ChatExecutionContext.$currentToolCallId.withValue(
+                                prepared.scope.toolCallId
                             ) {
-                                try await effectiveHandoff.around(
-                                    scope: prepared.scope,
-                                    resolved: prepared.resolved,
-                                    feed: feed
+                                try await SubagentSession.$activeKindId.withValue(
+                                    prepared.kind.capability.id
                                 ) {
-                                    let result = try await prepared.kind.run(
-                                        prepared.scope,
-                                        prepared.resolved,
-                                        feed: feed,
-                                        interrupt: interrupt
-                                    )
-                                    if captureProcessCacheSnapshot,
-                                        prepared.resolved.isLocal
-                                    {
-                                        cacheCapture.value =
-                                            await ModelRuntime.batchDiagnosticsSnapshot()
+                                    try await effectiveHandoff.around(
+                                        scope: prepared.scope,
+                                        resolved: prepared.resolved,
+                                        feed: feed
+                                    ) {
+                                        let result = try await prepared.kind.run(
+                                            prepared.scope,
+                                            prepared.resolved,
+                                            feed: feed,
+                                            interrupt: interrupt
+                                        )
+                                        if captureProcessCacheSnapshot,
+                                            prepared.resolved.isLocal
+                                        {
+                                            cacheCapture.value =
+                                                await ModelRuntime.batchDiagnosticsSnapshot()
+                                        }
+                                        return result
                                     }
-                                    return result
                                 }
                             }
                         }
@@ -1089,7 +1202,7 @@ public enum SubagentSession {
             // process cache snapshot for an isolated local run. Batched
             // siblings disable this child-local field because one process-wide
             // snapshot cannot be attributed to one concurrent child;
-            // SpawnBatchTool records one aggregate before/after delta instead.
+            // the wave records one aggregate before/after delta instead.
             var payload = result.payload
             var residency: [String: Any] = [:]
             let phases = Self.residencyPhaseTimings(
@@ -1177,8 +1290,8 @@ public enum SubagentSession {
     }
 
     /// Process-wide same-model callers share the active BatchEngine, so their
-    /// aggregate width must honor the same server/agent/RAM ceiling as
-    /// `spawn_batch`. This computes that ceiling for an ordinary one-child
+    /// aggregate width must honor the same server/agent/RAM ceiling as a
+    /// wave. This computes that ceiling for an ordinary one-child
     /// spawn; the admission actor accounts for already-reserved sibling slots.
     private struct LocalInPlaceCapacityDecision: Sendable {
         var capacity: Int
@@ -1191,11 +1304,19 @@ public enum SubagentSession {
         rejectUnsafeSingleRun: Bool = false
     ) async -> LocalInPlaceCapacityDecision {
         let runtime = ServerRuntimeSettingsStore.snapshot()
-        let engineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+        let configuredEngineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
             in: .standard,
             runtime: runtime
         )
-        let maxParallel = await SpawnBatchTool.effectiveMaxParallel(
+        let engineSnapshot = await ModelRuntime.shared.batchEngineCapacitySnapshot(
+            for: prepared.resolved.name, reconcilingTo: configuredEngineSlots
+        )
+        let engineSlots = min(configuredEngineSlots, engineSnapshot?.configuredMaximum ?? configuredEngineSlots)
+        let engineWindow = SpawnFanOutPolicy.engineAdmissionWindow(
+            configuredMaximum: configuredEngineSlots,
+            snapshot: engineSnapshot
+        )
+        let maxParallel = await SpawnFanOutPolicy.effectiveMaxParallel(
             scope: prepared.scope
         )
         let requested = max(
@@ -1213,21 +1334,52 @@ public enum SubagentSession {
         }
         if requested == 1, !rejectUnsafeSingleRun { return .init(capacity: 1) }
 
-        let memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
+        var memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
             for: prepared.resolved.name,
             residencyPlan: residencyPlan,
             requestEstimate: prepared.kind.admissionRequestEstimate()
         )
-        let plan = SpawnBatchTool.makeLocalAdmissionPlan(
+        // A large lifetime tool budget is a ceiling on work, not a promise
+        // that all 24 maximum-size rounds remain in KV simultaneously. When
+        // even one resident child would be refused, tighten its actual history
+        // window to available memory. Keep the output/turn limits intact, and
+        // preserve all cold-load, pressure, allocator and model-budget gates.
+        if residencyPlan.ramSafetyEnabled,
+            let adaptive = prepared.kind as? any SubagentContextAdmission,
+            let minimum = adaptive.minimumAdmissionContextPositions,
+            let requested = prepared.kind.admissionRequestEstimate()?.boundedPositionBudget(),
+            let memory = memoryFacts,
+            let fitted = await ModelRuntime.shared.affordableSubagentContext(
+                for: prepared.resolved.name, requested: requested,
+                minimum: minimum, memory: memory
+            ), adaptive.tightenAdmissionContextPositions(to: fitted.positions)
+        {
+            memoryFacts = fitted.facts
+            subagentLog.info(
+                "[admission-context] model=\(prepared.resolved.name, privacy: .public) requested_positions=\(requested) enforced_positions=\(fitted.positions) minimum_positions=\(minimum) per_child_bytes=\(fitted.facts.effectiveChildHeadroomBytes ?? 0)"
+            )
+        }
+        var plan = SpawnFanOutPolicy.makeLocalAdmissionPlan(
             localJobCount: requested,
             remoteJobCount: 0,
             maxParallel: maxParallel,
             engineParallelLimit: engineSlots,
+            engineSubmissionLimit: engineWindow.parallelLimit,
             continuousBatchingEnabled: runtime.concurrency.continuousBatching,
             residencyPlan: residencyPlan,
             memoryFacts: memoryFacts,
             failClosedWhenEstimateUnknown: true
         )
+        plan.engineOccupancy = engineSnapshot
+        plan.engineQueuedAtAdmission = engineWindow.queued
+        // A fitted window rescues one child, never increases fan-out. Keep
+        // this run serialized even if a stepped/fixed estimator or a later
+        // host sample would otherwise report more than one slot.
+        if (prepared.kind as? any SubagentContextAdmission)?.admissionContextWasMemoryFitted == true,
+            let positions = prepared.kind.admissionRequestEstimate()?.boundedPositionBudget()
+        {
+            plan.serializeMemoryFittedContext(jobCount: requested, positions: positions)
+        }
         if case .admitted = plan.verdict {
             return .init(capacity: max(1, plan.localCapacity), plan: plan)
         }
@@ -1237,7 +1389,7 @@ public enum SubagentSession {
 
         // A wider batch can be unsafe while the one already-reserved direct
         // child still fits. Re-evaluate exactly that child before refusing.
-        let singleRunPlan = SpawnBatchTool.makeLocalAdmissionPlan(
+        let singleRunPlan = SpawnFanOutPolicy.makeLocalAdmissionPlan(
             localJobCount: 1,
             remoteJobCount: 0,
             maxParallel: maxParallel,

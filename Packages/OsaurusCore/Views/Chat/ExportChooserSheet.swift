@@ -20,6 +20,7 @@ struct ExportChooserSheet: View {
     @State private var direction: SlideDirection = .forward
     @State private var selectedFormat: ChatSessionSidebar.ExportFormat?
     @State private var options: ChatExportOptions = ChatExportOptions.loadLast()
+    @State private var hydratedHasTimingData: Bool?
 
     private enum Page { case format, options }
     private enum SlideDirection { case forward, backward }
@@ -29,7 +30,9 @@ struct ExportChooserSheet: View {
 
     /// Disable the toggles if no turn carries timing data so users
     /// aren't tricked into selecting flags that would produce nothing.
-    private var hasTimingData: Bool { session.hasAnyTimingData }
+    private var hasTimingData: Bool {
+        session.hasAnyTimingData || hydratedHasTimingData == true
+    }
 
     var body: some View {
         ZStack {
@@ -38,6 +41,12 @@ struct ExportChooserSheet: View {
                 .transition(slideTransition)
         }
         .frame(width: contentWidth, height: pageHeight, alignment: .top)
+        .task(id: session.id) {
+            hydratedHasTimingData = nil
+            let available = await ChatSessionExportCoordinator.hasTimingData(metadataSession: session)
+            guard !Task.isCancelled else { return }
+            hydratedHasTimingData = available
+        }
     }
 
     @ViewBuilder
@@ -147,7 +156,9 @@ struct ExportChooserSheet: View {
                 toggleRow("Deltas", binding: $options.includeDeltas)
                 toggleRow("Token usage", binding: $options.includeTokenUsage)
 
-                if !hasTimingData {
+                if !hasTimingData, hydratedHasTimingData == nil {
+                    ProgressView().controlSize(.small)
+                } else if !hasTimingData {
                     Text("No timing data captured for this conversation.", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)

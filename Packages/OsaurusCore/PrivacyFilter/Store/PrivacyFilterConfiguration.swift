@@ -23,6 +23,16 @@ import Foundation
 public enum PrivacyAIBackend: String, Codable, Sendable, CaseIterable {
     case openai
     case rampart
+
+    /// True when this backend's bundle is on disk. Pure filesystem
+    /// check (no actor hop) so `resolvedAIBackend` can be called from
+    /// the outbound pipeline and the settings UI alike.
+    public static func isBundleInstalled(_ backend: PrivacyAIBackend) -> Bool {
+        switch backend {
+        case .openai: return PrivacyFilterModelBundle.exists()
+        case .rampart: return RampartModelManager.bundleExists()
+        }
+    }
 }
 
 /// Top-level privacy-filter preference shape. `Codable` so it
@@ -44,7 +54,14 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// block in `init(from:)`. Files written by older Osaurus
     /// builds decode as `0` (key absent) and the migration block
     /// promotes them to the current shape.
-    public static let currentSchemaVersion: Int = 1
+    ///
+    /// History:
+    /// - 1: first versioned schema.
+    /// - 2: US SSN moved from the `accountNumber` built-in into the
+    ///   `us.ssn` preset; `homeRegions` added. Migration keeps SSN
+    ///   detection on for files that had account numbers enabled and
+    ///   seeds `homeRegions` from the Mac locale.
+    public static let currentSchemaVersion: Int = 2
 
     /// Schema version that produced this in-memory value. Defaults
     /// to `currentSchemaVersion` for freshly-constructed objects
@@ -68,10 +85,23 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// detection runs regex-only (never blocks on a missing model).
     public var aiDetectionEnabled: Bool
 
-    /// Which model backend AI detection uses when `aiDetectionEnabled`.
+    /// Which model backend the user picked as default for AI detection.
     /// Defaults to `.openai` for backward compatibility with installs
-    /// that already downloaded that bundle.
+    /// that already downloaded that bundle. This is a preference, not
+    /// a guarantee the bundle exists — callers must go through
+    /// `resolvedAIBackend(isInstalled:)` to find the backend that will
+    /// actually run.
     public var aiDetectionBackend: PrivacyAIBackend
+
+    /// The backend AI detection actually runs with: the user's default
+    /// when its bundle is installed, otherwise whichever other backend
+    /// is installed, otherwise `nil`. Installing a single model must be
+    /// enough to use it — a user who downloads only Rampart should never
+    /// be blocked because the untouched default still says OpenAI.
+    public func resolvedAIBackend(isInstalled: (PrivacyAIBackend) -> Bool) -> PrivacyAIBackend? {
+        if isInstalled(aiDetectionBackend) { return aiDetectionBackend }
+        return PrivacyAIBackend.allCases.first(where: isInstalled)
+    }
 
     /// Per-provider enable map keyed by `RemoteProvider.id.uuidString`.
     /// Missing keys fall back to `defaultForCloudProvider` (true).
@@ -107,11 +137,22 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// tool results. Categories not in the map default to `true`.
     public var builtinPatternEnabled: [EntityCategory: Bool]
 
-    /// Opt-in preset rules keyed by `PrivacyRulePresets.Preset.id`.
-    /// Missing keys default to `false` — presets ship disabled so a
-    /// fresh install doesn't surprise the user with new false
-    /// positives after an Osaurus update that adds a preset.
+    /// Preset rules keyed by `PrivacyRulePresets.Preset.id`. Missing
+    /// keys default to `false`. A fresh install seeds the presets for
+    /// the Mac's locale region (`freshInstall(locale:)`) and adding a
+    /// region under "My Regions" seeds that region's presets; every
+    /// other preset — and any preset a later Osaurus update adds — is
+    /// opt-in so an update never surprises the user with new false
+    /// positives.
     public var presetRules: [String: Bool]
+
+    /// ISO 3166-1 alpha-2 region codes the user considers "home", in
+    /// the order they added them. Drives the "My regions" section of
+    /// the Rules tab and the suggestion banner. Seeded from the Mac
+    /// locale on a fresh install (`freshInstall(locale:)`) and fully
+    /// user-editable afterwards; `init()` leaves it empty so tests
+    /// stay deterministic.
+    public var homeRegions: [String]
 
     /// User-defined rules from the settings "Custom rules" panel.
     /// Empty by default. Bad/unparseable patterns are validated in
@@ -129,6 +170,7 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         requireReviewForNonInteractive: Bool = true,
         builtinPatternEnabled: [EntityCategory: Bool] = Self.defaultBuiltinPatternEnabled,
         presetRules: [String: Bool] = [:],
+        homeRegions: [String] = [],
         customRules: [PrivacyRule] = []
     ) {
         self.schemaVersion = Self.currentSchemaVersion
@@ -141,7 +183,58 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         self.requireReviewForNonInteractive = requireReviewForNonInteractive
         self.builtinPatternEnabled = builtinPatternEnabled
         self.presetRules = presetRules
+        self.homeRegions = homeRegions
         self.customRules = customRules
+    }
+
+    /// The configuration a brand-new install starts from: master
+    /// toggle off (unchanged), `homeRegions` seeded with the locale's
+    /// region, and the presets `PrivacyRulePresets.defaultPresetRules`
+    /// picks for that region switched on. Everything else keeps the
+    /// `init()` defaults. `PrivacyFilterStore.snapshot()` returns this
+    /// when no file exists on disk.
+    public static func freshInstall(locale: Locale = .current) -> PrivacyFilterConfiguration {
+        var config = PrivacyFilterConfiguration()
+        if let region = Self.regionCode(from: locale) {
+            config.homeRegions = [region]
+        }
+        config.presetRules = PrivacyRulePresets.defaultPresetRules(forRegions: config.homeRegions)
+        return config
+    }
+
+    /// Upper-cased ISO region of `locale`, or `nil` when the locale
+    /// has none (e.g. a bare language identifier like `en`).
+    static func regionCode(from locale: Locale) -> String? {
+        guard let region = locale.region?.identifier, !region.isEmpty else { return nil }
+        let upper = region.uppercased()
+        // Skip UN M.49 numeric codes (e.g. "001" world, "419" Latin
+        // America) — the picker only lists alpha-2 regions.
+        guard upper.count == 2, upper.allSatisfy(\.isLetter) else { return nil }
+        return upper
+    }
+
+    /// Add `region` to `homeRegions` (no-op when present) and switch on
+    /// the presets `PrivacyRulePresets.defaultPresetRules` picks for it,
+    /// except keys the user already explicitly set to `false` — an
+    /// opt-out must survive adding a neighbouring region.
+    public mutating func addHomeRegion(_ region: String) {
+        let code = region.uppercased()
+        if !homeRegions.contains(code) {
+            homeRegions.append(code)
+        }
+        for (id, on) in PrivacyRulePresets.defaultPresetRules(forRegions: [code]) where on {
+            if presetRules[id] == nil {
+                presetRules[id] = true
+            }
+        }
+    }
+
+    /// Remove `region` from `homeRegions`. Leaves `presetRules` alone:
+    /// nothing is silently disabled; the group just moves to "Other
+    /// regions" in the UI.
+    public mutating func removeHomeRegion(_ region: String) {
+        let code = region.uppercased()
+        homeRegions.removeAll { $0 == code }
     }
 
     /// Categories backed by a built-in regex pattern. New built-ins
@@ -191,6 +284,7 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         case requireReviewForNonInteractive
         case builtinPatternEnabled
         case presetRules
+        case homeRegions
         case customRules
     }
 
@@ -253,10 +347,30 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         }
         self.builtinPatternEnabled = builtin
 
-        self.presetRules =
+        var presets =
             try c.decodeIfPresent([String: Bool].self, forKey: .presetRules) ?? [:]
+        var regions =
+            try c.decodeIfPresent([String].self, forKey: .homeRegions) ?? []
         self.customRules =
             try c.decodeIfPresent([PrivacyRule].self, forKey: .customRules) ?? []
+
+        // Schema < 2: US SSN was part of the `accountNumber` built-in.
+        // Keep it detecting for users who had that built-in on by
+        // promoting it to the `us.ssn` preset, unless the file already
+        // has an explicit opinion about that preset. `homeRegions` is
+        // seeded from the Mac locale so the suggestion banner has a
+        // region to offer — presets for it are NOT auto-enabled on an
+        // existing install (the UI offers "Enable all" instead).
+        if schemaVersion < 2 {
+            if builtin[.accountNumber] != false, presets[PrivacyRulePresets.usSSN.id] == nil {
+                presets[PrivacyRulePresets.usSSN.id] = true
+            }
+            if regions.isEmpty, let region = Self.regionCode(from: .current) {
+                regions = [region]
+            }
+        }
+        self.presetRules = presets
+        self.homeRegions = regions
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -282,6 +396,7 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         }
         try c.encode(rawBuiltin, forKey: .builtinPatternEnabled)
         try c.encode(presetRules, forKey: .presetRules)
+        try c.encode(homeRegions, forKey: .homeRegions)
         try c.encode(customRules, forKey: .customRules)
     }
 

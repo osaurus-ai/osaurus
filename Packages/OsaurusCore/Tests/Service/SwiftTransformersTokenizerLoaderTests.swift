@@ -701,7 +701,10 @@ struct SwiftTransformersTokenizerLoaderTests {
         // This snapshot is the Default configuration agent. Its current
         // contract exposes the consolidated osaurus_* surface directly and
         // intentionally omits the custom-agent discovery gateway.
-        #expect(decoded.contains("osaurus_status"), "Decoded: \(decoded)")
+        // #2485 consolidated status/list/describe under osaurus_inspect.
+        // Assert the actual native declaration, not the retired tool name.
+        #expect(decoded.contains("declaration:osaurus_inspect{"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("declaration:osaurus_status{"), "Decoded: \(decoded)")
         #expect(!decoded.contains("capabilities_discover"), "Decoded: \(decoded)")
     }
 

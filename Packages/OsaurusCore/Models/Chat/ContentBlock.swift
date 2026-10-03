@@ -36,6 +36,18 @@ struct ToolCallItem: Equatable {
     }
 }
 
+/// Which wait the typing indicator row stands for. See
+/// `ContentBlockKind.typingIndicator`.
+enum TypingIndicatorPhase: Equatable {
+    /// The model has not finished producing output yet (load, prefill, or
+    /// the first token is still pending).
+    case generating
+    /// Output is complete but the run has not closed: the engine is draining
+    /// its post-generation tail (cache store, allocator teardown) and the
+    /// step's result (tool dispatch, stats, footer) lands only after it.
+    case finishing
+}
+
 /// The kind/type of a content block
 enum ContentBlockKind: Equatable {
     case header(role: MessageRole, agentName: String, isFirstInGroup: Bool)
@@ -54,7 +66,18 @@ enum ContentBlockKind: Equatable {
     /// first assistant turn that follows it), used by the overflow menu's
     /// "Inspect response" to open that reply's request/response log. Nil when the
     /// message has no assistant reply yet.
-    case userMessage(text: String, attachments: [Attachment], timestamp: Date, responseTurnId: UUID?)
+    /// `envelope` is set when `text` is a machine-generated dispatch envelope
+    /// (channel wrapper, delegation contract, …): the cell then renders
+    /// `envelope.displayText` under a provenance badge row and hides Edit.
+    /// `text` stays the raw stored content so equality and the edit fallback
+    /// keep working on the real turn bytes.
+    case userMessage(
+        text: String,
+        attachments: [Attachment],
+        timestamp: Date,
+        responseTurnId: UUID?,
+        envelope: DispatchEnvelope?
+    )
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
     /// Generation benchmarks footer for a completed assistant turn.
@@ -75,9 +98,16 @@ enum ContentBlockKind: Equatable {
         tokenCount: Int?,
         unclosedReasoning: Bool,
         modelLoad: TimeInterval?,
-        cachedInputTokens: Int?
+        cachedInputTokens: Int?,
+        totalDuration: TimeInterval?
     )
-    case typingIndicator
+    /// Bouncing-dots progress row. `.generating` while the model is still
+    /// producing output (load / prefill / first token); `.finishing` once the
+    /// engine's OUTPUT is complete but the run is still open — for local MLX
+    /// that is vmlx's post-generation cache-store tail, during which Stop
+    /// stays live and the input stays locked. The row carries a status label
+    /// in that phase so the wait is never a blank assistant row.
+    case typingIndicator(phase: TypingIndicatorPhase)
     case groupSpacer
     case chart(spec: ChartSpec)
     /// GitHub-style diff card rendered in place of the generic tool-call row
@@ -134,13 +164,13 @@ enum ContentBlockKind: Equatable {
             return lText == rText
 
         case let (
-            .userMessage(lText, lAttach, lTime, lResp),
-            .userMessage(rText, rAttach, rTime, rResp)
+            .userMessage(lText, lAttach, lTime, lResp, lEnv),
+            .userMessage(rText, rAttach, rTime, rResp, rEnv)
         ):
             guard lTime == rTime && lResp == rResp else { return false }
             guard lText.count == rText.count else { return false }
             guard lAttach.count == rAttach.count else { return false }
-            return lText == rText && lAttach == rAttach
+            return lText == rText && lAttach == rAttach && lEnv == rEnv
 
         case let (.sharedArtifact(lArt), .sharedArtifact(rArt)):
             return lArt == rArt
@@ -149,17 +179,20 @@ enum ContentBlockKind: Equatable {
             return lName == rName && lSize == rSize
 
         case let (
-            .generationStats(lTtft, lTps, lCount, lUnclosed, lLoad, lCached),
-            .generationStats(rTtft, rTps, rCount, rUnclosed, rLoad, rCached)
+            .generationStats(lTtft, lTps, lCount, lUnclosed, lLoad, lCached, lTotal),
+            .generationStats(rTtft, rTps, rCount, rUnclosed, rLoad, rCached, rTotal)
         ):
             // `modelLoad` / `cachedInputTokens` participate: this equality
             // decides whether the cell re-renders, so omitting them would leave
             // a stale (or missing) chip on screen when only that value changed.
             return lTtft == rTtft && lTps == rTps && lCount == rCount
                 && lUnclosed == rUnclosed && lLoad == rLoad && lCached == rCached
+                && lTotal == rTotal
 
-        case (.typingIndicator, .typingIndicator):
-            return true
+        case let (.typingIndicator(lPhase), .typingIndicator(rPhase)):
+            // The phase decides the label the cell shows; a change must
+            // reconfigure the (reused) cell.
+            return lPhase == rPhase
 
         case (.groupSpacer, .groupSpacer):
             return true
@@ -244,8 +277,10 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .paragraph(_, text, _, role) where role == .user || role == .assistant:
             return text
-        case let .userMessage(text, _, _, _):
-            return text
+        case let .userMessage(text, _, _, _, envelope):
+            // The displayed text, not the raw envelope, so find-bar
+            // occurrence indices line up with what the bubble paints.
+            return envelope?.displayText ?? text
         default:
             return nil
         }
@@ -370,6 +405,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         attachments: [Attachment],
         timestamp: Date,
         responseTurnId: UUID?,
+        envelope: DispatchEnvelope? = nil,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
@@ -379,7 +415,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 text: text,
                 attachments: attachments,
                 timestamp: timestamp,
-                responseTurnId: responseTurnId
+                responseTurnId: responseTurnId,
+                envelope: envelope
             ),
             position: position
         )
@@ -400,8 +437,19 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
-    static func typingIndicator(turnId: UUID, position: BlockPosition) -> ContentBlock {
-        ContentBlock(id: "typing-\(turnId.uuidString)", turnId: turnId, kind: .typingIndicator, position: position)
+    /// The block id is phase-independent so the generating → finishing flip
+    /// reconfigures the existing cell instead of inserting a new row.
+    static func typingIndicator(
+        turnId: UUID,
+        phase: TypingIndicatorPhase = .generating,
+        position: BlockPosition
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "typing-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .typingIndicator(phase: phase),
+            position: position
+        )
     }
 
     static func sharedArtifact(turnId: UUID, artifact: SharedArtifact, position: BlockPosition) -> ContentBlock {
@@ -421,6 +469,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         unclosedReasoning: Bool = false,
         modelLoad: TimeInterval? = nil,
         cachedInputTokens: Int? = nil,
+        totalDuration: TimeInterval? = nil,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
@@ -432,7 +481,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 tokenCount: tokenCount,
                 unclosedReasoning: unclosedReasoning,
                 modelLoad: modelLoad,
-                cachedInputTokens: cachedInputTokens
+                cachedInputTokens: cachedInputTokens,
+                totalDuration: totalDuration
             ),
             position: position
         )
@@ -533,8 +583,26 @@ extension ContentBlock {
     static func generateBlocks(
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
+        // The last turn while its RUN is still open, independent of whether
+        // the model's output has finished. `streamingTurnId` goes nil the
+        // moment the engine reports output complete (so the cursor stops at
+        // the last letter and the live-content path ends), but for local MLX
+        // the stream itself stays open for the post-generation cache-store
+        // tail — and a tool-call step's parsed invocation only arrives at
+        // that stream's end. Progress affordances (pending tool chip, typing
+        // indicator) key off this id so the tail never renders as a blank
+        // assistant row under a live Stop button. Nil for finished threads.
+        activeTurnId: UUID? = nil,
         agentName: String,
         previousTurn: ChatTurn? = nil,
+        // `requestedAt ?? createdAt` of the first assistant turn in `previousTurn`'s group,
+        // for suffix regenerations whose response began before `turns[0]`.
+        // Anchors the footer's total response time. Ignored unless
+        // `previousTurn` is an assistant turn.
+        previousGroupStartedAt: Date? = nil,
+        // Gates the marker-less watcher envelope parse (see `DispatchEnvelope`).
+        // `.chat` for callers that never render dispatched sessions.
+        sessionSource: SessionSource = .chat,
         // callId → occurrence ordinal for the "×N" repeat badge, computed by
         // `BlockMemoizer` over the FULL transcript (this function may only be
         // given a suffix of it on the incremental paths). Nil (tests, other
@@ -544,11 +612,19 @@ extension ContentBlock {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
         var previousTurnId: UUID? = previousTurn?.id
+        // Start of the assistant group being built: the first assistant turn
+        // after the user message. A tool-calling response spans several
+        // assistant turns, and the footer's total time covers all of them.
+        var groupStartedAt: Date? = previousTurn?.role == .assistant ? previousGroupStartedAt : nil
 
         let filteredTurns = turns.filter { $0.role != .tool }
 
         for (index, turn) in filteredTurns.enumerated() {
             let isStreaming = turn.id == streamingTurnId
+            // Run still open for this turn (streaming, or output complete
+            // and waiting on the engine tail). Drives the progress rows only;
+            // cursor / stats / footer stay on `isStreaming`.
+            let isActive = isStreaming || turn.id == activeTurnId
             let nextRole: MessageRole? =
                 index + 1 < filteredTurns.count
                 ? filteredTurns[index + 1].role : nil
@@ -556,6 +632,14 @@ extension ContentBlock {
             // User messages always start a new group (each is distinct input).
             // Assistant messages group consecutive turns (continuing responses).
             let isFirstInGroup = turn.role != previousRole || turn.role == .user
+            if isFirstInGroup {
+                groupStartedAt = turn.role == .assistant ? (turn.requestedAt ?? turn.createdAt) : nil
+            } else if let requestedAt = turn.requestedAt {
+                // A new run joined an existing group (Regenerate / retry on a
+                // later tool-calling step keeps the earlier steps): time from
+                // its own keypress, not the original send.
+                groupStartedAt = requestedAt
+            }
 
             if isFirstInGroup, let prevId = previousTurnId {
                 // Use the previous turn ID for the stable block ID (referencing the gap)
@@ -584,6 +668,8 @@ extension ContentBlock {
                         attachments: turn.attachments,
                         timestamp: turn.createdAt,
                         responseTurnId: responseTurnId,
+                        // Memoized on the turn: one parse per turn, not per tick.
+                        envelope: turn.dispatchEnvelope(sessionSource: sessionSource),
                         position: .only
                     )
                 )
@@ -667,9 +753,14 @@ extension ContentBlock {
                 }
             }
 
-            if isStreaming && !hasVisibleContent && !hasRenderableThinking
-                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+            // Run still open, no committed result yet (no tool calls, no
+            // pending chip, no remote tool rows) → a progress row is the only
+            // thing telling the user the turn is alive.
+            let needsProgressRow =
+                isActive && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && !turn.hasRemoteToolActivity
+            if needsProgressRow && !hasVisibleContent && !hasRenderableThinking
+                && !hasSharedArtifacts
             {
                 // During prefill (no content/thinking/tools yet), show the typing
                 // indicator so the interface doesn't appear frozen. Skipped once a
@@ -679,10 +770,33 @@ extension ContentBlock {
                 // produced reasoning yet, so labeling load/prefill as thinking
                 // misstates the phase. The real thinking block above appears on
                 // the first reasoning delta via `hasRenderableThinking`.
-                turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
+                //
+                // Same row, `.finishing` phase, once output is complete but the
+                // run is still draining the engine tail (`isActive` without
+                // `isStreaming`) — the turn produced nothing visible (yet) and
+                // would otherwise render as a header with nothing under it.
+                turnBlocks.append(
+                    .typingIndicator(
+                        turnId: turn.id,
+                        phase: isStreaming ? .generating : .finishing,
+                        position: .middle
+                    )
+                )
+            } else if needsProgressRow && !isStreaming {
+                // Output complete, content/thinking already painted, run still
+                // open on the engine tail. The cursor has stopped at the last
+                // letter (that contract is unchanged) but Stop is still live
+                // and the input is still locked — say why, in place of the
+                // stats/footer that land only when the stream closes.
+                turnBlocks.append(
+                    .typingIndicator(turnId: turn.id, phase: .finishing, position: .middle)
+                )
             }
 
-            if !isStreaming && !hasVisibleContent && !hasRenderableThinking
+            // The empty-turn notices below describe a FINISHED turn, so they
+            // wait for the run to close (`!isActive`), not just for output to
+            // complete — the finishing row above owns the in-between.
+            if !isActive && !hasVisibleContent && !hasRenderableThinking
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && !turn.hasRemoteToolActivity,
                 let billing = turn.routerBilling
@@ -693,7 +807,7 @@ extension ContentBlock {
                 turnBlocks.append(
                     .emptyResponseNotice(turnId: turn.id, billing: billing, position: .middle)
                 )
-            } else if !isStreaming && !hasVisibleContent
+            } else if !isActive && !hasVisibleContent
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && !turn.hasRemoteToolActivity
                 && turn.terminalStopReason == "cancelled"
@@ -717,7 +831,7 @@ extension ContentBlock {
                         position: .middle
                     )
                 )
-            } else if !isStreaming && !hasVisibleContent && !hasRenderableThinking
+            } else if !isActive && !hasVisibleContent && !hasRenderableThinking
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && !turn.hasRemoteToolActivity
                 && (turn.generationTokenCount != nil || turn.generationTokensPerSecond != nil)
@@ -870,7 +984,7 @@ extension ContentBlock {
                 flushRegularItems()
             }
 
-            if isStreaming, let pendingName = turn.pendingToolName {
+            if isActive, let pendingName = turn.pendingToolName {
                 // File-writing tools stream their whole file through the call
                 // arguments. Render a live diff card that grows with the code
                 // instead of the generic pending chip, so the finished card
@@ -879,6 +993,11 @@ extension ContentBlock {
                 // The shimmer chip stays up for the whole pending phase —
                 // the growing diff preview renders BELOW it rather than
                 // replacing it, so the "working" signal never blinks out.
+                // Keyed on `isActive`, not `isStreaming`: a local model's
+                // parsed call is only thrown at stream END, which for MLX is
+                // after the post-generation cache-store tail. The chip must
+                // survive the output-complete flip or the turn shows nothing
+                // for that whole tail.
                 turnBlocks.append(
                     .pendingToolCall(
                         turnId: turn.id,
@@ -909,9 +1028,30 @@ extension ContentBlock {
                 }
             }
 
+            // A turn whose run is still open with a tool call pending IS an
+            // intermediate tool-calling turn — its call just hasn't been
+            // materialised yet (local MLX throws it at stream end, after the
+            // cache-store tail). Without this the footer/stats flashed under
+            // the pending chip for the whole tail and vanished when the call
+            // landed.
+            let isPendingIntermediateStep = isActive && turn.pendingToolName != nil
+
+            // Wall-clock from the keypress to the moment the run ended: model
+            // load, prefill, every tool step, approval prompts and the local
+            // cache-store tail all included. Withheld while the run is still
+            // open so the chip lands once, final.
+            let totalDuration: TimeInterval? = {
+                guard turn.role == .assistant, !isActive, let start = groupStartedAt,
+                    let end = turn.completedAt ?? turn.lastOutputAt
+                else { return nil }
+                let elapsed = end.timeIntervalSince(start)
+                return elapsed >= 0.05 ? elapsed : nil
+            }()
+
             // stats must be shown only on the final turn (intermediate tool calling turns should not display them)
-            if !isStreaming && turn.role == .assistant && isLastInGroup,
+            if !isStreaming && !isPendingIntermediateStep && turn.role == .assistant && isLastInGroup,
                 turn.timeToFirstToken != nil || turn.generationTokensPerSecond != nil
+                    || (totalDuration != nil && turn.lastOutputAt != nil)
             {
                 turnBlocks.append(
                     .generationStats(
@@ -922,6 +1062,7 @@ extension ContentBlock {
                         unclosedReasoning: turn.unclosedReasoning,
                         modelLoad: turn.modelLoadSeconds,
                         cachedInputTokens: turn.effectiveCachedInputTokens,
+                        totalDuration: totalDuration,
                         position: .middle
                     )
                 )
@@ -930,7 +1071,7 @@ extension ContentBlock {
             // copy/regenerate bar pinned to the bottom of the final completed assistant
             // turn in a consecutive assistant group — intermediate tool-calling turns in
             // an agent loop don't get their own footer.
-            if !isStreaming && turn.role == .assistant && isLastInGroup,
+            if !isStreaming && !isPendingIntermediateStep && turn.role == .assistant && isLastInGroup,
                 hasVisibleContent || hasRenderableThinking || hasSharedArtifacts || !(turn.toolCalls ?? []).isEmpty
             {
                 // An image-generation reply renders as just the produced image, so
@@ -1071,7 +1212,7 @@ extension ContentBlock {
     /// `FileDiff.inferredEditPath`, which matches a streaming edit's
     /// `old_string` against these to name the card before its `path`
     /// argument streams.
-    private static func knownFileContents(in turns: [ChatTurn]) -> [(path: String, content: String)] {
+    static func knownFileContents(in turns: [ChatTurn]) -> [(path: String, content: String)] {
         var latest: [String: String] = [:]
         for turn in turns {
             guard let calls = turn.toolCalls else { continue }
@@ -1081,6 +1222,11 @@ extension ContentBlock {
                     guard let result = turn.toolResults[call.id],
                         let payload = ToolEnvelope.successPayload(result) as? [String: Any],
                         (payload["kind"] as? String) != "directory",
+                        // Image and workbook envelopes carry descriptive
+                        // text, not file bytes — never ground a diff on them.
+                        (payload["kind"] as? String) != "image",
+                        (payload["kind"] as? String) != "workbook",
+                        (payload["source"] as? String) != "ocr_text",
                         let path = payload["path"] as? String, !path.isEmpty,
                         let text = payload["text"] as? String
                     else { continue }

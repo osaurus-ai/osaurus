@@ -389,6 +389,10 @@ struct OrchestratorAddendumRequiredToolsTests {
     /// variants, and every required name is a real configure tool the
     /// Default agent's allowlist carries.
     @Test func requiredNames_areAdvertisedByBothVariantsAndAllowed() {
+        // The allow-list assertions below read the live domain registry;
+        // register the shipped domain so the test does not depend on
+        // another suite having bootstrapped it first.
+        ConfigurationDomainBootstrap.registerBuiltIns()
         let domains = [Self.probe(id: "config", writeToolNames: ["osaurus_config"])]
         for compact in [false, true] {
             let rendered = DefaultAgentSystemPromptBuilder._renderForTests(

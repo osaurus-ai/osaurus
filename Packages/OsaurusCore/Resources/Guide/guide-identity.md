@@ -11,7 +11,7 @@ Osaurus gives every participant — you, each agent, and each device — a crypt
 ## The pieces
 
 - **Master address** — your root identity, generated on your first device and stored in iCloud Keychain behind Face ID / Touch ID. All authority flows from it.
-- **Agent addresses** — each agent can be assigned its own address derived from the master and the device it was created on. Assign, rotate, or revoke them under Privacy & Security → Identity; rotation and revocation automatically invalidate keys issued for the old address.
+- **Agent addresses** — each agent can be assigned its own address derived from the master and the device it was created on. Assign, rotate, or revoke them under Settings… (⌘,) → Identity; rotation and revocation automatically invalidate keys issued for the old address.
 - **Device ID** — a hardware-bound identity (Secure Enclave attestation) proving which physical device is making a request. Every device gets its own on first launch, including devices that picked up your identity from iCloud or a recovery phrase.
 
 ## One identity, many devices

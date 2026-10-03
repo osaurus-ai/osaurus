@@ -10,9 +10,12 @@
 //  - Saves / restores a scroll anchor so that applying a new diffable snapshot
 //    preserves the user's reading position.
 //
-//  The anchor is row-based: we record the topmost visible row and the pixel
-//  offset from that row's top edge. After a snapshot, we recalculate the
-//  origin from the (possibly shifted) row rect.
+//  The anchor is block-based: we record the block in the topmost visible row
+//  and the pixel offset from that row's top edge. After a snapshot, we find
+//  that block's (possibly shifted) row and recalculate the origin from its
+//  rect. Resolving by id matters because a snapshot can insert rows above the
+//  reader (e.g. the streaming block window widening when a run ends), which
+//  would leave a bare row index pointing at older content.
 //
 
 import AppKit
@@ -25,6 +28,14 @@ final class ScrollAnchorManager {
     /// Whether the scroll view is currently pinned to the bottom.
     private(set) var isPinnedToBottom: Bool = true
 
+    /// While true, bounds changes never mark the reader pinned. Set while a
+    /// restored position settles: rows still measuring can briefly make the
+    /// content shorter than the viewport, which would read as "at bottom"
+    /// and let pinned-follow paths yank the reader down.
+    var holdUnpinned = false {
+        didSet { if oldValue != holdUnpinned { handleBoundsChanged() } }
+    }
+
     /// Distance (in points) from the bottom within which we consider the
     /// user "pinned". A small tolerance prevents jitter.
     var bottomThreshold: CGFloat = 50
@@ -33,6 +44,13 @@ final class ScrollAnchorManager {
 
     var onScrolledToBottom: (() -> Void)?
     var onScrolledAwayFromBottom: (() -> Void)?
+
+    /// Maps a table row to its block id. Must reflect the rows currently
+    /// in the table at `saveAnchor()` time.
+    var blockIdForRow: ((Int) -> String?)?
+
+    /// Maps a block id to its row after a snapshot applies.
+    var rowForBlockId: ((String) -> Int?)?
 
     // MARK: - Private State
 
@@ -53,6 +71,7 @@ final class ScrollAnchorManager {
 
     private struct Anchor {
         let row: Int
+        let blockId: String?
         let offsetFromRowTop: CGFloat
     }
 
@@ -94,7 +113,11 @@ final class ScrollAnchorManager {
         guard topRow >= 0 else { savedAnchor = nil; return }
 
         let rowRect = tableView.rect(ofRow: topRow)
-        savedAnchor = Anchor(row: topRow, offsetFromRowTop: topY - rowRect.origin.y)
+        savedAnchor = Anchor(
+            row: topRow,
+            blockId: blockIdForRow?(topRow),
+            offsetFromRowTop: topY - rowRect.origin.y
+        )
     }
 
     /// Restore position from the saved anchor. Call **after** the snapshot completes.
@@ -102,10 +125,19 @@ final class ScrollAnchorManager {
         guard let tableView, let scrollView, let anchor = savedAnchor else { return }
         savedAnchor = nil
 
-        let clampedRow = min(anchor.row, tableView.numberOfRows - 1)
-        guard clampedRow >= 0 else { return }
+        // Prefer the anchored block's new row; fall back to the old index
+        // only when that block left the thread.
+        let row: Int
+        if let blockId = anchor.blockId, let resolved = rowForBlockId?(blockId),
+            resolved < tableView.numberOfRows
+        {
+            row = resolved
+        } else {
+            row = min(anchor.row, tableView.numberOfRows - 1)
+        }
+        guard row >= 0 else { return }
 
-        let rowRect = tableView.rect(ofRow: clampedRow)
+        let rowRect = tableView.rect(ofRow: row)
         let targetY = rowRect.origin.y + anchor.offsetFromRowTop
         let curY = scrollView.contentView.bounds.origin.y
 
@@ -115,6 +147,54 @@ final class ScrollAnchorManager {
         guard abs(curY - targetY) > 1.0 else { return }
 
         setScrollOriginY(targetY)
+    }
+
+    // MARK: - Position Save / Restore (across mounts)
+
+    /// Snapshot the reading position so a later mount of the same session
+    /// can restore it. Returns nil when there is nothing to anchor to.
+    func capturePosition(blockIdForRow: (Int) -> String?) -> ThreadScrollPosition? {
+        guard let tableView, let scrollView, tableView.numberOfRows > 0 else { return nil }
+        if isPinnedToBottom { return .bottom }
+
+        // The origin can sit above row 0 (top content inset), where
+        // `row(at:)` finds nothing, so probe at 0 and keep the negative
+        // offset to land back in the inset.
+        let topY = scrollView.contentView.bounds.origin.y
+        let topRow = tableView.row(at: NSPoint(x: 0, y: max(topY, 0)))
+        guard topRow >= 0, let blockId = blockIdForRow(topRow) else { return nil }
+        let rowRect = tableView.rect(ofRow: topRow)
+        return ThreadScrollPosition(
+            isPinnedToBottom: false,
+            blockId: blockId,
+            offsetFromRowTop: topY - rowRect.origin.y
+        )
+    }
+
+    /// Put the reader back at a position from `capturePosition`. Returns
+    /// false when the anchored block is gone, so the caller can fall back to
+    /// the bottom.
+    func restorePosition(_ position: ThreadScrollPosition, rowForBlockId: (String) -> Int?) -> Bool {
+        guard let tableView else { return false }
+        if position.isPinnedToBottom {
+            scrollToBottom()
+            return true
+        }
+        guard let blockId = position.blockId, let row = rowForBlockId(blockId),
+            row < tableView.numberOfRows
+        else { return false }
+
+        let rowRect = tableView.rect(ofRow: row)
+        let targetY = rowRect.origin.y + position.offsetFromRowTop
+        // Re-applied on every layout change while settling; skip no-ops so
+        // the bounds callback it triggers can't loop.
+        if let scrollView, abs(scrollView.contentView.bounds.origin.y - targetY) > 0.5 {
+            setScrollOriginY(targetY)
+        }
+        // Unpin explicitly: the clip view has no height yet on first mount,
+        // so the bounds-based check could read this as "at bottom".
+        unpinFromBottom()
+        return true
     }
 
     // MARK: - Scroll Actions
@@ -216,7 +296,7 @@ final class ScrollAnchorManager {
     private func handleBoundsChanged() {
         guard let scrollView else { return }
         let wasPinned = isPinnedToBottom
-        isPinnedToBottom = isAtBottom(scrollView: scrollView)
+        isPinnedToBottom = !holdUnpinned && isAtBottom(scrollView: scrollView)
 
         if isPinnedToBottom, !wasPinned {
             let cb = onScrolledToBottom

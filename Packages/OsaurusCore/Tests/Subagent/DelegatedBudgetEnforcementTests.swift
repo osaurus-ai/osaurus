@@ -29,14 +29,16 @@ import os
 @Suite("Delegated budget enforcement chain")
 struct DelegatedBudgetEnforcementTests {
 
-    /// The default tool-enabled contract (2,048 × 2 against 64K) used by
-    /// every test — the same shape as the reported 16 GiB configuration.
+    /// A small tool-enabled contract (2,048 × 2 against 64K) used by every
+    /// test — the same shape as the reported 16 GiB configuration. Pinned
+    /// explicitly: the shipped defaults are larger (8,192 × 24) and would
+    /// clamp to the window, hiding the enforcement math under test.
     private var contract: DelegatedRunContract {
         DelegatedRunContract.derive(
             seedCharacters: 800,
             systemPromptCharacters: 2_000,
             toolSchemaTokens: 375,
-            budgets: SubagentBudgets(),
+            budgets: SubagentBudgets(maxDelegateTokens: 2048, maxDelegateTurns: 2),
             toolEnabled: true,
             resolvedContextWindow: 65_536
         )!

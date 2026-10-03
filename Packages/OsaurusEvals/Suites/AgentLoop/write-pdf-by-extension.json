@@ -1,0 +1,41 @@
+{
+  "id": "agent_loop.write-pdf-by-extension",
+  "domain": "agent_loop",
+  "label": "agent loop • create a one-page PDF with file_write from Markdown",
+  "query": "Create onepager.pdf: a one-page overview of a community garden proposal with a heading, two short paragraphs, and a three-item list.",
+  "notes": "file_write paginates Markdown/HTML into a PDF for the .pdf extension. The command assertion checks the %PDF magic so a text file named .pdf cannot pass.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "maxToolCalls": 4,
+      "mustCallTools": [
+        "file_write"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_write",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "onepager.pdf"
+        }
+      ],
+      "files": [
+        {
+          "path": "onepager.pdf",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "head -c 4 onepager.pdf | grep -q '%PDF'",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

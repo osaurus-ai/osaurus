@@ -5,17 +5,22 @@
 //  LLM-powered context compaction for chat sessions.
 //
 //  When a conversation outgrows the context window, this service asks the
-//  user-configured compaction model (Settings → Chat → Compaction Model)
-//  to summarize the oldest turns. The result is a `ConversationSummary`
-//  that replaces the covered turns in the OUTBOUND message array only —
-//  the visible transcript is never rewritten. The deterministic trimmer
-//  (`ContextBudgetManager` + `CompactionWatermark`) remains the safety net
-//  beneath this: it still runs on whatever the summary didn't reclaim.
+//  compaction model to summarize the oldest turns. The result is a
+//  `ConversationSummary` that replaces the covered turns in the OUTBOUND
+//  message array only — the visible transcript is never rewritten. The
+//  deterministic trimmer (`ContextBudgetManager` + `CompactionWatermark`)
+//  remains the safety net beneath this: it still runs on whatever the
+//  summary didn't reclaim.
 //
-//  Unlike `CoreModelService` there is deliberately NO chat-model fallback:
-//  when no compaction model is configured, callers surface a first-run
-//  dialog that asks the user to pick one (remote models allowed — they
-//  pass through the Privacy Filter via `RemoteProviderService`).
+//  Model resolution (`effectiveModelIdentifier`): the user-configured
+//  compaction model (Settings → Chat → Compaction Model) wins; when none is
+//  set, the chat's CURRENT model summarizes. Falling back to the resident
+//  chat model means auto compaction never has to interrupt a send with a
+//  model picker, and — because the target is the invoking parent —
+//  `SubagentResidency` runs it in place with no swap or background-load
+//  refusal. Remote models are allowed either way; they pass through the
+//  Privacy Filter via `RemoteProviderService`. Only when NEITHER is known
+//  do callers surface the model-selection dialog.
 //
 
 import Foundation
@@ -26,8 +31,8 @@ private let logger = Logger(subsystem: "ai.osaurus", category: "context_compacti
 // MARK: - Errors / phases / UI state
 
 enum ContextCompactionError: Error, LocalizedError, Equatable {
-    /// No compaction model configured — the caller should open the
-    /// first-run model-selection dialog rather than silently falling back.
+    /// No compaction model configured AND no chat model to fall back to —
+    /// the caller should open the model-selection dialog.
     case needsModelSelection
     /// A model is configured but the router can't serve it right now.
     case modelUnavailable(String)
@@ -41,7 +46,7 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .needsModelSelection:
-            return "No compaction model is configured"
+            return "No compaction model is configured and no chat model is selected"
         case .modelUnavailable(let model):
             return "Compaction model '\(model)' is not available"
         case .nothingToCompact:
@@ -107,11 +112,6 @@ final class ContextCompactionService {
 
     private let localServices: [ModelService] = [FoundationModelService(), MLXService.shared]
 
-    /// Utilization fraction (of the usable/effective budget) at which the
-    /// manual "Compact conversation" button appears in the Context Budget
-    /// popover.
-    static let manualTriggerThreshold: Double = 0.7
-
     /// Recent user turns that preferably stay verbatim: the covered span ends
     /// at the second-from-last user turn, so the current exchange plus one
     /// full prior exchange survive in full. When that cut covers nothing
@@ -140,6 +140,31 @@ final class ContextCompactionService {
 
     static func configuredModelIdentifier() -> String? {
         ChatConfigurationStore.load().compactionModelIdentifier
+    }
+
+    /// The model a compaction run will actually use: the configured
+    /// compaction model when set, otherwise `fallback` (the chat's current
+    /// model). Nil only when neither is known — the one case that still
+    /// needs the model-selection dialog. Blank strings count as unset.
+    static func effectiveModelIdentifier(
+        configured: String? = configuredModelIdentifier(),
+        fallback: String?
+    ) -> String? {
+        if let configured, !configured.trimmingCharacters(in: .whitespaces).isEmpty {
+            return configured
+        }
+        if let fallback, !fallback.trimmingCharacters(in: .whitespaces).isEmpty {
+            return fallback
+        }
+        return nil
+    }
+
+    /// True when a run would use `fallback` rather than an explicit
+    /// compaction model — drives the "uses the current chat model" copy in
+    /// the Context Budget popover.
+    static func usesChatModelFallback(configured: String? = configuredModelIdentifier()) -> Bool {
+        guard let configured else { return true }
+        return configured.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     /// Persist the user's model choice from the first-run dialog
@@ -251,19 +276,25 @@ final class ContextCompactionService {
         let summary: ConversationSummary
     }
 
-    /// Run one compaction pass over `turns`. Throws
-    /// `ContextCompactionError.needsModelSelection` when no model is
-    /// configured (drives the first-run dialog) and `.nothingToCompact`
-    /// when the conversation is too short.
+    /// Run one compaction pass over `turns`. The model is the configured
+    /// compaction model, else the chat's current model
+    /// (`invocation.parentModelName`). Throws
+    /// `ContextCompactionError.needsModelSelection` when neither is known
+    /// (drives the model-selection dialog) and `.nothingToCompact` when the
+    /// conversation is too short.
     func summarize(
         turns: [ChatTurn],
         existingSummary: ConversationSummary?,
         sessionId: UUID?,
+        invocation: ModelJobInvocation,
+        agentId: UUID,
         onPhase: @MainActor (ContextCompactionPhase) -> Void
     ) async throws -> ConversationSummary {
         onPhase(.preparing)
 
-        guard let modelId = Self.configuredModelIdentifier() else {
+        guard
+            let modelId = Self.effectiveModelIdentifier(fallback: invocation.parentModelName)
+        else {
             throw ContextCompactionError.needsModelSelection
         }
         guard let cut = Self.compactionCutIndex(turns: turns, existingSummary: existingSummary)
@@ -307,41 +338,70 @@ final class ContextCompactionService {
             temperature: Float(Self.summaryTemperature),
             maxTokens: Self.summaryMaxTokens,
             sessionId: sessionId?.uuidString,
-            requestSource: .chatUI,
-            // The user is actively waiting on compaction (button click or
-            // pre-send auto-trigger), so it has the right to load/evict.
-            loadIntent: .interactive
+            requestSource: invocation.source?.inferenceSource ?? .chatUI,
+            // The scoped handoff, not a general interactive eviction, owns
+            // any parent swap. Unrelated residents remain protected.
+            loadIntent: .background
         )
 
         onPhase(.summarizing)
         let startedAt = Date()
+        // Activity-log attribution: where the transcript went (local model or
+        // which cloud provider), the real post-scrub wire bytes, and the
+        // Privacy Filter outcome. The probe is only attached for remote sends.
+        let remoteConn = ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)
+        let wireProbe: WireTransportProbe? = remoteConn != nil ? WireTransportProbe() : nil
+        let logContext = InsightsLogContext(
+            source: invocation.source?.inferenceSource ?? .chatUI,
+            sessionId: sessionId,
+            agentId: agentId,
+            connection: remoteConn?.info,
+            probe: wireProbe
+        )
         let responseText: String
         do {
             responseText = try await valueWithDeadline(
                 seconds: Self.timeoutSeconds,
                 operationName: "context compaction"
             ) {
-                try await service.generateOneShot(
-                    messages: messages,
-                    parameters: params,
-                    requestedModel: modelId
-                )
+                try await AuxiliaryModelHandoff.run(
+                    targetModelName: modelId,
+                    invocation: invocation,
+                    sessionID: sessionId,
+                    agentID: agentId,
+                    operationName: "context_compaction"
+                ) {
+                    if let wireProbe {
+                        return try await WireTransportProbe.$current.withValue(wireProbe) {
+                            try await service.generateOneShot(
+                                messages: messages,
+                                parameters: params,
+                                requestedModel: modelId
+                            )
+                        }
+                    }
+                    return try await service.generateOneShot(
+                        messages: messages,
+                        parameters: params,
+                        requestedModel: modelId
+                    )
+                }
             }
         } catch is DeadlineExceededError {
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
-                startedAt: startedAt, error: "timed out")
+                startedAt: startedAt, error: "timed out", context: logContext)
             throw ContextCompactionError.timedOut
         } catch {
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
-                startedAt: startedAt, error: error.localizedDescription)
+                startedAt: startedAt, error: error.localizedDescription, context: logContext)
             throw error
         }
 
         Self.logToInsights(
             model: modelId, messages: messages, response: responseText,
-            startedAt: startedAt, error: nil)
+            startedAt: startedAt, error: nil, context: logContext)
 
         let summaryText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summaryText.isEmpty else { throw ContextCompactionError.emptySummary }
@@ -474,12 +534,23 @@ final class ContextCompactionService {
     /// Record the compaction inference in Insights under a dedicated path
     /// so it is traceable alongside normal chat/API traffic. Token counts
     /// are UI-estimated (same convention as remote chat turns).
+    /// Attribution captured before the compaction send so every outcome
+    /// (success, timeout, error) logs the same facts.
+    private struct InsightsLogContext {
+        let source: RequestSource
+        let sessionId: UUID?
+        let agentId: UUID?
+        let connection: RequestConnectionInfo?
+        let probe: WireTransportProbe?
+    }
+
     private static func logToInsights(
         model: String,
         messages: [ChatMessage],
         response: String?,
         startedAt: Date,
-        error: String?
+        error: String?,
+        context: InsightsLogContext
     ) {
         let requestBody: String? = {
             let payload: [String: Any] = [
@@ -495,8 +566,9 @@ final class ContextCompactionService {
         }()
 
         let inputTokens = messages.reduce(0) { $0 + TokenEstimator.estimate($1.content) }
+        let wire = context.probe?.snapshot()
         InsightsService.logInference(
-            source: .chatUI,
+            source: context.source,
             model: model,
             inputTokens: inputTokens,
             outputTokens: response.map { TokenEstimator.estimate($0) } ?? 0,
@@ -506,7 +578,14 @@ final class ContextCompactionService {
             errorMessage: error,
             requestBody: requestBody,
             responseBody: response,
-            path: "/internal/compaction"
+            wireRequestBody: wire?.request,
+            wireResponseBody: (wire?.response.isEmpty ?? true) ? nil : wire?.response,
+            connection: context.connection,
+            path: "/internal/compaction",
+            privacy: context.probe?.privacyOutcome,
+            agentId: context.agentId,
+            agentName: context.agentId.flatMap { AgentManager.agentDisplayName(for: $0) },
+            sessionId: context.sessionId
         )
     }
 }

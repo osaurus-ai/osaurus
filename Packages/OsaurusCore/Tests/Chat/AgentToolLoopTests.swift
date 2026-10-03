@@ -1065,52 +1065,64 @@ struct AgentToolLoopTests {
         #expect(AgentToolLoop.continuationRequestNotice(pending: 1).contains("1 item remains"))
     }
 
-    /// The stream consumer's cut is authoritative — it stopped reading, so
-    /// whatever terminal reason the runtime reports describes a generation
-    /// nobody finished. A wall of one repeated sentence is never an answer.
-    @Test func repetitionLoopOutranksTheReportedStopReason() {
-        for stopReason in ["stop", "length", nil] {
-            let step = AgentLoopModelStep.classifyTerminal(
+    /// Repetition can be requested data: quotes, code and fixture rows are
+    /// not grounds to override the runtime's terminal reason or retry a turn.
+    @Test func repeatedVisibleDataKeepsTheAuthoritativeTerminalReason() async throws {
+        let line = "The north gate remains open.\n"
+        let payloads = [
+            String(repeating: line, count: 20),
+            String(repeating: "> " + line, count: 20),
+            "~~~text\n" + String(repeating: line, count: 20) + "~~~",
+            "```text\n" + String(repeating: line, count: 20) + "```",
+            "| Status |\n| --- |\n" + String(repeating: "| unchanged |\n", count: 20),
+        ]
+        for content in payloads {
+            let completed = AgentLoopModelStep.classifyTerminal(
                 contentIsBlank: false,
-                thinkingIsBlank: true,
-                stopReason: stopReason,
-                requiresVisibleFinalResponse: false,
+                thinkingIsBlank: false,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: true,
                 toolsWereOffered: true,
-                content: "Let me continue:",
-                repetitionLoopPhrase: "let me continue"
+                content: content
             )
-            guard case .repetitionLoop(let phrase) = step else {
-                Issue.record("a cut stream must classify as a loop (stop=\(stopReason ?? "nil"))")
-                return
+            guard case .finalResponse = completed else {
+                Issue.record("requested repeated data must respect natural stop")
+                continue
             }
-            #expect(phrase == "let me continue")
-        }
-    }
+            for policy in [chatPolicy(), headlessPolicy()] {
+                let surface = ScriptedLoopSurface(steps: [completed, .emptyResponse])
+                let result = try await AgentToolLoop.run(
+                    policy: policy, state: AgentTaskState(), hooks: surface.makeHooks()
+                )
+                #expect(result.exit == .finalResponse)
+                #expect(result.iterations == 1)
+                #expect(surface.steps.count == 1, "no extra generation for repeated data")
+                #expect(surface.builtNotices == [[]], "no injected repetition instruction")
+                #expect(surface.emittedFinalTexts.isEmpty, "no fake task-size fallback")
+                #expect(surface.executedCalls.isEmpty)
+            }
 
-    /// Turns the consumer did not cut are unaffected.
-    @Test func absentRepetitionPhraseLeavesClassificationUnchanged() {
-        let step = AgentLoopModelStep.classifyTerminal(
-            contentIsBlank: false,
-            thinkingIsBlank: true,
-            stopReason: "stop",
-            requiresVisibleFinalResponse: false,
-            toolsWereOffered: true,
-            content: "All ten documents are loaded."
-        )
-        guard case .finalResponse = step else {
-            Issue.record("an ordinary turn must not be treated as a loop")
-            return
+            let capped = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: false,
+                stopReason: "length",
+                requiresVisibleFinalResponse: true,
+                toolsWereOffered: true,
+                content: content
+            )
+            guard case .lengthExhausted = capped else {
+                Issue.record("an explicit output limit must remain authoritative")
+                continue
+            }
+            let surface = ScriptedLoopSurface(steps: [capped, .finalResponse])
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(), state: AgentTaskState(), hooks: surface.makeHooks()
+            )
+            #expect(result.exit == .lengthExhausted)
+            #expect(surface.steps.count == 1, "a capped turn must not silently retry")
+            #expect(surface.builtNotices == [[]])
+            #expect(surface.emittedFinalTexts == [AgentToolLoop.lengthExhaustedFallback])
         }
-    }
-
-    /// The notice has to name the repeated phrase — a generic "you repeated
-    /// yourself" gives a small model nothing to steer away from.
-    @Test func repetitionNoticeNamesThePhraseAndDemandsOneAction() {
-        let notice = AgentToolLoop.repetitionLoopNotice(phrase: "let me continue")
-        #expect(notice.contains("let me continue"))
-        #expect(notice.contains("exactly ONE concrete thing"))
-        // Degrades cleanly when the phrase was not captured.
-        #expect(!AgentToolLoop.repetitionLoopNotice(phrase: nil).contains("(\"\")"))
     }
 
     @Test func recoveryIdempotencyOrdinalDistinguishesLogicalReplayOnly() {
@@ -2239,6 +2251,75 @@ struct AgentToolLoopTests {
         #expect(state.lastResultEnvelope == nil)
     }
 
+    @Test func processedCallCancellationDoesNotExecuteLaterBatchWrites() async throws {
+        for limit in [0, 1, 2] {
+            let surface = ScriptedLoopSurface(steps: [
+                .toolCalls([inv("write_one"), inv("write_two"), inv("write_three")])
+            ])
+            var hooks = surface.makeHooks()
+            let serial = hooks.executeTool
+            hooks.executeBatch = { calls in
+                var results: [AgentLoopToolExecution] = []
+                for call in calls { results.append(await serial(call.invocation, call.callId)) }
+                return results
+            }
+            hooks.isCancelled = { surface.executedCalls.count >= limit }
+            AgentLoopEvaluator.applyProcessedCallCancellation(to: &hooks, after: limit)
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(),
+                state: AgentTaskState(),
+                hooks: hooks
+            )
+            #expect(result.exit == .cancelled)
+            #expect(surface.executedCalls.map(\.name) == Array(["write_one", "write_two"].prefix(limit)))
+            #expect(surface.emittedToolRejectionTexts.isEmpty)
+        }
+    }
+
+    @Test func ordinaryEvalKeepsParallelDispatch() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("one"), inv("two")]), .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        var batches = 0
+        hooks.executeBatch = { calls in
+            batches += 1
+            return calls.map {
+                AgentLoopToolExecution(result: ToolEnvelope.success(tool: $0.invocation.toolName, text: "ok"))
+            }
+        }
+        AgentLoopEvaluator.applyProcessedCallCancellation(to: &hooks, after: nil)
+        let result = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .finalResponse)
+        #expect(batches == 1)
+        #expect(surface.executedCalls.isEmpty)
+    }
+
+    @Test func nativeRejectedWriteStopsWithoutCreatingFileOrRunningSibling() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_write", #"{"path":"report.key","content":"hello"}"#), inv("never_runs")])
+        ])
+        var hooks = surface.makeHooks()
+        hooks.executeTool = { call, _ in
+            let result: String
+            do {
+                result = try await FileWriteTool(rootPath: root).execute(argumentsJSON: call.jsonArguments)
+            } catch {
+                Issue.record("Native fixture unexpectedly threw: \(error)")
+                return AgentLoopToolExecution(result: ToolEnvelope.fromError(error, tool: call.toolName), isError: true)
+            }
+            #expect(result.contains("\"kind\":\"rejected\""))
+            #expect(call.toolName == "file_write")
+            return AgentLoopToolExecution(result: result, isError: ToolEnvelope.isError(result))
+        }
+        let result = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .toolRejected)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("report.key").path))
+    }
+
     @Test func cancellationStopsBetweenToolCalls() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("first_tool"), inv("second_tool")])
@@ -3094,7 +3175,7 @@ struct AgentToolLoopParallelBatchTests {
 
     @Test func batchBindsSharedBatchIdForUndoGrouping() async {
         // Multi-call batches bind one `ChatExecutionContext.currentBatchId`
-        // for the whole wave so the file-operation log can group them.
+        // for the whole wave so its tool calls can be correlated.
         actor BatchIds {
             private(set) var ids: [UUID?] = []
             func record(_ id: UUID?) { ids.append(id) }

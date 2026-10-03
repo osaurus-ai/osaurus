@@ -901,12 +901,12 @@ struct GitHubImportSheet: View {
         cancel()
     }
 
-    /// Deep-link from the install summary to the Tools Connections tab.
+    /// Deep-link from the install summary to the Tools & MCP Services tab.
     /// Used by the OAuth + placeholder-token install notices so the user
     /// doesn't have to hunt through the sidebar for where Sign In lives.
     private func openMCPProvider(id: UUID?) {
         ManagementStateManager.shared.selectedTab = .tools
-        ManagementStateManager.shared.pendingToolsSubTab = ToolsTab.connections.rawValue
+        ManagementStateManager.shared.pendingToolsSubTab = ToolsTab.services.rawValue
         ManagementStateManager.shared.pendingMCPProviderEditId = id
         cancel()
     }

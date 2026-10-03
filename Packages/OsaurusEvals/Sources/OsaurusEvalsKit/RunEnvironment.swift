@@ -99,6 +99,11 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
     /// resolution, which is Auto). Reports carrying different values are
     /// not silently comparable.
     public let mtpControl: String?
+    /// Reasoning-mode default the run executed under (`on`/`off`, from
+    /// `--thinking`). nil = every case used its own setting or the model
+    /// bundle's documented default. Reports carrying different values are
+    /// not comparable — a `no_think` lane never stands in for the default.
+    public let thinkingControl: String?
 
     public init(
         chip: String? = nil,
@@ -125,7 +130,8 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         experimentProfile: String? = nil,
         experimentProfileHash: String? = nil,
         experimentFeatures: [String]? = nil,
-        mtpControl: String? = nil
+        mtpControl: String? = nil,
+        thinkingControl: String? = nil
     ) {
         self.chip = chip
         self.totalRamMb = totalRamMb
@@ -152,6 +158,7 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         self.experimentProfileHash = experimentProfileHash
         self.experimentFeatures = experimentFeatures
         self.mtpControl = mtpControl
+        self.thinkingControl = thinkingControl
     }
 
     /// Copy with an experiment profile stamped in — the CLI applies this
@@ -216,7 +223,8 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
             powerSource: providingPowerSource(),
             contributor: nonEmpty(environment["OSAURUS_EVALS_CONTRIBUTOR"]),
             simulatedRamMb: simulatedRamMb(environment: environment),
-            mtpControl: EvalMTPControlState.requested?.label
+            mtpControl: EvalMTPControlState.requested?.label,
+            thinkingControl: EvalThinkingControlState.label
         )
     }
 

@@ -115,8 +115,8 @@ final class CreateAgentState: ObservableObject {
     /// Persists the agent and returns whether save succeeded. The caller is
     /// responsible for advancing the flow afterwards.
     ///
-    /// The system prompt is derived from the chosen specialty's archetype and
-    /// the description from its tagline; both are editable later in Settings.
+    /// The system prompt and routing description are derived from the chosen
+    /// specialty's template; both are editable later in Settings.
     ///
     /// Idempotent: if the user navigates back from a later onboarding
     /// step and re-fires the CTA, the previously-created agent's id is
@@ -125,11 +125,11 @@ final class CreateAgentState: ObservableObject {
     @discardableResult
     func saveAgent() -> Bool {
         if createdAgentId != nil { return true }
-        guard !isSaving else { return false }
+        guard canSave else { return false }
         isSaving = true
         var agent = AgentManager.newCustomAgentRecord(
             name: resolvedName,
-            description: selectedTemplate.tagline,
+            description: selectedTemplate.routingDescription,
             systemPrompt: selectedTemplate.systemPrompt
         )
         agent.toolSelectionMode = .auto
@@ -145,6 +145,10 @@ final class CreateAgentState: ObservableObject {
 
 struct CreateAgentStepView: View {
     @ObservedObject var state: CreateAgentState
+    /// `true` when this is the last onboarding step — the full distribution
+    /// already has its bundled brain installed, so the CTA also starts chat
+    /// (see `OnboardingView.continueFromCreateAgent`).
+    var isFinalStep: Bool = false
     let onContinue: () -> Void
 
     @FocusState private var nameFocused: Bool
@@ -193,7 +197,7 @@ struct CreateAgentStepView: View {
             Spacer().frame(height: 40)
 
             OnboardingPillButton(
-                title: "Create your Dino",
+                title: isFinalStep ? "Create your Dino and start chatting" : "Create your Dino",
                 style: .primary,
                 size: .large,
                 isEnabled: state.canSave,

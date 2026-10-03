@@ -234,6 +234,15 @@ LOCAL_MODEL ?= foundation
 FRONTIER_MODEL ?= openai/gpt-4o-mini
 EVALS_PR_REPORT_OUT ?= build/evals/pr-report/$(shell date -u +%Y%m%dT%H%M%SZ)
 EVALS_PR_REPORT_OUT := $(EVALS_PR_REPORT_OUT)
+# The SwiftPM eval runner has no Info.plist, so `ModelManifest` cannot read a
+# host version and refuses manifest-bearing bundles (`osaurus.json` with
+# `required_osaurus_version`, e.g. the default Raptor model). Evals stand in
+# for the latest released app version from the appcast; pin another with
+# `make evals EVALS_HOST_VERSION=0.26.0`.
+EVALS_HOST_VERSION ?= $(shell sed -n 's:.*<sparkle\:shortVersionString>\(.*\)</sparkle\:shortVersionString>.*:\1:p' docs/appcast.xml | head -1)
+evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic \
+evals-capture-screen evals-loop evals-matrix evals-diff evals-compat evals-pr-report \
+evals-pr-report-baseline evals-scoreboard: export OSAURUS_HOST_VERSION = $(EVALS_HOST_VERSION)
 EVALS_WATCHER_CHANNEL ?= main
 EVALS_WATCHER_OUT ?= build/evals/watcher
 EVALS_REPORT_PRESET ?= local-frontier

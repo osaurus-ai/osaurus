@@ -2,8 +2,8 @@
   "id": "agent_loop.ram-admission-sequential-children",
   "domain": "agent_loop",
   "label": "same-model RAM admission: sequential-children",
-  "query": "Use spawn_agent to ask RAM Admission Research to return exactly RAM_FIRST_OK. After that child has completed successfully, use spawn_agent to ask RAM Admission Marketing to return exactly RAM_SECOND_OK. Give neither child additional tasks or context. After both have completed, return both results. Do not combine these into spawn_batch.",
-  "notes": "Run with RAM-Safety ON, Handoff ON, Coexistence OFF and --repeat 3 to exercise fresh agent loops against the same resident model. Worker model and samplers inherit the selected bundle. Deterministic outcome assertions; no rubric judge. This does not emulate a 16 GiB host or inject memory availability.",
+  "query": "Use spawn_agent to ask RAM Admission Research to return exactly RAM_FIRST_OK. After that child has completed successfully, use spawn_agent to ask RAM Admission Marketing to return exactly RAM_SECOND_OK. Give neither child additional tasks or context. After both have completed, return both results. Issue the two calls in separate messages, one after the other, not in the same message.",
+  "notes": "Four fresh parent chats in one process, strict all-trials threshold. RAM ON, handoff ON, coexistence OFF, same-model and wave ceiling 1; exact executed child digests required. Bundle sampling defaults remain unchanged.",
   "fixtures": {
     "agentCapabilities": {
       "spawnAgents": [
@@ -18,11 +18,22 @@
           "systemPrompt": ""
         }
       ],
-      "maxParallelSpawns": 1
+      "maxParallelSpawns": 1,
+      "childBudgets": {
+        "maxDelegateTokens": 2048,
+        "maxDelegateTurns": 2,
+        "maxElapsedSeconds": 120,
+        "maxParallelSpawns": 1
+      }
     },
     "runtimeConcurrency": {
       "continuousBatching": true,
       "maxConcurrentSequences": 1
+    },
+    "delegationSettings": {
+      "ramSafety": true,
+      "handoff": true,
+      "coexistence": false
     }
   },
   "expect": {
@@ -31,10 +42,6 @@
       "maxModelSteps": 4,
       "mustCallTools": [
         "spawn_agent"
-      ],
-      "mustNotCallTools": [
-        "spawn_batch",
-        "spawn_model"
       ],
       "maxToolCalls": 2,
       "noDuplicateExecutedCalls": true,
@@ -53,7 +60,26 @@
           "maxCalls": 2,
           "maxErrors": 0
         }
-      ]
+      ],
+      "spawnSummaries": [
+        "RAM_FIRST_OK",
+        "RAM_SECOND_OK"
+      ],
+      "spawnAgentIDs": [
+        "A11CE912-0000-4000-8000-000000000101",
+        "A11CE912-0000-4000-8000-000000000102"
+      ],
+      "spawnWave": {
+        "exactCallCount": 2,
+        "expectedWaveSizes": [
+          1,
+          1
+        ],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0
+      }
     }
-  }
+  },
+  "trials": 4,
+  "passThreshold": 1
 }

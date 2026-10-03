@@ -27,6 +27,10 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 8. [Crypto inventory for iOS](#8-crypto-inventory-for-ios)
 9. [Compatibility contract](#9-compatibility-contract)
 10. [Sequence diagrams](#10-sequence-diagrams)
+11. [Mobile pairing (6-digit code)](#11-mobile-pairing-6-digit-code)
+12. [Choosing a model](#12-choosing-a-model)
+13. [Agent avatars](#13-agent-avatars)
+14. [Reading the Mac's chats](#14-reading-the-macs-chats)
 
 ---
 
@@ -489,7 +493,7 @@ InnerRequest = {"method":"POST","path":"/agents/<address>/run",
 Responses are frames `{"seq":<n>,"ct":"…","fin":true|absent}`:
 
 ```
-respKey(reqSeq) = HKDF-SHA256(s2c, salt = SHA256(transcript), info = "osaurus-sc1:resp:<reqSeq>", 32)
+respKey(reqSeq) = HKDF-SHA256(s2c, salt = <empty>, info = "osaurus-sc1:respkey:<reqSeq>", 32)
 AAD(resp)       = utf8("osaurus-sc1:resp:<sid>:<reqSeq>:<seq>:<fin ? 1 : 0>")
 ```
 
@@ -516,12 +520,55 @@ AAD(resp)       = utf8("osaurus-sc1:resp:<sid>:<reqSeq>:<seq>:<fin ? 1 : 0>")
   client conversation.
 - `workspace_context` (optional) is only for workspace-billed runs with a
   workspace-minted key; omit it for owner-redeemed keys.
-- Response is standard OpenAI-style SSE `data: {…}` chunks with text deltas;
-  tool calls execute on the host and are never forwarded. Ends with
-  `data: [DONE]`.
+- Response is standard OpenAI-style SSE `data: {…}` chunks with text and
+  `reasoning_content` deltas. Tool calls execute on the host; their
+  arguments and results are never forwarded, but progress is, as
+  extension chunks with empty `choices`: `osaurus_agent_tool`
+  (`{phase: "started"|"completed", name, call_id, is_error?, end_run?}`),
+  `osaurus_prefill` (`{stage, completedUnitCount, totalUnitCount}`) and
+  `osaurus_artifacts`. Ends with `data: [DONE]`.
+- Callers that own the Mac (loopback, or a master-scoped key such as the
+  Osaurus Connect phone, §11) also get, on `osaurus_agent_tool`: `label`
+  (the Mac UI's own running / done / failed text), `category`
+  (`file|search|terminal|network|database|code|general`), `icon` (SF
+  Symbol), `arguments` on "started" (secret-scrubbed JSON, ≤ 8 000 chars),
+  and `result` (≤ 16 000 chars, `result_truncated: true` when cut) plus
+  `duration_ms` on "completed". Agent-scoped and workspace-minted callers
+  never receive these fields.
 
 `GET /agents/<address>` (inside the channel, same bearer) returns agent
 metadata for the roster.
+
+### 6.4 Runs that outlive the connection
+
+iOS suspends an app moments after it leaves the screen, which drops the
+run's connection. The owner's paired phone (a master-scoped key over the
+Secure Channel) **SHOULD** name each run with a fresh
+`"osaurus_run_id": "<uuid>"` in the §6.3 body. A named run is not cancelled
+when its connection closes: it runs to the end, a continued chat (§14.5)
+still gets its turns, and the Mac records every `data:` frame it writes.
+Other callers' ids are ignored, and their runs still end with their
+connection.
+
+- `GET /runs/{id}/events?after=N` — the run's frames after the first `N`
+  (a client counts the `data:` lines it has read, `[DONE]` excluded), then
+  the rest live, then `data: [DONE]`. Same SSE as §6.3, `: ping` keepalives
+  included. A finished run replays and ends at once.
+  `404 run_not_found`: the Mac never had it, restarted, or has forgotten it
+  (finished runs are kept 30 minutes, 32 at most). `410 run_gone`: `N` is
+  past the end, or the run wrote more than 16 MB and keeps no replay.
+  Either way the client falls back to the chat itself (§14.2).
+- `POST /runs/{id}/stop` — Stop, now that closing the connection no longer
+  is one. `{"ok":true}`, or `{"ok":true,"finished":true}` when it had
+  already ended; `404 run_not_found`. A stopped run ends its stream as a
+  hang-up did before.
+- A second `POST /agents/{id}/run` with the id of a run still going (the
+  phone retrying on its other route after hearing nothing) starts nothing:
+  it follows that run from its first frame.
+
+Both endpoints are owner-only (`403 owner_only`). A Mac too old for this
+ignores `osaurus_run_id` and answers `/runs` with 404, so the client
+behaves as before.
 
 ---
 
@@ -698,3 +745,600 @@ sequenceDiagram
     R-->>P: 502 agent_offline
     Note over P: re-discover (roster now lists new address) · owner redeem again
 ```
+
+---
+
+## 11. Mobile pairing (6-digit code)
+
+The Osaurus iPhone app pairs with **one** Mac by typing a 6-digit code shown in
+Settings → Mobile. It needs no master key on the phone and yields a
+master-scoped `osk-v1` key covering every agent on that Mac, plus each agent's
+crypto address for the Secure Channel (§6.2). One phone per Mac: a new
+pairing revokes the previous phone's key.
+
+### 11.1 Discovery
+
+While the server is exposed to the network the Mac advertises itself (not an
+agent) as `_osaurus-mobile._tcp` with TXT `name=<computer name>`, `v=1`.
+
+Where Bonjour does not reach the phone (office and guest Wi-Fi that block
+mDNS between clients), the phone probes the hosts on its own subnet on the
+Mac's port instead. `GET /pair/hello` is public and LAN-only (relay-origin
+requests get `403 lan_only`) and answers
+`{"v":1,"name":"<computer name>","pairing":true|false}` — the same facts as
+the TXT record, plus whether a code is currently showing. As a last resort
+the phone accepts a typed host and port.
+
+### 11.2 Generating the code (Mac)
+
+"Generate Pairing Code" mints the master-scoped key immediately (biometric
+prompt — the user is at the Mac) and shows a uniformly random 6-digit code.
+The code is single-use, valid for 5 minutes, and discarded after 5 wrong
+guesses from any source; an unused code's key is deleted.
+
+### 11.3 Redeeming (phone)
+
+```
+POST /pair/code            (unauthenticated, LAN only, rate-limited per IP)
+{"v":1,"code":"123456","deviceId":"<stable per-install id>",
+ "deviceName":"My iPhone","encPub":"<base64url X25519 pub>",
+ "isSimulator":true}   // optional; omit on real devices
+
+→ 200 {"v":1,"sealed":{"enc":"<base64url>","ct":"<base64url>"}}
+
+sealed = HPKE(X25519, HKDF-SHA256, ChaCha20-Poly1305) to encPub,
+         info = utf8("osaurus-connect-pair-v1:<deviceId>")
+plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
+             "hostName":"…","agents":[{"id":"<uuid>","name":"…","address":"0x…",
+                         "relayURL":"https://0x….agent.osaurus.ai"|null}]}
+```
+
+| Status | Body `error` | Meaning |
+|---|---|---|
+| `400` | `bad_request` | Malformed body, unsupported `v`, missing device fields, bad `encPub` (code not consumed) |
+| `401` | `invalid_code` | Wrong, expired, locked out, or no active code — deliberately indistinguishable |
+| `403` | `lan_only` | Arrived through the relay |
+| `429` | — | Per-IP rate limit (shared with `/pair`) |
+
+`isSimulator` (optional) only drives a "Simulator" badge next to the paired
+device in Settings → Mobile.
+
+The phone pins every returned `address` against its agent `id` and uses the
+key as the Bearer inside the Secure Channel. `GET /agents` and
+`GET /agents/{id}` include additive `address` and `relay_url` fields so agents created after
+pairing can be learned; fetch the roster **inside** the Secure Channel of an
+already-pinned agent so the new addresses are authenticated.
+
+### 11.4 Lifecycle
+
+- Keys last 90 days; re-pair to renew. Unpair on the Mac revokes the key
+  immediately (inner `401` for the phone, which should return to pairing).
+- The phone unpairs itself with `POST /pair/unpair` (no body, inside the
+  Secure Channel with its Bearer): `200 {"ok":true}` revokes its key and
+  clears the Mac's "Paired iPhone"; `403 not_paired_device` for any other
+  key. If the Mac is unreachable the phone forgets the pairing anyway and
+  the stale entry stays on the Mac until removed there.
+- "Keep Mac Awake for Paired iPhone" (default on) holds an idle-system-sleep
+  assertion while a phone is paired.
+
+### 11.5 Security notes
+
+The code travels in cleartext on the LAN. A passive observer learns a
+single-use code that is useless after redemption, and the key itself is
+sealed to the phone's ephemeral key. An **active** LAN attacker who
+intercepts the code inside its 5-minute window can redeem it first; the Mac
+then shows the attacker's device name under "Paired iPhone", and the real
+phone's redemption fails. The residual risk is accepted for v1 (LAN-only,
+short-lived, user-initiated); a PAKE (e.g. SPAKE2 over the code) would remove
+it.
+
+### 11.6 Reaching the Mac away from the LAN
+
+"Reach From Anywhere" (Settings → Mobile, default on) turns on the
+relay tunnel (§6.1) for every remote agent while a phone is paired, and off
+again — only for tunnels it turned on — when disabled or unpaired. Agents
+created later are added automatically.
+
+- The pairing payload carries `relayURL` per agent, and `GET /agents`
+  carries `relay_url` for agents whose tunnel is on (`null` = LAN only).
+  Both equal `https://<address_lower>.agent.osaurus.ai`.
+- The phone keeps both routes and sends the same Secure Channel envelopes
+  (§6.2) to either base URL; nothing else changes. Prefer the LAN address
+  when it answers `/health` quickly, otherwise use the relay URL.
+- Relay failures surface as the outer errors in §7.1 (`502 agent_offline`
+  when the Mac is asleep, offline, or the tunnel is off).
+- `/pair/code` still refuses relay traffic (§11.3); pairing is LAN only.
+
+---
+
+## 12. Choosing a model
+
+Owner-only (loopback or a master-scoped key such as the §11 phone; others
+get `403 owner_only`). Send inside the Secure Channel like any other call.
+
+### 12.1 `GET /models/picker`
+
+The chat models the Mac composer's picker lists
+(`ModelPickerItemCache.chatModelCandidates`), in the picker's tab order and
+its order within each tab, plus the Mac's favourites:
+
+```json
+{"models":[{"id":"mlx-community/Qwen3-8B-4bit","name":"Qwen3 8B","provider":"Local Models",
+            "source":"local","vision":false,"thinking":true,"params":"8B",
+            "quantization":"4bit","available":true,"tab":"local","tab_title":"Local",
+            "favorite_key":"local\u001fmlx-community/Qwen3-8B-4bit",
+            "external_source":"LM Studio"}],
+ "favorites":["local\u001fmlx-community/Qwen3-8B-4bit"]}
+```
+
+`source` is `foundation | local | remote | claude-code`. `tab` / `tab_title`
+name the picker tab holding the model (`local`, `claude-code`,
+`remote-<provider uuid>`). `available: false` marks bundles the Mac can't run.
+The picker's sort and filters read `context_length` (tokens), `input_price` /
+`output_price` (Router micro-USD per million tokens) and `external_source`
+(where a local bundle was discovered); each is omitted when unknown, as are
+`params`, `quantization` and `description`. `favorites` lists favourite keys
+oldest first.
+
+### 12.2 `PUT /agents/{id}/model`
+
+`{"model":"<id from 12.1>"}` (or `null` to reset) sets the agent's default
+model — exactly what picking a model in the Mac composer does — and returns
+`{"ok":true,"effective_model":"…"}`. `404 agent_not_found` for unknown agents.
+For the Orchestrator (§18) the choice lands in the Mac's Orchestrator
+settings, the same place the Mac's own composer writes it; every other
+built-in agent answers `404`. Per-chat choice is simply the `model` field of `/run`
+(§6.3); shared workspace agents still refuse overrides
+(`workspace_model_locked`).
+
+### 12.3 `POST` / `PUT /models/options`
+
+The composer picker's Model Options section for one model: the Thinking row
+and every other option its profile or provider catalog exposes (Reasoning
+Effort, toggles). Choices are stored per model on the Mac, the same store the
+Mac composer writes, so they apply to Mac chats too. The phone's `/run` calls
+(§6.3) carry them whenever the request sends neither `enable_thinking` nor
+`reasoning_effort`.
+
+`POST {"model":"<id>"}` reads them:
+
+```json
+{"model":"openai/gpt-5.6-terra",
+ "options":[{"id":"reasoningEffort","label":"Effort","icon":"brain",
+             "kind":"segmented","explicit":false,"selected":"medium",
+             "segments":[{"id":"low","label":"Light"}, …]}]}
+```
+
+`thinking` is `{"enabled","explicit","tristate"}` for models with a thinking
+switch (`tristate` offers Default / On / Off). `selected` (segmented) / `on`
+(toggle) are the effective values; `explicit: false` means the default
+applies and nothing is sent to the model. Fields without a value (`icon`,
+`help`, a segment's catalog `description`) are omitted.
+
+`PUT {"model":"<id>","option":"<option id or thinking>","value":"high" | true | null}`
+stores one choice (`null` resets it) and answers with the same body as
+`POST`. `404 unknown_option`, `400 invalid_value`.
+
+### 12.4 `PUT /models/favorites`
+
+`{"key":"<favorite_key from 12.1>","favorite":true}` adds the model to the
+Mac's favourites (`false` removes it), as the heart on a picker row does, and
+answers with the whole list: `{"favorites":["…"]}`.
+
+---
+
+## 13. Agent avatars
+
+`GET /agents` and `GET /agents/{id}` carry the agent's mascot id in `avatar`
+(`blue | green | orange | purple | red | yellow`; the client falls back to a
+monogram of the agent's name) and `custom_avatar: true` when the user picked
+their own image.
+
+`GET /agents/{id}/avatar` returns those image bytes with the matching
+`image/*` content type. Owner-only (`403 owner_only` otherwise), since the
+image is host content; `404 no_custom_avatar` when the agent has none. The
+mascot images themselves ship inside each client.
+
+---
+
+## 13.1 The agent's system prompt
+
+`GET /agents/{id}` carries `system_prompt` for owner callers, so a paired
+phone can show what the agent was told to be. It is absent (null) for
+agent-scoped callers — a workspace peer has no business reading it — and is
+never included in the `GET /agents` list, which stays small.
+
+---
+
+## 14. Reading the Mac's chats
+
+Owner-only (§12), inside the Secure Channel. These expose the user's own
+chat history from `~/.osaurus/chat-history/history.sqlite`.
+
+### 14.1 `GET /sessions`
+
+Metadata only, newest first. Query: `agent_id`, `archived=true` (archived
+only — it is a lens, as on the Mac), `pinned=true`, `origin` (`mac`, `ios`,
+or a source such as `http`), `capabilities` (comma-separated `vision,code`;
+the chat must have all of them, as on the Mac), `project_id`, `plugin_id`
+(chats started by that plugin), `workspace_id` (chats served for that router
+workspace), `q` (matches
+the title or any message body, the same scan the Mac search uses), `limit`
+(default 200, max 500).
+
+```json
+{"sessions":[{"id":"<uuid>","title":"Bitcoin price","created_at":"…","updated_at":"…",
+              "agent_id":"<uuid>|null","selected_model":"qwen3","source":"chat",
+              "archived":false,"pinned":true,"origin":"mac","capabilities":["vision"],
+              "project_id":"<uuid>|null","plugin_id":"<id>|null","workspace_id":"<id>|null"}]}
+```
+
+`agent_id` is null for the built-in Default agent's chats. `source` is where
+the chat came from (`chat`, `http`, `channel`, `schedule`, …).
+
+`origin` is what a client shows as the row icon: `mac` for the user's own
+chats, `ios` for chats this phone started (hosted runs stamp the pairing
+key as their caller), otherwise the source. `capabilities` are the Mac's
+badges (`vision`, `voice`, `code`, `search`).
+
+### 14.2 `GET /sessions/{id}`
+
+The same fields plus `turns`, in the Mac's block shape:
+
+```json
+{"turns":[{"id":"<uuid>","role":"assistant","content":"…","thinking":"…",
+           "thinking_duration_ms":2500,
+           "tool_calls":[{"call_id":"…","name":"web_search","arguments":"{…}",
+                          "result":"…","duration_ms":1250}],
+           "attachment_count":1,
+           "attachments":[{"filename":"budget.md","file_size":664,"content":"…"}],
+           "images":[{"index":0,"byte_count":284113}],
+           "created_at":"…","completed_at":"…",
+           "requested_at":"2026-09-28T15:06:12.345Z","ended_at":"…","token_count":42}]}
+```
+
+Tool-result turns are folded into the assistant turn that called them, so a
+client renders one timeline per turn. `attachment_count` counts everything
+attached; `attachments` carries the documents among them with their text —
+what the model was given — so a phone away from the Mac can open them.
+Absent when the turn has no documents. `images` lists the turn's images
+without their bytes (§14.9 serves them); absent when there are none. Audio
+and video are counted only.
+`404 session_not_found` for an unknown id.
+
+`requested_at` and `ended_at` carry the Mac footer's "Worked for" time,
+with fractional seconds. `requested_at` is when the user sent the run (before
+any model load) and is set only on a run's first assistant turn. It is absent
+on later steps and on chats older than the field. `ended_at` is when the run
+ended. A client times one response, meaning the consecutive assistant turns
+after a user turn, from its first turn's `requested_at ?? created_at`. If a
+later turn in that response has its own `requested_at`, as a Regenerate on a
+tool-calling step does, the time restarts from there. The response ends at
+its last turn's `ended_at`.
+
+Images a client sends in a §14.5 run (`image_url` data URLs) are stored on
+the user turn they came with, as a Mac chat stores its own, so they come
+back in `images`.
+
+### 14.3 `PATCH /sessions/{id}`
+
+`{"title"?: "…", "archived"?: bool, "pinned"?: bool}` → `{"ok":true}`. Each
+field is a targeted column update, so a rename can never drop the
+transcript.
+
+### 14.4 `GET /agents/{id}/tools`
+
+```json
+{"tools":[{"name":"web_search","description":"…","enabled":true,"policy":"auto",
+           "remote_safe":true,"blocked_by":null}]}
+```
+
+`policy` is the effective permission (`auto | ask | deny`). `remote_safe` is
+true only when running the tool raises no approval card on the Mac and the
+surface allows it — an `ask` tool would block on a card the phone can't
+answer yet (that arrives with remote approvals), and only when the tool is
+enabled. `blocked_by` lists ungranted requirements or missing system
+permissions.
+
+### 14.5 Continuing a Mac chat
+
+`POST /agents/{id}/run` accepts `osaurus_session_id: "<session uuid>"`
+(owner callers only). The host loads that chat's turns as the model context
+— so the client sends only the new user message — and appends the turns the
+run produces back into the same chat. An open Mac window showing it updates
+live; otherwise History refreshes. The run's model becomes the chat's
+`selected_model`, as it does on the Mac.
+
+Ignored (the run proceeds statelessly) when the id is unknown or names a
+workspace chat served for a teammate. `session_id` keeps its existing
+meaning (host-side cache scoping) and is unrelated.
+
+### 14.6 `GET /projects`
+
+```json
+{"projects":[{"id":"<uuid>","name":"Website rewrite"}],
+ "plugins":[{"id":"com.example.notes","name":"Notes"}],
+ "workspaces":[{"id":"ws_123","name":"Acme"}]}
+```
+
+The user's chat projects, the installed plugins (display name from the
+manifest, falling back to the id) and the joined router workspaces, so a
+client can offer the Mac's project, plugin and workspace filters. Sessions
+carry `project_id`, `plugin_id` and `workspace_id` for the same purpose.
+Owner-only.
+
+### 14.7 `PATCH /agents/{id}/tools/{name}`
+
+Body `{"enabled":false}` and/or `{"policy":"auto"}` — turn a tool off, or
+change its permission behaviour, as the Mac's Tools catalog does. The reply
+is that tool's row in the §14.4 shape, already reflecting the change, so a
+client can redraw without refetching the catalog. Tool settings are global
+on this Mac, so `{id}` only scopes the route. `404 tool_not_found` when the
+name is not registered; the name is percent-decoded. Owner-only.
+
+### 14.8 `POST /sessions/{id}/truncate`
+
+Body `{"from_turn_id":"<uuid>"}`, a turn id from §14.2. Drops that turn and
+every turn after it, so a client can retry a reply the way the Mac's
+Regenerate does: truncate from the reply's prompt, then send the prompt
+again through §14.5, which appends it and the new reply. An open Mac window
+showing the chat drops the turns live; otherwise History refreshes.
+
+`{"ok":true,"removed":3}` on success. `404 session_not_found` for an
+unknown id or a workspace chat served for a teammate (the chats §14.5 would
+ignore), `404 turn_not_found` when the turn is not in the chat, and
+`409 session_busy` while the Mac is running that chat. Owner-only.
+
+### 14.9 `GET /sessions/{id}/turns/{turn id}/images/{index}`
+
+The bytes of one image from §14.2's `images`, `index` being its position
+there. `Content-Type` is the image's own (`image/jpeg`, `image/png`, …, read
+from its first bytes; `application/octet-stream` when unrecognised).
+`404 image_not_found` when the chat, turn or index doesn't exist,
+`400 invalid_image_path` for a malformed path. Owner-only.
+
+---
+
+## 15. Workspace agents
+
+Agents a teammate shared into a router workspace this Mac has joined. They
+run on THEIR Mac: this one only holds the membership, so the phone always
+goes through its own Mac for them. Both routes are owner-only — workspace
+membership belongs to the user, not to an agent.
+
+### 15.1 `GET /workspaces/agents`
+
+```json
+{"workspaces":[{"id":"ws_123","name":"Acme","agents":[
+  {"address":"0xabc…","name":"Researcher","description":"…","owner":"@rex-42",
+   "presence":"online","last_seen":"…","hosted_here":false}]}]}
+```
+
+`presence` is `online | offline | unknown`; `unknown` means the relay could
+not be reached and must never be drawn as offline. `hosted_here` marks an
+agent this Mac itself shared — run it locally through `/agents/{id}/run`
+instead. The roster is whatever the Mac last synced from the router.
+
+### 15.2 `POST /workspace-agents/{workspaceId}/{address}/run`
+
+Body is the `/agents/{id}/run` shape (`messages`, optional `model`,
+`temperature`, `max_tokens`, `stop`). The Mac prepares the relay pairing,
+refuses up front when the host is offline, the key lapsed or the agent is no
+longer shared, and otherwise streams the reply back as the same SSE chunks
+`/agents/{id}/run` emits.
+
+The run belongs to the teammate's Mac, so this is a thinner stream than a
+local agent's: assistant text only — no tool trace, prefill or artifact
+chunks — and it is not written into this Mac's chat history, so it does not
+appear under §14. A refusal arrives as an error chunk naming the agent.
+
+---
+
+## 16. Remote approvals
+
+A tool whose policy is `ask` raises an approval card on the Mac and the run
+waits on it. These routes let a paired phone answer that card instead of the
+run stalling until someone is back at the Mac. Owner-only: answering a card
+is consent to run something on this Mac.
+
+The phone's own runs raise these cards too. A run started over the Secure
+Channel by the owner (the paired phone) is not refused as an external caller:
+its `ask` tools, and those of the sub-agents it spawns, queue here for the
+phone to answer, and its sub-agents' redaction reviews go to §19 rather than
+the Mac's sheet. The external deny list (host file writes, shell, agent
+channels, Apple app tools) still applies to it. Any other HTTP caller,
+including a plain loopback script, keeps failing closed.
+
+### 16.1 `GET /approvals`
+
+```json
+{"approvals":[{"id":"<uuid>","tool":"file_write","description":"…",
+               "arguments":"{\"path\":\"…\"}","surface":"nativeHost",
+               "offers_run_lease":true,"presented":true}]}
+```
+
+Everything outstanding, the card on screen first (`presented: true`) and the
+queue behind it after. `surface` is `sandboxVM | nativeHost | remoteServer`,
+or null for a card that is not about running a tool somewhere.
+
+### 16.2 `POST /approvals/{id}`
+
+Body `{"decision":"deny" | "allow_once" | "allow_for_run" | "always_allow"}`
+— the same four answers the Mac's card offers; `allow_for_run` only when the
+card said `offers_run_lease`. The waiting run resumes immediately and any
+open panel on the Mac is torn down, exactly as if the button had been
+pressed there. `404 approval_not_pending` when the card is already gone —
+answered on the Mac, or its run ended. An unknown decision is a `400`, never
+an allow.
+
+### 16.3 Configuration plans: `GET /config/approvals`, `POST /config/approvals/{id}`
+
+The orchestrator changes this Mac's setup with `osaurus_config`, and every
+apply waits on its own plan-review card rather than a §16.1 card. A run from
+the paired phone parks the plan here for the phone to answer, for up to five
+minutes; plans raised in a Mac chat are never listed.
+
+```json
+{"approvals":[{"id":"<uuid>","prune":false,"high_risk":true,"change_count":2,
+  "summary":"agents:\n  + Researcher\n      model: … \n  …",
+  "actions":[{"section":"agents","target":"Researcher","kind":"create",
+              "changes":["model: gpt-5"],"risks":["…"]}],
+  "notes":["…"]}]}
+```
+
+`kind` is `create | update | delete | needs_user_input`. `summary` is the
+plan as the Mac renders it for the model. `prune: true` means entries missing
+from the document are deleted, and deserves a warning on the card.
+
+Answer with `{"decision":"apply" | "cancel"}`. `apply` resumes the run and
+applies the plan; `cancel` tells the model the user declined. `404
+approval_not_pending` when it was answered on the Mac or timed out. A caller
+that is not the paired phone is refused outright and the model is told no
+one could be asked, not that the user declined.
+
+### 16.4 Computer use: `GET /computer-use/prompts`, `POST /computer-use/prompts/{id}`
+
+Computer use, AppleScript and browser actions ask before each gated step,
+and a run can ask once for consent to send screenshots to a cloud model. For
+a run from the paired phone those cards are listed here as well as shown in
+any open Mac chat window; whichever answers first wins. They wait until
+answered or the run is cancelled.
+
+```json
+{"prompts":[{"id":"<uuid>","kind":"action","app":"Mail","action":"Click",
+             "target":"Send","effect":"consequential","note":"…",
+             "typed_text":"…","script":"…","offers_approve_rest":true},
+            {"id":"<uuid>","kind":"cloud_vision_consent"}]}
+```
+
+`effect` is `read | navigate | edit | consequential`. `typed_text` and
+`script` appear only for actions that type text or run an AppleScript, and
+should be shown in full before approving.
+
+Answer with `{"decision":…}`: for `action`, `approve | deny | approve_rest`
+(approve this and any later action in the same app at the same or lower
+effect, for the rest of the run; only when `offers_approve_rest`); for
+`cloud_vision_consent`, `allow_once | allow_always | deny`. A decision that
+does not fit the card is a `400 invalid_decision` and leaves it waiting;
+it is never read as an approval. `404 prompt_not_pending` means the card is
+gone: answered on the Mac, or its run ended.
+
+### 16.5 Secrets: `GET /secrets/prompts`, `POST /secrets/prompts/{id}`
+
+`sandbox_secret_set` without a value asks the user for the secret. A run
+from the paired phone parks the request here for up to five minutes:
+
+```json
+{"prompts":[{"id":"<uuid>","key":"NOTION_API_KEY",
+             "description":"…","instructions":"…"}]}
+```
+
+Answer with `{"value":"…"}` to store it in this Mac's Keychain for the agent,
+or `{"decision":"cancel"}`. The value is never logged or listed back.
+
+---
+
+## 17. Creating an agent
+
+### `POST /agents`
+
+Body `{"name":"Researcher","description":"…","system_prompt":"…","model":"…"}`
+— only `name` is required; `description` is capped at 300 characters and the
+name at 80. `model` is a picker id from §12, or omitted to inherit the Mac's
+default. The reply is `201 {"id":"<uuid>","name":"…"}`, and `GET /agents/{id}`
+then returns the full record, so a client can open a chat with the new agent
+straight away.
+
+Owner-only: a new agent is a new identity on this Mac. The agent is created
+exactly as the Mac's own New Agent flow creates it, sandbox policy included.
+
+---
+
+## 18. The Orchestrator
+
+The built-in Default agent — the Orchestrator, the one that delegates to the
+other agents — is hidden from HTTP: `GET /agents` filters it out, and
+`GET /agents/{id}` and `POST /agents/{id}/run` answer `404` for it, so an
+external client cannot even learn its id.
+
+Owner callers are the exception (§12): loopback, so App Intents can drive the
+in-app agent, and the user's own paired phone, which holds a master-scoped
+key. For them the Orchestrator is listed with `is_built_in: true` and runs
+like any other agent. Every other caller — workspace peers, agent-scoped
+keys, plaintext — still gets the `404` / `403`, so its persona, memory and
+tools stay off the open surface.
+
+It has no agent address of its own, so a client reaches it inside the Secure
+Channel of one of its pinned agents: the channel authenticates the phone, and
+the inner request names the Orchestrator.
+
+`PUT /agents/{id}/model` (§12.2) accepts it for owner callers. The
+Orchestrator's model belongs to the Mac's Orchestrator settings
+(`DefaultAgentConfiguration`) rather than to a chat, and that is where the
+call writes, so a phone picking a model for it changes it Mac-wide, just as
+the Mac's own composer does.
+
+---
+
+## 19. Privacy Filter reviews
+
+When the Privacy Filter finds PII in an outbound request to a cloud model,
+the Mac holds the send and asks the user which items to replace with
+placeholders. A request that cannot show that sheet fails closed with
+`422 privacy_filter_review_required` — which is what a phone-started run used
+to get.
+
+A run started by the owner's paired phone is different: there IS a person
+looking at a screen, just not this Mac's. Those runs hand the review to the
+phone instead of failing, through the routes below. Every other caller — a
+workspace peer, a plugin, a plain HTTP client — still fails closed exactly as
+before.
+
+Owner-only, and the payload is the detected PII itself, so it travels only
+inside the Secure Channel to the user's own device. It is never written to
+the request log.
+
+### 19.1 `GET /privacy/reviews`
+
+```json
+{"reviews":[{"id":"<uuid>","session_id":"<id>","items":[
+  {"id":"<uuid>","category":"person","original":"Ada Lovelace",
+   "placeholder":"[PERSON_1]"}]}]}
+```
+
+`category` is `person | email | phone | address | url | date |
+accountNumber | secret`. A run is suspended for as long as its review is
+listed here.
+
+### 19.2 `POST /privacy/reviews/{id}`
+
+Body `{"decision":"redact","redact":["<item id>", …]}` replaces the listed
+items with their placeholders and lets the send continue; anything left out
+goes to the provider as written. Omitting `redact` redacts every item, the
+same safe default the Mac's sheet opens with. `{"decision":"cancel"}`
+abandons the send — nothing reaches the provider.
+
+`404 review_not_pending` when the review is already answered or its run
+ended.
+
+---
+
+## 20. Voice calls
+
+A voice call is a chat the phone conducts by ear: it transcribes the user on
+the device, sends the transcript as an ordinary turn, and reads the reply
+aloud as it streams. Speech never crosses the wire in either direction —
+recognition (Parakeet EOU) and synthesis (Kokoro) both run on the phone,
+via the same FluidAudio models the Mac uses for its own dictation and read-
+aloud.
+
+So there is no call API. Each spoken turn is `POST /agents/{id}/run` (§6.3)
+with the transcript as the user message, in the same session as the chat it
+was started from, and the phone feeds the `text` stream events to the
+synthesiser sentence by sentence. Thinking and tool blocks are not spoken.
+
+Anything the Mac asks mid-run — an approval card (§14), a Privacy Filter
+review (§19) — arrives the way it always does, and the phone pauses the
+call's listening while it is shown, since a card cannot be answered by voice
+yet. A call ends nothing on the Mac: hanging up cancels the in-flight run
+exactly as tapping stop in the chat does.

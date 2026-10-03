@@ -56,6 +56,7 @@ struct WorkspaceDetailView: View {
     /// Invite row whose link was just copied (button reads "Copied").
     @State private var copiedInviteId: String?
     @State private var copiedInviteTask: Task<Void, Never>?
+    @State private var orchestratorAutoJoin = true
 
     private enum PendingDestruction: Identifiable {
         case removeMember(OsaurusRouterWorkspaceMember)
@@ -130,8 +131,10 @@ struct WorkspaceDetailView: View {
             if renameDraft == workspace.name || renameDraft.isEmpty { renameDraft = name }
         }
         .task(id: workspace.id) {
-            // Presence re-poll: `online`/`last_seen` age out fast, so keep
-            // the roster live (~30s) while this detail view is on screen.
+            // Presence: while the sync stream is verified it reconciles
+            // `online`/`last_seen` every ~15s and pushes the roster here, so
+            // no request is made. Only without a verified stream (older
+            // router, offline) does this fall back to a 30s presence poll.
             // Each pass also auto-connects any shared agent this member
             // hasn't paired with yet (hosts that just came online included),
             // so the roster is "ready to chat" without a Connect click.
@@ -139,7 +142,9 @@ struct WorkspaceDetailView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 guard !Task.isCancelled else { break }
-                await service.refreshAgentsPresence()
+                if !WorkspaceSyncService.shared.isVerified {
+                    await service.refreshAgentsPresence()
+                }
                 await autoConnectSharedAgents()
             }
         }
@@ -1294,6 +1299,7 @@ struct WorkspaceDetailView: View {
                 }
             }
         ) {
+            orchestratorAutoJoinToggle
             if service.workspaceAgents.isEmpty {
                 if service.isLoadingDetail {
                     AgentSectionEmptyState(loading: "Loading shared agents…")
@@ -1314,6 +1320,11 @@ struct WorkspaceDetailView: View {
                 }
             } else {
                 VStack(spacing: 8) {
+                    // The billing switch renders per hosted-here row; only the
+                    // first carries the search anchor so the id is unique.
+                    let firstHostedHere = service.workspaceAgents.first {
+                        agentManager.agent(byAddress: $0.agentAddress) != nil
+                    }?.agentAddress.lowercased()
                     ForEach(service.workspaceAgents) { agent in
                         WorkspaceSharedAgentRow(
                             identity: identity(for: agent),
@@ -1322,6 +1333,8 @@ struct WorkspaceDetailView: View {
                             canManage: canManageInvites,
                             billsThisWorkspace: service.billingWorkspaceId(forAgentAddress: agent.agentAddress)
                                 == workspace.id,
+                            billingAnchorId: agent.agentAddress.lowercased() == firstHostedHere
+                                ? "workspaces.agents.billPool" : nil,
                             isUnsharing: service.isBusy("agent.\(agent.agentAddress.lowercased())"),
                             onConnect: { connect(agent) },
                             onChat: { chat(with: agent) },
@@ -1343,6 +1356,38 @@ struct WorkspaceDetailView: View {
             }
         }
         .settingsLandingAnchor("workspaces.agents")
+    }
+
+    /// Per-workspace switch for the Orchestrator's delegation pool: on
+    /// (default), every teammate agent shared here joins "Allowed
+    /// subagents" automatically as the roster loads; off prunes this
+    /// workspace's agents from the pool and stops auto-joining. Declarative
+    /// twin: `delegation.workspace_auto_join`.
+    private var orchestratorAutoJoinToggle: some View {
+        SettingsToggle(
+            title: L("Let the Orchestrator delegate to shared agents"),
+            description: L(
+                "Teammates' agents shared in this workspace join the Orchestrator's Allowed subagents automatically. Off removes them from the pool; delegating still asks for permission (Settings → Orchestrator)."
+            ),
+            anchorId: "workspaces.agents.orchestratorAutoJoin",
+            isOn: Binding(
+                get: { orchestratorAutoJoin },
+                set: { enabled in
+                    orchestratorAutoJoin = enabled
+                    SubagentConfigurationStore.mutate { config in
+                        config.setWorkspaceAutoJoin(enabled, workspaceId: workspace.id)
+                    }
+                    // Re-run the join/prune step now instead of waiting for
+                    // the next roster tick so the pool reflects the switch.
+                    WorkspaceRosterStore.shared.reconcileSpawnPoolNow()
+                }
+            )
+        )
+        .padding(.bottom, 4)
+        .onAppear {
+            orchestratorAutoJoin =
+                SubagentConfigurationStore.snapshot().workspaceAutoJoinEnabled(workspace.id)
+        }
     }
 
     /// Identity scoped to THIS workspace (an agent shared into several
@@ -1432,6 +1477,9 @@ private struct WorkspaceSharedAgentRow: View {
     /// Owner/admin: may unshare teammates' agents too.
     let canManage: Bool
     let billsThisWorkspace: Bool
+    /// Settings-search landing anchor for the billing switch; set on the
+    /// first hosted-here row only, so the id stays unique in the list.
+    var billingAnchorId: String? = nil
     let isUnsharing: Bool
     let onConnect: () -> Void
     let onChat: () -> Void
@@ -1661,14 +1709,18 @@ private struct WorkspaceSharedAgentRow: View {
         }
     }
 
+    /// On by default for every agent you share: `WorkspacesService` binds
+    /// the agent to the first workspace whose roster lists it. Off records a
+    /// per-agent opt-out so the roster-driven default never flips it back.
     private var billingToggle: some View {
         SettingsToggle(
             title: L("Bill the workspace pool"),
             description: L(
-                "This agent's Osaurus cloud calls draw from the workspace's shared credits. Off, they bill your own balance."
+                "On by default for agents you share: this agent's Osaurus cloud calls — yours and your teammates' — draw from the workspace's shared credits. Off, your own chats bill your personal balance."
             ),
             isOn: Binding(get: { billsThisWorkspace }, set: onSetBilling)
         )
         .padding(.leading, 40)
+        .settingsLandingAnchor(billingAnchorId)
     }
 }
