@@ -1110,6 +1110,12 @@ Images a client sends in a §14.5 run (`image_url` data URLs) are stored on
 the user turn they came with, as a Mac chat stores its own, so they come
 back in `images`.
 
+An image model's reply keeps its images as markdown links to files in the
+Mac's generated-images folder (`![prompt](file:///…/generated-images/x.png)`)
+in `content`. Those files are listed in `images` too, after the turn's
+attachments, so a client shows them from §14.9 and drops the `file://` links
+from the text. Links outside that folder are never served.
+
 ### 14.3 `PATCH /sessions/{id}`
 
 `{"title"?: "…", "archived"?: bool, "pinned"?: bool}` → `{"ok":true}`. Each

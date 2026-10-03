@@ -7591,16 +7591,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             return SessionTurnDTO.AttachmentDTO(filename: filename, file_size: size, content: content)
         }
-        // Images by position among the turn's images, the index the image
-        // endpoint takes. Sizes come from the record, nothing is read here.
-        let images: [SessionTurnDTO.ImageDTO] = turn.attachments.filter(\.isImage).enumerated().map { index, image in
-            let size: Int
-            switch image.kind {
-            case .image(let data): size = data.count
-            case .imageRef(_, let byteCount): size = byteCount
-            default: size = 0
-            }
-            return SessionTurnDTO.ImageDTO(index: index, byte_count: size)
+        // Images by position among the turn's images (attachments, then
+        // generated ones), the index the image endpoint takes.
+        let images = SessionTurnImages.entries(for: turn).enumerated().map { index, image in
+            SessionTurnDTO.ImageDTO(index: index, byte_count: image.byteCount)
         }
         return SessionTurnDTO(
             id: turn.id.uuidString,
@@ -7663,9 +7657,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             let images = await ChatSessionStore.loadAsync(id: sessionId)?
-                .turns.first { $0.id == turnId }?
-                .attachments.filter(\.isImage)
-            guard let images, images.indices.contains(index), let data = images[index].loadImageData() else {
+                .turns.first { $0.id == turnId }
+                .map(SessionTurnImages.entries(for:))
+            guard let images, images.indices.contains(index), let data = images[index].load() else {
                 hop {
                     let body = #"{"error":"image_not_found"}"#
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
