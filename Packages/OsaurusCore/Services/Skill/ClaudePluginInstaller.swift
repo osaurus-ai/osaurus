@@ -22,7 +22,7 @@ public struct ClaudePluginSelection: Sendable {
     public var selectedAgentPaths: Set<String>
     /// Command .md paths (subset of `manifest.commands`) to install as slash commands.
     public var selectedCommandPaths: Set<String>
-    /// Whether to import `.mcp.json` HTTP/SSE servers (stdio entries are always skipped).
+    /// Whether to import `.mcp.json` servers (HTTP directly, stdio into the sandbox when available).
     public var importMCP: Bool
     /// Whether to attach `CLAUDE.md` (and other plugin-root markdown like
     /// `CONNECTORS.md` / `README.md`) as references on every imported skill.
@@ -491,9 +491,10 @@ public final class ClaudePluginInstaller {
                 }
             }
 
-            // 4. MCP providers (HTTP/SSE only — stdio is reported as
-            //    skipped; OAuth servers are imported with `authType: .oauth`
-            //    and surfaced as needing sign-in).
+            // 4. MCP providers. HTTP servers import directly (OAuth servers
+            //    with `authType: .oauth`, surfaced as needing sign-in); stdio
+            //    servers import into the sandbox, or are reported as blocked
+            //    when the sandbox is unavailable.
             if selection.importMCP, let mcpPath = manifest.mcpJsonPath {
                 defer { tick() }
                 if let content = fetched.mcpJson {
@@ -1584,8 +1585,9 @@ enum ClaudeMarkdownParser {
 /// (`mcpServers: { "name": { ... } }`), the equivalent `servers: { ... }`
 /// shape used by some forks, and the OAuth-discovery shape used by Anthropic's
 /// knowledge-work plugins (`type: "http"` + `oauth: { clientId, callbackPort }`).
-/// Everything stdio-style is surfaced as a "skipped" entry; OAuth servers
-/// are surfaced as needing sign-in.
+/// Stdio entries are classified so the installer can route them into the
+/// sandbox; OAuth servers are surfaced as needing sign-in.
+
 /// Outcome of classifying a key/value bag from a `.mcp.json` server
 /// entry — used for both HTTP headers and stdio env vars.
 struct ClassifiedMCPHeaders {

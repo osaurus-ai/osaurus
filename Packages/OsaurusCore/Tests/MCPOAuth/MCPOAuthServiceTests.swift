@@ -373,4 +373,32 @@ struct MCPOAuthServiceTests {
         let data = try! JSONSerialization.data(withJSONObject: payload)
         return try! JSONDecoder().decode(MCPAuthorizationServerMetadata.self, from: data)
     }
+
+    @Test func basicClientAuthKeepsSecretOutOfForm() async throws {
+        let recorder = TokenFormRecorder()
+        MCPOAuthService.tokenRequestOverride = { _, form in
+            await recorder.record(form)
+            return .init(accessToken: "at", refreshToken: nil, expiresAt: Date().addingTimeInterval(60), scope: nil)
+        }
+        defer { MCPOAuthService.tokenRequestOverride = nil }
+
+        _ = try await MCPOAuthService.exchangeAuthorizationCode(
+            tokenURL: URL(string: "https://auth.example.com/token")!,
+            clientId: "id",
+            clientSecret: "secret",
+            clientSecretBasic: true,
+            code: "c",
+            verifier: "v",
+            redirectURI: "http://127.0.0.1:33267/callback",
+            resource: nil
+        )
+        let form = await recorder.forms.last
+        #expect(form?["client_secret"] == nil)
+        #expect(form?["client_id"] == "id")
+    }
+}
+
+private actor TokenFormRecorder {
+    var forms: [[String: String]] = []
+    func record(_ form: [String: String]) { forms.append(form) }
 }

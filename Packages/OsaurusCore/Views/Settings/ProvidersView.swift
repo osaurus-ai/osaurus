@@ -46,6 +46,8 @@ struct ProvidersView: View {
     /// Starting step for the add sheet; set by the inline Directory.
     @State private var addSheetStart: MCPAddServiceStart = .catalog
     @State private var directoryQuery: String = ""
+    @State private var directoryCategory: MCPProviderCategory?
+    @State private var metadataDocumentPublished = false
 
     init(showAddSheet: Binding<Bool> = .constant(false)) {
         _showAddSheet = showAddSheet
@@ -487,6 +489,8 @@ struct ProvidersView: View {
                 SearchField(text: $directoryQuery, placeholder: "Search services", width: 200, compact: true)
             }
 
+            MCPProviderCategoryChips(selection: $directoryCategory)
+
             SettingsGroup {
                 MCPProviderDirectoryRow(
                     icon: "slider.horizontal.3",
@@ -500,13 +504,19 @@ struct ProvidersView: View {
                     MCPProviderDirectoryRow(
                         icon: template.iconSystemName,
                         title: template.displayName,
-                        tagline: template.tagline
+                        tagline: template.tagline,
+                        requiresSubscription: template.requiresSubscription
                     ) {
                         addSheetStart = .template(template)
                         showAddSheet = true
                     }
                 }
-                if directoryTemplates.isEmpty {
+                if directoryTemplates.isEmpty && directoryQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Text("No services in this category", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if directoryTemplates.isEmpty {
                     Text("No services match \"\(directoryQuery.trimmingCharacters(in: .whitespaces))\". Try another name, or pick Custom Server above.", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
@@ -517,14 +527,59 @@ struct ProvidersView: View {
             SettingsGroupFooter("Each service adds tools your agents can use.")
         }
         .settingsLandingAnchor("tools.directory")
+        .task { metadataDocumentPublished = await MCPOAuthClientMetadata.isDocumentPublished() }
     }
 
     private var directoryTemplates: [MCPProviderTemplate] {
-        MCPProviderDirectoryView.templates(matching: directoryQuery)
+        MCPProviderDirectoryView.templates(
+            matching: directoryQuery,
+            category: directoryCategory,
+            metadataDocumentPublished: metadataDocumentPublished
+        )
     }
 }
 
 // MARK: - Provider Card
+
+/// A connector error in plain language, with the raw protocol text behind a
+/// "Details" toggle when the presenter rewrote it.
+private struct MCPProviderErrorText: View {
+    let raw: String
+    let providerName: String
+    let color: Color
+
+    @Environment(\.theme) private var theme
+    @State private var showDetails = false
+
+    var body: some View {
+        let presentation = MCPProviderErrorPresenter.present(raw, providerName: providerName)
+        VStack(alignment: .leading, spacing: 3) {
+            Text(presentation.message)
+                .font(.system(size: 11))
+                .foregroundColor(color)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            if let details = presentation.details {
+                Button {
+                    showDetails.toggle()
+                } label: {
+                    Text(showDetails ? "Hide details" : "Details", bundle: .module)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .pointingHandCursor()
+                if showDetails {
+                    Text(details)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
 
 private struct ProviderCard: View {
     @Environment(\.theme) private var theme
@@ -585,7 +640,9 @@ private struct ProviderCard: View {
             // bearer provider would silently convert it to OAuth, which is
             // almost never what the user wants.
             if requiresAuth {
-                if provider.authType == .bearerToken || provider.authType == .none {
+                if provider.authType == .bearerToken
+                    || (provider.authType == .none && state?.oauthAvailable != true)
+                {
                     bearerTokenAuthBanner
                 } else {
                     oauthAuthBanner
@@ -599,11 +656,7 @@ private struct ProviderCard: View {
                     Image(systemName: errorIcon(for: error))
                         .font(.system(size: 11))
                         .foregroundColor(theme.errorColor)
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.errorColor)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    MCPProviderErrorText(raw: error, providerName: provider.name, color: theme.errorColor)
                     if isCommandNotFoundError(error) {
                         Spacer(minLength: 6)
                         inlineActionButton(L("Edit"), action: onEdit)
@@ -931,10 +984,7 @@ private struct ProviderCard: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                 if let signInError {
-                    Text(signInError)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.errorColor)
-                        .lineLimit(3)
+                    MCPProviderErrorText(raw: signInError, providerName: provider.name, color: theme.errorColor)
                 } else {
                     Text("This server requires OAuth sign in to provide tools.", bundle: .module)
                         .font(.system(size: 11))
@@ -965,13 +1015,14 @@ private struct ProviderCard: View {
                     Text("API token required", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.primaryText)
-                    Text(
-                        lastError
-                            ?? L("This server rejected the request as unauthorized. Paste an API token to retry.")
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(lastError == nil ? theme.secondaryText : theme.errorColor)
-                    .lineLimit(3)
+                    if let lastError {
+                        MCPProviderErrorText(raw: lastError, providerName: provider.name, color: theme.errorColor)
+                    } else {
+                        Text("This server rejected the request as unauthorized. Paste an API token to retry.", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(3)
+                    }
                 }
                 Spacer()
             }
@@ -1056,18 +1107,19 @@ private struct ProviderCard: View {
             }
 
             // Discovered tools list
-            if isConnected, let toolNames = state?.discoveredToolNames, !toolNames.isEmpty {
+            if isConnected, let tools = state?.discoveredToolSummaries, !tools.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Provides:", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
                     ToolPillsFlowLayout(spacing: 6) {
-                        ForEach(toolNames, id: \.self) { name in
+                        ForEach(tools) { tool in
                             HStack(spacing: 4) {
-                                Image(systemName: "function")
+                                Image(systemName: toolPillIcon(tool.hints))
                                     .font(.system(size: 9))
-                                Text(name)
+                                    .foregroundColor(tool.hints.isDestructive ? theme.warningColor : nil)
+                                Text(tool.displayName)
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .padding(.horizontal, 10)
@@ -1077,12 +1129,31 @@ private struct ProviderCard: View {
                                     .fill(theme.tertiaryBackground)
                             )
                             .foregroundColor(theme.primaryText)
-                            .help(name)
+                            .help(toolPillHelp(tool))
                         }
                     }
                 }
             }
         }
+    }
+
+    private func toolPillIcon(_ hints: MCPToolHints) -> String {
+        if hints.isReadOnly { return "eye" }
+        if hints.isDestructive { return "exclamationmark.triangle.fill" }
+        return "function"
+    }
+
+    private func toolPillHelp(_ tool: MCPDiscoveredToolSummary) -> String {
+        var lines = [tool.title == nil ? tool.name : "\(tool.displayName) (\(tool.name))"]
+        if tool.hints.isReadOnly {
+            lines.append(L("Server says this tool only reads data."))
+        } else if tool.hints.isDestructive {
+            lines.append(L("Server says this tool can modify or delete data."))
+        }
+        if tool.hints.openWorld == true {
+            lines.append(L("Server says this tool reaches external services."))
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func settingItem(icon: String, label: String, value: String) -> some View {
@@ -1203,7 +1274,7 @@ private struct ProviderEditSheet: View {
             case .catalog:
                 initialPhase = .chooseProvider
             case .template(let template):
-                initialPhase = template.selfHostingHelpURL == nil ? .configureKnown(template) : .configureCustom
+                initialPhase = .configureKnown(template)
             case .custom:
                 initialPhase = .configureCustom
             }
@@ -1211,12 +1282,11 @@ private struct ProviderEditSheet: View {
         _phase = State(initialValue: initialPhase)
 
         // Seed the draft for template starts so the fields are populated on
-        // the first frame too; `loadProvider` handles edit/prefill and any
-        // side effects (opening self-hosting docs).
+        // the first frame too; `loadProvider` handles edit/prefill.
         if provider == nil, prefill == nil, case .template(let template) = start {
             _name = State(initialValue: template.displayName)
-            _url = State(initialValue: template.selfHostingHelpURL == nil ? template.url : "")
-            _authType = State(initialValue: template.selfHostingHelpURL == nil ? template.authType : .bearerToken)
+            _url = State(initialValue: template.url)
+            _authType = State(initialValue: template.authType)
         }
     }
 
@@ -1527,6 +1597,7 @@ private struct ProviderEditSheet: View {
         self.url = url
         self.authType = authType
         customHeaders.removeAll()
+        toolCallTimeout = 45
         testResult = nil
         manualAuthEndpoint = ""
         manualTokenEndpoint = ""
@@ -1554,18 +1625,10 @@ private struct ProviderEditSheet: View {
     }
 
     private func selectTemplate(_ template: MCPProviderTemplate) {
-        // Self-hosting templates (e.g. Google Workspace) have no hosted endpoint;
-        // open the docs in the browser and drop the user into the freeform editor
-        // with the name pre-filled so they can paste their deployment's URL.
-        if let helpURL = template.selfHostingHelpURL {
-            NSWorkspace.shared.open(helpURL)
-            clearDraft(authType: .bearerToken, name: template.displayName, url: "")
-            transition(to: .configureCustom)
-            return
-        }
         // OAuth and bearer-token templates both go to .configureKnown — the screen
         // branches on template.authType for the correct sign-in vs. API-key UI.
         clearDraft(authType: template.authType, name: template.displayName, url: template.url)
+        toolCallTimeout = template.defaultToolCallTimeout
         transition(to: .configureKnown(template))
     }
 
@@ -1600,6 +1663,13 @@ private struct ProviderEditSheet: View {
                     apiKeyBlock(template: template)
                 case .none:
                     noAuthBlock(template: template)
+                }
+
+                if template.requiresSubscription {
+                    Text("\(template.displayName) needs a paid account or subscription.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .multilineTextAlignment(.center)
                 }
 
                 if let error = oauthError, template.authType == .oauth {
@@ -2666,14 +2736,9 @@ private struct ProviderEditSheet: View {
                 authType = .bearerToken
                 return
             }
-            // Add-mode. `init` already seeded `phase` and the draft fields;
-            // the only remaining work is the side effect for self-hosting
-            // templates (open the deployment docs). The draftId is preserved
-            // so anything OAuth-saved mid-flow ends up on this id and persists
-            // through save().
-            if case .template(let template) = start, let helpURL = template.selfHostingHelpURL {
-                NSWorkspace.shared.open(helpURL)
-            }
+            // Add-mode. `init` already seeded `phase` and the draft fields.
+            // The draftId is preserved so anything OAuth-saved mid-flow ends
+            // up on this id and persists through save().
             return
         }
         // Edit-mode: jump straight to the freeform editor. Re-use the existing

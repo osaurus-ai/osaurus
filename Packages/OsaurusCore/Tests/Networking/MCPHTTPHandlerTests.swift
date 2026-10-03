@@ -468,12 +468,12 @@ struct MCPHTTPHandlerTests {
     }
 
     @Test func stdio_mcp_policy_hides_externally_denied_tools() {
-        #expect(MCPServerManager.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: true))
-        #expect(!MCPServerManager.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: false))
+        #expect(ExternalMCPToolPolicy.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: true))
+        #expect(!ExternalMCPToolPolicy.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: false))
 
         for name in ["file_write", "shell_run"] + Self.agentChannelToolNames {
-            #expect(!MCPServerManager.isToolVisibleToExternalMCP(name: name, enabled: true))
-            let denial = MCPServerManager.externalMCPDenialMessage(for: name)
+            #expect(!ExternalMCPToolPolicy.isToolVisibleToExternalMCP(name: name, enabled: true))
+            let denial = ExternalMCPToolPolicy.externalMCPDenialMessage(for: name)
             #expect(denial?.contains("App-only tools") == true)
         }
     }
@@ -491,7 +491,7 @@ struct MCPHTTPHandlerTests {
             ToolRegistry.shared.setEnabled(true, for: ExternalSurfaceProbeTool.nameStatic)
             defer { ToolRegistry.shared.unregister(names: [ExternalSurfaceProbeTool.nameStatic]) }
 
-            let text = try await MCPServerManager.executeToolAsExternalMCP(
+            let text = try await ExternalMCPToolPolicy.executeToolAsExternalMCP(
                 name: ExternalSurfaceProbeTool.nameStatic,
                 argumentsJSON: "{}"
             )
@@ -507,7 +507,7 @@ struct MCPHTTPHandlerTests {
 
     @Test func stdio_mcp_execution_denies_agent_channel_tools() async throws {
         for toolName in Self.agentChannelToolNames {
-            let text = try await MCPServerManager.executeToolAsExternalMCP(
+            let text = try await ExternalMCPToolPolicy.executeToolAsExternalMCP(
                 name: toolName,
                 argumentsJSON: #"{"connection_id":"telegram","room_id":"-100111222333","content":"must not leak"}"#
             )

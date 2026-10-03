@@ -22,7 +22,7 @@ let package = Package(
         // redaction, atomic image-store state, and startup cleanup fixes.
         // Keep both app workspace lockfiles in step when bumping.
         .package(url: "https://github.com/apple/containerization.git", exact: "0.41.0"),
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.1"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient
         // source has declared NIO/shim dependencies when vmlx/MLX is also

@@ -14,7 +14,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Managers/RemoteProviderManager.swift, Services/Provider/RemoteProviderService.swift            |
 | Secure Channel (Agent E2E Encryption) | Stable | "Key Features"   | SECURE_CHANNEL.md             | Identity/SecureChannel.swift, Identity/SecureSessionStore.swift, Networking/SecureChannelResponseEncryptor.swift, Services/Provider/SecureChannelClient.swift, Networking/HTTPHandler.swift |
 | Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
-| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift, CLI MCPCommand.swift |
+| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/ExternalMCPToolPolicy.swift, CLI MCPCommand.swift |
 | Structured Document IO           | Foundation | "Tools & Plugins"  | (in README)                   | Services/Documents/, Models/Documents/, Managers/Documents/DocumentAdaptersBootstrap.swift |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
@@ -91,7 +91,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── RemoteProviderManager (Remote OpenAI-compatible APIs)           │
 │  │   └── RemoteProviderService (Per-provider connection handling)        │
 │  ├── MCP                                                                 │
-│  │   ├── MCPServerManager (Osaurus as MCP server)                        │
+│  │   ├── ExternalMCPToolPolicy (tools exposed to external MCP callers)   │
 │  │   └── MCPProviderManager (HTTP/SSE remote MCP client connections)     │
 │  ├── Documents                                                           │
 │  │   ├── DocumentAdaptersBootstrap (built-in adapter registration)        │
@@ -260,12 +260,12 @@ Research notes for the next local-runtime compatibility wave live in
 
 ### Remote MCP Providers
 
-**Purpose:** Connect to URL-reachable external MCP servers and aggregate their tools, with one-tap setup for ~25 well-known vendors.
+**Purpose:** Connect to URL-reachable external MCP servers and aggregate their tools, with a directory of ~110 well-known services grouped by professional domain (legal, finance and accounting, investing, healthcare first).
 
 **Components:**
 
 - `Models/Configuration/MCPProviderConfiguration.swift` — Provider config model (HTTP URL or stdio command, none / bearer / OAuth)
-- `Models/Configuration/MCPProviderTemplate.swift` — Hardcoded catalog of well-known providers
+- `Models/Configuration/MCPProviderTemplate.swift` — Hardcoded catalog of well-known providers, with categories and subscription flags
 - `Managers/MCPProviderManager.swift` — HTTP/SSE and stdio connection, tool discovery, OAuth refresh & 401 retry
 - `Services/MCP/MCPProviderKeychain.swift` — Secure token, refresh-token, and client-secret storage
 - `Services/MCP/Stdio/MCPStdioHostTransport.swift` — Host stdio subprocess runner with PATH / `~` command resolution
@@ -273,21 +273,38 @@ Research notes for the next local-runtime compatibility wave live in
 - `Services/MCP/OAuth/MCPOAuthService.swift` — End-to-end OAuth sign-in orchestration
 - `Services/MCP/OAuth/MCPOAuthDiscovery.swift` — RFC 9728 PRM + RFC 8414 ASM discovery (with OIDC fallback)
 - `Services/MCP/OAuth/MCPOAuthRegistration.swift` — RFC 7591 Dynamic Client Registration
+- `Services/MCP/OAuth/MCPOAuthClientMetadata.swift` — Client registration strategy (issuer-bound cache, Client ID Metadata Document, DCR) and RFC 9207 `iss` validation; the document itself is `docs/oauth/mcp-client-metadata.json`
+- `Services/MCP/OAuth/MCPScopeStepUp.swift` — `insufficient_scope` step-up bookkeeping
 - `Services/MCP/OAuth/MCPWWWAuthenticate.swift` — `WWW-Authenticate: Bearer` challenge parser
 - `Services/MCP/OAuth/MCPOAuthCanonicalURL.swift` — RFC 8707 canonical resource URL normalization
 - `Services/Auth/OAuthLoopbackServer.swift` — Shared RFC 8252 loopback callback server (also used by Codex)
 - `Services/Auth/PKCE.swift` — PKCE S256 challenge/verifier generator
 - `Services/Auth/OAuthFormEncoding.swift` — `application/x-www-form-urlencoded` helper
-- `Tools/MCPProviderTool.swift` — Wrapper for remote MCP tools
+- `Tools/MCPProviderTool.swift` — Wrapper for remote MCP tools and hint-driven default approval policy
+- `Services/MCP/MCPToolProgress.swift` — Progress-token routing, running-tool progress text, and the activity-extended tool-call deadline
+- `Services/MCP/MCPElicitation.swift` — Elicitation schema parsing/validation and the coordinator that only prompts during interactive tool calls
+- `Services/MCP/MCPElicitationPromptService.swift` / `Views/Plugin/MCPElicitationView.swift` — Elicitation form and browser cards
+- `Services/MCP/MCPProviderErrorPresenter.swift` — Plain-language connector errors
 - `Views/Settings/ProvidersView.swift` — Two-step add flow: catalog grid + connect screen
+- `Views/Settings/MCPProviderDirectoryView.swift` — Directory grid/rows with search and category chips
+- `scripts/live-proof/probe-mcp-templates.sh` — Read-only probe of every template URL (initialize + OAuth discovery, plus an anonymous `tools/call` on servers without sign-in)
 
 **Features:**
 
-- Provider catalog with search/filter for quick discovery
-- One-tap OAuth 2.1 sign-in via PKCE + Dynamic Client Registration (no client ID/secret to configure)
-- Manual-credentials OAuth 2.1 + PKCE for confidential-client vendors that don't publish DCR (HubSpot's MCP Auth Apps), with a fixed-port loopback redirect URI and Keychain-stored client secret
-- API-key templates for vendors without DCR (GitHub, Atlassian, Zapier)
-- Self-hosting templates (Google Workspace) that deeplink to setup docs
+- Provider catalog with search (name, tagline, category) and category filter chips; enterprise data products show a "Requires subscription" note
+- One-tap OAuth 2.1 sign-in via PKCE + Dynamic Client Registration (no client ID/secret to configure); Client ID Metadata Documents are used when the authorization server supports them and the Osaurus document is published, and CIMD-only templates stay hidden until then
+- Client credentials are bound to the authorization server issuer (re-registered on issuer change); the authorization response `iss` parameter is validated (RFC 9207)
+- Servers built against MCP 2025-03-26 (no protected-resource metadata) fall back to authorization-server metadata at the server origin
+- Manual-credentials OAuth 2.1 + PKCE for vendors that don't publish DCR (HubSpot, Google Drive/Gmail/Calendar, Slack, Asana, Zoom, Xero, Box, Docusign, Microsoft 365 Work IQ, Harvey), with a fixed-port loopback redirect URI (`http://127.0.0.1:33267/callback`), Keychain-stored client secret, and `client_secret_basic` when the token endpoint only accepts it (Zoom)
+- API-key templates for vendors without OAuth discovery (GitHub)
+- Tool title, behavior annotations (read-only / destructive / open-world), and `outputSchema` are surfaced on discovered-tool pills; `structuredContent` is used when a result carries no text, and `resource_link` items are kept
+- Annotations pick the default approval policy: read-only tools run without asking unless they declare `openWorldHint: true`, and tools that may be destructive (including tools without hints) ask on every call with no lease or Always Allow; user-set Ask/Deny still win
+- Tool calls send a progress token; each `notifications/progress` restarts the idle timeout (hard cap 10 minutes) and shows the progress message on the running tool card; Legal, Investing and Healthcare templates default to a 120s tool-call timeout
+- Elicitation (2025-11-25): form mode renders flat schemas (text, number, boolean, choice) with validation; URL mode shows the host, opens only on click, and closes on `notifications/elicitation/complete` or Done; non-interactive turns get `cancel`
+- A 401 on `tools/call` after the reconnect retry marks the provider as needing sign-in and tells the model to ask the user to sign in
+- Connector errors are shown in plain language with a Details disclosure for the raw error
+- Timed-out or stopped tool calls send `notifications/cancelled` so the server stops work
+- A 403 that persists after a token refresh marks the provider as needing sign-in with the union of granted and challenged scopes (`insufficient_scope` step-up); re-authorization is never silent
 - Custom Server fallback for any HTTP/SSE URL or local stdio command not in the catalog
 - HTTP/SSE transport for remote providers plus local stdio command launching on host or in the sandbox
 - Automatic tool discovery on connect, with namespaced tool names (`provider_toolname`)
@@ -304,7 +321,7 @@ Research notes for the next local-runtime compatibility wave live in
 
 **Components:**
 
-- `Services/MCP/MCPServerManager.swift` — MCP server lifecycle
+- `Services/MCP/ExternalMCPToolPolicy.swift` — Visibility and execution rules for externally exposed tools
 - `Networking/OsaurusServer.swift` — HTTP MCP endpoints
 - `Packages/OsaurusCLI/Sources/OsaurusCLICore/Commands/MCPCommand.swift` — stdio MCP bridge for command-based clients
 - `Tools/ToolRegistry.swift` — Tool registration and lookup

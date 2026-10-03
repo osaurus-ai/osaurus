@@ -10,8 +10,66 @@ import ImageIO
 import MCP
 import UniformTypeIdentifiers
 
+/// Server-declared behavior hints from an MCP tool's `annotations`. The spec
+/// treats these as untrusted: they only pick the *default* policy (see
+/// `defaultPolicy` / `requiresApprovalEveryCall`) and never override a policy
+/// the user configured.
+public struct MCPToolHints: Sendable, Equatable, Codable {
+    public var readOnly: Bool?
+    public var destructive: Bool?
+    public var idempotent: Bool?
+    public var openWorld: Bool?
+
+    public init(readOnly: Bool? = nil, destructive: Bool? = nil, idempotent: Bool? = nil, openWorld: Bool? = nil) {
+        self.readOnly = readOnly
+        self.destructive = destructive
+        self.idempotent = idempotent
+        self.openWorld = openWorld
+    }
+
+    init(_ annotations: MCP.Tool.Annotations) {
+        self.init(
+            readOnly: annotations.readOnlyHint,
+            destructive: annotations.destructiveHint,
+            idempotent: annotations.idempotentHint,
+            openWorld: annotations.openWorldHint
+        )
+    }
+
+    /// `destructiveHint` only applies when the tool is not read-only. The
+    /// spec's absent-means-destructive default is not applied here, so only
+    /// explicit declarations get a badge.
+    public var isReadOnly: Bool { readOnly == true }
+    public var isDestructive: Bool { !isReadOnly && destructive == true }
+
+    /// Read-only tools run without a prompt unless the server explicitly
+    /// declares them open-world (web search, URL fetch), which could carry
+    /// chat content to third parties.
+    var defaultPolicy: ToolPermissionPolicy {
+        isReadOnly && openWorld != true ? .auto : .ask
+    }
+
+    /// Every call is confirmed (no task lease, no Always Allow) unless the
+    /// tool is read-only or explicitly non-destructive. Absent hints fall
+    /// back to the spec defaults: not read-only, destructive.
+    var requiresApprovalEveryCall: Bool {
+        !isReadOnly && destructive != false
+    }
+}
+
+/// Display summary of one discovered MCP tool, published on `MCPProviderState`.
+public struct MCPDiscoveredToolSummary: Sendable, Equatable, Identifiable {
+    public var id: String { name }
+    public let name: String
+    public let title: String?
+    public let hints: MCPToolHints
+    public let hasOutputSchema: Bool
+
+    public var displayName: String { title ?? name }
+}
+
 /// A tool provided by a remote MCP server
-final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
+final class MCPProviderTool: OsaurusTool, PermissionedTool, ArgumentAwarePerCallApprovalTool, @unchecked Sendable {
     let name: String
     let description: String
     let parameters: JSONValue?
@@ -26,6 +84,25 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
 
     /// Original MCP tool name (may differ from exposed name if prefixed)
     let mcpToolName: String
+
+    /// Human-readable title (`title`, falling back to `annotations.title`).
+    let title: String?
+
+    /// Server-declared behavior hints. Shown on the tool pill and used to pick
+    /// the default approval policy.
+    let hints: MCPToolHints
+
+    /// Declared `outputSchema`, when the server publishes one for
+    /// `structuredContent` results.
+    let outputSchema: JSONValue?
+
+    func requiresApprovalEveryCall(argumentsJSON: String) -> Bool {
+        hints.requiresApprovalEveryCall
+    }
+
+    var summary: MCPDiscoveredToolSummary {
+        MCPDiscoveredToolSummary(name: mcpToolName, title: title, hints: hints, hasOutputSchema: outputSchema != nil)
+    }
 
     /// Maximum length for remote MCP tool descriptions exposed to the model.
     /// Vendors often put parameter semantics and examples beyond 200 chars; 4000
@@ -43,6 +120,11 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         self.providerId = providerId
         self.providerName = providerName
         self.mcpToolName = mcpTool.name
+        let trimmedTitle = (mcpTool.title ?? mcpTool.annotations.title)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.title = (trimmedTitle?.isEmpty ?? true) ? nil : trimmedTitle
+        self.hints = MCPToolHints(mcpTool.annotations)
+        self.outputSchema = mcpTool.outputSchema.map { Self.convertMCPValue($0) }
 
         let exposedName: String
         if prefixWithProvider {
@@ -78,8 +160,7 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         // MCP tools require network access
         self.requirements = ["network"]
 
-        // Default to asking for permission since these are remote tools
-        self.defaultPermissionPolicy = .ask
+        self.defaultPermissionPolicy = hints.defaultPolicy
     }
 
     /// Sanitize a provider display name into a stable tool-name prefix segment.
@@ -221,7 +302,7 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
     }
 
     /// Convert MCP.Value to JSONValue recursively
-    private static func convertMCPValue(_ value: MCP.Value) -> JSONValue {
+    static func convertMCPValue(_ value: MCP.Value) -> JSONValue {
         switch value {
         case .null:
             return .null
@@ -368,10 +449,14 @@ extension MCPProviderTool {
     /// Stage media off MainActor, forwarding cancellation before publishing a
     /// result. The SDK response already owns its encoded bytes; do not expand
     /// and serialize those bytes again on the provider manager's UI actor.
-    static func prepareMCPContent(_ content: [MCP.Tool.Content], toolName: String? = nil) async throws -> String {
+    static func prepareMCPContent(
+        _ content: [MCP.Tool.Content],
+        structuredContent: MCP.Value? = nil,
+        toolName: String? = nil
+    ) async throws -> String {
         try Task.checkCancellation()
         let conversion = Task.detached(priority: .userInitiated) {
-            try convertMCPContent(content, toolName: toolName)
+            try convertMCPContent(content, structuredContent: structuredContent, toolName: toolName)
         }
         return try await withTaskCancellationHandler {
             let result = try await conversion.value
@@ -385,7 +470,15 @@ extension MCPProviderTool {
     /// Keep typed MCP images out of the text tokenizer and universal TEXT
     /// output cap. References use the same content-addressed attachment store
     /// as file_read and persisted chat, not a second media/cache store.
-    static func convertMCPContent(_ content: [MCP.Tool.Content], toolName: String? = nil) throws -> String {
+    ///
+    /// `structuredContent` is only surfaced when no text block carries the
+    /// result: the spec asks servers to mirror it as serialized text, so
+    /// emitting both would double the tokens for compliant servers.
+    static func convertMCPContent(
+        _ content: [MCP.Tool.Content],
+        structuredContent: MCP.Value? = nil,
+        toolName: String? = nil
+    ) throws -> String {
         var results: [[String: Any]] = []
         var hasImages = false
 
@@ -424,9 +517,20 @@ extension MCPProviderTool {
                     result["text"] = text
                 }
                 results.append(result)
-            default:
-                break
+            case .resourceLink(let uri, let name, let title, let description, let mimeType, _):
+                var link: [String: Any] = ["type": "resource_link", "uri": uri, "name": name]
+                if let title { link["title"] = title }
+                if let description { link["description"] = description }
+                if let mimeType { link["mimeType"] = mimeType }
+                results.append(link)
             }
+        }
+
+        if let structuredContent,
+            !results.contains(where: { $0["type"] as? String == "text" }),
+            let structuredText = structuredJSONText(structuredContent)
+        {
+            results.append(["type": "text", "content": structuredText])
         }
 
         try Task.checkCancellation()
@@ -484,6 +588,11 @@ extension MCPProviderTool {
         throw MCPProviderError.toolExecutionFailed(
             "MCP result metadata exceeds the per-call output cap even without its text. Request fewer items."
         )
+    }
+
+    private static func structuredJSONText(_ value: MCP.Value) -> String? {
+        guard let data = try? JSONEncoder.osaurusCanonical().encode(convertMCPValue(value)) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     private static func stagedImage(_ encoded: String, mimeType: String) throws -> [String: Any] {

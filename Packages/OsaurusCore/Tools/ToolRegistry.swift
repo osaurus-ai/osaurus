@@ -2158,6 +2158,7 @@ public final class ToolRegistry: ObservableObject {
     /// planner says the setting is inert.
     func requiresPerCallApproval(_ name: String) -> Bool {
         (toolsByName[name] as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
+            || (toolsByName[name] as? MCPProviderTool)?.hints.requiresApprovalEveryCall == true
     }
 
     /// Whether the registered tool asks on every call for SOME arguments
@@ -2165,7 +2166,8 @@ public final class ToolRegistry: ObservableObject {
     /// `send: true`). `auto` still applies to the other calls (drafts), so the
     /// menu keeps offering it; the planner adds the caveat.
     func mayRequirePerCallApproval(_ name: String) -> Bool {
-        toolsByName[name] is ArgumentAwarePerCallApprovalTool
+        if toolsByName[name] is MCPProviderTool { return false }
+        return toolsByName[name] is ArgumentAwarePerCallApprovalTool
     }
 
     /// Explicit per-tool enablement and policy overrides, for the
