@@ -4996,9 +4996,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// Where an externally discovered local bundle came from ("LM
         /// Studio"), for the Local tab's source filter.
         let externalSource: String?
+        /// `chat` or `image`. Image models answer through `/images/generations`,
+        /// never a chat run; `edits` says `/images/edits` takes a source image.
+        let kind: String
+        let edits: Bool
 
         enum CodingKeys: String, CodingKey {
             case id, name, provider, source, vision, thinking, params, quantization, available, description, tab
+            case kind, edits
             case tabTitle = "tab_title"
             case favoriteKey = "favorite_key"
             case contextLength = "context_length"
@@ -5054,7 +5059,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let items = await ModelPickerItemCache.shared.buildModelPickerItems().chatModelCandidates
+            // Chat models plus ready image models, which the Mac picker also
+            // lists (picking one puts the composer in image mode).
+            let items = await ModelPickerItemCache.shared.buildModelPickerItems()
+                .filter { $0.isLikelyChatCapable || $0.isImageGenerationDelegateCandidate }
             let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
             // Grouped as the Mac picker groups them, so the phone shows the
             // same tabs in the same order.
@@ -5086,7 +5094,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     contextLength: item.contextLength,
                     inputPrice: item.inputPriceMicroPerMTok,
                     outputPrice: item.outputPriceMicroPerMTok,
-                    externalSource: item.externalSource
+                    externalSource: item.externalSource,
+                    kind: item.isImageGenerationDelegateCandidate ? "image" : "chat",
+                    edits: item.isImageEditDelegateCandidate
                 )
             }
             let json =

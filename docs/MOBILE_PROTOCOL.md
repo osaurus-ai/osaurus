@@ -903,9 +903,9 @@ get `403 owner_only`). Send inside the Secure Channel like any other call.
 
 ### 12.1 `GET /models/picker`
 
-The chat models the Mac composer's picker lists
-(`ModelPickerItemCache.chatModelCandidates`), in the picker's tab order and
-its order within each tab, plus the Mac's favourites:
+The models the Mac composer's picker lists — chat models
+(`ModelPickerItem.isLikelyChatCapable`) plus ready image models — in the
+picker's tab order and its order within each tab, plus the Mac's favourites:
 
 ```json
 {"models":[{"id":"mlx-community/Qwen3-8B-4bit","name":"Qwen3 8B","provider":"Local Models",
@@ -916,7 +916,9 @@ its order within each tab, plus the Mac's favourites:
  "favorites":["local\u001fmlx-community/Qwen3-8B-4bit"]}
 ```
 
-`source` is `foundation | local | remote | claude-code`. `tab` / `tab_title`
+`source` is `foundation | local | remote | claude-code | image`. `kind` is
+`chat` or `image`: an image model never takes a chat run, it generates through
+`/images/generations` (and `/images/edits` when `edits` is true). `tab` / `tab_title`
 name the picker tab holding the model (`local`, `claude-code`,
 `remote-<provider uuid>`). `available: false` marks bundles the Mac can't run.
 The picker's sort and filters read `context_length` (tokens), `input_price` /
