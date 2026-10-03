@@ -121,12 +121,17 @@ enum AgentToolSelectionResolver {
         var result: [String] = []
         var missingTools: [String] = []
         if let base = baseToolNames {
-            // Keep grouped selections, replace the ungrouped ones.
-            result = current.filter { owner[$0] != nil }
+            // Keep grouped selections, replace the ungrouped ones. A current
+            // name that is not registered at all most likely belongs to an MCP
+            // server or plugin that is offline right now; it has no owner to
+            // classify it by, so keep it rather than silently dropping tools
+            // the user picked.
+            result = current.filter { owner[$0] != nil || !registered.contains($0) }
+            let kept = Set(result)
             for name in base {
                 if owner[name] != nil || registered.contains(name) {
                     result.append(name)
-                } else {
+                } else if !kept.contains(name) {
                     missingTools.append(name)
                 }
             }

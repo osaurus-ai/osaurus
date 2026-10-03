@@ -92,6 +92,21 @@ struct AgentToolSelectionResolverTests {
         #expect(applied.missingGroups == ["Jira"])
     }
 
+    /// An MCP server that is offline during the apply registers no tools,
+    /// so its selected tools have no owner. They must survive a re-apply.
+    @Test
+    func apply_keepsToolsOfAnOfflineServer() {
+        let applied = AgentToolSelectionResolver.apply(
+            current: ["fetch", "jira_create_issue"],
+            baseToolNames: ["fetch"],
+            enabledGroups: [],
+            disabledGroups: [],
+            registered: ["fetch"],
+            groups: [:])
+        #expect(applied.manualToolNames == ["jira_create_issue", "fetch"])
+        #expect(applied.missingTools.isEmpty)
+    }
+
     @Test
     func roundTrip_exportThenApplyIsStable() {
         let original = ["fetch", "time", "linear_create_issue", "linear_search", "notes_create", "notes_list"]
