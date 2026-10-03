@@ -198,7 +198,9 @@ public final class AgentTemplateStore: ObservableObject {
         guard var template = templates.first(where: { $0.id == slug }) else {
             throw StoreError.notFound(slug)
         }
-        template.name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The agent the template creates follows the library name, or a
+        // renamed template would still create (and match) the old agent.
+        template = template.renamed(to: newName)
         let newSlug = template.id
         try save(template)
         if newSlug != slug, let old = Self.confinedURL(slug: slug) {
