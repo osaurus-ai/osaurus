@@ -592,7 +592,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         // are not listed at all, so the model cannot discover them by name.
         // `AgentTemplate` is Sendable; the `[String: Any]` rows are built
         // outside the actor hop.
-        let visible: [AgentTemplate] = await MainActor.run { [document] in
+        let visible: [AgentTemplate] = await MainActor.run {
             AgentTemplateStore.shared.reload()
             return AgentTemplateStore.shared.orchestratorVisible
         }
@@ -728,7 +728,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
             switch ConfigTemplateStore.load(name: templateName) {
             case .success(let contents): yaml = contents
             case .failure(let message):
-                let agentNames = await MainActor.run { [document] in
+                let agentNames = await MainActor.run {
                     AgentTemplateStore.shared.orchestratorVisible.map(\.name)
                 }
                 let hint = agentNames.isEmpty
