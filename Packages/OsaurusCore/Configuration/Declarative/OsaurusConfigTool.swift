@@ -712,6 +712,13 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         // missing `preferred` model becomes null (default model).
         var entry = template.resolvedEntry(overrides: overrides)
         entry.sourceTemplate = template.name
+        // Agents match by name, so a second use of the same template without
+        // `overrides.name` would silently rewrite the first agent. Give it a
+        // free name instead; an explicit name still updates on purpose.
+        if (overrides?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let taken = Set(AgentManager.shared.agents.map { AgentTemplate.slug(for: $0.name) })
+            entry.name = AgentTemplate.availableName(for: entry.name, takenSlugs: taken)
+        }
         document.agents = [entry]
         return .success(document, basedOn: template)
     }
