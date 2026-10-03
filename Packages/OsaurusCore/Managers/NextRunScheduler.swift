@@ -56,13 +56,44 @@ public final class NextRunScheduler {
     private var tickerTask: Task<Void, Never>?
     private var earlyWakeContinuation: CheckedContinuation<Void, Never>?
     private var storageUnlockObserver: NSObjectProtocol?
+    private var storageUnlockObservationID: UUID?
+    private let notificationCenter: NotificationCenter
+
+    #if DEBUG
+    private var tickerForTesting: (@MainActor @Sendable () async -> Void)?
+    private var storageNotificationHandledForTesting: (@MainActor @Sendable () -> Void)?
+    #endif
 
     /// `(agent_id, trigger_kind) -> last dispatch wall time`. Used for
     /// coalescing. Lives in-process; not persisted because spec defines
     /// the window relative to the running scheduler, not to wall time.
     private var lastDispatch: [String: Date] = [:]
 
-    private init() {}
+    private init(notificationCenter: NotificationCenter = .default) {
+        self.notificationCenter = notificationCenter
+    }
+
+    #if DEBUG
+    /// Isolate lifecycle tests from the shared scheduler, storage root and database.
+    static func makeForTesting(
+        notificationCenter: NotificationCenter,
+        ticker: @escaping @MainActor @Sendable () async -> Void,
+        onStorageNotificationHandled: @escaping @MainActor @Sendable () -> Void
+    ) -> NextRunScheduler {
+        let scheduler = NextRunScheduler(notificationCenter: notificationCenter)
+        scheduler.tickerForTesting = ticker
+        scheduler.storageNotificationHandledForTesting = onStorageNotificationHandled
+        return scheduler
+    }
+
+    /// Join the actual ticker task after cancelling it. Callers must also await
+    /// any notification handlers they published before releasing their fixture.
+    func stopAndWaitForTesting() async {
+        let ticker = tickerTask
+        stop()
+        await ticker?.value
+    }
+    #endif
 
     /// Run a synchronous `SchedulerDatabase` call off the main actor.
     ///
@@ -86,11 +117,19 @@ public final class NextRunScheduler {
     /// is a no-op. Called from `AppDelegate.applicationDidFinishLaunching`.
     public func start() {
         guard tickerTask == nil else { return }
+        removeStorageUnlockObserver()
         // Cold-start catch-up runs as the first iteration of the loop —
         // by the time the loop starts its first sleep, all rows whose
         // scheduled_at has already passed have been processed.
         tickerTask = Task { @MainActor [weak self] in
-            await self?.runLoop()
+            guard let self else { return }
+            #if DEBUG
+            if let ticker = self.tickerForTesting {
+                await ticker()
+                return
+            }
+            #endif
+            await self.runLoop()
         }
         print("[Osaurus] NextRunScheduler started")
     }
@@ -103,25 +142,37 @@ public final class NextRunScheduler {
     /// persisted from a previous session sit due forever.
     public func startWhenStorageBecomesReady() {
         guard tickerTask == nil, storageUnlockObserver == nil else { return }
-        storageUnlockObserver = NotificationCenter.default.addObserver(
+        let observationID = UUID()
+        storageUnlockObservationID = observationID
+        storageUnlockObserver = notificationCenter.addObserver(
             forName: StorageKeyManager.storageKeyDidBecomeResident,
             object: nil,
-            queue: .main
-        ) { _ in
-            Task { @MainActor in
-                NextRunScheduler.shared.handleStorageUnlocked()
+            // The publisher may own the serial key queue while main waits for
+            // that queue. Deliver inline; the explicit actor task below owns
+            // scheduler state without making notification posting wait on main.
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleStorageUnlocked(observationID: observationID)
             }
         }
     }
 
-    private func handleStorageUnlocked() {
+    private func handleStorageUnlocked(observationID: UUID) {
+        #if DEBUG
+        defer { storageNotificationHandledForTesting?() }
+        #endif
+        // Removing an observer cannot cancel an actor task it already queued.
+        // Only the currently armed observation may consume the one-shot start.
+        guard storageUnlockObservationID == observationID else { return }
         removeStorageUnlockObserver()
         start()
     }
 
     private func removeStorageUnlockObserver() {
+        storageUnlockObservationID = nil
         guard let observer = storageUnlockObserver else { return }
-        NotificationCenter.default.removeObserver(observer)
+        notificationCenter.removeObserver(observer)
         storageUnlockObserver = nil
     }
 
