@@ -592,6 +592,13 @@ extension ModelPickerItem {
             || (mediaModel?.kind == .image && mediaModel?.isAvailable == true)
     }
 
+    /// A ready on-device image model, the kind the paired phone can generate
+    /// with (docs/MOBILE_PROTOCOL.md §12.5). Remote media models are left to
+    /// the Mac, which confirms their credit spend.
+    var isPhoneImageModel: Bool {
+        source.isImageGeneration && isImageGenerationDelegateCandidate
+    }
+
     var isImageEditDelegateCandidate: Bool {
         source.isImageGeneration && imageReady && (imageCapabilities?.imageEdit == true)
     }

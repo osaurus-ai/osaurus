@@ -674,6 +674,23 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
+    /// A chat is deleted from outside any window (the paired phone). Does
+    /// what History's Delete does for its own window, for every window:
+    /// cancel a registry-owned run, move each window off the chat (a save
+    /// from one would resurrect the row), delete, refresh every sidebar.
+    func deleteSession(id: UUID) {
+        if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+            BackgroundTaskManager.shared.cancelTask(liveTask.id)
+        }
+        for state in windowStates.values {
+            state.prepareForSessionDeletion(id: id)
+        }
+        ChatSessionsManager.shared.delete(id: id)
+        for state in windowStates.values {
+            state.refreshSessions()
+        }
+    }
+
     /// Returns the set of local model names selected by currently-open chat
     /// windows plus any active registry-owned (detached) background tasks.
     /// Used as a "keep loaded for next interaction" hint for GC.
