@@ -385,3 +385,27 @@ struct AgentTemplateImportNameTests {
         #expect(renamed.id == "plato-2")
     }
 }
+
+struct AgentTemplateStaleToolTests {
+
+    @Test
+    func unregisteredToolNames_areDropped() {
+        var entry = AgentEntry(name: "Plato")
+        var tools = AgentToolsEntry()
+        tools.mode = "manual"
+        tools.enabled = ["browser_click", "underwriting_217e41d2_case_get", "underwriting_mcp_production_apps_count"]
+        entry.tools = tools
+        let cleaned = AgentTemplate.droppingUnregisteredTools(entry, registered: ["browser_click"])
+        #expect(cleaned.tools?.enabled == ["browser_click"])
+        #expect(cleaned.tools?.mode == "manual")
+    }
+
+    @Test
+    func autoMode_isUntouched() {
+        var entry = AgentEntry(name: "Plato")
+        var tools = AgentToolsEntry()
+        tools.mode = "auto"
+        entry.tools = tools
+        #expect(AgentTemplate.droppingUnregisteredTools(entry, registered: []) == entry)
+    }
+}

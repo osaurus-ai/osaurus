@@ -541,6 +541,8 @@ extension AgentTemplate {
         availableToOrchestrator: Bool = true
     ) -> AgentTemplate {
         var entry = ConfigExporter.exportAgent(agent)
+        entry = droppingUnregisteredTools(
+            entry, registered: Set(ToolRegistry.shared.listTools().map(\.name)))
         var requires: [TemplateRequirement] = []
 
         // Knowledge: ids -> names in `requires`, ids stripped from the entry.
@@ -601,6 +603,19 @@ extension AgentTemplate {
             requires: requires,
             actions: agent.chatQuickActions?.map(TemplateAction.init)
         )
+    }
+
+    /// `tools.enabled` keeps only tools registered on this Mac. An agent's
+    /// manual list collects stale names over time (an MCP server's tools from
+    /// an earlier connection carry a per-connection id, e.g.
+    /// `underwriting_217e41d2_case_get`); the live ones already travel as
+    /// `mcp_servers` by server name, so the stale ones only add noise and
+    /// leak machine-local ids into a shared file.
+    static func droppingUnregisteredTools(_ entry: AgentEntry, registered: Set<String>) -> AgentEntry {
+        guard let enabled = entry.tools?.enabled else { return entry }
+        var copy = entry
+        copy.tools?.enabled = enabled.filter { registered.contains($0) }
+        return copy
     }
 
     private static func abbreviateHome(_ path: String) -> String {
