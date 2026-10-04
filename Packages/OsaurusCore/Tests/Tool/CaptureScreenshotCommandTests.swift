@@ -175,4 +175,12 @@ struct CaptureScreenshotCommandTests {
         #expect(command?.icon == "camera.viewfinder")
         #expect(ToolRegistry.shared.entry(named: "capture_screenshot") == nil)
     }
+
+    @Test func compactCommandIsBuiltInSlashAction() {
+        let command = SlashCommand.builtIns.first { $0.name == "compact" }
+        #expect(command?.kind == .action)
+        #expect(command?.isBuiltIn == true)
+        let ids = SlashCommand.builtIns.map(\.id)
+        #expect(Set(ids).count == ids.count)
+    }
 }
