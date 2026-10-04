@@ -333,16 +333,17 @@ public actor ImageGenerationService {
 
     public func generate(
         _ params: ImageGenerationParameters,
-        jobID: String? = nil
+        jobID: String? = nil,
+        interrupt: InterruptToken? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        generate(params, jobID: jobID, resolvedTarget: nil)
+        generate(params, jobID: jobID, resolvedTarget: nil, interrupt: interrupt)
     }
 
     private func generate(
-        _ params: ImageGenerationParameters, jobID: String?, resolvedTarget: LoadTarget?
+        _ params: ImageGenerationParameters, jobID: String?, resolvedTarget: LoadTarget?, interrupt: InterruptToken? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         drive(
-            model: params.model, expected: .imageGen, jobID: jobID, resolvedTarget: resolvedTarget,
+            model: params.model, expected: .imageGen, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt,
             count: max(1, params.numImages), validate: { info in
                 try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: false,
@@ -375,16 +376,17 @@ public actor ImageGenerationService {
 
     public func edit(
         _ params: ImageEditParameters,
-        jobID: String? = nil
+        jobID: String? = nil,
+        interrupt: InterruptToken? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        edit(params, jobID: jobID, resolvedTarget: nil)
+        edit(params, jobID: jobID, resolvedTarget: nil, interrupt: interrupt)
     }
 
     private func edit(
-        _ params: ImageEditParameters, jobID: String?, resolvedTarget: LoadTarget?
+        _ params: ImageEditParameters, jobID: String?, resolvedTarget: LoadTarget?, interrupt: InterruptToken? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         drive(
-            model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget, validate: { info in
+            model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt, validate: { info in
                 try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: true,
                     guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
@@ -447,6 +449,7 @@ public actor ImageGenerationService {
         expected kind: ModelKind,
         jobID: String?,
         resolvedTarget: LoadTarget? = nil,
+        interrupt: InterruptToken? = nil,
         count: Int = 1,
         validate: @escaping @Sendable (ImageModelInfo) throws -> Void = { _ in },
         _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
@@ -462,8 +465,12 @@ public actor ImageGenerationService {
             // iteration immediately even if the engine still produces work.
             let cancellation = ImageJobCancellation { try await self.metalGate.enterImageGeneration() }
             let cancel: @Sendable () -> Void = { cancellation.cancel() }
+            // Only the gate waiter/soft-cancel flag is interrupted. Never cancel
+            // the consumer task: it must retain and drain the engine producer.
+            let observer = interrupt?.observeInterrupt(cancel)
             let task = Task {
                 defer {
+                    if let observer { interrupt?.removeInterruptObserver(observer) }
                     if let jobID { self.producerJobs.removeValue(forKey: jobID) }
                 }
                 do {
@@ -504,7 +511,7 @@ public actor ImageGenerationService {
                 var cancelled = false
                 var produced: [GeneratedImage] = []
                 func cancelRequested() -> Bool {
-                    if cancellation.isRequested { return true }
+                    if cancellation.isRequested || interrupt?.isInterrupted == true { return true }
                     if let jobID, self.cancelledJobIDs.contains(jobID) { return true }
                     return false
                 }

@@ -348,12 +348,13 @@ actor NativeImageJobCoordinator {
         self.imageService = imageService
     }
 
-    func generate(_ request: NativeImageGenerateJobRequest) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
+    func generate(_ request: NativeImageGenerateJobRequest, interrupt: InterruptToken? = nil) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 await request.context.invocation.withContext {
                     await self.runJob(
                         context: request.context,
+                        interrupt: interrupt,
                         kind: .imageGeneration,
                         isEdit: false,
                         activity: .init(
@@ -377,7 +378,7 @@ actor NativeImageJobCoordinator {
                                 numImages: request.numImages,
                                 outputFormat: request.outputFormat
                             )
-                            return await self.imageService.generate(params, jobID: jobID)
+                            return await self.imageService.generate(params, jobID: jobID, interrupt: interrupt)
                         },
                         continuation: continuation
                     )
@@ -387,12 +388,13 @@ actor NativeImageJobCoordinator {
         }
     }
 
-    func edit(_ request: NativeImageEditJobRequest) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
+    func edit(_ request: NativeImageEditJobRequest, interrupt: InterruptToken? = nil) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 await request.context.invocation.withContext {
                     await self.runJob(
                         context: request.context,
+                        interrupt: interrupt,
                         kind: .imageEdit,
                         isEdit: true,
                         activity: .init(
@@ -417,7 +419,7 @@ actor NativeImageJobCoordinator {
                                 seed: request.seed,
                                 outputFormat: request.outputFormat
                             )
-                            return await self.imageService.edit(params, jobID: jobID)
+                            return await self.imageService.edit(params, jobID: jobID, interrupt: interrupt)
                         },
                         continuation: continuation
                     )
@@ -453,6 +455,7 @@ actor NativeImageJobCoordinator {
 
     private func runJob(
         context: NativeImageJobContext,
+        interrupt: InterruptToken? = nil,
         kind: SubagentModelKind,
         isEdit: Bool,
         activity: ActivityFacts,
@@ -477,6 +480,10 @@ actor NativeImageJobCoordinator {
         var chatLease = ChatResidencyLease.empty
         var retention: ParentResidencyRetention?
         var startedImageModel: String?
+        var residencySettled = false
+        func checkInterrupt() throws {
+            if interrupt?.isInterrupted == true { throw NativeImageJobCoordinatorError.cancelled }
+        }
         // Activity log: one `mediaGeneration` row per job, written when the
         // job settles. Skipped when the local HTTP API owns the request (its
         // handler logs the inbound row).
@@ -501,6 +508,7 @@ actor NativeImageJobCoordinator {
             )
         }
         do {
+            try checkInterrupt()
             record(NativeImageJobProgress(jobID: jobID, phase: .queued))
             // Resolve the image model BEFORE any unload so the RAM-safety
             // preflight can refuse-before-evict (never strand the user with the
@@ -525,6 +533,7 @@ actor NativeImageJobCoordinator {
                 enabled: config.ramSafetyPreflightEnabled,
                 physicalCapacityOnly: true
             )
+            try checkInterrupt()
             chatLease = try await self.prepareChatResidencyIfNeeded(
                 plan: plan,
                 config: config,
@@ -553,6 +562,7 @@ actor NativeImageJobCoordinator {
             }
             var produced: [GeneratedImage] = []
             try Task.checkCancellation()
+            try checkInterrupt()
             startedImageModel = model
             activityRow = activityRow?.withModel(model)
             let stream = await makeStream(model, jobID)
@@ -598,6 +608,8 @@ actor NativeImageJobCoordinator {
                 jobID: jobID,
                 context: context
             )
+            residencySettled = true
+            try checkInterrupt()
             record(NativeImageJobProgress(jobID: jobID, phase: .completed, model: model))
             activityRow?.finish(producedCount: produced.count, jobId: jobID, error: nil)
             continuation.yield(
@@ -614,14 +626,20 @@ actor NativeImageJobCoordinator {
             continuation.finish()
         } catch {
             activityRow?.finish(producedCount: 0, jobId: jobID, error: error.localizedDescription)
-            _ = await self.finishResidency(
-                lease: chatLease,
-                retention: retention,
-                unloadImage: startedImageModel != nil
-                    && config.imageJobLoadPolicy.unloadAfterJob(restoresParent: !chatLease.isEmpty),
-                jobID: jobID,
-                context: context
-            )
+            if !residencySettled {
+                _ = await self.finishResidency(
+                    lease: chatLease,
+                    retention: retention,
+                    unloadImage: startedImageModel != nil
+                        && config.imageJobLoadPolicy.unloadAfterJob(restoresParent: !chatLease.isEmpty),
+                    jobID: jobID,
+                    context: context
+                )
+                residencySettled = true
+            }
+            if interrupt?.isInterrupted == true {
+                record(NativeImageJobProgress(jobID: jobID, phase: .cancelled, model: startedImageModel))
+            }
             continuation.finish(throwing: error)
         }
     }

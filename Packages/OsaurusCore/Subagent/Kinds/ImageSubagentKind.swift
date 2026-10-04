@@ -405,10 +405,10 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                     outputFormat: .png,
                     context: NativeImageJobContext.current()
                 )
-                finalResult = try await Self.consumeEdit(request)
+                finalResult = try await Self.consumeEdit(request, interrupt: interrupt)
             } else {
                 let request = localGenerateRequest(resolved, context: NativeImageJobContext.current())
-                finalResult = try await Self.consumeGenerate(request)
+                finalResult = try await Self.consumeGenerate(request, interrupt: interrupt)
             }
         } catch let inputError as NativeImageToolInputError {
             throw SubagentError.invalidArgs(
@@ -417,6 +417,9 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 expected: "existing local image files under 80 MB each"
             )
         } catch {
+            if interrupt.isInterrupted {
+                throw SubagentError.userDenied("User cancelled image generation.")
+            }
             throw SubagentError.executionFailed(
                 message: String(describing: error),
                 retryable: false
@@ -454,12 +457,13 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     /// the residency unload can incidentally trigger) must not cascade into the
     /// engine drain and abort generation; the detached consumer keeps the
     /// producer alive to completion. Explicit user cancel still works via the
-    /// coordinator / `ImageGenerationService` jobID cancel path.
+    /// job-scoped InterruptToken bridge; it cancels the gate waiter and marks
+    /// soft cancellation while the detached producer continues draining.
     private static func consumeGenerate(
-        _ request: NativeImageGenerateJobRequest
+        _ request: NativeImageGenerateJobRequest, interrupt: InterruptToken
     ) async throws -> NativeImageJobResult? {
         try await Task.detached(priority: .userInitiated) {
-            let stream = await NativeImageJobCoordinator.shared.generate(request)
+            let stream = await NativeImageJobCoordinator.shared.generate(request, interrupt: interrupt)
             var last: NativeImageJobResult?
             for try await result in stream { last = result }
             return last
@@ -467,10 +471,10 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     }
 
     private static func consumeEdit(
-        _ request: NativeImageEditJobRequest
+        _ request: NativeImageEditJobRequest, interrupt: InterruptToken
     ) async throws -> NativeImageJobResult? {
         try await Task.detached(priority: .userInitiated) {
-            let stream = await NativeImageJobCoordinator.shared.edit(request)
+            let stream = await NativeImageJobCoordinator.shared.edit(request, interrupt: interrupt)
             var last: NativeImageJobResult?
             for try await result in stream { last = result }
             return last

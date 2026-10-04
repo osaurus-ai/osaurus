@@ -22,6 +22,7 @@ import Foundation
 public final class InterruptToken: @unchecked Sendable {
     private let lock = NSLock()
     private var _interrupted = false
+    private var observers: [UUID: @Sendable () -> Void] = [:]
 
     public init() {}
 
@@ -33,7 +34,31 @@ public final class InterruptToken: @unchecked Sendable {
 
     public func interrupt() {
         lock.lock()
+        guard !_interrupted else { lock.unlock(); return }
         _interrupted = true
+        let callbacks = Array(observers.values)
+        observers.removeAll()
+        lock.unlock()
+        for callback in callbacks { callback() }
+    }
+
+    /// Job-scoped observer. Callbacks always run outside the lock, once per
+    /// registration, including immediate delivery after interruption.
+    func observeInterrupt(_ callback: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        lock.lock()
+        let alreadyInterrupted = _interrupted
+        if !alreadyInterrupted { observers[id] = callback }
+        lock.unlock()
+        if alreadyInterrupted { callback() }
+        return id
+    }
+
+    /// Removal cannot retract a callback already captured by interrupt().
+    /// Callers must make such a late callback harmless to other jobs.
+    func removeInterruptObserver(_ id: UUID) {
+        lock.lock()
+        observers.removeValue(forKey: id)
         lock.unlock()
     }
 }
