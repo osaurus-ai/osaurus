@@ -242,6 +242,7 @@ final class ChatSession: ObservableObject {
     }
 
     @Published var lastStreamError: String?
+    var delegatedToolFailure = DelegatedToolFailureState()
 
     /// Set when an Osaurus Router send fails because the account is out of
     /// credits (HTTP 402 INSUFFICIENT_FUNDS). Drives the "out of credits"
@@ -4336,6 +4337,7 @@ final class ChatSession: ObservableObject {
     }
 
     private func beginRun(_ runId: UUID, context: RunContext) {
+        delegatedToolFailure.begin(runID: runId)
         activeRunId = runId
         activeRunContext = context
     }
@@ -4792,6 +4794,7 @@ final class ChatSession: ObservableObject {
             return
         }
 
+        delegatedToolFailure.finish(runID: runId)
         let context = activeRunContext
         let runCompletedCleanly = !stopRequested && lastStreamError == nil
 
@@ -8370,6 +8373,10 @@ final class ChatSession: ObservableObject {
                             assistantTurn.content
                         }
                     )
+                    loopHooks.recordTerminalToolRejection = { [weak self] envelope in
+                        guard let self, self.activeRunId == runId else { return }
+                        self.delegatedToolFailure.record(envelope, runID: runId)
+                    }
                     // What this run may execute, read live: the driver folds
                     // `osaurus_help!!` onto `osaurus_help` only when the
                     // canonical name is in scope, and lists these names in the

@@ -94,6 +94,49 @@ struct AgentDelegationOutcome: Sendable {
     }
 }
 
+/// Typed metadata from the one terminal tool rejection in a chat run.
+/// Kept separately from its user-visible lifecycle error string.
+struct DelegatedToolFailure: Sendable {
+    let runID: UUID
+    let kind: ToolEnvelope.Kind
+    let message: String
+    let retryable: Bool?
+}
+
+struct DelegatedToolFailureState {
+    private(set) var runID: UUID?
+    private var accepting = false
+    private var failure: DelegatedToolFailure?
+
+    mutating func begin(runID: UUID) {
+        self.runID = runID
+        accepting = true
+        failure = nil
+    }
+
+    mutating func finish(runID: UUID) {
+        guard self.runID == runID else { return }
+        accepting = false
+    }
+
+    mutating func record(_ envelope: String, runID: UUID) {
+        guard accepting, self.runID == runID,
+            let data = envelope.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["ok"] as? Bool == false,
+            let rawKind = object["kind"] as? String,
+            let kind = ToolEnvelope.Kind(rawValue: rawKind)
+        else { return }
+        failure = DelegatedToolFailure(runID: runID, kind: kind,
+            message: ToolEnvelope.failureMessage(envelope), retryable: object["retryable"] as? Bool)
+    }
+
+    var current: DelegatedToolFailure? {
+        guard let failure, failure.runID == runID else { return nil }
+        return failure
+    }
+}
+
 enum AgentDelegationDispatcher {
     /// Prefix a delegated child uses to hand a question back to the
     /// requester instead of guessing (the child has no `clarify` tool —
@@ -694,14 +737,15 @@ enum AgentDelegationDispatcher {
         // watchdog only backstops a cancel that never reaches a terminal
         // state.
         let watchdogSeconds = UInt64(queueGrace + runBudget) + 120
-        let result = await withTaskCancellationHandler {
-            await BackgroundTaskManager.shared.awaitCompletion(
+        let completion = await withTaskCancellationHandler {
+            await BackgroundTaskManager.shared.awaitCompletionWithToolFailure(
                 taskId,
                 timeoutSeconds: watchdogSeconds
             )
         } onCancel: {
             cancelChild(.parentTask)
         }
+        let result = completion.result
         let elapsed = Date().timeIntervalSince(started)
 
         // Artifact pass-through for EVERY terminal state: whatever the child
@@ -754,11 +798,21 @@ enum AgentDelegationDispatcher {
                 )
             }
         case .failed(let message):
-            throw SubagentError.executionFailed(
-                message: "Delegated agent '\(targetAgentName)' failed: \(message)",
-                retryable: true
-            )
+            throw failureForChild(message: message, targetAgentName: targetAgentName,
+                terminalFailure: completion.terminalToolFailure)
         }
+    }
+
+    /// Preserve a terminal tool refusal across the child background-task
+    /// boundary, without classifying user-facing summary strings.
+    static func failureForChild(message: String, targetAgentName: String,
+        terminalFailure: DelegatedToolFailure?) -> SubagentError
+    {
+        if let terminalFailure, terminalFailure.kind == .userDenied {
+            return .userDenied("Delegated agent '\(targetAgentName)' stopped: \(terminalFailure.message)")
+        }
+        return .executionFailed(message: "Delegated agent '\(targetAgentName)' failed: \(message)",
+            retryable: terminalFailure?.retryable ?? true)
     }
 
     /// Read the persisted child session (saved by `markCompleted` before the

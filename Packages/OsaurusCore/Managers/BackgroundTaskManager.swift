@@ -117,7 +117,13 @@ public final class BackgroundTaskManager: ObservableObject {
     private var taskObservers: [UUID: Set<AnyCancellable>] = [:]
 
     /// Continuations for callers awaiting task completion (e.g. ScheduleManager)
-    private var completionContinuations: [UUID: CheckedContinuation<DispatchResult, Never>] = [:]
+    /// Value-only terminal metadata is copied while the task still owns its
+    /// live session. It cannot be lost when cleanup releases that session.
+    struct CompletionWithToolFailure: Sendable {
+        let result: DispatchResult
+        let terminalToolFailure: DelegatedToolFailure?
+    }
+    private var completionContinuations: [UUID: CheckedContinuation<CompletionWithToolFailure, Never>] = [:]
 
     /// Tracks the number of turns already processed per chat task so we only log new tool calls.
     private var chatTurnCounts: [UUID: Int] = [:]
@@ -1294,11 +1300,15 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Await completion of a background task. Suspends until the task completes, is cancelled, finalized, or times out.
     /// A 30-minute timeout prevents indefinite hangs if a task never reaches a terminal state.
     public func awaitCompletion(_ id: UUID, timeoutSeconds: UInt64 = 1800) async -> DispatchResult {
+        await awaitCompletionWithToolFailure(id, timeoutSeconds: timeoutSeconds).result
+    }
+
+    func awaitCompletionWithToolFailure(_ id: UUID, timeoutSeconds: UInt64 = 1800) async -> CompletionWithToolFailure {
         if let state = backgroundTasks[id], !state.status.isActive {
-            return resultFromState(state)
+            return completionSnapshot(for: id, result: resultFromState(state))
         }
         guard backgroundTasks[id] != nil else {
-            return .failed("Background task not found")
+            return CompletionWithToolFailure(result: .failed("Background task not found"), terminalToolFailure: nil)
         }
 
         // Start a watchdog that will resume the continuation with a timeout error
@@ -1306,7 +1316,8 @@ public final class BackgroundTaskManager: ObservableObject {
         let timeoutTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
             guard !Task.isCancelled else { return }
-            completionContinuations.removeValue(forKey: id)?.resume(returning: .failed("Background task timed out"))
+            completionContinuations.removeValue(forKey: id)?.resume(returning:
+                CompletionWithToolFailure(result: .failed("Background task timed out"), terminalToolFailure: nil))
         }
 
         let result = await withCheckedContinuation { continuation in
@@ -1316,6 +1327,12 @@ public final class BackgroundTaskManager: ObservableObject {
         timeoutTask.cancel()
         return result
     }
+
+    #if DEBUG
+        func hasCompletionWaiterForTesting(_ id: UUID) -> Bool {
+            completionContinuations[id] != nil
+        }
+    #endif
 
     // MARK: - Private: Dispatch Helpers
 
@@ -1614,8 +1631,20 @@ public final class BackgroundTaskManager: ObservableObject {
         }
     }
 
+    private func completionSnapshot(for id: UUID, result: DispatchResult) -> CompletionWithToolFailure {
+        var failure: DelegatedToolFailure?
+        if case .failed = result,
+            let session = backgroundTasks[id]?.executionContext?.chatSession,
+            session.sessionId == id
+        {
+            failure = session.delegatedToolFailure.current
+        }
+        return CompletionWithToolFailure(result: result, terminalToolFailure: failure)
+    }
+
     private func resumeCompletion(for id: UUID, result: DispatchResult) {
-        completionContinuations.removeValue(forKey: id)?.resume(returning: result)
+        let snapshot = completionSnapshot(for: id, result: result)
+        completionContinuations.removeValue(forKey: id)?.resume(returning: snapshot)
     }
 
     /// Map a dispatch source to the audit-trail trigger kind we persist
