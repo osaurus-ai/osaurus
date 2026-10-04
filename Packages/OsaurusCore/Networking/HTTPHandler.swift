@@ -11614,9 +11614,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed)
     }
 
-    private static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
+    static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
         if hfAuth { return HTTPResponseStatus(statusCode: 402) }
         let m = message.lowercased()
+        // The bridge's explicit request classification outranks explanatory
+        // text such as "strength ... is not implemented" in its detail.
+        if m.hasPrefix("invalid request:") { return .badRequest }
         if m.contains("not found") { return .notFound }
         if m.contains("incomplete") { return .conflict }
         if m.contains("not implemented") { return .notImplemented }
