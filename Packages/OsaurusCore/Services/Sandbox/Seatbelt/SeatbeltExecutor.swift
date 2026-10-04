@@ -234,10 +234,19 @@ enum SeatbeltExecutor {
         // path-sanitized cwd; fall back to the writable scratch directory.
         let confinedHome = request.cwd ?? scratch
         env["HOME"] = confinedHome
+        process.environment = env
+
+        // `run()` raises an uncatchable Objective-C exception for a NUL in the
+        // model-supplied command or env.
+        do {
+            try ProcessInputValidation.validate(process)
+        } catch {
+            throw SandboxError.execFailed("sandbox-exec launch failed: \(error.localizedDescription)")
+        }
+
         if request.command.contains("python3") {
             await preparePythonShimCache(home: confinedHome)
         }
-        process.environment = env
 
         if let cwd = request.cwd {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
