@@ -53,7 +53,55 @@ public actor ImageGenerationService {
     }
     private var producerJobs: [String: ProducerJob] = [:]
 
-    public init() {}
+    /// Only the bundle lookup, gate instance and GPU cleanup are replaceable.
+    /// The production service and FluxEngine stream/drain implementations are
+    /// used unchanged by no-model producer-lifetime tests.
+    struct LoadTarget: Sendable {
+        let info: ImageModelInfo
+        let directory: URL
+        let engineName: String
+        let kind: ModelKind?
+    }
+
+    enum StreamCheckpoint: Sendable, Hashable {
+        case created(Int), willDrain(Int), drained(Int)
+    }
+    private let testStreamCheckpoint: (@Sendable (StreamCheckpoint) async -> Void)?
+    private let testErrorSince: (@Sendable (UInt64) -> String?)?
+    private let metalGate: MetalGate
+    private let cleanupGPUCache: @Sendable () -> Void
+    private let testResolve: (@Sendable (String) throws -> LoadTarget)?
+
+    public init() {
+        metalGate = .shared
+        cleanupGPUCache = {
+            MLXCacheIOLock.withSerializedMLXCacheIO {
+                Memory.clearCache()
+            }
+        }
+        testResolve = nil
+        testStreamCheckpoint = nil
+        testErrorSince = nil
+    }
+
+    /// Internal, explicit fixture initializer. No singleton/global MLX state is
+    /// changed. Only the injected cleanup callback may omit the GPU barrier.
+    init(
+        testingEngine: FluxEngine,
+        gate: MetalGate,
+        cleanup: @escaping @Sendable () -> Void,
+        resolve: @escaping @Sendable (String) throws -> LoadTarget,
+        streamCheckpoint: (@Sendable (StreamCheckpoint) async -> Void)? = nil,
+        errorSince: (@Sendable (UInt64) -> String?)? = nil
+    ) {
+        engine = testingEngine
+        metalGate = gate
+        cleanupGPUCache = cleanup
+        testResolve = resolve
+        testStreamCheckpoint = streamCheckpoint
+        testErrorSince = errorSince
+        registered = true
+    }
 
     /// Request cancellation of an in-flight job by id. Safe to call from any
     /// connection/actor; the matching drain loop stops yielding at the next
@@ -112,14 +160,12 @@ public actor ImageGenerationService {
         // owner is exclusive against all others): once we decide to free the
         // FLUX weights, giving up mid-wait on cancellation would either leak
         // the engine or free buffers without the gate.
-        await MetalGate.shared.enterModelTeardown(model: "image-unload")
+        await metalGate.enterModelTeardown(model: "image-unload")
         await engine.unload()
         loadedDirectoryName = nil
         loadedDirectoryURL = nil
-        MLXCacheIOLock.withSerializedMLXCacheIO {
-            Memory.clearCache()
-        }
-        await MetalGate.shared.exitModelTeardown(model: "image-unload")
+        cleanupGPUCache()
+        await metalGate.exitModelTeardown(model: "image-unload")
         // Same channel the LLM runtime uses; observers either guard-cast the
         // snapshot object (and skip this post) or refresh unconditionally —
         // the loaded-models popover is the latter.
@@ -269,11 +315,8 @@ public actor ImageGenerationService {
         _ params: ImageGenerationParameters,
         jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageGen, jobID: jobID) { engine, outputDir in
-            let count = max(1, params.numImages)
-            var streams: [AsyncThrowingStream<ImageGenEvent, Error>] = []
-            streams.reserveCapacity(count)
-            for index in 0 ..< count {
+        drive(model: params.model, expected: .imageGen, jobID: jobID,
+            count: max(1, params.numImages)) { engine, outputDir, index in
                 // n > 1 is not engine-batched; run sequentially with distinct
                 // seeds so each image differs while staying reproducible.
                 let seed = params.seed.map { $0 &+ UInt64(index) }
@@ -289,9 +332,7 @@ public actor ImageGenerationService {
                     outputDir: outputDir,
                     outputFormat: Self.engineFormat(params.outputFormat)
                 )
-                streams.append(await engine.generate(request))
-            }
-            return streams
+            return await engine.generate(request)
         }
     }
 
@@ -299,7 +340,7 @@ public actor ImageGenerationService {
         _ params: ImageEditParameters,
         jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageEdit, jobID: jobID) { engine, outputDir in
+        drive(model: params.model, expected: .imageEdit, jobID: jobID) { engine, outputDir, _ in
             let sources = try Self.stageInputs(params.sourceImages)
             guard !sources.isEmpty else {
                 throw ImageGenerationError.invalidRequest("edit requires at least one source image")
@@ -318,7 +359,7 @@ public actor ImageGenerationService {
                 outputDir: outputDir,
                 outputFormat: Self.engineFormat(params.outputFormat)
             )
-            return [await engine.edit(request)]
+            return await engine.edit(request)
         }
     }
 
@@ -326,7 +367,7 @@ public actor ImageGenerationService {
         _ params: ImageUpscaleParameters,
         jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageUpscale, jobID: jobID) { engine, outputDir in
+        drive(model: params.model, expected: .imageUpscale, jobID: jobID) { engine, outputDir, _ in
             let source = try Self.stageInput(params.sourceImage)
             let request = UpscaleRequest(
                 sourceImage: source,
@@ -336,7 +377,7 @@ public actor ImageGenerationService {
                 outputDir: outputDir,
                 outputFormat: Self.engineFormat(params.outputFormat)
             )
-            return [await engine.upscale(request)]
+            return await engine.upscale(request)
         }
     }
 
@@ -349,7 +390,8 @@ public actor ImageGenerationService {
         model requestedModel: String,
         expected kind: ModelKind,
         jobID: String?,
-        _ build: @escaping @Sendable (FluxEngine, URL) async throws -> [AsyncThrowingStream<ImageGenEvent, Error>]
+        count: Int = 1,
+        _ build: @escaping @Sendable (FluxEngine, URL, Int) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
             guard jobID.map({ producerJobs[$0] == nil }) ?? true else {
@@ -360,7 +402,7 @@ public actor ImageGenerationService {
             // Cancel only the gate waiter, not the producer that consumes the
             // engine stream. Cancelling that consumer makes AsyncStream stop
             // iteration immediately even if the engine still produces work.
-            let cancellation = ImageJobCancellation { try await MetalGate.shared.enterImageGeneration() }
+            let cancellation = ImageJobCancellation { try await self.metalGate.enterImageGeneration() }
             let cancel: @Sendable () -> Void = { cancellation.cancel() }
             let task = Task {
                 defer {
@@ -389,9 +431,7 @@ public actor ImageGenerationService {
                 // buffer, then `clearCache()` returns freed teardown buffers and the
                 // bracketing syncs drain the device. We hold the exclusive image
                 // gate, so no new producer can start during the barrier.
-                MLXCacheIOLock.withSerializedMLXCacheIO {
-                    Memory.clearCache()
-                }
+                self.cleanupGPUCache()
                 // Recovered-error window for this job. Since the fork's
                 // metal completion handlers report GPU command-buffer
                 // failures through the global MLX error handler instead of
@@ -425,9 +465,12 @@ public actor ImageGenerationService {
                     let engine = self.ensureEngine()
                     let outputDir = OsaurusPaths.generatedImages()
                     OsaurusPaths.ensureExistsSilent(outputDir)
-                    let streams = cancelled ? [] : try await build(engine, outputDir)
-
-                    for stream in streams {
+                    for index in 0 ..< count {
+                        if cancelRequested() { cancelled = true }
+                        if cancelled { break }
+                        let stream = try await build(engine, outputDir, index)
+                        await self.testStreamCheckpoint?(.created(index))
+                        await self.testStreamCheckpoint?(.willDrain(index))
                         for try await event in stream {
                             if cancelRequested() { cancelled = true }
                             switch event {
@@ -452,11 +495,12 @@ public actor ImageGenerationService {
                                 cancelled = true
                             }
                         }
+                        await self.testStreamCheckpoint?(.drained(index))
                     }
 
                     if cancelled {
                         continuation.yield(.cancelled)
-                    } else if let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch) {
+                    } else if let mlxErr = self.recoveredErrorSince(mlxErrorEpoch) {
                         // The engine stream finished, but a GPU-side error was
                         // recovered during this job's window — any produced
                         // files decode from arrays downstream of the failed
@@ -490,16 +534,14 @@ public actor ImageGenerationService {
                 // cache-IO lock brackets the work in `Stream.gpu.synchronize`, so
                 // "gate released" provably means "GPU idle". Covers the success,
                 // cancel, and error paths (this runs after the do/catch).
-                MLXCacheIOLock.withSerializedMLXCacheIO {
-                    Memory.clearCache()
-                }
-                await MetalGate.shared.exitImageGeneration()
+                self.cleanupGPUCache()
+                await self.metalGate.exitImageGeneration()
                 // A recovered GPU error may have corrupted the resident
                 // weights (e.g. the failure hit during load). Drop residency
                 // so the next job reloads from disk. Runs after the image
                 // gate is released — `unload()` takes the teardown lane
                 // itself, which is exclusive against ours.
-                if MLXErrorRecovery.errorSince(mlxErrorEpoch) != nil {
+                if self.recoveredErrorSince(mlxErrorEpoch) != nil {
                     await self.unload()
                 }
             }
@@ -513,22 +555,38 @@ public actor ImageGenerationService {
         }
     }
 
-    private func ensureLoaded(_ requestedModel: String, expected kind: ModelKind) async throws {
+    private func recoveredErrorSince(_ epoch: UInt64) -> String? {
+        if let testErrorSince { return testErrorSince(epoch) }
+        return MLXErrorRecovery.errorSince(epoch)
+    }
+
+    private func resolveLoadTarget(_ requestedModel: String) throws -> LoadTarget {
+        if let testResolve { return try testResolve(requestedModel) }
         ensureRegistered()
-        let store = store()
-        guard let local = try store.resolve(name: requestedModel) else {
+        guard let local = try store().resolve(name: requestedModel) else {
             throw ImageGenerationError.modelNotFound(requestedModel)
         }
-        guard local.canEnterNativeLoadPath else {
-            throw ImageGenerationError.modelIncomplete(model: requestedModel, reasons: local.blockedReasons)
-        }
         guard let canonical = local.canonicalName else {
+            // Preserve the incomplete-bundle error before unknown identity.
+            if !local.canEnterNativeLoadPath {
+                throw ImageGenerationError.modelIncomplete(model: requestedModel, reasons: local.blockedReasons)
+            }
             throw ImageGenerationError.unknownModel(local.directoryName)
         }
-        if let modelKind = local.kind, modelKind != kind {
+        return LoadTarget(info: Self.info(for: local), directory: local.directory,
+            engineName: canonical, kind: local.kind)
+    }
+
+    private func ensureLoaded(_ requestedModel: String, expected kind: ModelKind) async throws {
+        let target = try resolveLoadTarget(requestedModel)
+        let info = target.info
+        guard info.ready else {
+            throw ImageGenerationError.modelIncomplete(model: requestedModel, reasons: info.blockedReasons)
+        }
+        if let modelKind = target.kind, modelKind != kind {
             throw ImageGenerationError.wrongModelKind(expected: kind.rawValue, actual: modelKind.rawValue)
         }
-        guard loadedDirectoryName != local.directoryName else { return }
+        guard loadedDirectoryName != info.id else { return }
         let engine = ensureEngine()
         // Free the previous model before loading a new one (bundles are large;
         // unload between switches per the integration spec).
@@ -536,12 +594,12 @@ public actor ImageGenerationService {
         loadedDirectoryName = nil
         loadedDirectoryURL = nil
         try await engine.load(
-            name: canonical,
-            modelPath: local.directory,
-            quantize: local.quantizationBits
+            name: target.engineName,
+            modelPath: target.directory,
+            quantize: info.quantizationBits
         )
-        loadedDirectoryName = local.directoryName
-        loadedDirectoryURL = local.directory
+        loadedDirectoryName = info.id
+        loadedDirectoryURL = target.directory
         NotificationCenter.default.post(name: .modelRuntimeResidencyChanged, object: nil)
     }
 
