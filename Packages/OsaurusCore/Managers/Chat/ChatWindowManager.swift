@@ -940,11 +940,21 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// the next window restores.
     func persistTabLayoutNow() {
         let store = ChatTabLayoutStore.shared
-        var layout = store.load()
-        for (id, state) in windowStates {
-            layout.windows[id] = state.tabLayoutSnapshot()
+        // Collect snapshots on the main thread; windowStates is main-actor state.
+        let snapshots: [UUID: ChatTabLayoutRecord] = windowStates.reduce(into: [:]) { result, pair in
+            result[pair.key] = pair.value.tabLayoutSnapshot()
         }
-        store.save(layout)
+        // Perform the UserDefaults read and write on a background queue to
+        // avoid blocking the main thread with a synchronous IPC to cfprefsd.
+        // ChatTabLayoutStore is @unchecked Sendable and UserDefaults is
+        // documented as thread-safe, so this is safe.
+        DispatchQueue.global(qos: .utility).async {
+            var layout = store.load()
+            for (id, record) in snapshots {
+                layout.windows[id] = record
+            }
+            store.save(layout)
+        }
     }
 
     /// Adopt the tabs of every window that is not open any more (the
