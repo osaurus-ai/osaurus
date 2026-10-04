@@ -468,6 +468,9 @@ public actor ImageGenerationService {
                     for index in 0 ..< count {
                         if cancelRequested() { cancelled = true }
                         if cancelled { break }
+                        // An earlier producer may finish without a failed event
+                        // after a recovered GPU error. Do not start another one.
+                        if self.recoveredErrorSince(mlxErrorEpoch) != nil { break }
                         let stream = try await build(engine, outputDir, index)
                         await self.testStreamCheckpoint?(.created(index))
                         await self.testStreamCheckpoint?(.willDrain(index))
@@ -498,6 +501,9 @@ public actor ImageGenerationService {
                         await self.testStreamCheckpoint?(.drained(index))
                     }
 
+                    // Cancellation can arrive after the last event while the
+                    // final producer is finishing; there may be no next event.
+                    if cancelRequested() { cancelled = true }
                     if cancelled {
                         continuation.yield(.cancelled)
                     } else if let mlxErr = self.recoveredErrorSince(mlxErrorEpoch) {
