@@ -752,6 +752,8 @@ final class ChatSession: ObservableObject {
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
+    /// A native image progress row still awaiting its terminal event.
+    private var pendingNativeImageTurnId: UUID?
     /// Outer task that parks a send behind an in-flight model-switch/warm-up
     /// handshake. Retaining it is required for lifecycle cancellation: a
     /// fire-and-forget task can otherwise resume after Stop, reset, or a
@@ -2634,6 +2636,13 @@ final class ChatSession: ObservableObject {
         // mounted, and the input bar hit-test disabled.
         promptQueue.drainAll()
         stopRequested = true
+        if preservesCancelledMarker, let turnId = pendingNativeImageTurnId,
+            let turn = turns.first(where: { $0.id == turnId && $0.role == .assistant })
+        {
+            turn.content = L("Image generation cancelled.")
+            isDirty = true
+        }
+        pendingNativeImageTurnId = nil
         // Background workers this run launched sit outside the task tree:
         // stop them explicitly before the run's own cancellation.
         interruptBackgroundSpawnsOfCurrentRun()
@@ -5728,6 +5737,19 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Record presentation ownership before the native producer starts. Stop
+    /// can then replace progress synchronously, before cleanup saves the turn.
+    func beginNativeImagePresentation(on turn: ChatTurn) {
+        pendingNativeImageTurnId = turn.id
+        turn.content = L("Generating image…")
+    }
+
+    func finishNativeImagePresentation(on turn: ChatTurn) {
+        if pendingNativeImageTurnId == turn.id {
+            pendingNativeImageTurnId = nil
+        }
+    }
+
     /// Run a text→image generation for the active image model, streaming
     /// progress into `turn` and rendering the final PNG as a markdown image
     /// (the existing assistant markdown renderer displays `file://` images).
@@ -5767,7 +5789,8 @@ final class ChatSession: ObservableObject {
             return
         }
 
-        turn.content = L("Generating image…")
+        beginNativeImagePresentation(on: turn)
+        defer { finishNativeImagePresentation(on: turn) }
         rebuildVisibleBlocks()
 
         var lastRebuild = Date.distantPast
@@ -5813,6 +5836,7 @@ final class ChatSession: ObservableObject {
                 case .preview:
                     break
                 case .completed(let images):
+                    finishNativeImagePresentation(on: turn)
                     reachedTerminal = true
                     if images.isEmpty {
                         turn.content = L("Image generation produced no image.")
@@ -5824,10 +5848,12 @@ final class ChatSession: ObservableObject {
                     }
                     refresh(force: true)
                 case .failed(let message, _):
+                    finishNativeImagePresentation(on: turn)
                     reachedTerminal = true
                     turn.content = "\(L("Image generation failed:")) \(message)"
                     refresh(force: true)
                 case .cancelled:
+                    finishNativeImagePresentation(on: turn)
                     if !reachedTerminal {
                         reachedTerminal = true
                         turn.content = L("Image generation cancelled.")
@@ -5836,6 +5862,7 @@ final class ChatSession: ObservableObject {
                 }
             }
         } catch {
+            guard isRunActive(runId) else { return }
             if !reachedTerminal {
                 turn.content = "\(L("Image generation failed:")) \(error)"
                 refresh(force: true)
