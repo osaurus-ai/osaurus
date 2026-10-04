@@ -169,6 +169,86 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         )
     }
 
+    /// Re-read the original typed fields only after a local bundle's canonical
+    /// metadata resolves. This recovers Q21 values lost by the legacy clamps;
+    /// no requested/display-name inference or remote-policy changes are made.
+    static func paramsForResolvedLocalModel(_ legacy: ImageJobParams, argumentsJSON: String,
+        canonical: String?, defaultGuidance: Float?) throws -> ImageJobParams
+    {
+        guard canonical == "qwen-image-2.1" else { return legacy }
+        let raw: Qwen21Arguments
+        do { raw = try JSONDecoder().decode(Qwen21Arguments.self, from: Data(argumentsJSON.utf8)) }
+        catch { throw ImageGenerationError.invalidRequest("invalid explicit image tool parameter: \(error)") }
+        if let format = raw.output_format, format.lowercased() != "png" {
+            throw ImageGenerationError.invalidRequest("Qwen-Image-2.1 supports PNG output only")
+        }
+        let paths = raw.source_paths?.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? []
+        if raw.source_paths != nil, (!(1...4).contains(paths.count) || paths.contains(where: \.isEmpty)) {
+            throw ImageGenerationError.invalidRequest("source_paths must contain one to four non-empty paths")
+        }
+        try ImageModelRequestPolicy.validateQwen21Steps(raw.steps)
+        if raw.strength != nil, paths.isEmpty {
+            throw ImageGenerationError.invalidRequest("strength is an edit-only parameter")
+        }
+        try ImageModelRequestPolicy(canonical: canonical).validate(
+            width: raw.width, height: raw.height, isEdit: !paths.isEmpty,
+            guidance: raw.guidance ?? defaultGuidance ?? 1,
+            negativePrompt: raw.negative_prompt, strength: raw.strength,
+            hasMask: raw.mask != nil, sourceCount: paths.count)
+        if raw.mask != nil {
+            throw ImageGenerationError.invalidRequest("the image tool does not support masks")
+        }
+        return ImageJobParams(prompt: legacy.prompt, sourcePaths: paths, model: legacy.model,
+            negativePrompt: raw.negative_prompt, width: raw.width, height: raw.height,
+            steps: raw.steps, guidance: raw.guidance, strength: raw.strength,
+            seed: raw.seed, numImages: raw.num_images)
+    }
+
+    private struct Qwen21Arguments: Decodable {
+        let source_paths: [String]?
+        let negative_prompt: String?
+        let width: Int?
+        let height: Int?
+        let steps: Int?
+        let guidance: Float?
+        let strength: Float?
+        let seed: UInt64?
+        let num_images: Int?
+        let mask: String?
+        let output_format: String?
+
+        enum CodingKeys: String, CodingKey {
+            case source_paths, negative_prompt, width, height, steps, guidance, strength, seed, num_images, mask, output_format
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            source_paths = try c.decodeIfPresent([String].self, forKey: .source_paths)
+            negative_prompt = try c.decodeIfPresent(String.self, forKey: .negative_prompt)
+            width = try c.decodeIfPresent(Int.self, forKey: .width)
+            height = try c.decodeIfPresent(Int.self, forKey: .height)
+            steps = try c.decodeIfPresent(Int.self, forKey: .steps)
+            guidance = try c.decodeIfPresent(Float.self, forKey: .guidance)
+            strength = try c.decodeIfPresent(Float.self, forKey: .strength)
+            num_images = try c.decodeIfPresent(Int.self, forKey: .num_images)
+            mask = try c.decodeIfPresent(String.self, forKey: .mask)
+            output_format = try c.decodeIfPresent(String.self, forKey: .output_format)
+            if !c.contains(.seed) {
+                seed = nil
+            } else if try c.decodeNil(forKey: .seed) {
+                seed = nil
+            } else if let value = try? c.decode(UInt64.self, forKey: .seed) {
+                seed = value
+            } else {
+                let text = try c.decode(String.self, forKey: .seed)
+                guard let value = UInt64(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    throw ImageGenerationError.invalidRequest("seed must be an unsigned 64-bit integer")
+                }
+                seed = value
+            }
+        }
+    }
+
     // MARK: - Argument coercion
 
     private static func optionalString(_ raw: Any?) -> String? {

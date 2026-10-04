@@ -13,7 +13,7 @@ import Foundation
 
 // MARK: - Requests
 
-struct MediaTargetRequestDTO: Decodable {
+struct MediaTargetRequestDTO: Decodable, Sendable {
     let backend: String
     let provider_id: UUID?
     let model: String
@@ -35,7 +35,7 @@ struct MediaTargetRequestDTO: Decodable {
     }
 }
 
-struct ImageGenerationRequestDTO: Decodable {
+struct ImageGenerationRequestDTO: Decodable, Sendable {
     /// Optional: when omitted/empty the handler falls back to the configured
     /// `defaultImageGenerationModelId` (Settings → Agent Delegation), matching
     /// the agent `image` tool's default-resolution behavior.
@@ -59,7 +59,7 @@ struct ImageGenerationRequestDTO: Decodable {
     let allow_remote_media_spend: Bool?
 }
 
-struct ImageEditRequestDTO: Decodable {
+struct ImageEditRequestDTO: Decodable, Sendable {
     /// Optional: when omitted/empty the handler falls back to the configured
     /// `defaultImageEditModelId` (Settings → Agent Delegation), matching the
     /// agent `image` tool's (edit mode) default-resolution behavior.
@@ -169,6 +169,8 @@ struct ImageCapabilitiesDTO: Encodable {
     let image_edit: Bool
     let upscale: Bool
     let negative_prompt: Bool
+    var edit_negative_prompt: Bool? = nil
+    var edit_strength: Bool? = nil
     let mask: Bool
     let multiple_source_images: Bool
     let lora: Bool

@@ -155,6 +155,7 @@ struct ModelPickerItem: Identifiable, Hashable {
 
     /// Image-generation metadata. Nil for text/remote chat models.
     let imageKind: String?
+    let imageCanonicalName: String?
     let imageCapabilities: ImageModelCapabilities?
     let imageDefaultSteps: Int?
     let imageDefaultGuidance: Float?
@@ -182,6 +183,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         supportsToolCalling: Bool? = nil,
         reasoningCapabilities: ModelReasoningCapabilities? = nil,
         imageKind: String? = nil,
+        imageCanonicalName: String? = nil,
         imageCapabilities: ImageModelCapabilities? = nil,
         imageDefaultSteps: Int? = nil,
         imageDefaultGuidance: Float? = nil,
@@ -206,6 +208,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.supportsToolCalling = supportsToolCalling
         self.reasoningCapabilities = reasoningCapabilities
         self.imageKind = imageKind
+        self.imageCanonicalName = imageCanonicalName
         self.imageCapabilities = imageCapabilities
         self.imageDefaultSteps = imageDefaultSteps
         self.imageDefaultGuidance = imageDefaultGuidance
@@ -277,6 +280,7 @@ extension ModelPickerItem {
             quantization: model.quantizationBits.map { "\($0)-bit" },
             description: model.ready ? nil : model.blockedReasons.first,
             imageKind: model.kind,
+            imageCanonicalName: model.canonicalName,
             imageCapabilities: model.capabilities,
             imageDefaultSteps: model.defaultSteps,
             imageDefaultGuidance: model.defaultGuidance,

@@ -55,7 +55,8 @@ struct ImageJobParams: Sendable {
 final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     let capability = SubagentCapabilityRegistry.image
 
-    private let params: ImageJobParams
+    private var params: ImageJobParams
+    private var usesQwen21Parameters = false
     private let argumentsJSON: String
     private var resolvedTarget: MediaModelTarget?
     private var selectedMediaModel: MediaModelInfo?
@@ -132,6 +133,12 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             let target =
                 selected.mediaModel?.target
                 ?? MediaModelTarget(backend: .local, modelID: selected.id)
+            if target.backend == .local {
+                // Canonical identity is from installed ImageModelInfo, copied
+                // into the picker; it is independent of a renamed directory.
+                try prepareLocalParameters(canonical: selected.imageCanonicalName,
+                    defaultGuidance: selected.imageDefaultGuidance)
+            }
             resolvedTarget = target
             selectedMediaModel = selected.mediaModel
             return ResolvedModel(
@@ -148,11 +155,32 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 available: models,
                 kind: modelKind
             )
+            if let info = models.first(where: { $0.id == model }) {
+                try prepareLocalParameters(canonical: info.canonicalName,
+                    defaultGuidance: info.defaultGuidance)
+            }
             resolvedTarget = MediaModelTarget(backend: .local, modelID: model)
             return ResolvedModel(name: model, id: model, isLocal: true)
         } catch {
             throw SubagentError.unavailable(String(describing: error))
         }
+    }
+
+    // Used after exact local model selection and before permission/admission.
+    // Invalid raw Q21 fields never reach coordinator coercion or eviction.
+    func prepareLocalParameters(canonical: String?, defaultGuidance: Float?) throws {
+        params = try ImageTool.paramsForResolvedLocalModel(params, argumentsJSON: argumentsJSON,
+            canonical: canonical, defaultGuidance: defaultGuidance)
+        usesQwen21Parameters = canonical == "qwen-image-2.1"
+    }
+
+    func localGenerateRequest(_ resolved: ResolvedModel,
+        context: NativeImageJobContext) -> NativeImageGenerateJobRequest
+    {
+        NativeImageGenerateJobRequest(prompt: params.prompt, model: usesQwen21Parameters ? (resolved.id ?? resolved.name) : resolved.name,
+            negativePrompt: params.negativePrompt, width: params.width, height: params.height,
+            steps: params.steps, guidance: params.guidance, seed: params.seed,
+            numImages: 1, outputFormat: .png, context: context)
     }
 
     /// Every local image run owns one producer and may swap the parent under
@@ -362,37 +390,24 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         do {
             if params.isEdit {
                 let sources = try Self.loadSourceImages(paths: params.sourcePaths)
+                if usesQwen21Parameters { try ImageHTTPParameterBuilder.validateSourceImages(sources) }
                 let request = NativeImageEditJobRequest(
                     prompt: params.prompt,
-                    model: resolved.name,
+                    model: usesQwen21Parameters ? (resolved.id ?? resolved.name) : resolved.name,
                     sourceImages: sources,
                     negativePrompt: params.negativePrompt,
                     width: params.width,
                     height: params.height,
                     steps: params.steps,
                     guidance: params.guidance,
-                    strength: params.strength ?? 0.75,
+                    strength: params.strength,
                     seed: params.seed,
                     outputFormat: .png,
                     context: NativeImageJobContext.current()
                 )
                 finalResult = try await Self.consumeEdit(request)
             } else {
-                let request = NativeImageGenerateJobRequest(
-                    prompt: params.prompt,
-                    model: resolved.name,
-                    negativePrompt: params.negativePrompt,
-                    width: params.width,
-                    height: params.height,
-                    steps: params.steps,
-                    guidance: params.guidance,
-                    seed: params.seed,
-                    // Force single-image: multi-image (n>1) sequential generation
-                    // trips the MLX CommandEncoder race (no per-image drain).
-                    numImages: 1,
-                    outputFormat: .png,
-                    context: NativeImageJobContext.current()
-                )
+                let request = localGenerateRequest(resolved, context: NativeImageJobContext.current())
                 finalResult = try await Self.consumeGenerate(request)
             }
         } catch let inputError as NativeImageToolInputError {

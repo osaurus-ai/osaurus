@@ -5782,44 +5782,22 @@ final class ChatSession: ObservableObject {
         var reachedTerminal = false
         let sourceImages = attachments.loadImages()
         let stream: AsyncThrowingStream<ImageGenerationEvent, Error>
-        if imageItem.imageCapabilities?.imageEdit == true || imageItem.imageKind == "imageEdit" {
-            guard !sourceImages.isEmpty else {
-                turn.content = L("Attach one source image to edit with this model.")
-                rebuildVisibleBlocks()
-                return
-            }
-            let params = ImageEditParameters(
-                model: model,
-                prompt: prompt,
-                sourceImages: sourceImages,
-                negativePrompt: settings.normalizedNegativePrompt,
-                strength: settings.clampedStrength,
-                width: settings.clampedWidth,
-                height: settings.clampedHeight,
-                steps: settings.clampedSteps,
-                guidance: settings.clampedGuidance,
-                seed: settings.normalizedSeed
+        do {
+            let request = try ImageComposerRequestBuilder.build(
+                item: imageItem, prompt: prompt, sourceImages: sourceImages,
+                expectedSourceCount: attachments.filter(\.isImage).count, settings: settings
             )
-            stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
-        } else {
-            guard sourceImages.isEmpty else {
-                turn.content = L("Selected image model does not accept source images.")
-                rebuildVisibleBlocks()
-                return
+            switch request {
+            case .generate(let params):
+                stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+            case .edit(let params):
+                stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
             }
-            let params = ImageGenerationParameters(
-                model: model,
-                prompt: prompt,
-                negativePrompt: settings.normalizedNegativePrompt,
-                width: settings.clampedWidth,
-                height: settings.clampedHeight,
-                steps: settings.clampedSteps,
-                guidance: settings.clampedGuidance,
-                seed: settings.normalizedSeed,
-                numImages: 1,
-                outputFormat: .png
-            )
-            stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+        } catch {
+            turn.content = (error as? ImageComposerRequestBuilder.RequestError)?.localizedMessage
+                ?? String(describing: error)
+            rebuildVisibleBlocks()
+            return
         }
         do {
             for try await event in stream {

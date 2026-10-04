@@ -84,7 +84,7 @@ struct NativeImageEditJobRequest: Sendable {
     var height: Int?
     var steps: Int?
     var guidance: Float?
-    var strength: Float
+    var strength: Float?
     var seed: UInt64?
     var outputFormat: ImageOutputFormat
     var context: NativeImageJobContext
@@ -98,7 +98,7 @@ struct NativeImageEditJobRequest: Sendable {
         height: Int? = nil,
         steps: Int? = nil,
         guidance: Float? = nil,
-        strength: Float = 0.75,
+        strength: Float? = nil,
         seed: UInt64? = nil,
         outputFormat: ImageOutputFormat = .png,
         context: NativeImageJobContext = .empty
@@ -111,7 +111,7 @@ struct NativeImageEditJobRequest: Sendable {
         self.height = height
         self.steps = steps
         self.guidance = guidance
-        self.strength = min(1, max(0, strength))
+        self.strength = strength.map { min(1, max(0, $0)) }
         self.seed = seed
         self.outputFormat = outputFormat
         self.context = context

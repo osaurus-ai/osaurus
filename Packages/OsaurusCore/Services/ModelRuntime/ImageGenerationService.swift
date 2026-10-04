@@ -294,29 +294,64 @@ public actor ImageGenerationService {
         canonical: String?,
         entry: ModelEntry?
     ) -> ImageModelCapabilities {
-        ImageModelCapabilities(
-            textToImage: kind == .imageGen,
-            imageEdit: kind == .imageEdit,
-            upscale: kind == .imageUpscale,
-            // negative_prompt is honored whenever guidance > 0 (gen + edit).
-            negativePrompt: kind == .imageGen || kind == .imageEdit,
-            // No current model has a real mask/inpaint path; qwen-edit masks
-            // are rejected by the engine. Hide the control everywhere.
-            mask: false,
-            // Ordered multi-reference is qwen-image-edit only.
-            multipleSourceImages: canonical == "qwen-image-edit",
-            lora: entry?.supportsLoRA ?? false
+        ImageModelRequestPolicy.capabilities(
+            kind: kind.rawValue, canonical: canonical, supportsLoRA: entry?.supportsLoRA ?? false
         )
     }
 
     // MARK: - Generate / edit / upscale
 
+    // The HTTP factory resolves one exact store target, then passes that SAME
+    // target into the existing gated load/validate path. No second lookup,
+    // preflight weight load, or residency change is introduced.
+    func generateHTTP(_ request: ImageGenerationRequestDTO, modelID: String, jobID: String)
+        -> ImageHTTPPreparedJob
+    {
+        do {
+            let target = try resolveLoadTarget(modelID)
+            let params = try ImageHTTPParameterBuilder.generation(request, info: target.info)
+            return ImageHTTPPreparedJob(stream: generate(params, jobID: jobID, resolvedTarget: target),
+                width: params.width ?? 1024, height: params.height ?? 1024)
+        } catch {
+            return .failure(Self.message(for: error))
+        }
+    }
+
+    func editHTTP(_ request: ImageEditRequestDTO, modelID: String, decodedSources: [Data?], jobID: String)
+        -> ImageHTTPPreparedJob
+    {
+        do {
+            let target = try resolveLoadTarget(modelID)
+            let params = try ImageHTTPParameterBuilder.edit(request, info: target.info,
+                decodedSources: decodedSources)
+            return ImageHTTPPreparedJob(stream: edit(params, jobID: jobID, resolvedTarget: target),
+                width: params.width, height: params.height, sourceCount: params.sourceImages.count)
+        } catch {
+            return .failure(Self.message(for: error))
+        }
+    }
+
     public func generate(
         _ params: ImageGenerationParameters,
         jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageGen, jobID: jobID,
-            count: max(1, params.numImages)) { engine, outputDir, index in
+        generate(params, jobID: jobID, resolvedTarget: nil)
+    }
+
+    private func generate(
+        _ params: ImageGenerationParameters, jobID: String?, resolvedTarget: LoadTarget?
+    ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
+        drive(
+            model: params.model, expected: .imageGen, jobID: jobID, resolvedTarget: resolvedTarget,
+            count: max(1, params.numImages), validate: { info in
+                try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
+                    width: params.width, height: params.height, isEdit: false,
+                    guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
+                    negativePrompt: params.negativePrompt, steps: params.steps ?? info.defaultSteps,
+                    outputFormat: params.outputFormat
+                )
+            }
+        ) { engine, outputDir, index, info in
                 // n > 1 is not engine-batched; run sequentially with distinct
                 // seeds so each image differs while staying reproducible.
                 let seed = params.seed.map { $0 &+ UInt64(index) }
@@ -325,8 +360,10 @@ public actor ImageGenerationService {
                     negativePrompt: params.negativePrompt,
                     width: params.width ?? 1024,
                     height: params.height ?? 1024,
-                    steps: Self.safeDenoiseSteps(for: params.model, requested: params.steps),
-                    guidance: params.guidance ?? Self.defaultGuidance(for: params.model),
+                    steps: info.canonicalName == "qwen-image-2.1"
+                        ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: "qwen-image-2.1"))
+                        : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
+                    guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
                     seed: seed,
                     numImages: 1,
                     outputDir: outputDir,
@@ -340,7 +377,23 @@ public actor ImageGenerationService {
         _ params: ImageEditParameters,
         jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageEdit, jobID: jobID) { engine, outputDir, _ in
+        edit(params, jobID: jobID, resolvedTarget: nil)
+    }
+
+    private func edit(
+        _ params: ImageEditParameters, jobID: String?, resolvedTarget: LoadTarget?
+    ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
+        drive(
+            model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget, validate: { info in
+                try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
+                    width: params.width, height: params.height, isEdit: true,
+                    guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
+                    negativePrompt: params.negativePrompt, strength: params.strength,
+                    hasMask: params.maskImage != nil, sourceCount: params.sourceImages.count,
+                    steps: params.steps ?? info.defaultSteps, outputFormat: params.outputFormat
+                )
+            }
+        ) { engine, outputDir, _, info in
             let sources = try Self.stageInputs(params.sourceImages)
             guard !sources.isEmpty else {
                 throw ImageGenerationError.invalidRequest("edit requires at least one source image")
@@ -350,11 +403,14 @@ public actor ImageGenerationService {
                 prompt: params.prompt,
                 sourceImages: sources,
                 mask: mask,
-                strength: params.strength,
+                strength: ImageModelRequestPolicy(canonical: info.canonicalName)
+                    .editStrength(params.strength),
                 width: params.width,
                 height: params.height,
-                steps: Self.safeDenoiseSteps(for: params.model, requested: params.steps),
-                guidance: params.guidance ?? Self.defaultGuidance(for: params.model),
+                steps: info.canonicalName == "qwen-image-2.1"
+                        ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: "qwen-image-2.1"))
+                        : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
+                guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
                 seed: params.seed,
                 outputDir: outputDir,
                 outputFormat: Self.engineFormat(params.outputFormat)
@@ -367,7 +423,7 @@ public actor ImageGenerationService {
         _ params: ImageUpscaleParameters,
         jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageUpscale, jobID: jobID) { engine, outputDir, _ in
+        drive(model: params.model, expected: .imageUpscale, jobID: jobID) { engine, outputDir, _, _ in
             let source = try Self.stageInput(params.sourceImage)
             let request = UpscaleRequest(
                 sourceImage: source,
@@ -390,8 +446,10 @@ public actor ImageGenerationService {
         model requestedModel: String,
         expected kind: ModelKind,
         jobID: String?,
+        resolvedTarget: LoadTarget? = nil,
         count: Int = 1,
-        _ build: @escaping @Sendable (FluxEngine, URL, Int) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
+        validate: @escaping @Sendable (ImageModelInfo) throws -> Void = { _ in },
+        _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
             guard jobID.map({ producerJobs[$0] == nil }) ?? true else {
@@ -454,9 +512,11 @@ public actor ImageGenerationService {
                     if cancelRequested() { cancelled = true }
                     // Load (or switch) the model under the gate — quantized
                     // bundles decode their weights with MLX eval at load time.
+                    var modelInfo: ImageModelInfo?
                     if !cancelled {
                         continuation.yield(.loadingModel(model: requestedModel))
-                        try await self.ensureLoaded(requestedModel, expected: kind)
+                        modelInfo = try await self.ensureLoaded(requestedModel, expected: kind,
+                            resolvedTarget: resolvedTarget, validate: validate)
                     }
                     // Honor a cancel that arrived during the (uninterruptible)
                     // weight load so generation never starts. The gate-drain
@@ -471,7 +531,8 @@ public actor ImageGenerationService {
                         // An earlier producer may finish without a failed event
                         // after a recovered GPU error. Do not start another one.
                         if self.recoveredErrorSince(mlxErrorEpoch) != nil { break }
-                        let stream = try await build(engine, outputDir, index)
+                        guard let modelInfo else { break }
+                        let stream = try await build(engine, outputDir, index, modelInfo)
                         await self.testStreamCheckpoint?(.created(index))
                         await self.testStreamCheckpoint?(.willDrain(index))
                         for try await event in stream {
@@ -583,16 +644,20 @@ public actor ImageGenerationService {
             engineName: canonical, kind: local.kind)
     }
 
-    private func ensureLoaded(_ requestedModel: String, expected kind: ModelKind) async throws {
-        let target = try resolveLoadTarget(requestedModel)
+    private func ensureLoaded(
+        _ requestedModel: String, expected kind: ModelKind, resolvedTarget: LoadTarget?,
+        validate: @Sendable (ImageModelInfo) throws -> Void
+    ) async throws -> ImageModelInfo {
+        let target = try resolvedTarget ?? resolveLoadTarget(requestedModel)
         let info = target.info
         guard info.ready else {
             throw ImageGenerationError.modelIncomplete(model: requestedModel, reasons: info.blockedReasons)
         }
-        if let modelKind = target.kind, modelKind != kind {
-            throw ImageGenerationError.wrongModelKind(expected: kind.rawValue, actual: modelKind.rawValue)
+        guard ImageModelRequestPolicy.supports(kind.rawValue, capabilities: info.capabilities) else {
+            throw ImageGenerationError.wrongModelKind(expected: kind.rawValue, actual: info.kind)
         }
-        guard loadedDirectoryName != info.id else { return }
+        try validate(info)
+        guard loadedDirectoryName != info.id else { return info }
         let engine = ensureEngine()
         // Free the previous model before loading a new one (bundles are large;
         // unload between switches per the integration spec).
@@ -607,6 +672,7 @@ public actor ImageGenerationService {
         loadedDirectoryName = info.id
         loadedDirectoryURL = target.directory
         NotificationCenter.default.post(name: .modelRuntimeResidencyChanged, object: nil)
+        return info
     }
 
     // MARK: - Defaults + helpers

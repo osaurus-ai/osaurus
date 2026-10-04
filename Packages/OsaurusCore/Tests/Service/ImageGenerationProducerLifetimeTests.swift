@@ -136,13 +136,13 @@ struct ImageProducerFixture: Sendable {
 
     init(held: Set<Int>, gate: MetalGate = .makeForTesting(),
          canonical: String? = nil, kind: ModelKind = .imageGen,
-         capabilities: ImageModelCapabilities? = nil,
+         capabilities: ImageModelCapabilities? = nil, identityStem: String? = nil,
          heldCheckpoints: Set<ImageGenerationService.StreamCheckpoint> = []) {
         let newLog = ImageProducerLog()
         let newProbe = ImageProducerProbe(held: held, log: newLog)
         let newCheckpoints = ImageProducerCheckpoints(held: heldCheckpoints)
         let newError = ImageProducerErrorSignal()
-        let stem = (canonical ?? "image-service") + "-fixture-" + UUID().uuidString.lowercased()
+        let stem = (identityStem ?? canonical ?? "image-service") + "-fixture-" + UUID().uuidString.lowercased()
         let nameA = stem + "-a", nameB = stem + "-b"
         var targets: [String: ImageGenerationService.LoadTarget] = [:]
         for name in [nameA, nameB] {
@@ -164,6 +164,7 @@ struct ImageProducerFixture: Sendable {
         let resolved = targets
         service = ImageGenerationService(testingEngine: FluxEngine(), gate: gate,
             cleanup: { newLog.record("cleanup") }, resolve: { name in
+                newLog.record("resolve:\(name)")
                 guard let target = resolved[name] else { throw ImageGenerationError.modelNotFound(name) }
                 return target
             }, streamCheckpoint: { await newCheckpoints.reached($0) },

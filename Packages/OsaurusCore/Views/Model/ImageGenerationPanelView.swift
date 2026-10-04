@@ -210,18 +210,40 @@ struct ImageGenerationPanelView: View {
     let displayName: String
     /// `true` ⇒ image-edit bundle (needs a source image); `false` ⇒ text→image.
     let isEdit: Bool
+    let modelInfo: ImageModelInfo
+    private var requestPolicy: ImageModelRequestPolicy {
+        ImageModelRequestPolicy(canonical: modelInfo.canonicalName)
+    }
 
     @State private var prompt: String = ""
     @State private var negativePrompt: String = ""
     @State private var sizeIndex: Int = 1  // 0:512, 1:1024
     @State private var seedText: String = ""
-    @State private var sourceURL: URL?
+    @State private var sourceURLs: [URL] = []
+    @State private var stepsText = ""
+    @State private var guidanceText = ""
+    @State private var useSourceSize = true
+    private var sourceLimit: Int { modelInfo.capabilities.multipleSourceImages ? 4 : 1 }
 
     private let sizes: [Int] = [512, 1024]
 
+    private var parsedInput: ImagePanelParameterInput? {
+        try? ImagePanelParameterInput(steps: stepsText, guidance: guidanceText, seed: seedText)
+    }
+
+    private var inputError: String? {
+        do {
+            _ = try ImagePanelParameterInput(steps: stepsText, guidance: guidanceText, seed: seedText)
+            return nil
+        } catch let error as ImagePanelParameterInput.InputError {
+            return error.localizedMessage
+        } catch { return nil }
+    }
+
     private var canRun: Bool {
         !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (!isEdit || sourceURL != nil)
+            && (!isEdit || (!sourceURLs.isEmpty && sourceURLs.count <= sourceLimit))
+            && parsedInput != nil
             && !model.isBusy
     }
 
@@ -233,6 +255,7 @@ struct ImageGenerationPanelView: View {
                     if isEdit { sourcePicker }
                     promptField
                     paramsRow
+                    advancedParams
                     statusCard
                     if let url = model.resultURL { resultCard(url) }
                 }
@@ -279,30 +302,31 @@ struct ImageGenerationPanelView: View {
 
     private var sourcePicker: some View {
         VStack(alignment: .leading, spacing: 8) {
-            fieldLabel("Source image")
-            HStack(spacing: 12) {
-                if let sourceURL, let nsImage = NSImage(contentsOf: sourceURL) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 84, height: 84)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8).stroke(theme.cardBorder, lineWidth: 1)
-                        )
+            if sourceLimit > 1 {
+                Text(localized: "Source images (ordered, up to 4)").font(.system(size: 11))
+            } else {
+                fieldLabel("Source image")
+            }
+            ForEach(Array(sourceURLs.enumerated()), id: \.offset) { index, url in
+                HStack {
+                    Text("\(index + 1). \(url.lastPathComponent)")
+                        .font(.system(size: 11)).lineLimit(1)
+                    Spacer()
+                    if sourceLimit > 1 {
+                        Button { sourceURLs.swapAt(index, index - 1) } label: {
+                            Image(systemName: "arrow.up")
+                        }.disabled(index == 0)
+                        Button { sourceURLs.remove(at: index) } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                    }
                 }
-                Button(action: pickSource) {
-                    Text(sourceURL == nil ? "Choose…" : "Replace…", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .buttonStyle(SettingsButtonStyle())
-                if let sourceURL {
-                    Text(sourceURL.lastPathComponent)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+            }
+            Button(action: pickSource) {
+                Text(sourceURLs.isEmpty ? "Choose…" : "Replace…", bundle: .module)
+            }.buttonStyle(SettingsButtonStyle())
+            if sourceURLs.count > sourceLimit {
+                Text(localized: "Choose up to \(sourceLimit) source images.").foregroundColor(theme.warningColor)
             }
         }
     }
@@ -322,6 +346,7 @@ struct ImageGenerationPanelView: View {
                             RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
                         )
                 )
+            if modelInfo.capabilities.negativePrompt && (!isEdit || modelInfo.capabilities.editNegativePrompt) {
             fieldLabel("Negative prompt (optional)")
             TextField("", text: $negativePrompt)
                 .textFieldStyle(.plain)
@@ -334,6 +359,40 @@ struct ImageGenerationPanelView: View {
                             RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
                         )
                 )
+                if requestPolicy.isQwen21 {
+                    Text(localized: "Negative prompt applies when guidance is above 1.")
+                        .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                }
+            }
+            if modelInfo.canonicalName == "ideogram" {
+                Text(localized: "Use a structured JSON caption.")
+                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                Text(verbatim: "{\"high_level_description\": \"your description\"}")
+                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+            }
+        }
+    }
+
+    private var advancedParams: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(localized: "Steps").font(.system(size: 11))
+                TextField(String(modelInfo.defaultSteps ?? 20), text: $stepsText).frame(width: 70)
+                Text(localized: "Guidance").font(.system(size: 11))
+                TextField(String(modelInfo.defaultGuidance ?? 3.5), text: $guidanceText).frame(width: 70)
+            }
+            if isEdit {
+                Toggle(isOn: $useSourceSize) {
+                    Text(localized: "Use source aspect ratio")
+                }.font(.system(size: 11))
+            }
+            if requestPolicy.isQwen21 {
+                Text(localized: "Qwen-Image-2.1 uses at least 2 steps.")
+                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+            }
+            if let inputError {
+                Text(verbatim: inputError).font(.system(size: 11)).foregroundColor(theme.warningColor)
+            }
         }
     }
 
@@ -348,6 +407,7 @@ struct ImageGenerationPanelView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
+                .disabled(isEdit && useSourceSize)
                 .frame(width: 150)
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -524,19 +584,23 @@ struct ImageGenerationPanelView: View {
 
     private func run() {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPrompt.isEmpty else { return }
+        guard canRun, let input = parsedInput else { return }
         let size = sizes[sizeIndex]
-        let seed = UInt64(seedText.trimmingCharacters(in: .whitespaces))
+        let seed = input.seed
         let negative = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if isEdit {
-            guard let sourceURL, let data = try? Data(contentsOf: sourceURL) else { return }
+            guard !sourceURLs.isEmpty,
+                let sources = try? sourceURLs.map({ try Data(contentsOf: $0) }) else { return }
             model.edit(
                 ImageEditParameters(
                     model: modelId,
                     prompt: trimmedPrompt,
-                    sourceImages: [data],
-                    negativePrompt: negative.isEmpty ? nil : negative,
+                    sourceImages: sources,
+                    negativePrompt: modelInfo.capabilities.editNegativePrompt && !negative.isEmpty ? negative : nil,
+                    width: useSourceSize ? nil : size,
+                    height: useSourceSize ? nil : size,
+                    steps: input.steps, guidance: input.guidance,
                     seed: seed
                 )
             )
@@ -548,6 +612,7 @@ struct ImageGenerationPanelView: View {
                     negativePrompt: negative.isEmpty ? nil : negative,
                     width: size,
                     height: size,
+                    steps: input.steps, guidance: input.guidance,
                     seed: seed
                 )
             )
@@ -557,9 +622,9 @@ struct ImageGenerationPanelView: View {
     private func pickSource() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png, .jpeg, .image]
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = sourceLimit > 1
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK { sourceURL = panel.url }
+        if panel.runModal() == .OK { sourceURLs = panel.urls }
     }
 
     private func saveAs(_ url: URL) {
