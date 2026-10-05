@@ -5435,9 +5435,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
-        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
-            return
-        }
         let cors = stateRef.value.corsHeaders
         let components = path.split(separator: "/")
         guard components.count == 3, components[0] == "agents",
@@ -5558,9 +5555,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
-            return
-        }
-        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -6558,9 +6552,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
-            return
-        }
-        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let isSecrets = path == "/secrets/prompts"
@@ -7644,9 +7635,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
-        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
-            return
-        }
         let cors = stateRef.value.corsHeaders
         let components = path.split(separator: "/")
         guard components.count == 6, components[0] == "sessions", components[2] == "turns",
@@ -8126,7 +8114,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// GET): an agent's prompt, tools or sandbox, an approval, a chat. With
     /// a master-scoped key these reach as far as a run does, so a sniffed or
     /// leaked pairing key must not work them over plaintext. Reads stay
-    /// open. Sends the 426 and returns `true` when the request is refused.
+    /// open, so GET-only routes don't call it. Called per route rather than
+    /// once in the dispatcher: a master key also drives the OpenAI-style
+    /// API (`/chat/completions` and the like) from other machines, which
+    /// must keep working over plain HTTP. Sends the 426 and returns `true`
+    /// when the request is refused.
     private func requiresOwnerChannel(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -10997,9 +10989,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
-            return
-        }
-        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let components = path.split(separator: "/")
