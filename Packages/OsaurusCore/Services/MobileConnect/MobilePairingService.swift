@@ -156,8 +156,7 @@ final class MobilePairingService: ObservableObject {
         // A code is only worth showing with the server up to take it: the
         // phone would otherwise search for a Mac that never answers.
         await ServerController.ensureRunning()
-        if let server = ServerControllerHolder.shared.controller, !server.isRunning {
-            let reason = server.lastErrorMessage ?? L("The server isn't running.")
+        if let reason = ServerController.notRunningReason() {
             MobileConnectLog.write("pairing: no code, the server isn't running: \(reason)")
             lastError = L("Your Mac can't take a pairing right now. \(reason)")
             return

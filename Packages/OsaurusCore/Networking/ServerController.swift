@@ -186,6 +186,13 @@ final class ServerController: ObservableObject {
         }
     }
 
+    /// Why the server isn't taking requests, or nil while it is (or before
+    /// a controller is wired, when there is nothing to tell yet).
+    static func notRunningReason() -> String? {
+        guard let controller = ServerControllerHolder.shared.controller, !controller.isRunning else { return nil }
+        return controller.lastErrorMessage ?? L("The server isn't running.")
+    }
+
     /// Starts the server with current configuration
     func startServer() async {
         guard !isRunning else { return }
