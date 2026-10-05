@@ -76,25 +76,28 @@ enum SessionTurnImages {
             (parsed.metadata["mime_type"] as? String)?.hasPrefix("image/") == true,
             let contextId = parsed.metadata["context_id"] as? String
         else { return nil }
-        return artifactFile(contextId: contextId, filename: parsed.filename)
+        return artifactImageFile(contextId: contextId, filename: parsed.filename)
     }
 
-    /// A file in `~/.osaurus/artifacts/{contextId}/`, the one place the
-    /// phone may fetch shared artifacts from (§14.12).
-    static func artifactFile(contextId: String, filename: String) -> URL? {
-        let parts = [contextId, filename]
-        guard parts.allSatisfy({ !$0.isEmpty && !$0.contains("/") && $0 != "." && $0 != ".." }) else { return nil }
+    /// An image in `~/.osaurus/artifacts/{contextId}/`, the one place the
+    /// phone may fetch shared files from (§14.12), and images only: that is
+    /// all it shows. Both parts must be plain names, as `SharedArtifact`
+    /// writes them; anything it would have rewritten is refused.
+    static func artifactImageFile(contextId: String, filename: String) -> URL? {
+        guard SharedArtifact.sanitizeArtifactFilename(contextId) == contextId,
+            SharedArtifact.sanitizeArtifactFilename(filename) == filename,
+            SharedArtifact.mimeType(from: filename).hasPrefix("image/")
+        else { return nil }
         let url = OsaurusPaths.contextArtifactsDir(contextId: contextId).appendingPathComponent(filename)
         return existingFile(url, under: OsaurusPaths.artifactsDir())
     }
 
     /// `url` with symlinks resolved, when it is an existing regular file
-    /// inside `root`.
+    /// inside `root`: the containment check `SharedArtifact` writes with.
     private static func existingFile(_ url: URL, under root: URL) -> URL? {
-        let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path + "/"
-        let file = url.standardizedFileURL.resolvingSymlinksInPath()
+        let file = SharedArtifact.canonicalizedURL(url)
         var isDirectory: ObjCBool = false
-        guard file.path.hasPrefix(rootPath),
+        guard SharedArtifact.isContained(file, in: SharedArtifact.canonicalizedURL(root)),
             FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue
         else { return nil }
         return file

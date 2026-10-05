@@ -1262,12 +1262,14 @@ Owner-only.
 
 ### 14.12 `GET /artifacts/{context id}/{filename}`
 
-The bytes of a file an agent shared, named as its `share_artifact` tool result
-names it (`context_id`, `filename` in the marker's metadata), so a client can
-show an image while the run is still going, before the chat is saved.
-`Content-Type` follows the file's extension. Only files in
-`~/.osaurus/artifacts/` are served: `404 artifact_not_found` for anything
-else, a missing file, or a directory. Owner-only.
+The bytes of an image an agent shared, named as its `share_artifact` tool
+result names it (`context_id`, `filename` in the marker's metadata), so a
+client can show it while the run is still going, before the chat is saved.
+`Content-Type` follows the file's extension. Only images in
+`~/.osaurus/artifacts/` are served: `404 artifact_not_found` for any other
+file, a missing one, a directory, or a name `share_artifact` would not have
+written. Owner-only, and over the Secure Channel only (426 otherwise),
+though it is a read.
 
 ---
 

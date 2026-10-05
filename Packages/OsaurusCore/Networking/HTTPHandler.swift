@@ -7719,10 +7719,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// GET /artifacts/{context id}/{filename} — a file an agent shared
+    /// GET /artifacts/{context id}/{filename} — an image an agent shared
     /// (`share_artifact`, the `image` tool), as its tool result names it
-    /// (`context_id`, `filename`). Owner-only; nothing outside
-    /// `~/.osaurus/artifacts/` is ever served (docs/MOBILE_PROTOCOL.md §14.12).
+    /// (`context_id`, `filename`). Owner-only, and over the Secure Channel
+    /// only even though it is a read: a shared image can be anything the
+    /// agent saw. Nothing but images in `~/.osaurus/artifacts/` is ever
+    /// served (docs/MOBILE_PROTOCOL.md §14.12).
     private func handleArtifactFileEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -7734,6 +7736,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         let components = path.split(separator: "/").map { String($0).removingPercentEncoding ?? String($0) }
         let loop = context.eventLoop
@@ -7742,7 +7753,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             let file =
                 components.count == 3 && components[0] == "artifacts"
-                ? SessionTurnImages.artifactFile(contextId: components[1], filename: components[2]) : nil
+                ? SessionTurnImages.artifactImageFile(contextId: components[1], filename: components[2]) : nil
             guard let file, let data = try? Data(contentsOf: file) else {
                 hop {
                     let body = #"{"error":"artifact_not_found"}"#

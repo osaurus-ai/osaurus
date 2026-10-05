@@ -918,11 +918,11 @@ extension SharedArtifact {
         return cleaned
     }
 
-    private static func canonicalizedURL(_ url: URL) -> URL {
+    static func canonicalizedURL(_ url: URL) -> URL {
         url.resolvingSymlinksInPath().standardizedFileURL
     }
 
-    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+    static func isContained(_ candidate: URL, in root: URL) -> Bool {
         let candidatePath = candidate.path
         let rootPath = root.path
         return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
