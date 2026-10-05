@@ -163,7 +163,13 @@ final class AgentChannelInboundRelay {
             providerRoute: request.providerRoute
         )
         guard activePartitions.insert(partition.externalSessionKey).inserted else {
-            return .suppressed("conversation_already_running")
+            return await steerRunningTurn(
+                request,
+                content: content,
+                target: target,
+                rule: resolution.matchedRule,
+                partition: partition
+            )
         }
 
         let safety = await safetyGate.authorize(
@@ -226,6 +232,83 @@ final class AgentChannelInboundRelay {
             )
         }
         return .dispatched(target: target, rule: resolution.matchedRule)
+    }
+
+    /// A message for a conversation whose turn is still streaming joins that
+    /// turn at its next iteration boundary instead of waiting for a new one,
+    /// so the agent keeps its in-flight work and answers everything together
+    /// (#2988). `run` sends anything that missed the last boundary as the
+    /// follow-up turn.
+    private func steerRunningTurn(
+        _ request: AgentChannelInboundRelayRequest,
+        content: String,
+        target: AgentDispatchTarget,
+        rule: String,
+        partition: AgentChannelSessionPartition
+    ) async -> AgentChannelInboundRelaySubmission {
+        guard request.attachments.isEmpty,
+            let runningId = taskManager.runningTaskId(
+                source: .channel,
+                externalSessionKey: partition.externalSessionKey,
+                target: target
+            )
+        else {
+            return .suppressed("conversation_already_running")
+        }
+        // Rate limits and content assessment still apply. `.receive` does not
+        // reserve a remote task slot: the steer rides the running task's.
+        let safety = await safetyGate.authorize(
+            ChannelRemoteSafetyRequest(
+                identity: request.identity,
+                action: .receive,
+                content: content,
+                taskId: request.providerEventId
+            )
+        )
+        guard safety.allowed else {
+            await auditLog.record(
+                AgentChannelAuditEvent(
+                    kind: .taskFailed,
+                    status: .rejected,
+                    connectionId: request.connectionId,
+                    agentId: target.localId,
+                    auditKey: request.providerEventId,
+                    failure: AgentChannelFailure(
+                        code: safety.reason == .rateLimited ? .rateLimited : .dispatchUnavailable,
+                        message: safety.message,
+                        retryable: safety.reason == .rateLimited
+                    ),
+                    metadata: ["reason": safety.reason.rawValue]
+                )
+            )
+            return .suppressed(safety.reason.rawValue)
+        }
+        let prompt = ChannelRemoteSafetyGate.wrapUntrustedContent(
+            content,
+            source: request.sourceLabel,
+            assessment: safety.contentAssessment
+        )
+        guard taskManager.steerTask(runningId, text: prompt) else {
+            return .suppressed("conversation_already_running")
+        }
+        NSLog("[AgentChannelInboundRelay] Steered message %@ into the running turn", request.providerEventId)
+        await auditLog.record(
+            AgentChannelAuditEvent(
+                kind: .dispatchStarted,
+                status: .dispatched,
+                connectionId: request.connectionId,
+                agentId: target.localId,
+                sessionId: runningId,
+                auditKey: request.providerEventId,
+                metadata: [
+                    "conversation_hash": partition.conversationHash,
+                    "external_session_key": partition.externalSessionKey,
+                    "dispatch_rule": rule,
+                    "steered": "true",
+                ]
+            )
+        )
+        return .dispatched(target: target, rule: rule)
     }
 
     private func run(
@@ -319,6 +402,34 @@ final class AgentChannelInboundRelay {
 
         revealConversationIfPreferred(taskId: taskId)
 
+        var turnStartedAt = runStartedAt
+        while true {
+            await deliverReply(request, taskId: taskId, agentId: agentId, runStartedAt: turnStartedAt)
+            // Steered messages that arrived after the last iteration boundary
+            // have not been answered yet: they become the follow-up turn.
+            let leftover = taskManager.takeRemoteSteers(taskId)
+            guard !leftover.isEmpty else { break }
+            turnStartedAt = Date()
+            guard taskManager.submitQuickReply(taskId, text: leftover.joined(separator: "\n\n")) else {
+                await recordFailure(
+                    request,
+                    agentId: agentId,
+                    sessionId: taskId,
+                    code: .dispatchUnavailable,
+                    message: "\(leftover.count) message(s) arrived while the agent was working but the turn ended before they could be answered."
+                )
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    private func deliverReply(
+        _ request: AgentChannelInboundRelayRequest,
+        taskId: UUID,
+        agentId: UUID?,
+        runStartedAt: Date
+    ) async {
         let terminal = await waitForReply(taskId: taskId, runStartedAt: runStartedAt)
         switch terminal {
         case .reply(let text, let awaitingClarification, let artifacts):
