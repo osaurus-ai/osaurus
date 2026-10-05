@@ -30,6 +30,7 @@ struct FollowUpSuggestionsBar: View {
 
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
     @State private var hoveredIndex: Int? = nil
     /// Drives the entrance animation. Starts already-revealed when `animate`
     /// is false so a replayed cell renders in its final state immediately.
@@ -65,7 +66,8 @@ struct FollowUpSuggestionsBar: View {
 
                 ForEach(Array(suggestions.enumerated()), id: \.offset) { index, suggestion in
                     if index > 0 {
-                        rowDivider
+                        // Hidden beside the hovered row; its highlight is the edge.
+                        rowDivider(hidden: hoveredIndex == index || hoveredIndex == index - 1)
                             .modifier(RevealModifier(appeared: appeared, animation: reveal(index: index)))
                     }
                     suggestionRow(index: index, suggestion: suggestion)
@@ -85,11 +87,14 @@ struct FollowUpSuggestionsBar: View {
     }
 
     /// Hairline separator between rows. A full-weight `Divider` reads too harsh
-    /// here, so this is a thin, low-opacity line.
-    private var rowDivider: some View {
+    /// here, so this is a thin, low-opacity line. Exactly one device pixel: a
+    /// fixed 0.5pt line straddles two pixels on 1x displays (or at fractional
+    /// row offsets) and renders at half strength, so some rows looked muted.
+    private func rowDivider(hidden: Bool) -> some View {
         theme.inputBorder
-            .opacity(0.35)
-            .frame(height: 0.5)
+            .opacity(hidden ? 0 : 0.35)
+            .frame(height: 1 / max(displayScale, 1))
+            .animation(.easeOut(duration: 0.15), value: hidden)
     }
 
     private var header: some View {
