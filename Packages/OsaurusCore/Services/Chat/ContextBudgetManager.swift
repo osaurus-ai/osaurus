@@ -98,9 +98,11 @@ public struct ContextBreakdown: Equatable, Sendable {
         inputTokens: Int = 0,
         outputTokens: Int = 0
     ) -> ContextBreakdown {
-        var ctx: [Entry] = manifest.sections
-            .filter { $0.estimatedTokens > 0 }
-            .map { Entry(id: $0.id, label: $0.label, tokens: $0.estimatedTokens, tint: tint(for: $0.id)) }
+        var ctx: [Entry] = manifest.sections.compactMap { section in
+            let tokens = section.estimatedTokens
+            guard tokens > 0 else { return nil }
+            return Entry(id: section.id, label: section.label, tokens: tokens, tint: tint(for: section.id))
+        }
         if memoryTokens > 0 {
             ctx.append(Entry(id: "memory", label: L("Memory"), tokens: memoryTokens, tint: tint(for: "memory")))
         }
