@@ -307,7 +307,8 @@ public enum SecureChannel {
             sid: sid,
             sendKey: s2c,
             receiveKey: c2s,
-            expiresAt: Date(timeIntervalSince1970: TimeInterval(expiresAt))
+            expiresAt: Date(timeIntervalSince1970: TimeInterval(expiresAt)),
+            agentAddress: hello.agentAddress.lowercased()
         )
         return (session, serverHello)
     }
@@ -435,6 +436,10 @@ public final class SecureChannelSession: @unchecked Sendable {
 
     public let sid: String
     public let expiresAt: Date
+    /// Server: the address the client handshook with (an agent, or the
+    /// Mac's connect identity), so a route can tell which agent it reached
+    /// the Mac through.
+    public let agentAddress: String?
 
     private let role: Role
     /// Key for frames this side emits (client: c2s; server: s2c).
@@ -451,9 +456,17 @@ public final class SecureChannelSession: @unchecked Sendable {
     private var replayWindow: UInt64 = 0
     private static let replayWindowSize: UInt64 = 64
 
-    init(role: Role, sid: String, sendKey: SymmetricKey, receiveKey: SymmetricKey, expiresAt: Date) {
+    init(
+        role: Role,
+        sid: String,
+        sendKey: SymmetricKey,
+        receiveKey: SymmetricKey,
+        expiresAt: Date,
+        agentAddress: String? = nil
+    ) {
         self.role = role
         self.sid = sid
+        self.agentAddress = agentAddress
         self.sendKey = sendKey
         self.receiveKey = receiveKey
         self.expiresAt = expiresAt

@@ -291,6 +291,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// `/agents/{id}/dispatch`) check this to reject non-loopback
         /// plaintext with 426.
         var isSecureChannel: Bool = false
+        /// The address that Secure Channel was opened with: the agent (or
+        /// the connect identity) the caller reaches this Mac through.
+        var secureChannelAgentAddress: String?
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -458,6 +461,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.bodyBytesSeen = 0
             stateRef.value.rejectedTooLarge = false
             stateRef.value.isSecureChannel = false
+            stateRef.value.secureChannelAgentAddress = nil
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
             stateRef.value.callerHasVerifiedAccessKey = false
@@ -5682,6 +5686,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
         }
         let isDelete = head.method == .DELETE
+        // The agent this request came in through, which it must not delete.
+        let connectedThrough = stateRef.value.secureChannelAgentAddress
 
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
@@ -5690,7 +5696,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let outcome: (status: HTTPResponseStatus, json: String)
             do {
                 if isDelete {
-                    let deleted = try await PhoneAgentEditing.delete(agentId)
+                    let deleted = try await PhoneAgentEditing.delete(agentId, connectedThrough: connectedThrough)
                     outcome =
                         deleted
                         ? (.ok, #"{"ok":true}"#)
@@ -8036,6 +8042,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return nil
         }
+        stateRef.value.secureChannelAgentAddress = session.agentAddress
 
         let plaintext: Data
         let requestSeq: UInt64

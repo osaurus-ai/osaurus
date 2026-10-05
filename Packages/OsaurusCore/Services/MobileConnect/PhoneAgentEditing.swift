@@ -42,6 +42,9 @@ enum PhoneAgentEditing {
         case sandboxUnavailable
         /// Shared to a workspace: teammates would keep a row nobody can reach.
         case sharedInWorkspace
+        /// The agent the phone's Secure Channel (and relay tunnel) runs
+        /// through: deleting it would cut the phone off.
+        case connectionAgent
 
         /// `(status, error code, message)` for the reply.
         var reply: (status: Int, code: String, message: String) {
@@ -54,6 +57,12 @@ enum PhoneAgentEditing {
                 return (409, "sandbox_unavailable", "This Mac can't run the sandbox.")
             case .sharedInWorkspace:
                 return (409, "agent_shared", "Unshare this agent from its workspace on your Mac before deleting it.")
+            case .connectionAgent:
+                return (
+                    409,
+                    "agent_in_use",
+                    "Your phone is connected to your Mac through this agent. Delete it on your Mac instead."
+                )
             }
         }
     }
@@ -198,12 +207,17 @@ enum PhoneAgentEditing {
     }
 
     /// Deletes a custom agent as the Mac's Delete Agent does, refusing one
-    /// still shared to a workspace as the Mac does. False when the delete
-    /// itself fails.
+    /// still shared to a workspace as the Mac does, and the one the phone
+    /// is connected through (`connectedThrough`, its Secure Channel's
+    /// address): with it gone the phone has no channel or relay tunnel left
+    /// to reach the Mac by. False when the delete itself fails.
     @MainActor
-    static func delete(_ agentId: UUID) async throws -> Bool {
+    static func delete(_ agentId: UUID, connectedThrough: String? = nil) async throws -> Bool {
         guard let agent = AgentManager.shared.agent(for: agentId), !agent.isBuiltIn else {
             throw EditError.notEditable
+        }
+        if let connectedThrough, agent.agentAddress?.lowercased() == connectedThrough.lowercased() {
+            throw EditError.connectionAgent
         }
         if let address = agent.agentAddress,
             !WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address).isEmpty
