@@ -5382,69 +5382,83 @@ public actor ModelRuntime {
         return false
     }
 
-    /// Identity of the weights on disk, cheap enough to recompute on every load.
-    ///
-    /// The prefix cache is keyed by model *name*, and a name is not an identity: a
-    /// re-quantized bundle installed over the old one (MXFP4 -> MXFP8, a re-bake,
-    /// any weight edit) keeps its name, its layer count, its head dims and its KV
-    /// mode — every tag the key carried. The key was therefore byte-identical
-    /// across the swap, and the new weights would restore the OLD weights' KV and
-    /// continue generating from activations that never came from them. Silent, and
-    /// exactly the kind of thing that reads as "the quant is bad".
-    ///
-    /// `stat` per shard, not a content hash: digesting 94 GB on every load is not
-    /// affordable, and (size, mtime) over the shard set already changes on any real
-    /// re-bake. This is a cache *invalidation* key, not a security boundary — the
-    /// cost of a false miss is one slow prefill, so erring toward missing is right.
+    /// Cache invalidation identity, without reading weight payloads. Loader metadata
+    /// is content-hashed so same-size, timestamp-preserving edits cannot reuse KV.
+    /// Weight shards use inode/device, size, and nanosecond modification/change
+    /// timestamps. This is not a cryptographic weight identity: a filesystem that
+    /// preserves every recorded shard attribute can still conceal a weight edit.
     nonisolated static func weightsFingerprint(for directory: URL) -> String {
-        let fm = FileManager.default
+        let metadataNames: Set<String> = [
+            "config.json", "generation_config.json", "jang_config.json", "osaurus.json",
+            "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
+            "tokenizer.model", "vocab.json", "merges.txt", "chat_template.jinja",
+            "processor_config.json", "preprocessor_config.json",
+        ]
         guard
-            let entries = try? fm.contentsOfDirectory(
+            let entries = try? FileManager.default.contentsOfDirectory(
                 at: directory,
-                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+                includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             )
-        else {
-            // Unreadable bundle: fall back to a value that never matches a previous
-            // load, so we take a cold prefill rather than risk a wrong-weights hit.
-            return "unknown-\(UUID().uuidString)"
-        }
+        else { return "unknown-\(UUID().uuidString)" }
+        let relevant = entries.filter {
+            let name = $0.lastPathComponent
+            return name.hasSuffix(".safetensors") || metadataNames.contains(name)
+                || name.hasSuffix(".safetensors.index.json")
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard !relevant.isEmpty else { return "unknown-\(UUID().uuidString)" }
 
-        // Weights and the files that change how they are interpreted. A tokenizer or
-        // config edit changes token ids / rope / quant metadata, which invalidates a
-        // stored KV just as surely as a weight edit does.
-        let interesting = entries.filter { url in
-            let name = url.lastPathComponent
-            return name.hasSuffix(".safetensors")
-                || name == "config.json"
-                || name == "tokenizer.json"
-                || name == "tokenizer_config.json"
+        func statIdentity(_ info: stat) -> String {
+            "\(info.st_dev):\(info.st_ino):\(info.st_size):"
+                + "\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):"
+                + "\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)"
         }
-
-        let parts =
-            interesting
-            .map { url -> String in
-                let values = try? url.resourceValues(forKeys: [
-                    .fileSizeKey, .contentModificationDateKey,
-                ])
-                let size = values?.fileSize ?? -1
-                let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? -1
-                return "\(url.lastPathComponent):\(size):\(Int(mtime))"
+        // Bound metadata IO, including unexpectedly large tokenizer/index files.
+        // An unreadable or oversized bundle gets a cold namespace, never a partial
+        // reusable fingerprint. Normal weight shards are stat-only at any size.
+        var remainingMetadataBytes = 128 * 1024 * 1024
+        var parts = ["bundle-cache-identity-v2"]
+        for url in relevant {
+            let component: String? = url.path.withCString { path in
+                let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK)
+                guard fd >= 0 else { return nil }
+                defer { Darwin.close(fd) }
+                var before = stat()
+                guard Darwin.fstat(fd, &before) == 0,
+                    (before.st_mode & S_IFMT) == S_IFREG, before.st_size >= 0
+                else { return nil }
+                if url.pathExtension == "safetensors" {
+                    return "shard:\(url.lastPathComponent):\(statIdentity(before))"
+                }
+                guard before.st_size <= 64 * 1024 * 1024,
+                    before.st_size <= remainingMetadataBytes
+                else { return nil }
+                remainingMetadataBytes -= Int(before.st_size)
+                var hash = SHA256()
+                var remaining = Int(before.st_size)
+                var buffer = [UInt8](repeating: 0, count: min(1024 * 1024, remaining))
+                while remaining > 0 {
+                    let count = min(buffer.count, remaining)
+                    let readCount = buffer.withUnsafeMutableBytes { bytes in
+                        Darwin.read(fd, bytes.baseAddress, count)
+                    }
+                    if readCount < 0 && errno == EINTR { continue }
+                    guard readCount > 0 else { return nil }
+                    hash.update(data: Data(buffer.prefix(readCount)))
+                    remaining -= readCount
+                }
+                var after = stat()
+                guard Darwin.fstat(fd, &after) == 0,
+                    statIdentity(before) == statIdentity(after)
+                else { return nil }
+                let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
+                return "metadata:\(url.lastPathComponent):\(digest)"
             }
-            .sorted()
-
-        guard !parts.isEmpty else { return "empty" }
-
-        // FNV-1a, not `hashValue`: Swift seeds `Hasher` per process, so a
-        // `hashValue`-derived key would differ on every launch and the prefix cache
-        // would never hit again — trading a correctness bug for a performance one.
-        // This must be stable across launches and across machines.
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-        for byte in parts.joined(separator: "|").utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 0x0000_0100_0000_01b3
+            guard let component else { return "unknown-\(UUID().uuidString)" }
+            parts.append(component)
         }
-        return String(format: "%016llx", hash)
+        let digest = SHA256.hash(data: Data(parts.joined(separator: "\n").utf8))
+        return String(digest.map { String(format: "%02x", $0) }.joined().prefix(16))
     }
 
     /// Match the loader's optional tied-head policy, including explicit bench
