@@ -1170,7 +1170,9 @@ enabled. `blocked_by` lists ungranted requirements or missing system
 permissions.
 `enabled` is the Mac-wide switch; `agent_enabled` whether this agent has the
 tool on, and `built_in` marks the tools every agent has while its Tools
-switch is on, which can't be picked one by one (§14.11).
+switch is on, which can't be picked one by one (§14.11). A built-in is
+`agent_enabled` only while that switch is on, and an Apple app's tools only
+while the app is on in the agent's Abilities.
 
 ### 14.5 Continuing a Mac chat
 
@@ -1210,7 +1212,9 @@ when the name is not registered; the name is percent-decoded. Owner-only.
 
 `{"agent_enabled":false}` turns a plugin or MCP tool off for `{id}` alone
 (§14.11), leaving it on for other agents. `400 bad_request` for a built-in
-tool, `403 agent_not_editable` for a built-in agent.
+tool, `403 agent_not_editable` for a built-in agent, `409 tools_loading` while
+the Mac has no plugin or MCP tools loaded to start the agent's own list from
+(written then, it would leave every other tool off once they load).
 
 A body is applied whole or not at all: any field that is present but invalid
 (an unknown `policy`, a non-boolean switch) refuses it with `400

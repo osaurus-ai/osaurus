@@ -65,4 +65,11 @@ struct PhoneAgentDeleteTests {
         #expect(reply.status == 409)
         #expect(reply.code == "agent_shared")
     }
+
+    @Test func connectionAgentAndLoadingToolsAreConflicts() {
+        #expect(PhoneAgentEditing.EditError.connectionAgent.reply.status == 409)
+        #expect(PhoneAgentEditing.EditError.connectionAgent.reply.code == "agent_in_use")
+        #expect(PhoneAgentEditing.EditError.toolsLoading.reply.status == 409)
+        #expect(PhoneAgentEditing.EditError.toolsLoading.reply.code == "tools_loading")
+    }
 }

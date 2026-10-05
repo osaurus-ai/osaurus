@@ -45,6 +45,9 @@ enum PhoneAgentEditing {
         /// The agent the phone's Secure Channel (and relay tunnel) runs
         /// through: deleting it would cut the phone off.
         case connectionAgent
+        /// The Mac's plugin and MCP tools haven't loaded, so the agent's
+        /// own list can't be started yet.
+        case toolsLoading
 
         /// `(status, error code, message)` for the reply.
         var reply: (status: Int, code: String, message: String) {
@@ -57,6 +60,8 @@ enum PhoneAgentEditing {
                 return (409, "sandbox_unavailable", "This Mac can't run the sandbox.")
             case .sharedInWorkspace:
                 return (409, "agent_shared", "Unshare this agent from its workspace on your Mac before deleting it.")
+            case .toolsLoading:
+                return (409, "tools_loading", "Your Mac is still loading its tools. Try again in a moment.")
             case .connectionAgent:
                 return (
                     409,
@@ -248,12 +253,18 @@ enum PhoneAgentEditing {
         return registry.builtInToolNames.contains(name) || registry.runtimeManagedToolNames.contains(name)
     }
 
-    /// Whether the agent has the tool on. Built-ins follow its switches, so
-    /// they count as on; a plugin or MCP tool is on unless the agent's own
-    /// list leaves it out (no list yet means every tool, as on the Mac).
+    /// Whether the agent has the tool on. Built-ins follow its switches: on
+    /// while its Tools switch is, and an Apple app's tools only when that
+    /// app is on in its Abilities. A plugin or MCP tool is on unless the
+    /// agent's own list leaves it out (no list yet means every tool, as on
+    /// the Mac); that list is kept while Tools is off, so it shows as is.
     @MainActor
     static func agentHasTool(_ name: String, agent: Agent) -> Bool {
-        if isBuiltInTool(name) { return true }
+        if let app = AppleApp.app(forTool: name) {
+            return agent.toolsEnabled
+                && AgentManager.shared.effectiveCapabilities(for: agent.id).enabledAppleApps.contains(app)
+        }
+        if isBuiltInTool(name) { return agent.toolsEnabled }
         guard let allowed = AgentManager.shared.effectiveEnabledToolNames(for: agent.id) else { return true }
         return allowed.contains(name)
     }
@@ -267,7 +278,13 @@ enum PhoneAgentEditing {
             throw EditError.badRequest("Built-in tools follow the agent's own switches")
         }
         seedToolListIfNeeded(for: agentId)
-        var names = Set(manager.effectiveEnabledToolNames(for: agentId) ?? [])
+        // Still no list: the Mac has no plugin or MCP tools loaded yet to
+        // seed it with. Writing one now would leave just this tool, and turn
+        // every other off once they load; the Mac's own picker refuses too.
+        guard let current = manager.effectiveEnabledToolNames(for: agentId) else {
+            throw EditError.toolsLoading
+        }
+        var names = Set(current)
         if enabled { names.insert(name) } else { names.remove(name) }
         manager.updateEnabledToolNames(names.sorted(), for: agentId)
     }
