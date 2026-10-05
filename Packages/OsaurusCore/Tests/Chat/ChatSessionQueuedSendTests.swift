@@ -495,6 +495,35 @@ struct ChatSessionQueuedSendTests {
     }
 
     @Test
+    func injectQueuedSteer_joinsRemoteSteersAheadOfComposerSteer() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.turns.append(ChatTurn(role: .user, content: "What's the weather"))
+            session.remoteSteers = ["in phx", "and Cleveland"]
+            session.enqueueSend("in fahrenheit", attachments: [])
+
+            #expect(session.injectQueuedSteerIfEligible())
+
+            #expect(session.remoteSteers.isEmpty)
+            #expect(session.queuedSend == nil)
+            let userTurns = session.turns.filter { $0.role == .user }
+            #expect(userTurns.map(\.content) == ["What's the weather", "in phx\n\nand Cleveland\n\nin fahrenheit"])
+        }
+    }
+
+    @Test
+    func injectQueuedSteer_remoteSteersAloneInjectOneTurn() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.remoteSteers = ["2", "3"]
+
+            #expect(session.injectQueuedSteerIfEligible())
+            #expect(session.turns.map(\.content) == ["2\n\n3"])
+            #expect(session.injectQueuedSteerIfEligible() == false)
+        }
+    }
+
+    @Test
     func injectQueuedSteer_noOpWhenQueueEmpty() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()

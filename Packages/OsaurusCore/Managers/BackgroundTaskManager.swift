@@ -767,6 +767,49 @@ public final class BackgroundTaskManager: ObservableObject {
         return true
     }
 
+    /// The task currently streaming for this grouping key, or nil. The
+    /// running twin of `replyableTaskId`, used to steer a live turn.
+    public func runningTaskId(
+        source: SessionSource,
+        externalSessionKey: String,
+        target: AgentDispatchTarget
+    ) -> UUID? {
+        backgroundTasks.values.first { state in
+            guard state.source == source,
+                state.externalSessionKey == externalSessionKey,
+                state.target == target,
+                case .running = state.status
+            else { return false }
+            return state.chatSession?.isStreaming == true
+        }?.id
+    }
+
+    /// Hand a running task a new user message without stopping it. The text
+    /// joins the conversation at the loop's next iteration boundary, so the
+    /// agent sees it after the current tool call returns. Text that misses
+    /// the last boundary stays queued for `takeRemoteSteers`. Returns false
+    /// when the task is not streaming, so the caller dispatches normally.
+    public func steerTask(_ backgroundId: UUID, text: String) -> Bool {
+        // Inbound shared-agent runs belong to the remote caller; the host
+        // cannot write into their conversation.
+        guard let state = backgroundTasks[backgroundId], !state.isSubagentMirror, !state.isInboundRun,
+            let session = state.chatSession, session.isStreaming
+        else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        session.remoteSteers.append(trimmed)
+        return true
+    }
+
+    /// Steers that arrived too late for the run's last iteration boundary.
+    /// The caller that queued them sends these as the follow-up turn.
+    public func takeRemoteSteers(_ backgroundId: UUID) -> [String] {
+        guard let session = backgroundTasks[backgroundId]?.chatSession else { return [] }
+        let leftover = session.remoteSteers
+        session.remoteSteers = []
+        return leftover
+    }
+
     /// Soft-stop a running task by cancelling its current stream.
     ///
     /// When `message` is non-empty, the trimmed content is appended to the

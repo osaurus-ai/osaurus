@@ -369,6 +369,13 @@ final class ChatSession: ObservableObject {
     /// user turn.
     @Published var queuedSend: QueuedSend?
 
+    /// Text from a remote surface (a channel message) that arrived while a
+    /// run was streaming. Joined into the next iteration boundary like a
+    /// composer steer, but never flushed at run end: whoever queued it owns
+    /// the follow-up turn and drains leftovers with
+    /// `BackgroundTaskManager.takeRemoteSteers`, so it can wait for that reply.
+    var remoteSteers: [String] = []
+
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
     @Published var title: String = "New Chat"
@@ -2752,15 +2759,23 @@ final class ChatSession: ObservableObject {
     /// stay queued for the run-end flush / Send Now. The injected text rides
     /// the normal outbound request pipeline, so the privacy filter scrubs it
     /// exactly like any other user message.
+    ///
+    /// Remote steers (`remoteSteers`) join the same turn ahead of the
+    /// composer's, in arrival order.
     @discardableResult
     func injectQueuedSteerIfEligible() -> Bool {
-        guard let pending = queuedSend,
+        var texts = remoteSteers
+        remoteSteers = []
+        if let pending = queuedSend,
             pending.attachments.isEmpty,
             pending.oneOffSkillId == nil,
             !pending.text.isEmpty
-        else { return false }
-        queuedSend = nil
-        let turn = ChatTurn(role: .user, content: pending.text)
+        {
+            queuedSend = nil
+            texts.append(pending.text)
+        }
+        guard !texts.isEmpty else { return false }
+        let turn = ChatTurn(role: .user, content: texts.joined(separator: "\n\n"))
         appendMidRunUserTurn(turn)
         isDirty = true
         rebuildVisibleBlocks()
@@ -3013,6 +3028,7 @@ final class ChatSession: ObservableObject {
         pendingAttachments = []
         pendingOneOffSkillId = nil
         queuedSend = nil
+        remoteSteers = []
         modelSwitchContinuityWarning = nil
         voiceInputState = .idle
         showVoiceOverlay = false
@@ -3611,6 +3627,7 @@ final class ChatSession: ObservableObject {
         restoreDraft()
         pendingOneOffSkillId = nil
         queuedSend = nil
+        remoteSteers = []
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
         awaitingPreSendHandshake = false
