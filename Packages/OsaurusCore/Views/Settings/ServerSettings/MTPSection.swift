@@ -69,8 +69,9 @@ struct MTPSection: View {
                 Picker("", selection: Binding(
                     get: { draft.mtp.mode == .off ? VMLXMTPServerMode.off : .auto },
                     set: { mode in
-                        draft.mtp.mode = mode
-                        draft.mtp = NativeMTPSelectionDefault.adaptiveSelection(draft.mtp)
+                        var selection = draft.mtp
+                        selection.mode = mode
+                        draft.mtp = NativeMTPSelectionDefault.adaptiveSelection(selection)
                     }
                 )) {
                     Text(L("Off (AR)")).tag(VMLXMTPServerMode.off)
