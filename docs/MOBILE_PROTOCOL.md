@@ -1044,10 +1044,12 @@ Changes a custom agent as the Mac's agent editor does. Any of `name`,
 (0–2) and `max_tokens` (1–1,000,000); a field left out is untouched, and
 `null` puts `temperature` / `max_tokens` back to the model's default. The
 name is trimmed and capped at 80 characters; the description is kept to one
-line. Turning `autonomous_exec_enabled` on also starts the sandbox.
+line. Turning `autonomous_exec_enabled` on also starts the sandbox, without
+waiting for it: a cold start can download for minutes. A failed start is
+logged on the Mac and the switch stays on, as when the Mac starts it at launch.
 
-`{"ok":true}` on success, plus `"warning"` when the switch was saved but the
-sandbox failed to start; `GET /agents/{id}` then has the new values.
+`{"ok":true}` on success; `GET /agents/{id}` then has the new values.
+`500 edit_failed` when saving fails.
 `400 bad_request` for a malformed or out-of-range field, `403
 agent_not_editable` for an unknown or built-in agent, `409
 sandbox_unavailable` for Autonomous Execution on a Mac that can't run it.

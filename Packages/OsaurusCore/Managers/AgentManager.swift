@@ -1329,7 +1329,15 @@ extension AgentManager {
     /// coalesced first-use task, so UI success means real tools are ready.
     /// Provisioning itself still has one owner (`SandboxToolRegistrar`);
     /// this manager never races a direct `ensureProvisioned` call against it.
-    public func updateAutonomousExec(_ config: AutonomousExecConfig?, for agentId: UUID) async throws {
+    /// `waitForSandbox: false` saves the switch and starts the sandbox without
+    /// waiting for it, as the paired phone needs: a cold boot can download for
+    /// minutes, longer than its request lives. A failure is then only logged,
+    /// as it is for the Mac's own launch-time boot.
+    public func updateAutonomousExec(
+        _ config: AutonomousExecConfig?,
+        for agentId: UUID,
+        waitForSandbox: Bool = true
+    ) async throws {
         let wasEnabled = effectiveAutonomousExec(for: agentId)?.enabled ?? false
         let willBeEnabled = config?.enabled ?? false
 
@@ -1352,7 +1360,17 @@ extension AgentManager {
             // provisioning if needed), bypassing the `setupComplete` gate that
             // keeps the default-ON chip from auto-downloading at launch.
             // `provisionOnDemand` resets the startup-failure tracking for us.
-            try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+            if waitForSandbox {
+                try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+            } else {
+                Task { @MainActor in
+                    do {
+                        try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+                    } catch {
+                        print("[Osaurus] Sandbox failed to start for agent \(agentId): \(error)")
+                    }
+                }
+            }
         }
 
         // Mirror the per-agent egress choice onto the shared sandbox config

@@ -186,12 +186,13 @@ enum PhoneAgentEditing {
         case nil: break
         }
         manager.update(agent)
-        // Last, through the call that also boots the sandbox when it turns on.
+        // Last, through the call that also boots the sandbox when it turns on:
+        // started, not waited for, as a cold boot outlives the request.
         if let enabled = patch.autonomousExecEnabled {
             var config = manager.effectiveAutonomousExec(for: agentId) ?? .default
             if config.enabled != enabled {
                 config.enabled = enabled
-                try await manager.updateAutonomousExec(config, for: agentId)
+                try await manager.updateAutonomousExec(config, for: agentId, waitForSandbox: false)
             }
         }
     }

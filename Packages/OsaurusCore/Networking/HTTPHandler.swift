@@ -5706,10 +5706,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } catch let error as PhoneAgentEditing.EditError {
                 outcome = Self.agentEditFailure(error)
             } catch {
-                // The sandbox failed to start; the switch is saved on.
+                // The sandbox boots after the reply (`waitForSandbox: false`),
+                // so anything here really failed.
                 outcome = (
-                    .ok,
-                    Self.jsonObjectString(["ok": true, "warning": error.localizedDescription])
+                    .internalServerError,
+                    Self.jsonObjectString(["error": "edit_failed", "message": error.localizedDescription])
                 )
             }
             hop {
