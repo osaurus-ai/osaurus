@@ -144,6 +144,7 @@ public enum ServerRuntimeSettingsStore {
             }?.mtp
             ?? VMLXServerMTPSettings()
         var settings = canonicalizedContextAndKVPolicy(settings)
+        settings.mtp = NativeMTPSelectionDefault.adaptiveSelection(settings.mtp)
         // Anything we write is by definition current-schema, so stamp it.
         //
         // Without this a saved value could carry a stale (or absent)
@@ -160,7 +161,10 @@ public enum ServerRuntimeSettingsStore {
             try encoder.encode(settings).write(to: url, options: [.atomic])
             if recordMTPChoice {
                 NativeMTPSelectionDefault.recordSavedChoice(
-                    previous: previousMTP,
+                    // A cold save may read the legacy representation directly
+                    // from disk. Compare the same representation on both sides
+                    // so an unrelated edit does not become an explicit MTP choice.
+                    previous: NativeMTPSelectionDefault.adaptiveSelection(previousMTP),
                     next: settings.mtp,
                     isFamilyDefault: mtpSelectionIsFamilyDefault
                 )
@@ -387,7 +391,8 @@ public enum ServerRuntimeSettingsStore {
         // Native MTP now requires opt-in. Never repair an explicit Off to Auto.
         // Retire only defaults whose provenance was recorded by the old family
         // selector, including API-only launches with no chat view present.
-        normalized.mtp = NativeMTPSelectionDefault.retiringOwnedDefault(normalized.mtp)
+        normalized.mtp = NativeMTPSelectionDefault.adaptiveSelection(
+            NativeMTPSelectionDefault.retiringOwnedDefault(normalized.mtp))
         // Osaurus product default for block-diffusion models: 16 denoising
         // steps (~74 tok/s on diffusiongemma-26B-A4B MXFP4, coherent) vs the
         // bundle's 48 (~37 tok/s). Seeded exactly once; afterwards a blank

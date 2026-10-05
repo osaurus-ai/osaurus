@@ -115,22 +115,21 @@ advanced overrides remain in force. Disabling the delegation check does not sile
 rewrite those server settings. Decisions report `ram_safety_enabled`; when false,
 `ram_slots` is diagnostic and does not limit the admitted capacity.
 
-## Speculative decoding
+## Native MTP
 
-Native MTP starts **Off**. Selecting a compatible local model shows **Speculative
-Depth** in the model picker's options after its configuration and weight headers
-are inspected; sending a request or loading weights is not required. Choose
-**Auto** or a maximum depth of **1–3** to opt in. The runtime can lower that depth
-or use ordinary decoding when speculation does not help. Sampling settings remain
-independent. Models without an executable MTP head do not advertise these controls.
+Native MTP starts **Off (AR)**. **On (Adaptive)** requests the runtime's adaptive
+speculative policy for an eligible local model, including Qwen 27B and Flash Next
+in supported affine and JANGH bundles. The runtime chooses its depth; there are
+no user depth buttons or native draft-token limits. Sampling remains bundle-driven
+unless you explicitly override it.
 
-The same global setting lives under Server → Settings → **Speculative Decoding**
-and applies to Chat and API requests. Saved explicit choices survive model
-selection and relaunch. Old defaults are turned off only when the app recorded
-that it chose them automatically. An explicitly selected DFlash 2 drafter is a
-separate opt-in; remove its folder selection to stop using it.
-
-Force On requires verified bundle tuning unless an eligible manual depth is selected in Chat. If the bundle cannot honor that selection, Chat and API requests report a policy error; they do not silently change to ordinary decoding. A selected DFlash 2 drafter remains a separate explicit setting.
+On is a request, not proof of active speculation. Missing heads, blocked bundles
+and missing verified tuning can keep ordinary decoding active. Server → Settings →
+**Speculative Decoding** shows the loaded model's actual resolution and reason.
+Remote models do not expose this local control. Explicit Off survives reload;
+legacy manual depths migrate to Adaptive and are re-evaluated by runtime admission.
+A selected **DFlash 2 Drafter** remains a separate external-drafter choice; remove
+that selection to stop it. Native MTP Off does not disable an external drafter.
 
 ## Local model memory
 

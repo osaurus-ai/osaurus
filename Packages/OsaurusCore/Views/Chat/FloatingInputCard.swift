@@ -2501,10 +2501,8 @@ extension FloatingInputCard {
             .lowercased()
     }
 
-    /// Off / Auto / 1 / 2 / 3, beside Reasoning Effort in the picker's Model
-    /// Options. Auto starts from the runtime's eligible recommendation and
-    /// explores within its configured limit. Explicit 1-3 selections activate
-    /// an eligible head and bound exploration by the selected depth.
+    /// Product selection requests adaptive admission; runtime resolution can
+    /// remain autoregressive when the bundle is missing verified tuning.
     private func nativeMTPOption(for model: String) -> ModelOptionDefinition? {
         let identity = Self.mtpIdentity(model)
         guard !isRemoteAgentRun,
@@ -2513,17 +2511,14 @@ extension FloatingInputCard {
         let manuallyBlocked = nativeMTPManuallyBlockedModels.contains(identity)
         return ModelOptionDefinition(
             id: Self.nativeMTPOptionID,
-            label: L("Speculative Depth"),
+            label: L("Native MTP"),
             icon: "hare",
             kind: .segmented(
                 manuallyBlocked
-                    ? [ModelOptionSegment(id: "off", label: L("Off"))]
+                    ? [ModelOptionSegment(id: "off", label: L("Off (AR)"))]
                     : [
-                        ModelOptionSegment(id: "off", label: L("Off")),
-                        ModelOptionSegment(id: "auto", label: L("Auto")),
-                        ModelOptionSegment(id: "1", label: "1"),
-                        ModelOptionSegment(id: "2", label: "2"),
-                        ModelOptionSegment(id: "3", label: "3"),
+                        ModelOptionSegment(id: "off", label: L("Off (AR)")),
+                        ModelOptionSegment(id: "auto", label: L("On (Adaptive)")),
                     ]
             ),
             // Depth controls speculation, not the user's sampling settings.
@@ -2532,7 +2527,7 @@ extension FloatingInputCard {
                     "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
                 )
                 : L(
-                    "Speculative decoding starts Off. Select Auto or a maximum depth of 1–3 explicitly. The runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
+                    "Off uses ordinary autoregressive decoding. On requests adaptive native MTP when the bundle passes runtime safety and tuning checks. Ineligible bundles continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged."
                 )
         )
     }
@@ -2541,15 +2536,7 @@ extension FloatingInputCard {
     private static func nativeMTPSegment(
         _ mtp: VMLXServerMTPSettings
     ) -> String {
-        if mtp.mode == .off { return "off" }
-        if mtp.mode == .forceOn, let depth = mtp.explicitDepth, (1 ... 3).contains(depth) {
-            return String(depth)
-        }
-        // Legacy saved state: the old buttons wrote auto + draftTokenLimit,
-        // which never activated anything. Render it as the depth it claimed
-        // so the migration to a real press is one click, not a mystery.
-        if let limit = mtp.draftTokenLimit, (1 ... 3).contains(limit) { return String(limit) }
-        return "auto"
+        mtp.mode == .off ? "off" : "auto"
     }
 
     /// Writes through the same path the Settings pane uses, so there is one
@@ -2572,10 +2559,7 @@ extension FloatingInputCard {
                 settings.mtp.draftTokenLimit = nil
                 settings.mtp.explicitDepth = nil
             default:
-                guard let depth = Int(segment), (1...3).contains(depth) else { return }
-                settings.mtp.mode = .forceOn
-                settings.mtp.explicitDepth = depth
-                settings.mtp.draftTokenLimit = nil
+                return
             }
             _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings)
             // A rejected save must not leave an optimistic segment displayed.
@@ -4415,7 +4399,7 @@ extension FloatingInputCard {
             let advisory = MTPLayoutAdvisory.evaluate(bundleDirectory: bundleDir)
             // Selection must expose the controls before Send. This reads only
             // bundle metadata/headers; it neither loads nor warms the model.
-            let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
+            let capability = ModelRuntime.inspectLoadingModelMTP(name: model, directory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }

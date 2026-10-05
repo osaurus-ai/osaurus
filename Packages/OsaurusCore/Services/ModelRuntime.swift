@@ -304,13 +304,23 @@ public actor ModelRuntime {
     /// `bundleHasMTP == false`; a non-target family returns
     /// `isTargetMTPFamily == false` — no false positives on other families.
     nonisolated static func inspectLoadingModelMTP(name: String) -> LoadingModelMTPStatus? {
-        guard let dir = findLocalDirectory(forModelId: name),
-            let status = try? MTPBundleInspector.inspect(modelDirectory: dir)
+        guard let directory = findLocalDirectory(forModelId: name) else { return nil }
+        return inspectLoadingModelMTP(name: name, directory: directory)
+    }
+
+    /// Selection already resolved the installed bundle. Inspect that exact
+    /// directory rather than resolving its display name a second time, which
+    /// can select a different local alias or miss an externally found bundle.
+    /// Availability is tensor evidence; tuning eligibility stays a separate field.
+    nonisolated static func inspectLoadingModelMTP(
+        name: String, directory: URL
+    ) -> LoadingModelMTPStatus? {
+        guard let status = try? MTPBundleInspector.inspect(modelDirectory: directory)
         else { return nil }
         return LoadingModelMTPStatus(
             name: name,
             bundleHasMTP: status.bundleHasMTP,
-            isTargetMTPFamily: modelTypeIsMTPControlTarget(directory: dir),
+            isTargetMTPFamily: modelTypeIsMTPControlTarget(directory: directory),
             isBlocked: status.isExplicitlyBlocked
                 || status.nativeMTPTuning?.manualBlocked == true,
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,

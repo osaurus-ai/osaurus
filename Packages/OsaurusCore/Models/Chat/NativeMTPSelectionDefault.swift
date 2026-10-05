@@ -8,6 +8,17 @@ enum NativeMTPSelectionDefault {
     static let userChoseKey = "nativeMTPSegmentUserChose"
     static let familyDefaultKey = "nativeMTPSegmentIsFamilyDefault"
 
+    /// Product controls expose only Off (AR) and On (Adaptive). Keep the
+    /// engine's legacy fields decodable, but never persist a native depth cap.
+    /// External DFlash selection and its block size are independent.
+    static func adaptiveSelection(_ settings: VMLXServerMTPSettings) -> VMLXServerMTPSettings {
+        var result = settings
+        result.mode = settings.mode == .off ? .off : .auto
+        result.explicitDepth = nil
+        result.draftTokenLimit = nil
+        return result
+    }
+
     /// Called only after the runtime settings write succeeds. An unrelated
     /// sampler or network edit must not become an explicit MTP choice.
     static func recordSavedChoice(

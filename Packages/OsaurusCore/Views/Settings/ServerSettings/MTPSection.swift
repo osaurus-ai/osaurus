@@ -64,24 +64,21 @@ struct MTPSection: View {
             SettingsField(
                 label: "Mode",
                 hint:
-                    "Native MTP starts Off. Off disables the model's native MTP head. Auto requires verified bundle tuning. Force On requires verified tuning unless you select an eligible manual depth in Chat. A refused request reports the reason. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
+                    "Off uses autoregressive decoding. On requests adaptive native MTP when bundle safety and verified tuning allow it; otherwise ordinary decoding remains active. See the resolved reason below. A selected DFlash 2 drafter is separate and replaces native MTP."
             ) {
-                Picker("", selection: $draft.mtp.mode) {
-                    ForEach(VMLXMTPServerMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                            .tag(mode)
+                Picker("", selection: Binding(
+                    get: { draft.mtp.mode == .off ? VMLXMTPServerMode.off : .auto },
+                    set: { mode in
+                        draft.mtp.mode = mode
+                        draft.mtp = NativeMTPSelectionDefault.adaptiveSelection(draft.mtp)
                     }
+                )) {
+                    Text(L("Off (AR)")).tag(VMLXMTPServerMode.off)
+                    Text(L("On (Adaptive)")).tag(VMLXMTPServerMode.auto)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-
-            OptionalIntField(
-                label: "Draft Tokens Per Step",
-                placeholder: "Blank = engine recommendation",
-                help: "How many tokens the draft model proposes before the main model verifies.",
-                value: $draft.mtp.draftTokenLimit
-            )
 
             SettingsToggle(
                 title: L("Keep Draft Cache Separate"),
@@ -192,13 +189,8 @@ struct MTPSection: View {
 
     // MARK: - What the engine actually resolved
 
-    /// Mode is a REQUEST, not a result. A bundle whose tuning artifact never
-    /// asserted `output_equivalent` cannot run speculative decoding even on
-    /// Force-On — correctly, since that assertion IS the output-equivalence
-    /// proof — and a Draft-Tokens limit can only lower the artifact's depth,
-    /// never raise it. Both are right, and both were previously invisible: the
-    /// picker looked inert and the reason, already computed at load and
-    /// already written to the log, reached nobody.
+    /// On is a request, not proof of activation. Show the engine's resolved
+    /// strategy and reason rather than inferring activation from the picker.
     private var resolvedStateRows: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Models still warming: by-WEIGHT detection shown NOW, so the

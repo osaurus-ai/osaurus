@@ -3935,11 +3935,11 @@ struct RuntimePolicySourceTests {
             picker.contains(
                 "nativeMTPManuallyBlockedModels.contains(identity) ? \"off\" : nativeMTPSelection"
             ),
-            "A globally saved manual depth must render as Off for a bundle whose runtime blocks manual MTP."
+            "A globally saved Adaptive request must render as Off for a bundle whose runtime blocks native MTP."
         )
         #expect(
-            picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
-            "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
+            picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off (AR)\"))]"),
+            "Blocked bundles must not advertise selectable Adaptive chips."
         )
     }
 }

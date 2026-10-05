@@ -821,7 +821,7 @@ public enum SettingsSearchIndex {
             section: "Speculative Decoding",
             title: "Speculative Decoding",
             keywords: [
-                "speculative", "mtp", "native mtp", "draft model", "speculative depth", "default off",
+                "speculative", "mtp", "native mtp", "draft model", "speculative depth", "default off", "on adaptive", "off ar", "adaptive",
                 // The drafter picker lives in this card. Someone who has
                 // just downloaded a DFlash 2 checkpoint searches for its
                 // name, not for "speculative decoding".
