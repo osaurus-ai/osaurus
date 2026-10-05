@@ -61,7 +61,11 @@ enum RemoteSessionContinuation {
     ) async {
         guard !generated.isEmpty, isContinuable(sessionId) else { return }
         let now = Date()
-        let reply = generated.map { "![\(prompt)](\($0.absoluteString))" }.joined(separator: "\n\n")
+        // The prompt as the link's alt text, minus the brackets and line
+        // breaks that would end it early, or no reader (the Mac's markdown,
+        // `SessionTurnImages`, the phone) would find the image.
+        let alt = prompt.map { "[]\n\r".contains($0) ? " " : String($0) }.joined()
+        let reply = generated.map { "![\(alt)](\($0.absoluteString))" }.joined(separator: "\n\n")
         let turns = [
             ChatTurnData(role: .user, content: prompt, attachments: sourceImages.map(Attachment.image), createdAt: now),
             ChatTurnData(role: .assistant, content: reply, createdAt: now, completedAt: now),

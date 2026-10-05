@@ -12260,7 +12260,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return id
     }
 
-    /// Appends the finished exchange to `sessionId`, when there is one.
+    /// Appends the finished exchange to `sessionId`, when there is one. In
+    /// the background, as a chat run's turns are: the append waits out a
+    /// reply the Mac is streaming in that chat, which must not hold the
+    /// image back from the phone.
     private static func imageSessionAppender(
         _ sessionId: UUID?,
         prompt: String,
@@ -12269,13 +12272,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) -> (@Sendable ([GeneratedImage]) async -> Void)? {
         guard let sessionId else { return nil }
         return { images in
-            await RemoteSessionContinuation.appendImageExchange(
-                prompt: prompt,
-                sourceImages: sourceImages,
-                generated: images.map(\.url),
-                to: sessionId,
-                model: model
-            )
+            let urls = images.map(\.url)
+            Task { @MainActor in
+                await RemoteSessionContinuation.appendImageExchange(
+                    prompt: prompt,
+                    sourceImages: sourceImages,
+                    generated: urls,
+                    to: sessionId,
+                    model: model
+                )
+            }
         }
     }
 
