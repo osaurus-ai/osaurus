@@ -19,6 +19,7 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import os
 
 enum MobileConnectIdentity {
     /// The Secure Channel signing key. Device-scoped when this Mac has a
@@ -46,10 +47,27 @@ enum MobileConnectIdentity {
         return try body(key)
     }
 
-    /// The lowercased address the phone pins, or nil without a master key.
-    /// Reads the Keychain: never call on main.
+    /// The lowercased address the phone pins, or nil without a master key or
+    /// when the Keychain can't be read right now. Read once, then kept: it is
+    /// public, and fixed for a master key on this Mac, so a handshake naming
+    /// some other address costs no Keychain read. Reads the Keychain the
+    /// first time: never call on main.
     static func address() -> String? {
+        if let known = cachedAddress.withLock({ $0 }) { return known }
         // `try?` flattens the optional result, so this is a plain `String?`.
-        (try? withPrivateKey { try deriveOsaurusId(from: $0) })?.lowercased()
+        guard let derived = (try? withPrivateKey { try deriveOsaurusId(from: $0) })?.lowercased() else { return nil }
+        cachedAddress.withLock { $0 = derived }
+        return derived
     }
+
+    /// Whether `wanted` is this identity: nil when that can't be told, as
+    /// the master key exists but can't be read now (a locked Keychain).
+    /// That is worth a retry, not the "unknown address" that makes the
+    /// phone drop its pin.
+    static func matches(_ wanted: String) -> Bool? {
+        if let address = address() { return address == wanted.lowercased() }
+        return MasterKey.exists() ? nil : false
+    }
+
+    private static let cachedAddress = OSAllocatedUnfairLock<String?>(initialState: nil)
 }

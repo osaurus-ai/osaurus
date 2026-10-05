@@ -112,6 +112,7 @@ What the channel does **not** hide: traffic timing and approximate sizes (true o
 |---|---|---|---|
 | `426` | `secure_channel_required` | Plaintext request to a protected agent route from a remote caller | Upgrade Osaurus / use the channel. A paired phone with nothing pinned refetches `GET /agents` for the connect identity |
 | `404` | `Unknown agent address` | Handshake for an address that is no agent here and not the connect identity | Drop the stale pin |
+| `503` | `Secure channel identity unavailable, try again` | The connect identity's master key can't be read right now (a locked Keychain) | Keep the pin and retry |
 | `401` | `secure_session_unknown` | Session expired or server restarted | Re-handshake (automatic) |
 | `409` | `secure_replay` | Sequence number already consumed | Never retry the same envelope |
 | `400` | `secure_malformed` | Bad envelope, or inner request targeting `/secure/*` | Fix the request |

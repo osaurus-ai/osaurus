@@ -7918,9 +7918,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let wanted = hello.agentAddress.lowercased()
             let agents = await MainActor.run { AgentManager.shared.agents }
             let agentKeyPath = agents.first(where: { $0.agentAddress?.lowercased() == wanted })?.agentKeyPath
-            guard agentKeyPath != nil || MobileConnectIdentity.address() == wanted else {
-                reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
-                return
+            if agentKeyPath == nil {
+                switch MobileConnectIdentity.matches(wanted) {
+                case true?:
+                    break
+                case false?:
+                    reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
+                    return
+                case nil:
+                    // The Keychain can't be read now: worth a retry, and not
+                    // the 404 that makes a phone drop its pin.
+                    reply(
+                        status: .serviceUnavailable,
+                        body: #"{"error":"Secure channel identity unavailable, try again"}"#,
+                        code: 503
+                    )
+                    return
+                }
             }
 
             let result: (session: SecureChannelSession, serverHello: SecureChannel.ServerHello)
