@@ -87,7 +87,22 @@ final class AgentChannelInboundRelay {
     private let activityCenter: AgentChannelInboundActivityCenter
     private let focusPreference: AgentChannelInboundFocusPreference
     private let revealTask: @MainActor (UUID) -> Void
-    private var activePartitions = Set<String>()
+    /// A message that arrived while its conversation already had a turn in
+    /// flight, held until that turn ends.
+    private struct QueuedMessage {
+        let request: AgentChannelInboundRelayRequest
+        let content: String
+        let rule: String
+    }
+
+    /// Conversations with a turn in flight, mapped to the messages that
+    /// arrived meanwhile. The queue is drained as one follow-up turn when
+    /// the current turn ends, so no accepted message is dropped (#2987).
+    private var activePartitions: [String: [QueuedMessage]] = [:]
+
+    /// Ceiling on messages held behind one running turn, so a flood can't
+    /// grow the follow-up prompt without bound.
+    nonisolated static let maxQueuedMessagesPerConversation = 20
 
     init(
         substrate: AgentChannelAsyncSubstrate = .shared,
@@ -162,16 +177,87 @@ final class AgentChannelInboundRelay {
             connectionId: request.connectionId,
             providerRoute: request.providerRoute
         )
-        guard activePartitions.insert(partition.externalSessionKey).inserted else {
-            return await steerRunningTurn(
-                request,
-                content: content,
-                target: target,
-                rule: resolution.matchedRule,
-                partition: partition
+        let key = partition.externalSessionKey
+        if var queue = activePartitions[key] {
+            // Steer a live turn when nothing is queued ahead of this message
+            // (#2988). A queue already in line keeps arrival order.
+            if queue.isEmpty,
+                let steered = await steerRunningTurn(
+                    request,
+                    content: content,
+                    target: target,
+                    rule: resolution.matchedRule,
+                    partition: partition
+                )
+            {
+                return steered
+            }
+            // The steer check awaited: if the turn ended meanwhile, nothing
+            // would ever drain a queue, so start this message's own turn.
+            guard let current = activePartitions[key] else {
+                activePartitions[key] = []
+                return await start(
+                    request,
+                    content: content,
+                    target: target,
+                    rule: resolution.matchedRule,
+                    partition: partition
+                )
+            }
+            queue = current
+            guard queue.count < Self.maxQueuedMessagesPerConversation else {
+                NSLog(
+                    "[AgentChannelInboundRelay] Dropped message %@, %d already waiting behind the running turn",
+                    request.providerEventId,
+                    queue.count
+                )
+                return .suppressed("conversation_queue_full")
+            }
+            queue.append(QueuedMessage(request: request, content: content, rule: resolution.matchedRule))
+            activePartitions[key] = queue
+            NSLog(
+                "[AgentChannelInboundRelay] Queued message %@ behind the running turn (%d waiting)",
+                request.providerEventId,
+                queue.count
             )
+            await auditLog.record(
+                AgentChannelAuditEvent(
+                    kind: .dispatchStarted,
+                    status: .awaitingAgent,
+                    connectionId: request.connectionId,
+                    agentId: agentId,
+                    sessionId: partition.sessionId,
+                    auditKey: request.providerEventId,
+                    metadata: [
+                        "conversation_hash": partition.conversationHash,
+                        "external_session_key": key,
+                        "dispatch_rule": resolution.matchedRule,
+                        "queued": "true",
+                    ]
+                )
+            )
+            return .dispatched(target: target, rule: resolution.matchedRule)
         }
+        activePartitions[key] = []
+        return await start(
+            request,
+            content: content,
+            target: target,
+            rule: resolution.matchedRule,
+            partition: partition
+        )
+    }
 
+    /// Authorizes and launches one turn for a conversation already marked
+    /// active. Every exit path ends in `finishTurn`, which drains the queue.
+    private func start(
+        _ request: AgentChannelInboundRelayRequest,
+        content: String,
+        target: AgentDispatchTarget,
+        rule: String,
+        partition: AgentChannelSessionPartition
+    ) async -> AgentChannelInboundRelaySubmission {
+        let agentId = target.localId
         let safety = await safetyGate.authorize(
             ChannelRemoteSafetyRequest(
                 identity: request.identity,
@@ -181,7 +267,6 @@ final class AgentChannelInboundRelay {
             )
         )
         guard safety.allowed else {
-            activePartitions.remove(partition.externalSessionKey)
             await auditLog.record(
                 AgentChannelAuditEvent(
                     kind: .taskFailed,
@@ -197,6 +282,7 @@ final class AgentChannelInboundRelay {
                     metadata: ["reason": safety.reason.rawValue]
                 )
             )
+            await finishTurn(target: target, partition: partition)
             return .suppressed(safety.reason.rawValue)
         }
 
@@ -208,7 +294,7 @@ final class AgentChannelInboundRelay {
         var startedMetadata = [
             "conversation_hash": partition.conversationHash,
             "external_session_key": partition.externalSessionKey,
-            "dispatch_rule": resolution.matchedRule,
+            "dispatch_rule": rule,
         ]
         if let ref = target.workspaceRef { startedMetadata["workspace_agent"] = ref.key }
         await auditLog.record(
@@ -230,22 +316,59 @@ final class AgentChannelInboundRelay {
                 partition: partition,
                 prompt: prompt
             )
+            await self?.finishTurn(target: target, partition: partition)
         }
-        return .dispatched(target: target, rule: resolution.matchedRule)
+        return .dispatched(target: target, rule: rule)
+    }
+
+    /// Ends the conversation's current turn. Messages that queued up behind
+    /// it start the next turn, otherwise the conversation goes idle.
+    private func finishTurn(target: AgentDispatchTarget, partition: AgentChannelSessionPartition) async {
+        let key = partition.externalSessionKey
+        guard let queued = activePartitions[key], let first = queued.first else {
+            activePartitions.removeValue(forKey: key)
+            return
+        }
+        // Batch only one sender's consecutive messages, so the safety gate
+        // and the reply attribution see the person who actually wrote them.
+        let batch = Array(queued.prefix { $0.request.identity == first.request.identity })
+        activePartitions[key] = Array(queued.dropFirst(batch.count))
+        let merged = Self.mergedRequest(batch.map(\.request), contents: batch.map(\.content))
+        _ = await start(
+            merged.request,
+            content: merged.content,
+            target: target,
+            rule: batch.last?.rule ?? first.rule,
+            partition: partition
+        )
+    }
+
+    /// Folds queued messages into one request, in arrival order. The last
+    /// message's event id keys the reply, and its reply handlers answer.
+    nonisolated static func mergedRequest(
+        _ requests: [AgentChannelInboundRelayRequest],
+        contents: [String]
+    ) -> (request: AgentChannelInboundRelayRequest, content: String) {
+        var request = requests[requests.count - 1]
+        let content = contents.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        request.content = content
+        request.attachments = requests.flatMap(\.attachments)
+        return (request, content)
     }
 
     /// A message for a conversation whose turn is still streaming joins that
     /// turn at its next iteration boundary instead of waiting for a new one,
     /// so the agent keeps its in-flight work and answers everything together
     /// (#2988). `run` sends anything that missed the last boundary as the
-    /// follow-up turn.
+    /// follow-up turn. Returns nil when the turn can't take a steer (not
+    /// streaming yet, attachments, workspace run), so the caller queues it.
     private func steerRunningTurn(
         _ request: AgentChannelInboundRelayRequest,
         content: String,
         target: AgentDispatchTarget,
         rule: String,
         partition: AgentChannelSessionPartition
-    ) async -> AgentChannelInboundRelaySubmission {
+    ) async -> AgentChannelInboundRelaySubmission? {
         guard request.attachments.isEmpty,
             let runningId = taskManager.runningTaskId(
                 source: .channel,
@@ -253,7 +376,7 @@ final class AgentChannelInboundRelay {
                 target: target
             )
         else {
-            return .suppressed("conversation_already_running")
+            return nil
         }
         // Rate limits and content assessment still apply. `.receive` does not
         // reserve a remote task slot: the steer rides the running task's.
@@ -289,7 +412,7 @@ final class AgentChannelInboundRelay {
             assessment: safety.contentAssessment
         )
         guard taskManager.steerTask(runningId, text: prompt) else {
-            return .suppressed("conversation_already_running")
+            return nil
         }
         NSLog("[AgentChannelInboundRelay] Steered message %@ into the running turn", request.providerEventId)
         await auditLog.record(
@@ -319,7 +442,6 @@ final class AgentChannelInboundRelay {
     ) async {
         let agentId = target.localId
         defer {
-            activePartitions.remove(partition.externalSessionKey)
             Task {
                 await safetyGate.finishRemoteTask(
                     identity: request.identity,

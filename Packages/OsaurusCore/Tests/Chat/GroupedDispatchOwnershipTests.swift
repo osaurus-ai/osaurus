@@ -125,6 +125,24 @@ struct GroupedDispatchOwnershipTests {
     }
 
     @Test
+    func optedOutRequestNeverReattaches() async throws {
+        try await ChatHistoryTestStorage.run {
+            let data = stored(agentId: UUID(), source: .schedule)
+            ChatSessionStore.save(data)
+            let fresh = DispatchRequest(
+                prompt: "next",
+                agentId: data.agentId,
+                showToast: false,
+                source: .schedule,
+                externalSessionKey: data.externalSessionKey,
+                reattachSession: false,
+                loadIntent: .background
+            )
+            #expect(BackgroundTaskManager.makeForTesting().lookupReattachableSession(for: fresh) == nil)
+        }
+    }
+
+    @Test
     func dispatchReservesOwnerBeforePreparationAndHonorsCancellation() async throws {
         try await ChatHistoryTestStorage.run {
             let agent = Agent(name: "Grouped dispatch test", autonomousExec: AutonomousExecConfig(enabled: false))

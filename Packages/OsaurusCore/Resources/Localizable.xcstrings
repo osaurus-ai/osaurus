@@ -268310,6 +268310,9 @@
         }
       }
     },
+    "Too many messages are waiting for this conversation's current turn to finish. Send this one again once the agent replies." : {
+      "comment" : "Actionable recovery guidance for when an inbound channel message is dropped because too many messages are already queued behind the running turn."
+    },
     "Tool" : {
       "localizations" : {
         "de" : {

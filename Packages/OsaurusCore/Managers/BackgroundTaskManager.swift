@@ -1274,7 +1274,8 @@ public final class BackgroundTaskManager: ObservableObject {
     /// if a live in-memory task is already driving that session, to avoid
     /// double-stream into the same `ChatSession`.
     func lookupReattachableSession(for request: DispatchRequest) -> (data: ChatSessionData, live: ChatSession?)? {
-        guard let key = request.externalSessionKey,
+        guard request.reattachSession,
+            let key = request.externalSessionKey,
             !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
 
