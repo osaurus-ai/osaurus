@@ -1851,10 +1851,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
-            let next =
+            var next =
                 ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
                     requested
                 )
+            // Match persistence before computing effects or returning settings.
+            // Legacy depth requests select Adaptive without a native depth cap.
+            next.mtp = NativeMTPSelectionDefault.adaptiveSelection(next.mtp)
 
             if previous.network != next.network {
                 let body = Self.errorBody(

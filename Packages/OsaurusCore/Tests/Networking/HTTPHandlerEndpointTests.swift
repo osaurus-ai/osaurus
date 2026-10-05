@@ -184,6 +184,9 @@ struct HTTPHandlerEndpointTests {
             var previous = VMLXServerRuntimeSettings()
             previous.mtp = .init(mode: .forceOn, explicitDepth: 1)
             ServerRuntimeSettingsStore.save(previous)
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            previous = ServerRuntimeSettingsStore.snapshot()
+            #expect(previous.mtp == .init(mode: .auto))
             let server = try await startServer()
             defer { Task { await server.shutdown() } }
 
@@ -191,12 +194,14 @@ struct HTTPHandlerEndpointTests {
             // No model is resident: load effects here are policy receipts,
             // not evidence of a real container unload or head activation.
             let transitions: [(VMLXServerMTPSettings, Bool, Bool)] = [
-                (.init(mode: .forceOn, explicitDepth: 3), false, true),
-                (.init(mode: .auto), false, true),
-                (.init(mode: .auto, draftTokenLimit: 2), false, true),
+                (.init(mode: .forceOn, explicitDepth: 3), false, false),
+                (.init(mode: .auto), false, false),
+                (.init(mode: .auto, draftTokenLimit: 2), false, false),
                 (.init(mode: .auto, draftTokenLimit: 2), false, false),
                 (.init(mode: .off), true, true),
                 (.init(mode: .forceOn, explicitDepth: 1), true, true),
+                (.init(mode: .off, draftTokenLimit: 2, explicitDepth: 3), true, true),
+                (.init(mode: .off), false, false),
             ]
             for (mtp, refreshExpected, invalidateExpected) in transitions {
                 var next = previous
@@ -204,6 +209,10 @@ struct HTTPHandlerEndpointTests {
                 let (data, response) = try await putRuntimeSettings(next, server: server)
                 #expect((response as? HTTPURLResponse)?.statusCode == 200)
                 let decoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: data)
+                // The endpoint must describe the effective saved policy, not
+                // echo a legacy depth that persistence immediately migrates.
+                next.mtp = .init(mode: mtp.mode == .off ? .off : .auto)
+                ServerRuntimeSettingsStore.invalidateSnapshot()
                 #expect(decoded.effects?.loadedModelRefreshNeeded == refreshExpected)
                 #expect(decoded.effects?.runtimeConfigInvalidated == invalidateExpected)
                 #expect(decoded.settings.mtp == next.mtp)
@@ -216,7 +225,7 @@ struct HTTPHandlerEndpointTests {
                     decoded.effects?.runtimeConfigInvalidated
                         == ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next)
                 )
-                previous = next
+                previous = ServerRuntimeSettingsStore.snapshot()
             }
         }
     }
