@@ -261,6 +261,9 @@ struct ChatTabStripView: View {
         let visibleIds = Set(shown.map(\.id))
         let hiddenTabs = windowState.scopedTabs.filter { !visibleIds.contains($0.id) }
         let tabWidth = maxTabWidth(stripWidth: stripWidth)
+        // A lone tab reads as the window title; the recessed track only
+        // appears once there are tabs to group.
+        let showsTrack = shown.count + hiddenTabs.count > 1
         return HStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, tab in
@@ -284,6 +287,7 @@ struct ChatTabStripView: View {
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(windowState.theme.secondaryBackground.opacity(windowState.theme.isDark ? 0.4 : 0.5))
+                    .opacity(showsTrack ? 1 : 0)
             )
             // Tabs never draw outside the track, even for a frame mid-resize.
             // Only the track is clipped: clipping the whole row would cut
@@ -592,6 +596,15 @@ private struct ChatTabItemView: View {
         return agent.customAvatarURL
     }
 
+    /// The active tab is accent-tinted only when there are siblings to pick
+    /// it out from; a lone tab reads as a neutral window title.
+    private var isHighlighted: Bool { isActive && hasSiblings }
+    private var titleColor: Color {
+        if isHighlighted { return theme.accentColor }
+        return isActive ? theme.primaryText : theme.secondaryText
+    }
+    private var glyphColor: Color { isHighlighted ? theme.accentColor : theme.secondaryText }
+
     private var activityStatus: SessionActivityMonitor.Status? {
         session.sessionId.flatMap { activityMonitor.statuses[$0] }
     }
@@ -653,7 +666,7 @@ private struct ChatTabItemView: View {
                 Button(action: onOpenProject) {
                     Image(systemName: "folder.fill")
                         .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                        .foregroundColor(glyphColor)
                         .frame(width: 14, height: 14)
                         .contentShape(Rectangle())
                 }
@@ -666,7 +679,7 @@ private struct ChatTabItemView: View {
             if !isNarrow, let originIconName {
                 Image(systemName: originIconName)
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                    .foregroundColor(glyphColor)
                     .frame(width: 12, height: 12)
                     .accessibilityHidden(true)
             }
@@ -677,7 +690,7 @@ private struct ChatTabItemView: View {
                     // Optical centring: the label's x-height sits a hair above
                     // the avatar's centre at this size.
                     .offset(y: 0.5)
-                    .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                    .foregroundColor(titleColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -688,7 +701,7 @@ private struct ChatTabItemView: View {
         Button(action: onClose) {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                .foregroundColor(glyphColor)
                 .frame(width: Self.closeButtonSize, height: Self.closeButtonSize)
                 .contentShape(Rectangle())
         }
@@ -699,8 +712,11 @@ private struct ChatTabItemView: View {
     }
 
     /// Accent pill for the active tab (the sidebar lens bar's selected
-    /// segment), a faint neutral pill on hover, nothing at rest.
+    /// segment), a faint neutral pill on hover, nothing at rest. A lone tab
+    /// has nothing to be selected against and reads as the window title, so
+    /// it draws no pill at all.
     private var pillFill: Color {
+        guard hasSiblings else { return .clear }
         if isActive { return theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) }
         return theme.secondaryText.opacity(isHovered ? 0.08 : 0)
     }
