@@ -40,9 +40,11 @@ extension ThemeProtocol {
 
 extension View {
     /// The flat themed card surface: secondary background, continuous 16pt
-    /// corners and the theme border, with no shadow.
-    func pickerCardSurface() -> some View {
-        modifier(PickerCardSurfaceModifier())
+    /// corners and the theme border. Cards in their own panel get the
+    /// window server's shadow; `elevated` adds one for cards drawn inside
+    /// the chat window (composer popups, voice input).
+    func pickerCardSurface(elevated: Bool = false) -> some View {
+        modifier(PickerCardSurfaceModifier(elevated: elevated))
     }
 
     /// Row chrome: inset content, minimum row height, and the rounded fill
@@ -53,6 +55,7 @@ extension View {
 }
 
 private struct PickerCardSurfaceModifier: ViewModifier {
+    let elevated: Bool
     @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
@@ -63,8 +66,21 @@ private struct PickerCardSurfaceModifier: ViewModifier {
             .overlay {
                 shape.strokeBorder(theme.primaryBorder.opacity(theme.borderOpacity), lineWidth: theme.defaultBorderWidth)
             }
+            .shadow(color: elevated ? theme.shadowColor.opacity(theme.isDark ? 0.35 : 0.12) : .clear, radius: 16, y: 6)
             .font(theme.font(size: CGFloat(theme.bodySize)))
             .foregroundStyle(theme.primaryText)
+    }
+}
+
+/// Keyboard hints in a list card's heading ("↑↓ navigate  ↵ select  esc dismiss").
+struct PickerCardKeyHints: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text("↑↓ navigate  ↵ select  esc dismiss", bundle: .module)
+            .font(theme.font(size: theme.pickerCardCaptionSize))
+            .foregroundStyle(theme.tertiaryText)
+            .lineLimit(1)
     }
 }
 

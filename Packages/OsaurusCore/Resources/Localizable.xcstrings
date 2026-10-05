@@ -1,6 +1,34 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Speak now…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jetzt sprechen …"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请开始说话…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지금 말하세요…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Говорите…"
+          }
+        }
+      }
+    },
     "/ %@ tokens" : {
       "localizations" : {
         "de" : {
