@@ -595,6 +595,9 @@ struct AgentLoopHooks {
     /// asking the model to guess about a denied or failed side effect.
     var emitToolRejectionText: ((_ text: String) async -> Void)?
 
+    /// Terminal envelope provenance, captured before its visible summary.
+    var recordTerminalToolRejection: ((_ envelope: String) async -> Void)?
+
     /// Diagnostics side channel, fired once immediately before the run
     /// returns. Optional and observational: the loop's behaviour is
     /// identical whether or not a surface supplies it, and `RunResult`
@@ -2463,6 +2466,7 @@ enum AgentToolLoop {
         /// cancellation has been checked, so Stop/cancel retains its own
         /// terminal semantics and never gains a synthetic denial message.
         func emitToolRejection(_ outcome: AgentLoopToolOutcome) async {
+            await hooks.recordTerminalToolRejection?(outcome.result)
             await hooks.emitToolRejectionText?(ToolEnvelope.failureMessage(outcome.result))
         }
         /// Under `wrapsUpIncompleteWork`, a stop caused by a replayed

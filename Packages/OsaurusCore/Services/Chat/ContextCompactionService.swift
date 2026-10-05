@@ -42,6 +42,10 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
     /// The model returned an empty/blank summary.
     case emptySummary
     case timedOut
+    /// The summarize request itself failed. Carries the model that ran so
+    /// the dialog names it — the configured compaction model routes every
+    /// chat's summary to the same provider, regardless of the chat model.
+    case requestFailed(model: String, message: String)
 
     var errorDescription: String? {
         switch self {
@@ -55,6 +59,8 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
             return "The compaction model returned an empty summary"
         case .timedOut:
             return "Context compaction timed out"
+        case .requestFailed(let model, let message):
+            return "Compaction model '\(model)' failed: \(message)"
         }
     }
 }
@@ -392,11 +398,16 @@ final class ContextCompactionService {
                 model: modelId, messages: messages, response: nil,
                 startedAt: startedAt, error: "timed out", context: logContext)
             throw ContextCompactionError.timedOut
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
                 startedAt: startedAt, error: error.localizedDescription, context: logContext)
-            throw error
+            throw ContextCompactionError.requestFailed(
+                model: modelId,
+                message: error.localizedDescription
+            )
         }
 
         Self.logToInsights(

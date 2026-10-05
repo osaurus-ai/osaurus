@@ -66,6 +66,7 @@ public final class MemoryPressureResponder: @unchecked Sendable {
         LaTeXRenderer.shared.clearCache()
         SymbolImageCache.clear()
         NativeHeaderView.clearMonogramCache()
+        AvatarBitmapRenderer.shared.removeAll()
         Task {
             await ThemePreviewImageCache.shared.removeAll()
             await ModelRuntime.shared.trimFreedBufferCacheUnderMemoryPressure()

@@ -945,6 +945,7 @@ final class NativeToolCallRowView: NSView {
     /// `nonisolated(unsafe)` so deinit can read it; only ever set in
     /// init on the main actor.
     nonisolated(unsafe) private var ttsObservation: NSObjectProtocol?
+    nonisolated(unsafe) private var mcpProgressObservation: NSObjectProtocol?
 
     // MARK: Callbacks
 
@@ -981,6 +982,17 @@ final class NativeToolCallRowView: NSView {
                 self?.applyStatusAndShimmer()
             }
         }
+        mcpProgressObservation = NotificationCenter.default.addObserver(
+            forName: .mcpToolProgressChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let callId = note.object as? String
+            MainActor.assumeIsolated {
+                guard let self, callId == self.currentItem?.call.id else { return }
+                self.applyStatusAndShimmer()
+            }
+        }
         fileChangeObservation = NotificationCenter.default.addObserver(
             forName: .fileChangesDidChange,
             object: nil,
@@ -1000,6 +1012,9 @@ final class NativeToolCallRowView: NSView {
             NotificationCenter.default.removeObserver(observation)
         }
         if let observation = fileChangeObservation {
+            NotificationCenter.default.removeObserver(observation)
+        }
+        if let observation = mcpProgressObservation {
             NotificationCenter.default.removeObserver(observation)
         }
     }
@@ -2235,8 +2250,9 @@ final class NativeToolCallRowView: NSView {
         CATransaction.commit()
 
         if isRunning(item) {
+            let progress = MCPToolProgressRegistry.shared.message(for: item.call.id)
             shimmerLabel.configure(
-                text: runningTitle,
+                text: progress.map { "\(runningTitle) · \($0)" } ?? runningTitle,
                 font: nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .semibold),
                 baseColor: NSColor(theme.primaryText).withAlphaComponent(0.4),
                 highlightColor: NSColor(theme.primaryText)

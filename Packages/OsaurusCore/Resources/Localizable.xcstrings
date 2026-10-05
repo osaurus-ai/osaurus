@@ -1,6 +1,448 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Clear unsupported edit settings" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear unsupported edit settings"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht unterstützte Bearbeitungseinstellungen löschen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "清除不支持的编辑设置"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "지원하지 않는 편집 설정 지우기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Очистить неподдерживаемые настройки редактирования"
+          }
+        }
+      }
+    },
+    "Guidance" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guidance"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Steuerung"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "引导强度"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "가이던스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление"
+          }
+        }
+      }
+    },
+    "Source images (ordered, up to 4)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Source images (ordered, up to 4)"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quellbilder (geordnet, bis zu 4)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "源图像（按顺序，最多 4 张）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원본 이미지 (순서대로, 최대 4개)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Исходные изображения (по порядку, до 4)"
+          }
+        }
+      }
+    },
+    "Choose up to %lld source images." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose up to %lld source images."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle bis zu %lld Quellbilder."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最多选择 %lld 张源图像。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원본 이미지를 최대 %lld개 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите до %lld исходных изображений."
+          }
+        }
+      }
+    },
+    "Negative prompt applies when guidance is above 1." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Negative prompt applies when guidance is above 1."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein negativer Prompt wird bei einer Steuerung über 1 angewendet."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "引导强度大于 1 时，负面提示词才会生效。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "가이던스가 1보다 클 때 부정 프롬프트가 적용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Негативный промпт применяется при управлении выше 1."
+          }
+        }
+      }
+    },
+    "Use a structured JSON caption." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use a structured JSON caption."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verwende eine strukturierte JSON-Beschreibung."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请使用结构化的 JSON 描述。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "구조화된 JSON 설명을 사용하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Используйте структурированное описание JSON."
+          }
+        }
+      }
+    },
+    "Use source aspect ratio" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use source aspect ratio"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seitenverhältnis der Quelle verwenden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用源图像的宽高比"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원본 종횡비 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Использовать пропорции исходного изображения"
+          }
+        }
+      }
+    },
+    "Qwen-Image-2.1 uses at least 2 steps." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen-Image-2.1 uses at least 2 steps."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qwen-Image-2.1 verwendet mindestens 2 Schritte."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qwen-Image-2.1 至少使用 2 个步骤。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qwen-Image-2.1은 최소 2단계를 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qwen-Image-2.1 использует минимум 2 шага."
+          }
+        }
+      }
+    },
+    "Research / non-commercial license" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Research / non-commercial license"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Forschungs- / nichtkommerzielle Lizenz"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "研究／非商业许可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "연구 / 비상업용 라이선스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Исследовательская / некоммерческая лицензия"
+          }
+        }
+      }
+    },
+    "Non-commercial license" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Non-commercial license"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nichtkommerzielle Lizenz"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "非商业许可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "비상업용 라이선스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Некоммерческая лицензия"
+          }
+        }
+      }
+    },
+    "Enter a positive whole number of steps." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a positive whole number of steps."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gib eine positive ganze Zahl für die Schritte ein."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请输入正整数步数。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "단계 수를 양의 정수로 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Введите положительное целое число шагов."
+          }
+        }
+      }
+    },
+    "Guidance must be a finite number." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guidance must be a finite number."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Steuerung muss eine endliche Zahl sein."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "引导强度必须是有限数值。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "가이던스는 유한한 숫자여야 합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление должно быть конечным числом."
+          }
+        }
+      }
+    },
+    "Enter a seed from 0 to 18446744073709551615." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a seed from 0 to 18446744073709551615."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gib einen Seed von 0 bis 18446744073709551615 ein."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请输入 0 到 18446744073709551615 之间的种子值。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "시드 값을 0부터 18446744073709551615 사이로 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Введите seed от 0 до 18446744073709551615."
+          }
+        }
+      }
+    },
     "" : {
       "shouldTranslate" : false
     },
@@ -167,26 +609,6 @@
         }
       }
     },
-    "%lld recommended presets are off" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld recommended presets are off"
-          }
-        }
-      }
-    },
-    "%lld presets" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld presets"
-          }
-        }
-      }
-    },
     "-1001234567890 — one per line" : {
       "localizations" : {
         "de" : {
@@ -251,96 +673,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "-1001234567890 或 @channelname — 每行一個"
-          }
-        }
-      }
-    },
-    "Multilingual keyword fallback for regions without a specific preset." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Multilingual keyword fallback for regions without a specific preset."
-          }
-        }
-      }
-    },
-    "Matches the documented shape, usually after a keyword; no checksum exists for this ID." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Matches the documented shape, usually after a keyword; no checksum exists for this ID."
-          }
-        }
-      }
-    },
-    "Check digit verified — bare numbers can be matched with few false positives." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Check digit verified — bare numbers can be matched with few false positives."
-          }
-        }
-      }
-    },
-    "Hide until Settings is reopened." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hide until Settings is reopened."
-          }
-        }
-      }
-    },
-    "Osaurus turns these on for %@ and Global on a new install." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus turns these on for %@ and Global on a new install."
-          }
-        }
-      }
-    },
-    "Generic coverage only" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Generic coverage only"
-          }
-        }
-      }
-    },
-    "Country-specific presets" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Country-specific presets"
-          }
-        }
-      }
-    },
-    "Detected from your Mac" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Detected from your Mac"
-          }
-        }
-      }
-    },
-    "Presets on for this region, out of the total available." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Presets on for this region, out of the total available."
           }
         }
       }
@@ -2871,6 +3203,74 @@
         }
       }
     },
+    "%@ didn't allow this. Your account may not have access, or you may need to sign in again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ hat dies nicht erlaubt. Ihr Konto hat möglicherweise keinen Zugriff, oder Sie müssen sich erneut anmelden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에서 이 작업을 허용하지 않았습니다. 계정에 접근 권한이 없거나 다시 로그인해야 할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не разрешил это действие. Возможно, у вашей учётной записи нет доступа или нужно войти снова."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 不允许此操作。您的账户可能没有访问权限，或者需要重新登录。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 不允許此操作。您的帳戶可能沒有存取權限，或者需要重新登入。"
+          }
+        }
+      }
+    },
+    "%@ didn't answer at this address. The service may have moved; check the URL." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ hat unter dieser Adresse nicht geantwortet. Der Dienst ist möglicherweise umgezogen; prüfen Sie die URL."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@이(가) 이 주소에서 응답하지 않았습니다. 서비스가 이전되었을 수 있으니 URL을 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не ответил по этому адресу. Возможно, сервис переехал — проверьте URL."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 未在此地址响应。服务可能已迁移，请检查 URL。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 未在此位址回應。服務可能已遷移，請檢查 URL。"
+          }
+        }
+      }
+    },
     "%@ disabled" : {
       "localizations" : {
         "de" : {
@@ -3365,6 +3765,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@是空的"
+          }
+        }
+      }
+    },
+    "%@ is having problems right now. Try again later." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ hat gerade Probleme. Versuchen Sie es später erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에 현재 문제가 있습니다. 나중에 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У %@ сейчас неполадки. Повторите попытку позже."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 目前出现问题，请稍后再试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 目前發生問題，請稍後再試。"
           }
         }
       }
@@ -4161,6 +4595,108 @@
         }
       }
     },
+    "%@ needs a paid account or subscription." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ erfordert ein kostenpflichtiges Konto oder Abonnement."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에는 유료 계정 또는 구독이 필요합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для %@ нужен платный аккаунт или подписка."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要付费账户或订阅。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要付費帳戶或訂閱。"
+          }
+        }
+      }
+    },
+    "%@ needs more information" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ benötigt weitere Angaben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에 추가 정보가 필요합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ нужны дополнительные сведения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要更多信息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要更多資訊"
+          }
+        }
+      }
+    },
+    "%@ needs you to sign in again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ erfordert eine erneute Anmeldung."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에 다시 로그인해야 합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ просит войти снова."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要您重新登录。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要您重新登入。"
+          }
+        }
+      }
+    },
     "%@ no longer need a plugin. Already turned on for %@; for other agents use Agents → Abilities → Tools → Apple Apps." : {
 
     },
@@ -4651,6 +5187,40 @@
     "%@ s" : {
 
     },
+    "%@ says your account doesn't include this. It may need a paid plan." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Laut %@ ist dies in Ihrem Konto nicht enthalten. Möglicherweise ist ein kostenpflichtiger Tarif nötig."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에 따르면 계정에 이 기능이 포함되어 있지 않습니다. 유료 요금제가 필요할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По данным %@, ваша учётная запись этого не включает. Возможно, нужен платный тариф."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 表示您的账户不包含此功能，可能需要付费方案。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 表示您的帳戶不包含此功能，可能需要付費方案。"
+          }
+        }
+      }
+    },
     "%@ sent" : {
 
     },
@@ -4874,6 +5444,40 @@
         }
       }
     },
+    "%@ took too long to respond. Try again in a moment." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ hat zu lange für eine Antwort gebraucht. Versuchen Sie es gleich noch einmal."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@의 응답이 너무 오래 걸렸습니다. 잠시 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ слишком долго не отвечал. Повторите попытку чуть позже."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 响应超时，请稍后再试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 回應逾時，請稍後再試。"
+          }
+        }
+      }
+    },
     "%@ tools are now built into Osaurus. This plugin's tools are no longer loaded — turn %@ on for a custom agent under Agents → Abilities → Tools (off by default). You can uninstall this plugin." : {
       "localizations" : {
         "en" : {
@@ -4963,6 +5567,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 使用此已驗證的代理端點。"
+          }
+        }
+      }
+    },
+    "%@ wants you to finish in your browser" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ möchte, dass Sie den Vorgang im Browser abschließen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에서 브라우저로 마무리하도록 요청합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ просит завершить действие в браузере"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要您在浏览器中完成操作"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 需要您在瀏覽器中完成操作"
           }
         }
       }
@@ -10601,6 +11239,16 @@
         }
       }
     },
+    "%lld presets" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld presets"
+          }
+        }
+      }
+    },
     "%lld projects" : {
       "localizations" : {
         "de" : {
@@ -10827,6 +11475,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 個最近"
+          }
+        }
+      }
+    },
+    "%lld recommended presets are off" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld recommended presets are off"
           }
         }
       }
@@ -20472,6 +21130,40 @@
         }
       }
     },
+    "Accounting and payroll data in MYOB" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buchhaltungs- und Lohndaten in MYOB"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MYOB의 회계 및 급여 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бухгалтерские и зарплатные данные в MYOB"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MYOB 中的会计和薪资数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MYOB 中的會計和薪資資料"
+          }
+        }
+      }
+    },
     "Accounting Channel" : {
       "localizations" : {
         "de" : {
@@ -20496,6 +21188,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "会计频道"
+          }
+        }
+      }
+    },
+    "Accounts, opportunities, and records in Salesforce" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accounts, Opportunities und Datensätze in Salesforce"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salesforce의 계정, 영업 기회, 레코드"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунты, возможности и записи в Salesforce"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salesforce 中的客户、商机和记录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salesforce 中的客戶、商機和紀錄"
           }
         }
       }
@@ -31063,6 +31789,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "以 %@ 身份回覆"
+          }
+        }
+      }
+    },
+    "Answers from peer-reviewed research papers" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Antworten aus begutachteten Fachartikeln"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "동료 심사 논문 기반 답변"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответы из рецензируемых научных статей"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来自同行评审论文的答案"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來自同儕審查論文的答案"
           }
         }
       }
@@ -42157,6 +42917,40 @@
         }
       }
     },
+    "Boards, lists, and cards in Trello" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Boards, Listen und Karten in Trello"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trello의 보드, 목록, 카드"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доски, списки и карточки в Trello"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trello 中的看板、列表和卡片"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trello 中的看板、清單和卡片"
+          }
+        }
+      }
+    },
     "Body" : {
       "localizations" : {
         "de" : {
@@ -42332,6 +43126,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bonjour 發現；你點擊的連接器會顯示在你的列表中。"
+          }
+        }
+      }
+    },
+    "Books, financial statements, and cash in Digits" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buchhaltung, Abschlüsse und Liquidität in Digits"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Digits의 장부, 재무제표, 현금"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Учёт, финансовая отчётность и денежные средства в Digits"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Digits 中的账簿、财务报表和现金"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Digits 中的帳簿、財務報表和現金"
           }
         }
       }
@@ -43936,6 +44764,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "瀏覽、檢查並導出智能體數據庫中存儲的行數據。"
+          }
+        }
+      }
+    },
+    "Browse, search, and manage files in Dropbox" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dateien in Dropbox durchsuchen und verwalten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dropbox에서 파일 탐색, 검색, 관리"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просмотр, поиск и управление файлами в Dropbox"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Dropbox 中浏览、搜索和管理文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Dropbox 中瀏覽、搜尋和管理檔案"
           }
         }
       }
@@ -45579,6 +46441,142 @@
         }
       }
     },
+    "Business bank accounts and transactions" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geschäftskonten und Transaktionen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기업 은행 계좌 및 거래 내역"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бизнес-счета и транзакции"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "企业银行账户和交易"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "企業銀行帳戶和交易"
+          }
+        }
+      }
+    },
+    "Business banking and transactions in Qonto" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geschäftsbanking und Transaktionen in Qonto"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qonto의 기업 뱅킹 및 거래 내역"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бизнес-банкинг и транзакции в Qonto"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qonto 中的企业银行业务和交易"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qonto 中的企業銀行業務和交易"
+          }
+        }
+      }
+    },
+    "Business formation and legal document guidance" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unternehmensgründung und Hilfe zu Rechtsdokumenten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사업체 설립 및 법률 문서 안내"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Регистрация бизнеса и помощь с юридическими документами"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "企业设立和法律文件指导"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "企業設立和法律文件指引"
+          }
+        }
+      }
+    },
+    "Business Productivity" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Business-Produktivität"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "비즈니스 생산성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бизнес-продуктивность"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "商务效率"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "商務效率"
+          }
+        }
+      }
+    },
     "Button BG" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -47118,6 +48116,40 @@
         }
       }
     },
+    "Cap tables, equity, and fund data in Carta" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cap Tables, Beteiligungen und Fondsdaten in Carta"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carta의 지분 구조, 지분, 펀드 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Таблицы капитализации, доли и данные фондов в Carta"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carta 中的股权结构表、股权和基金数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carta 中的股權結構表、股權和基金資料"
+          }
+        }
+      }
+    },
     "Cap the response length per request." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -47665,6 +48697,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "區分大小寫"
+          }
+        }
+      }
+    },
+    "Cases, clients, and calendars in MyCase" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fälle, Mandanten und Kalender in MyCase"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyCase의 사건, 고객, 일정"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дела, клиенты и календари в MyCase"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyCase 中的案件、客户和日历"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyCase 中的案件、客戶和行事曆"
           }
         }
       }
@@ -51247,6 +52313,16 @@
         }
       }
     },
+    "Check digit verified — bare numbers can be matched with few false positives." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check digit verified — bare numbers can be matched with few false positives."
+          }
+        }
+      }
+    },
     "Check for app updates" : {
       "localizations" : {
         "de" : {
@@ -54446,6 +55522,40 @@
         }
       }
     },
+    "Choose yes or no." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie Ja oder Nein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "예 또는 아니요를 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите «да» или «нет»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请选择是或否。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請選擇是或否。"
+          }
+        }
+      }
+    },
     "Choose your bot, then Disable — otherwise the bot cannot see group messages." : {
       "comment" : "Command to set a Telegram bot's privacy settings to \"Disabled\".",
       "isCommentAutoGenerated" : true,
@@ -56504,6 +57614,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Client 密鑰"
+          }
+        }
+      }
+    },
+    "Clinical trial data in Medidata" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daten klinischer Studien in Medidata"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Medidata의 임상시험 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные клинических исследований в Medidata"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Medidata 中的临床试验数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Medidata 中的臨床試驗資料"
           }
         }
       }
@@ -58837,9 +59981,77 @@
       "comment" : "A title displayed when a context compaction fails.",
       "isCommentAutoGenerated" : true
     },
+    "Compaction is already running." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Komprimierung läuft bereits."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미 압축이 진행 중입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сжатие уже выполняется."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "压缩已在进行中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "壓縮已在進行中。"
+          }
+        }
+      }
+    },
     "Compaction model" : {
       "comment" : "A label for the model picker in the compaction dialog.",
       "isCommentAutoGenerated" : true
+    },
+    "Company, funding, and investor data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unternehmens-, Finanzierungs- und Investorendaten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기업, 투자 유치, 투자자 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные о компаниях, финансировании и инвесторах"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "公司、融资和投资者数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "公司、融資和投資者資料"
+          }
+        }
+      }
     },
     "Compatibility" : {
       "localizations" : {
@@ -59230,6 +60442,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "補全批處理大小"
+          }
+        }
+      }
+    },
+    "Compliance & Security" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compliance & Sicherheit"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "규정 준수 및 보안"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Соответствие и безопасность"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合规与安全"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合規與安全"
           }
         }
       }
@@ -64272,6 +65518,40 @@
         }
       }
     },
+    "Connector request" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anfrage des Connectors"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "커넥터 요청"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запрос коннектора"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接器请求"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "連接器請求"
+          }
+        }
+      }
+    },
     "Consequential" : {
       "localizations" : {
         "de" : {
@@ -64480,6 +65760,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聯繫人"
+          }
+        }
+      }
+    },
+    "Contacts, companies, and deals in Attio" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kontakte, Unternehmen und Deals in Attio"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attio의 연락처, 회사, 거래"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Контакты, компании и сделки в Attio"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attio 中的联系人、公司和交易"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attio 中的聯絡人、公司和交易"
           }
         }
       }
@@ -68008,6 +69322,40 @@
         }
       }
     },
+    "Corporate cards, bills, and spend in Ramp" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmenkarten, Rechnungen und Ausgaben in Ramp"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ramp의 법인 카드, 청구서, 지출"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Корпоративные карты, счета и расходы в Ramp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ramp 中的公司卡、账单和支出"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ramp 中的公司卡、帳單和支出"
+          }
+        }
+      }
+    },
     "CORRUPT" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -69390,6 +70738,40 @@
         }
       }
     },
+    "Couldn't reach %@. Check your internet connection and try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ ist nicht erreichbar. Prüfen Sie Ihre Internetverbindung und versuchen Sie es erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에 연결할 수 없습니다. 인터넷 연결을 확인하고 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось связаться с %@. Проверьте подключение к интернету и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法连接到 %@。请检查网络连接后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法連線到 %@。請檢查網路連線後再試一次。"
+          }
+        }
+      }
+    },
     "Couldn't reach Osaurus" : {
 
     },
@@ -69950,6 +71332,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Country-specific ID, tax, health and bank number formats plus global finance, network and secret patterns. Presets for your regions are on by default; everything else is opt-in. Osaurus redacts matches and blocks sends that leak them."
+          }
+        }
+      }
+    },
+    "Country-specific presets" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Country-specific presets"
           }
         }
       }
@@ -72438,6 +73830,40 @@
         }
       }
     },
+    "Credit ratings and research from Moody's" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kreditratings und Research von Moody's"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moody's의 신용 등급 및 리서치"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кредитные рейтинги и исследования Moody's"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "穆迪的信用评级和研究"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "穆迪的信用評級和研究"
+          }
+        }
+      }
+    },
     "credits" : {
       "comment" : "Unit caption rendered next to the hero credits balance figure.",
       "localizations" : {
@@ -72645,6 +74071,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "積分讓Osaurus代表您進行交易 - 目前用於雲模型訪問，未來將支持更多路由服務。"
+          }
+        }
+      }
+    },
+    "CRM for financial advisors" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CRM für Finanzberater"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "재무 상담사를 위한 CRM"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CRM для финансовых консультантов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "面向理财顾问的 CRM"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "面向理財顧問的 CRM"
           }
         }
       }
@@ -74156,6 +75616,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自定義…"
+          }
+        }
+      }
+    },
+    "Customer conversations and contacts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kundengespräche und Kontakte"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "고객 대화 및 연락처"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разговоры с клиентами и контакты"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "客户对话和联系人"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "客戶對話和聯絡人"
           }
         }
       }
@@ -79548,6 +81042,16 @@
         }
       }
     },
+    "Detected from your Mac" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Detected from your Mac"
+          }
+        }
+      }
+    },
     "Detected: %@" : {
       "localizations" : {
         "de" : {
@@ -80392,6 +81896,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "直接"
+          }
+        }
+      }
+    },
+    "Direct debit payments and mandates" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lastschriftzahlungen und Mandate"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "자동이체 결제 및 위임"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Платежи прямым дебетом и мандаты"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接借记付款和授权"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接扣款付款和授權"
           }
         }
       }
@@ -83200,6 +84738,40 @@
         }
       }
     },
+    "Documents & Signatures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dokumente & Signaturen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "문서 및 서명"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Документы и подписи"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文档与签名"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件與簽署"
+          }
+        }
+      }
+    },
     "Doesn't look like a 64-character theme ID or osaurus://themes-install link." : {
       "comment" : "A message displayed when the user pastes an invalid theme ID or link.",
       "isCommentAutoGenerated" : true,
@@ -85140,6 +86712,40 @@
         }
       }
     },
+    "Draft, review, and track contracts in Juro" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verträge in Juro entwerfen, prüfen und verfolgen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Juro에서 계약서 작성, 검토, 추적"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подготовка, проверка и отслеживание договоров в Juro"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Juro 中起草、审阅和跟踪合同"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Juro 中起草、審閱和追蹤合約"
+          }
+        }
+      }
+    },
     "Drafts" : {
       "comment" : "Title of the section of the outbound outbox that shows drafts.",
       "isCommentAutoGenerated" : true,
@@ -85494,6 +87100,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dropbox 自動化"
+          }
+        }
+      }
+    },
+    "Drug regulatory intelligence from Clarivate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arzneimittel-Regulierungsdaten von Clarivate"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clarivate의 의약품 규제 인텔리전스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Регуляторная информация о лекарствах от Clarivate"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clarivate 的药品监管情报"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clarivate 的藥品監管情報"
+          }
+        }
+      }
+    },
+    "Drug target and disease association data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daten zu Wirkstoffzielen und Krankheitsassoziationen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "약물 표적 및 질병 연관성 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные о мишенях лекарств и связях с заболеваниями"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "药物靶点和疾病关联数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "藥物標靶和疾病關聯資料"
           }
         }
       }
@@ -91884,6 +93558,74 @@
         }
       }
     },
+    "Enter a date and time as YYYY-MM-DDTHH:MM:SSZ." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geben Sie Datum und Uhrzeit als YYYY-MM-DDTHH:MM:SSZ ein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "날짜와 시간을 YYYY-MM-DDTHH:MM:SSZ 형식으로 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите дату и время в формате YYYY-MM-DDTHH:MM:SSZ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请按 YYYY-MM-DDTHH:MM:SSZ 格式输入日期和时间。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請以 YYYY-MM-DDTHH:MM:SSZ 格式輸入日期和時間。"
+          }
+        }
+      }
+    },
+    "Enter a date as YYYY-MM-DD." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geben Sie ein Datum als YYYY-MM-DD ein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "날짜를 YYYY-MM-DD 형식으로 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите дату в формате YYYY-MM-DD."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请按 YYYY-MM-DD 格式输入日期。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請以 YYYY-MM-DD 格式輸入日期。"
+          }
+        }
+      }
+    },
     "Enter a dollar amount between $5 and $500." : {
       "localizations" : {
         "de" : {
@@ -91949,6 +93691,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "輸入美元金額，比如25。"
+          }
+        }
+      }
+    },
+    "Enter a full web address, including https://." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geben Sie eine vollständige Webadresse inklusive https:// ein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "https://를 포함한 전체 웹 주소를 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите полный веб-адрес, включая https://."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入包含 https:// 的完整网址。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請輸入包含 https:// 的完整網址。"
+          }
+        }
+      }
+    },
+    "Enter a number." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geben Sie eine Zahl ein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "숫자를 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите число."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入数字。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請輸入數字。"
           }
         }
       }
@@ -92055,8 +93865,76 @@
         }
       }
     },
+    "Enter a valid email address." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geben Sie eine gültige E-Mail-Adresse ein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "올바른 이메일 주소를 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите действительный адрес электронной почты."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入有效的电子邮件地址。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請輸入有效的電子郵件地址。"
+          }
+        }
+      }
+    },
     "Enter a valid phrase" : {
 
+    },
+    "Enter a whole number." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geben Sie eine ganze Zahl ein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "정수를 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите целое число."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入整数。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請輸入整數。"
+          }
+        }
+      }
     },
     "Enter an executable path or command before testing." : {
       "localizations" : {
@@ -92682,6 +94560,40 @@
         }
       }
     },
+    "Envelopes, agreements, and signing status" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Umschläge, Vereinbarungen und Signaturstatus"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "봉투, 계약서, 서명 상태"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Конверты, соглашения и статус подписания"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信封、协议和签署状态"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信封、協議和簽署狀態"
+          }
+        }
+      }
+    },
     "environment" : {
       "localizations" : {
         "de" : {
@@ -93078,6 +94990,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "情節"
+          }
+        }
+      }
+    },
+    "ERP ledger, revenue, and close in Rillet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ERP-Hauptbuch, Umsatz und Abschluss in Rillet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rillet의 ERP 원장, 매출, 결산"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Главная книга ERP, выручка и закрытие периода в Rillet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rillet 中的 ERP 总账、收入和结账"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rillet 中的 ERP 總帳、營收和結帳"
           }
         }
       }
@@ -93832,6 +95778,40 @@
     },
     "Events" : {
 
+    },
+    "Events and availability in Google Calendar" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Termine und Verfügbarkeit in Google Kalender"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google 캘린더의 일정 및 가용 시간"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "События и доступность в Google Календаре"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google 日历中的活动和空闲时间"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google 日曆中的活動和空閒時間"
+          }
+        }
+      }
     },
     "every %@" : {
       "extractionState" : "stale",
@@ -100752,6 +102732,142 @@
         }
       }
     },
+    "Finance & Accounting" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finanzen & Buchhaltung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "재무 및 회계"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финансы и бухгалтерия"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "财务与会计"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "財務與會計"
+          }
+        }
+      }
+    },
+    "Financial data and analytics from FactSet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finanzdaten und Analysen von FactSet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FactSet의 금융 데이터 및 분석"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финансовые данные и аналитика FactSet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FactSet 的金融数据和分析"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FactSet 的金融資料和分析"
+          }
+        }
+      }
+    },
+    "Financial reports, invoices, and contacts in Xero" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finanzberichte, Rechnungen und Kontakte in Xero"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Xero의 재무 보고서, 청구서, 연락처"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финансовые отчёты, счета и контакты в Xero"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Xero 中的财务报告、发票和联系人"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Xero 中的財務報告、發票和聯絡人"
+          }
+        }
+      }
+    },
+    "Financial statements, prices, and ratios" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abschlüsse, Kurse und Kennzahlen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "재무제표, 가격, 비율"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финансовая отчётность, цены и коэффициенты"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "财务报表、价格和比率"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "財務報表、價格和比率"
+          }
+        }
+      }
+    },
     "Find" : {
       "localizations" : {
         "de" : {
@@ -100810,6 +102926,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "查找模型"
+          }
+        }
+      }
+    },
+    "Find and read documents in iManage Work" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dokumente in iManage Work finden und lesen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iManage Work에서 문서 찾기 및 읽기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и чтение документов в iManage Work"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 iManage Work 中查找和阅读文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 iManage Work 中尋找和閱讀文件"
+          }
+        }
+      }
+    },
+    "Find and read documents in NetDocuments" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dokumente in NetDocuments finden und lesen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "NetDocuments에서 문서 찾기 및 읽기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и чтение документов в NetDocuments"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 NetDocuments 中查找和阅读文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 NetDocuments 中尋找和閱讀文件"
           }
         }
       }
@@ -101254,6 +103438,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "請在瀏覽器中完成付款。Stripe 確認後，工作空間會立即出現在 Osaurus 中。"
+          }
+        }
+      }
+    },
+    "Finish the steps in your browser. This closes on its own when %@ confirms, or click Done." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schließen Sie die Schritte in Ihrem Browser ab. Dieses Fenster schließt sich, sobald %@ bestätigt, oder klicken Sie auf Fertig."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저에서 단계를 완료하세요. %@에서 확인하면 자동으로 닫히며, 완료를 클릭해도 됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершите шаги в браузере. Окно закроется само, когда %@ подтвердит, или нажмите «Готово»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在浏览器中完成相关步骤。%@ 确认后此窗口会自动关闭，也可以点击“完成”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在瀏覽器中完成相關步驟。%@ 確認後此視窗會自動關閉，也可以按一下「完成」。"
           }
         }
       }
@@ -102642,6 +104860,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "格式：分鐘 小時 月內日期 月份 星期幾"
+          }
+        }
+      }
+    },
+    "FP&A reporting and budgets in Datarails" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FP&A-Berichte und Budgets in Datarails"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datarails의 FP&A 보고 및 예산"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FP&A-отчётность и бюджеты в Datarails"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datarails 中的财务规划分析报告和预算"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datarails 中的財務規劃分析報告和預算"
           }
         }
       }
@@ -104123,6 +106375,74 @@
         }
       }
     },
+    "Fund, stock, and portfolio research" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fonds-, Aktien- und Portfolio-Research"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "펀드, 주식, 포트폴리오 리서치"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исследования фондов, акций и портфелей"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "基金、股票和投资组合研究"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "基金、股票和投資組合研究"
+          }
+        }
+      }
+    },
+    "Fundamental data from company filings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fundamentaldaten aus Unternehmensberichten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기업 공시의 기본 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фундаментальные данные из отчётности компаний"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来自公司申报文件的基本面数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來自公司申報文件的基本面資料"
+          }
+        }
+      }
+    },
     "Fuses the per-token decode graph with MLX compile (+25% measured on Gemma 4 QAT). Takes effect after restarting Osaurus — MLX fixes its compile state at the first model load of the process, so toggling this mid-session cannot turn it on/off live (the setting is saved and applies on next launch). Experimental: kept off by default until the historical model-switch corruption (PR #1173) is root-caused. If model switching misbehaves with this on, turn it off and restart." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -104358,6 +106678,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "通用"
+          }
+        }
+      }
+    },
+    "General ledger and accounting in DualEntry" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hauptbuch und Buchhaltung in DualEntry"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DualEntry의 총계정원장 및 회계"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Главная книга и бухгалтерия в DualEntry"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DualEntry 中的总账和会计"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DualEntry 中的總帳和會計"
           }
         }
       }
@@ -105318,6 +107672,40 @@
     "Generate Pairing Code" : {
 
     },
+    "Generate presentations and documents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Präsentationen und Dokumente erstellen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "프레젠테이션 및 문서 생성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создание презентаций и документов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "生成演示文稿和文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "產生簡報和文件"
+          }
+        }
+      }
+    },
     "Generate text embeddings" : {
       "localizations" : {
         "de" : {
@@ -105907,6 +108295,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Generic"
+          }
+        }
+      }
+    },
+    "Generic coverage only" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generic coverage only"
           }
         }
       }
@@ -107436,6 +109834,7 @@
       }
     },
     "Gmail, Calendar, Drive, Docs (requires self-hosting)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -110067,6 +112466,74 @@
         }
       }
     },
+    "Healthcare & Life Sciences" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gesundheit & Life Sciences"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "의료 및 생명과학"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Здравоохранение и науки о жизни"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "医疗与生命科学"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "醫療與生命科學"
+          }
+        }
+      }
+    },
+    "Healthcare price transparency data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daten zur Preistransparenz im Gesundheitswesen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "의료 가격 투명성 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные о прозрачности цен в здравоохранении"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "医疗价格透明度数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "醫療價格透明度資料"
+          }
+        }
+      }
+    },
     "Healthy" : {
       "localizations" : {
         "de" : {
@@ -110777,7 +113244,6 @@
     },
     "Hide details" : {
       "comment" : "Label for a button that hides advanced details in a view.",
-      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -111087,6 +113553,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "隱藏過大的項"
+          }
+        }
+      }
+    },
+    "Hide until Settings is reopened." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide until Settings is reopened."
           }
         }
       }
@@ -121995,6 +124471,40 @@
         }
       }
     },
+    "Investing & Market Data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Investments & Marktdaten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "투자 및 시장 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инвестиции и рыночные данные"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "投资与市场数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "投資與市場資料"
+          }
+        }
+      }
+    },
     "Invite" : {
       "localizations" : {
         "de" : {
@@ -122621,6 +125131,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在你的訂閱恢復正常前，邀請、共享代理和點數池扣費推論均暫停。逾期未付？請在「管理帳單」中更新信用卡。"
+          }
+        }
+      }
+    },
+    "Invoices, bills, and accounting in Zoho Books" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechnungen, Eingangsrechnungen und Buchhaltung in Zoho Books"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoho Books의 청구서, 지급 청구서, 회계"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Счета, входящие счета и бухгалтерия в Zoho Books"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoho Books 中的发票、账单和会计"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoho Books 中的發票、帳單和會計"
+          }
+        }
+      }
+    },
+    "Invoices, customers, and reports in QuickBooks Online" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechnungen, Kunden und Berichte in QuickBooks Online"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QuickBooks Online의 청구서, 고객, 보고서"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Счета, клиенты и отчёты в QuickBooks Online"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QuickBooks Online 中的发票、客户和报表"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QuickBooks Online 中的發票、客戶和報表"
+          }
+        }
+      }
+    },
+    "Invoices, expenses, and clients in FreshBooks" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechnungen, Ausgaben und Kunden in FreshBooks"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreshBooks의 청구서, 경비, 고객"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Счета, расходы и клиенты в FreshBooks"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreshBooks 中的发票、费用和客户"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreshBooks 中的發票、費用和客戶"
           }
         }
       }
@@ -125639,6 +128251,40 @@
         }
       }
     },
+    "Leads, calls, and pipeline in Close" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leads, Anrufe und Pipeline in Close"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close의 리드, 통화, 파이프라인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лиды, звонки и воронка в Close"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close 中的潜在客户、通话和销售管道"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close 中的潛在客戶、通話和銷售管道"
+          }
+        }
+      }
+    },
     "Learn how in our [Privacy Policy](%1$@)." : {
       "localizations" : {
         "de" : {
@@ -126497,6 +129143,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "法律"
+          }
+        }
+      }
+    },
+    "Legal Q&A, Vault documents, and research sources" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechtsfragen, Vault-Dokumente und Recherchequellen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "법률 Q&A, Vault 문서, 리서치 자료"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Юридические вопросы, документы Vault и источники для исследований"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "法律问答、Vault 文档和研究资料"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "法律問答、Vault 文件和研究資料"
+          }
+        }
+      }
+    },
+    "Legal research with cited case law" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechtsrecherche mit zitierter Rechtsprechung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "인용 판례를 포함한 법률 조사"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Юридические исследования со ссылками на судебную практику"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附判例引用的法律研究"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附判例引用的法律研究"
           }
         }
       }
@@ -132865,6 +135579,40 @@
         }
       }
     },
+    "Look up clinical terminology codes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klinische Terminologiecodes nachschlagen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "임상 용어 코드 조회"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск кодов клинической терминологии"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查询临床术语代码"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查詢臨床術語代碼"
+          }
+        }
+      }
+    },
     "Look up people and phone numbers." : {
       "comment" : "Onboarding plugin picker blurb for Contacts.",
       "extractionState" : "stale",
@@ -133107,6 +135855,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "數值越低，輸出越專注；數值越高，越具創造性。設爲 0 則始終選取概率最高的單個 token。"
+          }
+        }
+      }
+    },
+    "LSEG financial analytics and market data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LSEG-Finanzanalysen und Marktdaten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LSEG 금융 분석 및 시장 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финансовая аналитика и рыночные данные LSEG"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LSEG 金融分析和市场数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LSEG 金融分析和市場資料"
           }
         }
       }
@@ -133894,6 +136676,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "管理积分"
+          }
+        }
+      }
+    },
+    "Manage in-house legal matters and contracts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interne Rechtsangelegenheiten und Verträge verwalten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사내 법무 사안 및 계약 관리"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управление внутренними юридическими делами и договорами"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理企业内部法律事务和合同"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理企業內部法律事務和合約"
           }
         }
       }
@@ -135879,6 +138695,16 @@
         }
       }
     },
+    "Matches the documented shape, usually after a keyword; no checksum exists for this ID." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Matches the documented shape, usually after a keyword; no checksum exists for this ID."
+          }
+        }
+      }
+    },
     "Max" : {
       "localizations" : {
         "de" : {
@@ -137461,6 +140287,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "認識你的小恐龍"
+          }
+        }
+      }
+    },
+    "Meeting notes from Granola" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting-Notizen aus Granola"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Granola의 회의 노트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заметки о встречах из Granola"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来自 Granola 的会议笔记"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來自 Granola 的會議筆記"
+          }
+        }
+      }
+    },
+    "Meeting transcripts and summaries" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting-Transkripte und Zusammenfassungen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "회의 녹취록 및 요약"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стенограммы и сводки встреч"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会议转录和摘要"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議逐字稿和摘要"
+          }
+        }
+      }
+    },
+    "Meetings, recordings, and AI summaries in Zoom" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meetings, Aufzeichnungen und KI-Zusammenfassungen in Zoom"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoom의 회의, 녹화, AI 요약"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Встречи, записи и ИИ-сводки в Zoom"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoom 中的会议、录制和 AI 摘要"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoom 中的會議、錄影和 AI 摘要"
           }
         }
       }
@@ -143297,6 +146225,16 @@
         }
       }
     },
+    "Multilingual keyword fallback for regions without a specific preset." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Multilingual keyword fallback for regions without a specific preset."
+          }
+        }
+      }
+    },
     "Multilingual model supporting 25 European languages" : {
       "localizations" : {
         "de" : {
@@ -143403,6 +146341,142 @@
     },
     "Music" : {
 
+    },
+    "Must be at least %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Muss mindestens %@ sein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 이상이어야 합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Значение должно быть не меньше %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不能小于 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不能小於 %@。"
+          }
+        }
+      }
+    },
+    "Must be at least %lld characters." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Muss mindestens %lld Zeichen lang sein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld자 이상이어야 합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужно не меньше %lld символов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "至少需要 %lld 个字符。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "至少需要 %lld 個字元。"
+          }
+        }
+      }
+    },
+    "Must be at most %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Darf höchstens %@ sein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 이하여야 합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Значение должно быть не больше %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不能大于 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不能大於 %@。"
+          }
+        }
+      }
+    },
+    "Must be at most %lld characters." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Darf höchstens %lld Zeichen lang sein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld자 이하여야 합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Допускается не больше %lld символов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最多 %lld 个字符。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最多 %lld 個字元。"
+          }
+        }
+      }
     },
     "Mutations in flight on this agent's serial queue." : {
       "extractionState" : "stale",
@@ -144664,6 +147738,40 @@
         }
       }
     },
+    "Navigate definitions and clauses in contracts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Definitionen und Klauseln in Verträgen nachschlagen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계약서의 정의와 조항 탐색"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Навигация по определениям и пунктам договоров"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "浏览合同中的定义和条款"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "瀏覽合約中的定義和條款"
+          }
+        }
+      }
+    },
     "Navigating" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -145658,6 +148766,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "從不"
+          }
+        }
+      }
+    },
+    "Never enter passwords, API keys or card numbers here. Your answers are sent to %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geben Sie hier niemals Passwörter, API-Schlüssel oder Kartennummern ein. Ihre Antworten werden an %@ gesendet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "여기에 비밀번호, API 키, 카드 번호를 절대 입력하지 마세요. 답변은 %@(으)로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никогда не вводите здесь пароли, API-ключи или номера карт. Ваши ответы отправляются в %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切勿在此输入密码、API 密钥或银行卡号。您的回答会发送给 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切勿在此輸入密碼、API 金鑰或信用卡號。您的回答會傳送給 %@。"
           }
         }
       }
@@ -154243,6 +157385,40 @@
         }
       }
     },
+    "No services in this category" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Dienste in dieser Kategorie"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 카테고리에 서비스가 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этой категории нет сервисов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此类别中没有服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此類別中沒有服務"
+          }
+        }
+      }
+    },
     "No services match \"%@\"" : {
       "localizations" : {
         "de" : {
@@ -158357,6 +161533,40 @@
     "Nothing Matches These Filters" : {
 
     },
+    "Nothing to compact yet. The recent conversation is already as small as it can get." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch nichts zu komprimieren. Die letzte Unterhaltung ist bereits so klein wie möglich."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 압축할 내용이 없습니다. 최근 대화가 이미 최소 크기입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нечего сжимать. Недавняя часть разговора уже минимальна."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无可压缩的内容。最近的对话已经尽可能精简。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫無可壓縮的內容。最近的對話已經盡可能精簡。"
+          }
+        }
+      }
+    },
     "Nothing to export yet." : {
       "localizations" : {
         "de" : {
@@ -161404,6 +164614,40 @@
         }
       }
     },
+    "Only continue if you trust this site. Osaurus opens it in your browser when you click Open." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fahren Sie nur fort, wenn Sie dieser Website vertrauen. Osaurus öffnet sie in Ihrem Browser, wenn Sie auf Öffnen klicken."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 사이트를 신뢰하는 경우에만 계속하세요. 열기를 클릭하면 Osaurus가 브라우저에서 엽니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжайте, только если доверяете этому сайту. Osaurus откроет его в браузере, когда вы нажмёте «Открыть»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在信任此网站时继续。点击“打开”后，Osaurus 会在浏览器中打开它。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅在信任此網站時繼續。按一下「打開」後，Osaurus 會在瀏覽器中打開它。"
+          }
+        }
+      }
+    },
     "Only documented capture capabilities can be requested by plugins." : {
       "localizations" : {
         "de" : {
@@ -162037,6 +165281,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 Telegram 中開啟 @BotFather"
+          }
+        }
+      }
+    },
+    "Open %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ öffnen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開 %@"
           }
         }
       }
@@ -167992,6 +171270,16 @@
         }
       }
     },
+    "Osaurus turns these on for %@ and Global on a new install." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus turns these on for %@ and Global on a new install."
+          }
+        }
+      }
+    },
     "Osaurus will not auto-connect this MCP provider while the row toggle is off." : {
       "localizations" : {
         "de" : {
@@ -168529,6 +171817,40 @@
     "Outcome" : {
       "comment" : "A label for the outcome of a dialog request.",
       "isCommentAutoGenerated" : true
+    },
+    "Outlook mail and calendar, Teams, OneDrive, and SharePoint" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Outlook-Mail und -Kalender, Teams, OneDrive und SharePoint"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Outlook 메일 및 일정, Teams, OneDrive, SharePoint"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почта и календарь Outlook, Teams, OneDrive и SharePoint"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Outlook 邮件和日历、Teams、OneDrive 和 SharePoint"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Outlook 郵件和行事曆、Teams、OneDrive 和 SharePoint"
+          }
+        }
+      }
     },
     "Output" : {
       "comment" : "Section title for the \"Output\" feature group in the agent detail view.",
@@ -172823,6 +176145,74 @@
         }
       }
     },
+    "Payroll, contracts, and people data in Deel" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gehaltsabrechnung, Verträge und Personaldaten in Deel"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deel의 급여, 계약, 인사 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зарплаты, договоры и кадровые данные в Deel"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deel 中的薪资、合同和人员数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deel 中的薪資、合約和人員資料"
+          }
+        }
+      }
+    },
+    "Payroll, employees, and tax data in Gusto (read-only)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gehaltsabrechnung, Mitarbeiter und Steuerdaten in Gusto (nur lesen)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gusto의 급여, 직원, 세금 데이터(읽기 전용)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зарплаты, сотрудники и налоговые данные в Gusto (только чтение)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gusto 中的薪资、员工和税务数据（只读）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gusto 中的薪資、員工和稅務資料（唯讀）"
+          }
+        }
+      }
+    },
     "PDF" : {
       "localizations" : {
         "de" : {
@@ -174497,6 +177887,40 @@
         }
       }
     },
+    "Personal budgets and cash-flow forecasts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Persönliche Budgets und Cashflow-Prognosen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "개인 예산 및 현금 흐름 예측"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Личные бюджеты и прогнозы денежного потока"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "个人预算和现金流预测"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "個人預算和現金流預測"
+          }
+        }
+      }
+    },
     "Personal Organizer" : {
       "localizations" : {
         "de" : {
@@ -175346,6 +178770,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "從概率總和達到 P 的最小 token 集合中進行選取。"
+          }
+        }
+      }
+    },
+    "Pick one of the options." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie eine der Optionen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "옵션 중 하나를 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите один из вариантов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请选择其中一个选项。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請選擇其中一個選項。"
           }
         }
       }
@@ -178532,6 +181990,40 @@
         }
       }
     },
+    "Portfolio and wealth data in Addepar" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Portfolio- und Vermögensdaten in Addepar"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Addepar의 포트폴리오 및 자산 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные портфелей и капитала в Addepar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Addepar 中的投资组合和财富数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Addepar 中的投資組合和財富資料"
+          }
+        }
+      }
+    },
     "Portrait 9:16 for mobile and vertical compositions." : {
       "comment" : "Text describing the size of the image for portrait compositions.",
       "isCommentAutoGenerated" : true
@@ -179859,6 +183351,16 @@
         }
       }
     },
+    "Presets on for this region, out of the total available." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Presets on for this region, out of the total available."
+          }
+        }
+      }
+    },
     "Press key" : {
       "localizations" : {
         "de" : {
@@ -181064,6 +184566,40 @@
     "Privacy Filter rewrote spans before send" : {
       "comment" : "A tooltip for a privacy filter icon.",
       "isCommentAutoGenerated" : true
+    },
+    "Privacy policies, cookie consent, and GDPR records" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datenschutzerklärungen, Cookie-Einwilligungen und DSGVO-Nachweise"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "개인정보 처리방침, 쿠키 동의, GDPR 기록"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Политики конфиденциальности, согласие на cookie и записи GDPR"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐私政策、Cookie 同意和 GDPR 记录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隱私權政策、Cookie 同意和 GDPR 紀錄"
+          }
+        }
+      }
     },
     "Privacy Policy" : {
       "localizations" : {
@@ -190300,6 +193836,40 @@
         }
       }
     },
+    "Private market companies, deals, and investors" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Private-Market-Unternehmen, Deals und Investoren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "비상장 시장 기업, 거래, 투자자"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Компании, сделки и инвесторы частного рынка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "私募市场公司、交易和投资者"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "私募市場公司、交易和投資者"
+          }
+        }
+      }
+    },
     "Private model ready" : {
       "comment" : "Polished pending-local-setup status copy.",
       "extractionState" : "manual",
@@ -191617,6 +195187,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "提案 #%lld：%@"
+          }
+        }
+      }
+    },
+    "Proposals, quotes, and e-signatures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Angebote, Kostenvoranschläge und E-Signaturen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제안서, 견적서, 전자 서명"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предложения, сметы и электронные подписи"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提案、报价和电子签名"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提案、報價和電子簽署"
           }
         }
       }
@@ -194562,6 +198166,40 @@
         }
       }
     },
+    "Read and create Miro boards" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Miro-Boards lesen und erstellen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Miro 보드 읽기 및 생성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чтение и создание досок Miro"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "读取和创建 Miro 白板"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讀取和建立 Miro 白板"
+          }
+        }
+      }
+    },
     "Read and edit Webflow sites and CMS items" : {
       "localizations" : {
         "de" : {
@@ -194857,6 +198495,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在已允許清單的工作區頻道中讀取和回覆"
+          }
+        }
+      }
+    },
+    "Read and update Airtable bases and records" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Airtable-Bases und Datensätze lesen und aktualisieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Airtable 베이스와 레코드 읽기 및 업데이트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чтение и обновление баз и записей Airtable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "读取和更新 Airtable 数据库与记录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讀取和更新 Airtable 資料庫與紀錄"
           }
         }
       }
@@ -200343,6 +204015,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "關係"
+          }
+        }
+      }
+    },
+    "Relationship intelligence for deal teams" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beziehungsanalysen für Deal-Teams"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "딜 팀을 위한 관계 인텔리전스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аналитика связей для команд по сделкам"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "面向交易团队的关系洞察"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "面向交易團隊的關係洞察"
           }
         }
       }
@@ -207106,6 +210812,40 @@
         }
       }
     },
+    "Requires subscription" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abonnement erforderlich"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "구독 필요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужна подписка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要订阅"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要訂閱"
+          }
+        }
+      }
+    },
     "Requires the helper and a linked account. Chats come from the local session store; nothing leaves this machine." : {
       "comment" : "A description of the WhatsApp channel.",
       "isCommentAutoGenerated" : true,
@@ -207275,6 +211015,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "研究分析師"
+          }
+        }
+      }
+    },
+    "Research cases, dockets, and legal news" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fälle, Verfahrensakten und Rechtsnachrichten recherchieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "판례, 소송 기록, 법률 뉴스 조사"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск дел, судебных реестров и правовых новостей"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检索案例、案卷和法律新闻"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢索案例、案卷和法律新聞"
           }
         }
       }
@@ -211391,6 +215165,40 @@
     "Review Activity in Insights" : {
 
     },
+    "Review Brex card spend, expenses, and budgets" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brex-Kartenausgaben, Spesen und Budgets prüfen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brex 카드 지출, 경비, 예산 검토"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просмотр расходов по картам Brex, затрат и бюджетов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看 Brex 卡消费、费用和预算"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢視 Brex 卡消費、費用和預算"
+          }
+        }
+      }
+    },
     "Review Bundle" : {
       "localizations" : {
         "de" : {
@@ -211428,6 +215236,40 @@
     "Review configuration changes" : {
       "comment" : "A title for a card that reviews configuration changes.",
       "isCommentAutoGenerated" : true
+    },
+    "Review M&A data rooms and deal documents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M&A-Datenräume und Transaktionsdokumente prüfen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M&A 데이터룸 및 거래 문서 검토"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просмотр M&A-датарумов и документов по сделкам"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "审阅并购数据室和交易文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "審閱併購資料室和交易文件"
+          }
+        }
+      }
     },
     "Review manifest and install" : {
       "localizations" : {
@@ -216181,6 +220023,40 @@
         }
       }
     },
+    "S&P Capital IQ financials via Kensho" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "S&P-Capital-IQ-Finanzdaten über Kensho"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kensho를 통한 S&P Capital IQ 재무 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финансовые данные S&P Capital IQ через Kensho"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过 Kensho 获取 S&P Capital IQ 财务数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "透過 Kensho 取得 S&P Capital IQ 財務資料"
+          }
+        }
+      }
+    },
     "Safe Auto" : {
       "localizations" : {
         "de" : {
@@ -216351,6 +220227,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "安全級別"
+          }
+        }
+      }
+    },
+    "Sales & CRM" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vertrieb & CRM"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "영업 및 CRM"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продажи и CRM"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "销售与 CRM"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "銷售與 CRM"
           }
         }
       }
@@ -220399,6 +224309,40 @@
         }
       }
     },
+    "Scheduling links and booked meetings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminlinks und gebuchte Meetings"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "예약 링크 및 예약된 회의"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ссылки для записи и назначенные встречи"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预约链接和已预订的会议"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預約連結和已預訂的會議"
+          }
+        }
+      }
+    },
     "Scheduling the next run" : {
       "localizations" : {
         "de" : {
@@ -221338,6 +225282,40 @@
         }
       }
     },
+    "Search across the work apps connected to Dash" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle mit Dash verbundenen Arbeits-Apps durchsuchen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dash에 연결된 업무 앱 전체 검색"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск по рабочим приложениям, подключённым к Dash"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索已连接到 Dash 的所有工作应用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋已連接到 Dash 的所有工作 App"
+          }
+        }
+      }
+    },
     "Search agents" : {
       "comment" : "Placeholder text in a search field used to filter a list of spawnable agents.",
       "isCommentAutoGenerated" : true,
@@ -221479,7 +225457,76 @@
         }
       }
     },
+    "Search and draft email in Gmail" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "E-Mails in Gmail durchsuchen und entwerfen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail에서 이메일 검색 및 초안 작성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и черновики писем в Gmail"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Gmail 中搜索和起草邮件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Gmail 中搜尋和草擬郵件"
+          }
+        }
+      }
+    },
+    "Search and edit Jira and Confluence content" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jira- und Confluence-Inhalte durchsuchen und bearbeiten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jira 및 Confluence 콘텐츠 검색 및 편집"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и редактирование содержимого Jira и Confluence"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索和编辑 Jira 与 Confluence 内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋和編輯 Jira 與 Confluence 內容"
+          }
+        }
+      }
+    },
     "Search and edit Jira, Confluence, and Compass content" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -221543,6 +225590,176 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜索並編輯您的Canva設計"
+          }
+        }
+      }
+    },
+    "Search and read files in Box" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dateien in Box durchsuchen und lesen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Box에서 파일 검색 및 읽기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и чтение файлов в Box"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Box 中搜索和阅读文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Box 中搜尋和閱讀檔案"
+          }
+        }
+      }
+    },
+    "Search and read files in Egnyte" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dateien in Egnyte durchsuchen und lesen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Egnyte에서 파일 검색 및 읽기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и чтение файлов в Egnyte"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Egnyte 中搜索和阅读文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Egnyte 中搜尋和閱讀檔案"
+          }
+        }
+      }
+    },
+    "Search and read files in Google Drive" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dateien in Google Drive durchsuchen und lesen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Drive에서 파일 검색 및 읽기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и чтение файлов в Google Диске"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Google 云端硬盘中搜索和阅读文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Google 雲端硬碟中搜尋和閱讀檔案"
+          }
+        }
+      }
+    },
+    "Search and send messages in Slack" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nachrichten in Slack durchsuchen und senden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Slack에서 메시지 검색 및 전송"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и отправка сообщений в Slack"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Slack 中搜索和发送消息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Slack 中搜尋和傳送訊息"
+          }
+        }
+      }
+    },
+    "Search and summarize scientific literature" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wissenschaftliche Literatur durchsuchen und zusammenfassen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "과학 문헌 검색 및 요약"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск и обобщение научной литературы"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索和总结科学文献"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋和摘要科學文獻"
           }
         }
       }
@@ -221778,6 +225995,40 @@
         }
       }
     },
+    "Search contracts and workflows in Ironclad" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verträge und Workflows in Ironclad durchsuchen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ironclad에서 계약 및 워크플로 검색"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск договоров и процессов в Ironclad"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Ironclad 中搜索合同和工作流"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Ironclad 中搜尋合約和工作流程"
+          }
+        }
+      }
+    },
     "Search conversations" : {
       "comment" : "Placeholder text for a search field in the room selector.",
       "isCommentAutoGenerated" : true
@@ -221955,6 +226206,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋引擎 ID (cx)"
+          }
+        }
+      }
+    },
+    "Search legislation and case law across countries" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gesetze und Rechtsprechung länderübergreifend durchsuchen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "여러 국가의 법령과 판례 검색"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск законодательства и судебной практики разных стран"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跨国家搜索法律法规和判例"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跨國家搜尋法律法規和判例"
           }
         }
       }
@@ -222194,6 +226479,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜索路徑或模型..."
+          }
+        }
+      }
+    },
+    "Search peer-reviewed Wiley research" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Begutachtete Wiley-Forschung durchsuchen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "동료 심사를 거친 Wiley 연구 검색"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск рецензируемых исследований Wiley"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索经同行评审的 Wiley 研究"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋經同儕審查的 Wiley 研究"
           }
         }
       }
@@ -222638,6 +226957,7 @@
       }
     },
     "Search Stack Overflow for code answers" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -222773,6 +227093,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜索工具"
+          }
+        }
+      }
+    },
+    "Search US case law summaries" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zusammenfassungen von US-Rechtsprechung durchsuchen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미국 판례 요약 검색"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск кратких обзоров судебной практики США"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索美国判例摘要"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋美國判例摘要"
+          }
+        }
+      }
+    },
+    "Search US court opinions, dockets, and judges" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "US-Gerichtsurteile, Verfahrensakten und Richter durchsuchen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미국 법원 판결, 소송 기록, 판사 검색"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск решений судов США, реестров и судей"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索美国法院判决、案卷和法官"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋美國法院判決、案卷和法官"
           }
         }
       }
@@ -224233,6 +228621,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "查看歷史"
+          }
+        }
+      }
+    },
+    "See how research papers are cited" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sehen, wie Fachartikel zitiert werden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "연구 논문이 어떻게 인용되는지 확인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как цитируются научные статьи"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看研究论文的引用情况"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看研究論文的引用情況"
           }
         }
       }
@@ -226141,6 +230563,40 @@
         }
       }
     },
+    "Send documents for e-signature" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dokumente zur E-Signatur senden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전자 서명용 문서 보내기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправка документов на электронную подпись"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送文档进行电子签名"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "傳送文件進行電子簽署"
+          }
+        }
+      }
+    },
     "Send iMessages from your Mac." : {
       "comment" : "Onboarding plugin picker blurb for Messages.",
       "extractionState" : "stale",
@@ -227753,6 +232209,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "服務器正在運行"
+          }
+        }
+      }
+    },
+    "Server says this tool can modify or delete data." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Laut Server kann dieses Tool Daten ändern oder löschen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서버에 따르면 이 도구는 데이터를 수정하거나 삭제할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По данным сервера, этот инструмент может изменять или удалять данные."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器声明此工具可以修改或删除数据。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "伺服器聲明此工具可以修改或刪除資料。"
+          }
+        }
+      }
+    },
+    "Server says this tool only reads data." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Laut Server liest dieses Tool nur Daten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서버에 따르면 이 도구는 데이터를 읽기만 합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По данным сервера, этот инструмент только читает данные."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器声明此工具只读取数据。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "伺服器聲明此工具只讀取資料。"
+          }
+        }
+      }
+    },
+    "Server says this tool reaches external services." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Laut Server greift dieses Tool auf externe Dienste zu."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서버에 따르면 이 도구는 외부 서비스에 접근합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По данным сервера, этот инструмент обращается к внешним сервисам."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器声明此工具会访问外部服务。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "伺服器聲明此工具會存取外部服務。"
           }
         }
       }
@@ -235688,6 +240246,40 @@
         }
       }
     },
+    "Sketch diagrams and whiteboards" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagramme und Whiteboards skizzieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다이어그램 및 화이트보드 스케치"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Наброски диаграмм и досок"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "绘制图表和白板草图"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繪製圖表和白板草圖"
+          }
+        }
+      }
+    },
     "Skill archive contains more than %lld entries" : {
       "localizations" : {
         "de" : {
@@ -237355,6 +241947,40 @@
         }
       }
     },
+    "SOC 2, ISO 27001, and HIPAA compliance status" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compliance-Status für SOC 2, ISO 27001 und HIPAA"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SOC 2, ISO 27001, HIPAA 규정 준수 현황"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Статус соответствия SOC 2, ISO 27001 и HIPAA"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SOC 2、ISO 27001 和 HIPAA 合规状态"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SOC 2、ISO 27001 和 HIPAA 合規狀態"
+          }
+        }
+      }
+    },
     "Socket Mode app token" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -238157,6 +242783,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "出了點問題"
+          }
+        }
+      }
+    },
+    "Something went wrong talking to %@. Click Retry, or open Details for more." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bei der Kommunikation mit %@ ist ein Fehler aufgetreten. Klicken Sie auf Erneut versuchen oder öffnen Sie Details."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@와(과) 통신하는 중 문제가 발생했습니다. 다시 시도를 클릭하거나 세부 정보를 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При обращении к %@ что-то пошло не так. Нажмите «Повторить попытку» или откройте «Подробности»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与 %@ 通信时出错。请点击“重试”，或打开“详情”了解更多。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與 %@ 通訊時發生錯誤。請按一下「重試」，或打開「詳情」了解更多。"
           }
         }
       }
@@ -239254,6 +243914,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "塊擴散模型（DiffusionGemma）的速度/質量預算。設爲 16 時速度約爲模型默認值的 2 倍，且保持畫面連貫；低於 12 時質量下降。對常規模型無效。"
+          }
+        }
+      }
+    },
+    "Spending and budget spreadsheets from Tiller" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausgaben- und Budgettabellen aus Tiller"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tiller의 지출 및 예산 스프레드시트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Таблицы расходов и бюджета из Tiller"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来自 Tiller 的支出和预算表格"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來自 Tiller 的支出和預算試算表"
           }
         }
       }
@@ -241681,7 +246375,39 @@
     },
     "Steps" : {
       "comment" : "A label for the number of steps in a media generation.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steps"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schritte"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "步数"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "단계"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Шаги"
+          }
+        }
+      }
     },
     "Still can't open memory — try Reset." : {
       "comment" : "Toast message shown when a memory store reset fails but the memory store can still be reopened.",
@@ -241743,6 +246469,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "仍在处理中 — 正在等待模型或工具…"
+          }
+        }
+      }
+    },
+    "Stock, forex, and economic market data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktien-, Devisen- und Wirtschaftsdaten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "주식, 외환, 경제 시장 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные по акциям, валютам и экономике"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "股票、外汇和经济市场数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "股票、外匯和經濟市場資料"
           }
         }
       }
@@ -244288,6 +249048,40 @@
     "Suggest Follow-Up Questions" : {
 
     },
+    "Summarize older messages to free up context" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ältere Nachrichten zusammenfassen, um Kontext freizugeben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 메시지를 요약해 컨텍스트 확보"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сжать старые сообщения в сводку, чтобы освободить контекст"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "总结较早的消息以释放上下文"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "摘要較早的訊息以釋出上下文"
+          }
+        }
+      }
+    },
     "Summarize text" : {
       "localizations" : {
         "de" : {
@@ -246672,6 +251466,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "任務已取消"
+          }
+        }
+      }
+    },
+    "Tasks and projects in Todoist" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufgaben und Projekte in Todoist"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Todoist의 작업 및 프로젝트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задачи и проекты в Todoist"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Todoist 中的任务和项目"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Todoist 中的任務和專案"
+          }
+        }
+      }
+    },
+    "Tasks, docs, and goals in ClickUp" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufgaben, Dokumente und Ziele in ClickUp"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ClickUp의 작업, 문서, 목표"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задачи, документы и цели в ClickUp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ClickUp 中的任务、文档和目标"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ClickUp 中的任務、文件和目標"
+          }
+        }
+      }
+    },
+    "Tasks, projects, and goals in Asana" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufgaben, Projekte und Ziele in Asana"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asana의 작업, 프로젝트, 목표"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задачи, проекты и цели в Asana"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asana 中的任务、项目和目标"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asana 中的任務、專案和目標"
           }
         }
       }
@@ -251218,6 +256114,40 @@
         }
       }
     },
+    "The connection to %@ dropped. Click Retry to reconnect." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Verbindung zu %@ wurde unterbrochen. Klicken Sie auf Erneut versuchen, um sie wiederherzustellen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@와(과)의 연결이 끊어졌습니다. 다시 연결하려면 다시 시도를 클릭하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Соединение с %@ прервалось. Нажмите «Повторить попытку», чтобы переподключиться."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与 %@ 的连接已断开。请点击“重试”重新连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與 %@ 的連線已中斷。請按一下「重試」重新連線。"
+          }
+        }
+      }
+    },
     "The container's /workspace directory is bind-mounted from ~/.osaurus/container/workspace/. Open it in Finder to browse or edit files directly on the host." : {
       "localizations" : {
         "de" : {
@@ -252197,6 +257127,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "該鏈接將停止工作。任何嘗試使用它的人將被拒絕訪問。"
+          }
+        }
+      }
+    },
+    "The local %@ server stopped unexpectedly." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der lokale %@-Server wurde unerwartet beendet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬 %@ 서버가 예기치 않게 중지되었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальный сервер %@ неожиданно остановился."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地 %@ 服务器意外停止。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本機 %@ 伺服器意外停止。"
           }
         }
       }
@@ -257845,6 +262809,40 @@
         }
       }
     },
+    "This field is required." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Feld ist erforderlich."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "필수 입력 항목입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это обязательное поле."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此字段为必填项。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此欄位為必填。"
+          }
+        }
+      }
+    },
     "This file is the index of a Claude export, not the conversations. Claude splits large exports into batch zip files and lists them here. Import each batch zip directly, no need to unzip. If you only received this file, download each link under export_url first." : {
       "localizations" : {
         "de" : {
@@ -259941,6 +264939,40 @@
         }
       }
     },
+    "This service" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Dienst"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 서비스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот сервис"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服務"
+          }
+        }
+      }
+    },
     "This session" : {
       "localizations" : {
         "de" : {
@@ -261340,6 +266372,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "該工作區的訂閱未啟用。邀請和共享已暫停。"
+          }
+        }
+      }
+    },
+    "Thomson Reuters legal research and drafting" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechtsrecherche und Entwürfe von Thomson Reuters"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thomson Reuters 법률 조사 및 문서 작성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Юридические исследования и подготовка документов от Thomson Reuters"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thomson Reuters 法律研究与起草"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thomson Reuters 法律研究與起草"
           }
         }
       }
@@ -265210,6 +270276,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "轉錄模型"
+          }
+        }
+      }
+    },
+    "Translate text and documents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Texte und Dokumente übersetzen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "텍스트 및 문서 번역"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевод текстов и документов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "翻译文本和文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "翻譯文字和文件"
           }
         }
       }
@@ -271651,6 +276751,40 @@
         }
       }
     },
+    "US tax questions and filing guidance" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "US-Steuerfragen und Hilfe bei der Steuererklärung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미국 세금 질문 및 신고 안내"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Налоговые вопросы США и помощь с декларацией"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "美国税务问题和报税指导"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "美國稅務問題和報稅指引"
+          }
+        }
+      }
+    },
     "US-style 10–12 digit phone numbers, with or without separators." : {
       "comment" : "Description of a built-in detection pattern for phone numbers.",
       "extractionState" : "stale",
@@ -277094,6 +282228,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "等待"
+          }
+        }
+      }
+    },
+    "Wait for the current response to finish, then run /compact." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Warte, bis die aktuelle Antwort fertig ist, und führe dann /compact aus."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "현재 응답이 끝날 때까지 기다린 후 /compact를 실행하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дождитесь завершения текущего ответа, затем выполните /compact."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请等待当前回复完成，然后运行 /compact。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請等待目前回覆完成，然後執行 /compact。"
           }
         }
       }
@@ -289268,6 +294436,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你的覆蓋項"
+          }
+        }
+      }
+    },
+    "Your own health records, with your consent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihre eigenen Gesundheitsdaten, mit Ihrer Einwilligung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "동의하에 본인의 건강 기록 이용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваши медицинские записи с вашего согласия"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "经您同意访问您自己的健康记录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "經您同意存取您自己的健康紀錄"
           }
         }
       }

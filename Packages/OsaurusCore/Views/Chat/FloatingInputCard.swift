@@ -2205,6 +2205,25 @@ extension FloatingInputCard {
                     message: "Pass an onGenerateTitle handler to enable /title"
                 )
             }
+        case "compact":
+            if compactionState.isRunning {
+                ToastManager.shared.infoLocalized(
+                    "Compact Conversation",
+                    message: "Compaction is already running."
+                )
+            } else if isStreaming {
+                ToastManager.shared.infoLocalized(
+                    "Compact Conversation",
+                    message: "Wait for the current response to finish, then run /compact."
+                )
+            } else if let compact = onCompactConversation, canCompactConversation {
+                compact()
+            } else {
+                ToastManager.shared.infoLocalized(
+                    "Compact Conversation",
+                    message: "Nothing to compact yet. The recent conversation is already as small as it can get."
+                )
+            }
         case "help":
             ToastManager.shared.infoLocalized(
                 "Slash Commands",
@@ -2731,7 +2750,7 @@ extension FloatingInputCard {
                 // The negative prompt sits where the token meter normally would,
                 // as a compact button that opens a themed editor on tap.
                 if selectedMediaPickerItem?.mediaModel != nil
-                    || imageCapabilities?.negativePrompt == true
+                    || imageComposerControls.negativePrompt
                 {
                     negativePromptButton
                 }
@@ -2954,6 +2973,14 @@ extension FloatingInputCard {
 
     private var imageCapabilities: ImageModelCapabilities? {
         selectedImagePickerItem?.imageCapabilities
+    }
+
+    private var imageComposerControls: ImageComposerRequestBuilder.Controls {
+        ImageComposerRequestBuilder.controls(
+            capabilities: imageCapabilities,
+            fallbackKind: selectedImagePickerItem?.imageKind,
+            hasReferences: pendingAttachments.hasImages
+        )
     }
 
     private var isImageComposerActive: Bool {
@@ -5187,7 +5214,12 @@ extension FloatingInputCard {
     private var seedText: Binding<String> {
         Binding(
             get: { imageComposerSettings.seed },
-            set: { imageComposerSettings.seed = $0.filter(\.isNumber) }
+            set: {
+                // Remote media keeps its existing digits-only input contract.
+                // Local image requests validate the complete string at admission.
+                imageComposerSettings.seed = selectedMediaPickerItem?.mediaModel != nil
+                    ? $0.filter(\.isNumber) : $0
+            }
         )
     }
 
@@ -5204,8 +5236,22 @@ extension FloatingInputCard {
                     stepsChip
                     cfgChip
                     seedChip
-                    if imageCapabilities?.imageEdit == true {
+                    if imageComposerControls.strength {
                         strengthChip
+                    }
+                    if ImageComposerRequestBuilder.hasUnsupportedEditOverrides(
+                        controls: imageComposerControls, settings: imageComposerSettings
+                    ) {
+                        Button {
+                            if !imageComposerControls.strength {
+                                imageComposerSettings.strengthWasExplicitlySet = false
+                            }
+                            if !imageComposerControls.negativePrompt {
+                                imageComposerSettings.negativePrompt = ""
+                            }
+                        } label: {
+                            Text(localized: "Clear unsupported edit settings")
+                        }.buttonStyle(.plain)
                     }
                 }
             }
@@ -5437,6 +5483,11 @@ extension FloatingInputCard {
     }
 
     private var selectedSizeLabel: String {
+        if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1",
+            !imageComposerSettings.hasExplicitImageSize
+        {
+            return pendingAttachments.hasImages ? L("Use source aspect ratio") : "1024px"
+        }
         let w = imageComposerSettings.width
         let h = imageComposerSettings.height
         return w == h ? "\(w)px" : "\(w)×\(h)"
@@ -5476,9 +5527,19 @@ extension FloatingInputCard {
                 .padding(.top, 12)
                 .padding(.bottom, 4)
 
+            if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1" {
+                Button {
+                    imageComposerSettings.imageSizeWasExplicitlySet = false
+                    showImageSizePicker = false
+                } label: {
+                    Text(localized: "Default")
+                }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 8)
+            }
             ForEach(imageSizeOptions) { option in
                 let isSelected =
-                    imageComposerSettings.width == option.width
+                    (selectedImagePickerItem?.imageCanonicalName != "qwen-image-2.1"
+                        || imageComposerSettings.hasExplicitImageSize)
+                    && imageComposerSettings.width == option.width
                     && imageComposerSettings.height == option.height
                 Button {
                     imageComposerSettings.width = option.width

@@ -458,9 +458,19 @@ struct MetalGateTests {
         // NON-cancellable teardown owner (engine.unload immediately follows
         // entering the gate) — a teardown that gave up mid-wait on
         // cancellation would free buffers without the gate.
+        // Production still uses the shared gate; injection only supplies an
+        // isolated gate to explicit fixture construction.
+        #expect(imageService.contains("public init() {\n        metalGate = .shared"))
         #expect(
             imageService.contains(
-                "await MetalGate.shared.enterModelTeardown(model: \"image-unload\")\n        await engine.unload()"
+                """
+                await metalGate.enterModelTeardown(model: "image-unload")
+                        await engine.unload()
+                        loadedDirectoryName = nil
+                        loadedDirectoryURL = nil
+                        cleanupGPUCache()
+                        await metalGate.exitModelTeardown(model: "image-unload")
+                """
             )
         )
     }

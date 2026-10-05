@@ -1951,7 +1951,10 @@ public enum SettingsSearchIndex {
             title: "Directory",
             keywords: [
                 "browse services", "mcp directory", "discover mcp", "provider catalog", "linear",
-                "github", "notion", "custom server",
+                "github", "notion", "custom server", "connectors", "legal connectors",
+                "accounting connectors", "finance connectors", "healthcare connectors", "quickbooks",
+                "xero", "docusign", "google drive", "gmail", "slack", "dropbox", "gusto",
+                "microsoft 365", "outlook", "harvey",
             ],
             subTab: "Services"
         ),

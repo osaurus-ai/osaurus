@@ -2710,11 +2710,69 @@ struct WorkspacesServiceTests {
             service.noteWorkspaceBilled(workspaceId: "team-1")
             service.noteWorkspaceBilled(workspaceId: "team-1")
             service.noteWorkspaceBilled(workspaceId: "team-1")
-            for _ in 0..<40 where balanceCalls.current < 2 {
+            // Handler entry counts the request before URLSession delivers and
+            // decodes its response. Wait for the actual MainActor publication.
+            for _ in 0..<40 where service.poolBalances["team-1"]?.balanceMicro != "199990000" {
                 try await Task.sleep(for: .milliseconds(50))
             }
             #expect(balanceCalls.current == 2)
             #expect(service.poolBalances["team-1"]?.balanceMicro == "199990000")
+        }
+    }
+
+    /// Request entry cannot stand in for response publication. The second
+    /// real URLProtocol response is held without blocking its delivery thread.
+    @Test func poolBalanceRequestStartPrecedesHeldResponsePublication() async throws {
+        let calls = Counter()
+        let hold = WorkspacesResponseHold()
+        let started = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let published = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        defer {
+            hold.release()
+            started.continuation.finish()
+            published.continuation.finish()
+        }
+        try await withService(handler: { request in
+            guard request.url?.path == "/workspaces/team-1/credits/balance" else {
+                throw URLError(.badURL)
+            }
+            let n = calls.increment()
+            let micro = n == 1 ? "200000000" : "199990000"
+            return json(#"{"balance_micro":"\#(micro)","frozen":false}"#)
+        }, responseDelivery: { deliver in
+            if calls.current == 2 {
+                hold.install(deliver)
+                started.continuation.yield(())
+            } else {
+                deliver()
+            }
+        }) { service, _ in
+            let first = await service.refreshPoolBalance(workspaceId: "team-1")
+            #expect(first?.balanceMicro == "200000000")
+            #expect(service.selectedWorkspaceId == nil)
+            let subscription = service.$poolBalances.sink { balances in
+                if balances["team-1"]?.balanceMicro == "199990000" {
+                    published.continuation.yield(())
+                }
+            }
+            defer { subscription.cancel(); hold.release() }
+            // One deadline includes the existing real 600ms debounce and both
+            // response events. Timer expiry is failure, never success evidence.
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            service.noteWorkspaceBilled(workspaceId: "team-1")
+            service.noteWorkspaceBilled(workspaceId: "team-1")
+            service.noteWorkspaceBilled(workspaceId: "team-1")
+            try await waitForWorkspacesResponseEvent(started.stream, before: deadline)
+            #expect(calls.current == 2)  // The old wait predicate is satisfied.
+            #expect(hold.hasPendingResponse)
+            #expect(service.poolBalances["team-1"]?.balanceMicro == "200000000")
+            hold.release()
+            try await waitForWorkspacesResponseEvent(published.stream, before: deadline)
+            // The suspended MainActor resumes after the synchronous @Published
+            // setter finishes, so check real stored state as well as the event.
+            #expect(service.poolBalances["team-1"]?.balanceMicro == "199990000")
+            #expect(calls.current == 2)
+            #expect(!hold.hasPendingResponse)
         }
     }
 
@@ -2861,9 +2919,12 @@ struct WorkspacesServiceTests {
 
     private func withService(
         handler: @escaping @Sendable (URLRequest) throws -> (Int, Data, [String: String]),
+        responseDelivery: (@Sendable (@escaping @Sendable () -> Void) -> Void)? = nil,
         _ body: @MainActor (WorkspacesService, UserDefaults) async throws -> Void
     ) async rethrows {
         WorkspacesServiceURLProtocol.handler = handler
+        WorkspacesServiceURLProtocol.responseDelivery = responseDelivery
+        defer { WorkspacesServiceURLProtocol.responseDelivery = nil }
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [WorkspacesServiceURLProtocol.self]
         let session = URLSession(configuration: config)
@@ -3233,7 +3294,11 @@ private final class WorkspacesClientURLProtocol: WorkspacesStubURLProtocolBase, 
 
 private final class WorkspacesServiceURLProtocol: WorkspacesStubURLProtocolBase, @unchecked Sendable {
     nonisolated(unsafe) static var handler: Handler?
+    nonisolated(unsafe) static var responseDelivery: (@Sendable (@escaping @Sendable () -> Void) -> Void)?
     override class var currentHandler: Handler? { handler }
+    override func deliverResponse(_ deliver: @escaping @Sendable () -> Void) {
+        if let intercept = Self.responseDelivery { intercept(deliver) } else { deliver() }
+    }
 }
 
 private class WorkspacesStubURLProtocolBase: URLProtocol, @unchecked Sendable {
@@ -3259,15 +3324,70 @@ private class WorkspacesStubURLProtocolBase: URLProtocol, @unchecked Sendable {
                 httpVersion: "HTTP/1.1",
                 headerFields: headers
             )!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
+            deliverResponse { [self] in
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: data)
+                client?.urlProtocolDidFinishLoading(self)
+            }
         } catch {
             client?.urlProtocol(self, didFailWithError: error)
         }
     }
 
+    func deliverResponse(_ deliver: @escaping @Sendable () -> Void) { deliver() }
+
     override func stopLoading() {}
+}
+
+/// No waiter blocks a URLSession or MainActor thread. A held response is an
+/// owned completion closure released explicitly (and in diagnostic cleanup).
+private final class WorkspacesResponseHold: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: (@Sendable () -> Void)?
+    private var released = false
+    func install(_ response: @escaping @Sendable () -> Void) {
+        lock.lock()
+        if released {
+            lock.unlock()
+            response()
+            return
+        }
+        precondition(pending == nil)
+        pending = response
+        lock.unlock()
+    }
+    var hasPendingResponse: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return pending != nil
+    }
+    func release() {
+        lock.lock()
+        let response = pending
+        pending = nil
+        released = true
+        lock.unlock()
+        response?()
+    }
+}
+
+private enum WorkspacesResponseWaitError: Error { case timedOut, closed }
+
+private func waitForWorkspacesResponseEvent(
+    _ events: AsyncStream<Void>, before deadline: ContinuousClock.Instant
+) async throws {
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask {
+            var iterator = events.makeAsyncIterator()
+            guard await iterator.next() != nil else { throw WorkspacesResponseWaitError.closed }
+        }
+        group.addTask {
+            try await ContinuousClock().sleep(until: deadline)
+            throw WorkspacesResponseWaitError.timedOut
+        }
+        defer { group.cancelAll() }
+        _ = try await group.next()
+    }
 }
 
 private extension URLRequest {

@@ -12079,9 +12079,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed)
     }
 
-    private static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
+    static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
         if hfAuth { return HTTPResponseStatus(statusCode: 402) }
         let m = message.lowercased()
+        // The bridge's explicit request classification outranks explanatory
+        // text such as "strength ... is not implemented" in its detail.
+        if m.hasPrefix("invalid request:") { return .badRequest }
         if m.contains("not found") { return .notFound }
         if m.contains("incomplete") { return .conflict }
         if m.contains("not implemented") { return .notImplemented }
@@ -12120,6 +12123,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         image_edit: m.capabilities.imageEdit,
                         upscale: m.capabilities.upscale,
                         negative_prompt: m.capabilities.negativePrompt,
+                        edit_negative_prompt: m.capabilities.editNegativePrompt,
+                        edit_strength: m.capabilities.editStrength,
                         mask: m.capabilities.mask,
                         multiple_source_images: m.capabilities.multipleSourceImages,
                         lora: m.capabilities.lora
@@ -12128,13 +12133,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         steps: m.defaultSteps,
                         guidance: m.defaultGuidance.map { Double($0) }
                     ),
-                    limits: ImageLimitsDTO(
-                        min_steps: 1,
-                        max_steps: 50,
-                        size_multiple: 16,
-                        max_pixels: 1024 * 1024,
-                        supported_sizes: ["512x512", "768x768", "1024x1024"]
-                    ),
+                    limits: ImageHTTPParameterBuilder.limits(for: m),
                     blocked_reasons: m.blockedReasons
                 )
             }
@@ -12238,24 +12237,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         {
             return
         }
-        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
-        let params = ImageGenerationParameters(
-            model: modelId,
-            prompt: req.prompt,
-            negativePrompt: req.negative_prompt,
-            width: w.map(Self.clampImageDimension),
-            height: h.map(Self.clampImageDimension),
-            steps: req.steps.map(Self.clampImageSteps),
-            guidance: req.guidance.map { Float($0) },
-            seed: req.seed,
-            // Multi-image (`n` > 1) is force-capped to 1: the service generates the
-            // N images sequentially in one job WITHOUT a GPU drain between them, which
-            // reliably trips the MLX `tryCoalescingPreviousComputeCommandEncoder`
-            // assertion (reproduced at n=2). Re-enable once the per-image drain lands
-            // in the multi-image loop.
-            numImages: 1,
-            outputFormat: Self.imageOutputFormat(req.output_format)
-        )
         let jobID = Self.shortId(prefix: "img")
         runImageJob(
             head: head,
@@ -12269,7 +12250,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             jobID: jobID,
             onCompleted: Self.imageSessionAppender(
                 continuedSession, prompt: req.prompt, sourceImages: [], model: modelId)
-        ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
+        ) { await ImageGenerationService.shared.generateHTTP(req, modelID: modelId, jobID: jobID) }
     }
 
     /// The Mac chat an owner's phone named with `osaurus_session_id` on an
@@ -12784,7 +12765,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         // Prefer the ordered `images` list; fall back to the single `image`.
         let rawSources = req.images ?? [req.image].compactMap { $0 }
-        let sources = rawSources.compactMap { Self.decodeImageInput($0) }
+        // Keep every position until actual bundle metadata chooses its policy.
+        // Older families preserve legacy compactMap; Q21 rejects any bad entry.
+        let decodedSources = rawSources.map { Self.decodeImageInput($0) }
+        let sources = decodedSources.compactMap { $0 }
         guard !sources.isEmpty else {
             sendImageError(
                 head: head,
@@ -12842,21 +12826,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         {
             return
         }
-        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
-        let params = ImageEditParameters(
-            model: editModelId,
-            prompt: req.prompt,
-            sourceImages: sources,
-            maskImage: nil,
-            negativePrompt: req.negative_prompt,
-            strength: req.strength.map { Float($0) } ?? 0.75,
-            width: w.map(Self.clampImageDimension),
-            height: h.map(Self.clampImageDimension),
-            steps: req.steps.map(Self.clampImageSteps),
-            guidance: req.guidance.map { Float($0) },
-            seed: req.seed,
-            outputFormat: Self.imageOutputFormat(req.output_format)
-        )
         let jobID = Self.shortId(prefix: "img")
         runImageJob(
             head: head,
@@ -12871,12 +12840,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             model: editModelId,
             activityDetails: Self.mediaActivityDetails(
                 kind: "image", operation: "edit", backend: .local,
-                count: nil, width: params.width, height: params.height,
+                count: nil, width: nil, height: nil,
                 aspect: nil, resolution: nil,
-                extra: ["source_images": String(sources.count), "job_id": jobID]),
+                extra: ["source_images": String(rawSources.count), "job_id": jobID]),
             onCompleted: Self.imageSessionAppender(
                 continuedSession, prompt: req.prompt, sourceImages: sources, model: editModelId)
-        ) { await ImageGenerationService.shared.edit(params, jobID: jobID) }
+        ) {
+            await ImageGenerationService.shared.editHTTP(req, modelID: editModelId,
+                decodedSources: decodedSources, jobID: jobID)
+        }
     }
 
     func handleImageUpscale(
@@ -12925,7 +12897,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 kind: "image", operation: "upscale", backend: .local,
                 count: nil, width: nil, height: nil, aspect: nil, resolution: nil,
                 extra: ["scale": String(params.scale), "job_id": jobID])
-        ) { await ImageGenerationService.shared.upscale(params, jobID: jobID) }
+        ) { ImageHTTPPreparedJob(stream: await ImageGenerationService.shared.upscale(params, jobID: jobID)) }
     }
 
     func handleImageCancel(
@@ -12988,7 +12960,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String? = nil,
         activityDetails: [String: String] = [:],
         onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
-        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+        build: @escaping @Sendable () async -> ImageHTTPPreparedJob
     ) {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -13010,7 +12982,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             runRequestTask(priority: .userInitiated) {
                 emit(ImageStreamEventDTO(type: "queued", job_id: jobID))
-                let stream = await build()
+                let prepared = await build()
+                let stream = prepared.stream
                 do {
                     for try await event in stream {
                         switch event {
@@ -13060,7 +13033,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    details: activityDetails
+                    details: activityDetails.merging(prepared.activityDetails) { _, actual in actual }
                 )
             }
             return
@@ -13099,12 +13072,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String? = nil,
         activityDetails: [String: String] = [:],
         onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
-        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+        build: @escaping @Sendable () async -> ImageHTTPPreparedJob
     ) {
         runRequestTask(priority: .userInitiated) {
             var produced: [GeneratedImage] = []
             var failure: (message: String, hfAuth: Bool)?
-            let stream = await build()
+            let prepared = await build()
+            let stream = prepared.stream
             do {
                 for try await event in stream {
                     switch event {
@@ -13141,7 +13115,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     model: model,
                     errorMessage: failure.message,
-                    details: activityDetails
+                    details: activityDetails.merging(prepared.activityDetails) { _, actual in actual }
                 )
                 return
             }
@@ -13157,7 +13131,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers.append(contentsOf: cors)
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
             }
-            var details = activityDetails
+            var details = activityDetails.merging(prepared.activityDetails) { _, actual in actual }
             details["count"] = String(produced.count)
             logSelf.logRequest(
                 method: "POST",
