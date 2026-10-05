@@ -107,6 +107,25 @@ private enum SmokeFixtures {
         </body></html>
         """
 
+    static let submissionControls = """
+        <!DOCTYPE html><html><head><title>Submission Gate Fixture</title></head><body>
+        <form id="form" onsubmit="event.preventDefault(); window.submissions++">
+            <input id="name" aria-label="Full name">
+            <button id="explicit" type="submit">Create demo account</button>
+            <button id="implicit">Créer un compte</button>
+            <button id="nested"><span id="nested-span">계정 만들기</span></button>
+            <input id="image" type="image" alt="Continue">
+            <input id="input-submit" type="submit" value="Weiter">
+        </form>
+        <button id="external" form="form">Continue</button>
+        <button id="edit" type="button" onclick="window.edits++">Add to cart</button>
+        <label for="check" id="check-label">Remember me</label><input id="check" type="checkbox">
+        <button id="disabled" disabled>Disabled</button>
+        <a id="link" href="#catalog">Catalog</a>
+        <script>window.submissions = 0; window.edits = 0;</script>
+        </body></html>
+        """
+
     /// Write a fixture and return its file:// URL string.
     static func write(_ html: String, to dir: URL, name: String) throws -> String {
         let url = dir.appendingPathComponent("\(name).html")
@@ -125,6 +144,9 @@ struct BrowserWebKitSmokeTests {
     /// (Balanced) policy — approval behavior itself is covered by
     /// `BrowserGateTests`.
     private func withSmokeExecutor(
+        agentId: UUID = UUID(),
+        policy: AutonomyPolicy = .defaultPolicy,
+        confirm: @escaping @MainActor (ActionPreview) async -> Bool = { _ in true },
         _ body: (BrowserToolExecutor, _ fixtures: URL) async throws -> Void
     ) async rethrows {
         let dir = FileManager.default.temporaryDirectory
@@ -134,15 +156,14 @@ struct BrowserWebKitSmokeTests {
         BrowserSessionCatalog.overrideDirectory = dir
         BrowserSessionCatalog.resetCacheForTests()
 
-        let agentId = UUID()
         // The scheme policy blocks file:// in production; the fixtures here
         // legitimately load over file://, so opt into the test seam.
         BrowserSession.allowFileURLsForTesting = true
         let executor = BrowserToolExecutor(
             agentId: agentId,
             toolCallId: "smoke-\(UUID().uuidString)",
-            gate: BrowserGate(policy: .defaultPolicy),
-            confirm: { _ in true }
+            gate: BrowserGate(policy: policy),
+            confirm: confirm
         )
         defer {
             // Wipe the profile's WKWebsiteDataStore + catalog record, then
@@ -491,6 +512,167 @@ struct BrowserWebKitSmokeTests {
             manager.endRun(for: agentId)
             manager.reapIdleSessions(now: Date(timeIntervalSinceNow: 3600))
             #expect(!manager.activeAgentIds().contains(agentId))
+        }
+    }
+
+    // Regression: Gemma clicked a real form submit labelled "Create demo account"
+    // without a consequential confirmation. Exercise DOM effects, not just labels.
+    @Test(arguments: ["explicit", "implicit", "nested-span", "image", "input-submit", "external"], [false, true])
+    func formSubmissionsCannotBypassDenial(selectorID: String, batched: Bool) async throws {
+        let agentId = UUID()
+        var effects: [EffectClass] = []
+        try await withSmokeExecutor(
+            agentId: agentId,
+            confirm: { preview in
+                effects.append(preview.effect)
+                return false
+            }
+        ) { executor, fixtures in
+            let url = try SmokeFixtures.write(SmokeFixtures.submissionControls, to: fixtures, name: "submit")
+            _ = await executor.execute(
+                name: "browser_navigate",
+                argumentsJSON: ##"{"url":"\##(url)","detail":"none"}"##
+            )
+            let args =
+                batched
+                ? ##"{"actions":[{"action":"click","selector":"#\##(selectorID)"},{"action":"click","selector":"#edit"}],"detail":"none"}"##
+                : ##"{"selector":"#\##(selectorID)","detail":"none"}"##
+            let result = await executor.execute(name: batched ? "browser_do" : "browser_click", argumentsJSON: args)
+            #expect(!ToolEnvelope.isSuccess(result))
+            #expect(result.contains("declined"))
+            #expect(effects == [.consequential])
+            let state = await BrowserSessionManager.shared.session(for: agentId).executeScript(
+                "return [window.submissions, window.edits];"
+            )
+            #expect(state.result as? [Int] == [0, 0], "Neither denied submit nor later batch action may run")
+        }
+    }
+
+    @Test(arguments: [AutonomyPreset.balanced, .trusted])
+    func approvedNativeSubmitExecutesExactlyOnce(preset: AutonomyPreset) async throws {
+        let agentId = UUID()
+        var effects: [EffectClass] = []
+        try await withSmokeExecutor(
+            agentId: agentId,
+            policy: AutonomyPolicy(globalPreset: preset),
+            confirm: { preview in
+                effects.append(preview.effect)
+                return true
+            }
+        ) { executor, fixtures in
+            let url = try SmokeFixtures.write(SmokeFixtures.submissionControls, to: fixtures, name: "submit")
+            _ = await executor.execute(
+                name: "browser_navigate",
+                argumentsJSON: ##"{"url":"\##(url)","detail":"none"}"##
+            )
+            let result = await executor.execute(
+                name: "browser_click",
+                argumentsJSON: ##"{"selector":"#explicit","detail":"none"}"##
+            )
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(effects == [.consequential])
+            let state = await BrowserSessionManager.shared.session(for: agentId).executeScript(
+                "return window.submissions;"
+            )
+            #expect(state.result as? Int == 1)
+        }
+    }
+
+    @Test func readOnlyBlocksStateChangingClicksButAllowsRealLinks() async throws {
+        let agentId = UUID()
+        var confirmations = 0
+        try await withSmokeExecutor(
+            agentId: agentId,
+            policy: AutonomyPolicy(globalPreset: .readOnly),
+            confirm: { _ in
+                confirmations += 1
+                return true
+            }
+        ) { executor, fixtures in
+            let url = try SmokeFixtures.write(SmokeFixtures.submissionControls, to: fixtures, name: "readonly")
+            _ = await executor.execute(
+                name: "browser_navigate",
+                argumentsJSON: ##"{"url":"\##(url)","detail":"none"}"##
+            )
+            for selector in ["#edit", "#check", "#check-label", "#explicit"] {
+                let result = await executor.execute(
+                    name: "browser_click",
+                    argumentsJSON: ##"{"selector":"\##(selector)","detail":"none"}"##
+                )
+                #expect(!ToolEnvelope.isSuccess(result))
+                #expect(result.contains("policy blocks"))
+            }
+            let link = await executor.execute(
+                name: "browser_click",
+                argumentsJSON: ##"{"selector":"#link","detail":"none"}"##
+            )
+            #expect(ToolEnvelope.isSuccess(link))
+            #expect(confirmations == 0)
+            let state = await BrowserSessionManager.shared.session(for: agentId).executeScript(
+                "return [window.submissions, window.edits, document.querySelector('#check').checked ? 1 : 0];"
+            )
+            #expect(state.result as? [Int] == [0, 0, 0])
+        }
+    }
+
+    @Test(arguments: [
+        "el.type = 'submit'; el.setAttribute('form', 'form');",
+        "el.outerHTML = el.outerHTML;",
+        "el.setAttribute('aria-label', 'Different action');",
+        "el.disabled = true;",
+        "el.insertAdjacentHTML('afterend', el.outerHTML);",
+    ])
+    func targetChangesDuringApprovalDoNotExecute(mutation: String) async throws {
+        let agentId = UUID()
+        var confirmations = 0
+        try await withSmokeExecutor(
+            agentId: agentId,
+            confirm: { preview in
+                confirmations += 1
+                #expect(preview.effect == .edit)
+                let change = await BrowserSessionManager.shared.session(for: agentId).executeScript(
+                    "const el = document.querySelector('#edit'); \(mutation) return true;"
+                )
+                #expect(change.error == nil)
+                return true
+            }
+        ) { executor, fixtures in
+            let url = try SmokeFixtures.write(SmokeFixtures.submissionControls, to: fixtures, name: "changing")
+            _ = await executor.execute(
+                name: "browser_navigate",
+                argumentsJSON: ##"{"url":"\##(url)","detail":"none"}"##
+            )
+            let result = await executor.execute(
+                name: "browser_click",
+                argumentsJSON: ##"{"selector":"#edit","detail":"none"}"##
+            )
+            #expect(!ToolEnvelope.isSuccess(result))
+            #expect(confirmations == 1)
+            let state = await BrowserSessionManager.shared.session(for: agentId).executeScript(
+                "return [window.submissions, window.edits];"
+            )
+            #expect(state.result as? [Int] == [0, 0])
+        }
+    }
+
+    @Test func ambiguousAndDisabledTargetsFailBeforeConfirmation() async throws {
+        var confirmations = 0
+        try await withSmokeExecutor(confirm: { _ in
+            confirmations += 1; return true
+        }) { executor, fixtures in
+            let url = try SmokeFixtures.write(SmokeFixtures.submissionControls, to: fixtures, name: "unresolved")
+            _ = await executor.execute(
+                name: "browser_navigate",
+                argumentsJSON: ##"{"url":"\##(url)","detail":"none"}"##
+            )
+            for selector in ["button", "#disabled", "#missing"] {
+                let result = await executor.execute(
+                    name: "browser_click",
+                    argumentsJSON: ##"{"selector":"\##(selector)","detail":"none"}"##
+                )
+                #expect(!ToolEnvelope.isSuccess(result))
+            }
+            #expect(confirmations == 0)
         }
     }
 }
