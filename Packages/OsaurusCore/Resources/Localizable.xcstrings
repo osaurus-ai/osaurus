@@ -259504,6 +259504,9 @@
         }
       }
     },
+    "The server isn't running." : {
+
+    },
     "The setupComplete flag is false, so tool and agent startup still require provisioning." : {
       "localizations" : {
         "de" : {
@@ -294084,6 +294087,9 @@
       }
     },
     "Your Mac" : {
+
+    },
+    "Your Mac can't take a pairing right now. %@" : {
 
     },
     "Your Mac has %lld GB unified memory; for smooth performance, choose models estimated below %@ while running." : {
