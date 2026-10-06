@@ -103,14 +103,16 @@ What the channel does **not** hide: traffic timing and approximate sizes (true o
 
 | Endpoint | Purpose | Notes |
 |---|---|---|
-| `POST /secure/session` | Handshake | Public, rate-limited per source IP; grants nothing by itself |
+| `POST /secure/session` | Handshake | Public, rate-limited per source IP; grants nothing by itself. Signed by the target agent's key, or by the Mac's connect identity for a paired phone whose Mac has no custom agents ([`MOBILE_PROTOCOL.md` §11.3](MOBILE_PROTOCOL.md)) |
 | `POST /secure/call` | Encrypted request envelope | Ciphertext decrypts to the inner request; inner auth fully enforced |
 
 ### Error codes
 
 | Status | Code | Meaning | Client action |
 |---|---|---|---|
-| `426` | `secure_channel_required` | Plaintext request to a protected agent route from a remote caller | Upgrade Osaurus / use the channel |
+| `426` | `secure_channel_required` | Plaintext request to a protected agent route from a remote caller | Upgrade Osaurus / use the channel. A paired phone with nothing pinned refetches `GET /agents` for the connect identity |
+| `404` | `Unknown agent address` | Handshake for an address that is no agent here and not the connect identity | Drop the stale pin |
+| `503` | `Secure channel identity unavailable, try again` | The connect identity's master key can't be read right now (a locked Keychain) | Keep the pin and retry |
 | `401` | `secure_session_unknown` | Session expired or server restarted | Re-handshake (automatic) |
 | `409` | `secure_replay` | Sequence number already consumed | Never retry the same envelope |
 | `400` | `secure_malformed` | Bad envelope, or inner request targeting `/secure/*` | Fix the request |
@@ -127,11 +129,13 @@ What the channel does **not** hide: traffic timing and approximate sizes (true o
 | Remote-provider integration (`.osaurus` providers) | `Packages/OsaurusCore/Services/Provider/RemoteProviderService.swift` |
 | Capability advertisement (`osc=1`) | `Packages/OsaurusCore/Networking/BonjourAdvertiser.swift` / `BonjourBrowser.swift` |
 | Transcript signature domain prefix | `Packages/OsaurusCore/Identity/CryptoHelpers.swift` |
+| Connect identity for the paired phone | `Packages/OsaurusCore/Services/MobileConnect/MobileConnectIdentity.swift` |
 
 ### Test coverage
 
 - `Tests/Identity/SecureChannelTests.swift` — handshake roundtrip, wrong-identity and tampered-transcript rejection, version negotiation, replay/reorder windows, cross-session and cross-call frame rejection, `fin` authentication, truncation detection.
 - `Tests/Networking/SecureChannelE2ETests.swift` — full NIO server: encrypted buffered and SSE calls, replay → `409`, unknown session → `401`, the `426` gate (plaintext remote refused, loopback allowed, encrypted relay-origin passes), inner auth still enforced, built-in-agent guard still fires inside the channel, per-agent scope enforced on `GET /agents/{id}` (a cross-agent scoped key is refused `403 agent_scope_denied` inside the ciphertext), no `/secure/*` nesting.
+- `Tests/Identity/MobilePairingTests.swift` — the connect identity: deterministic, device-scoped, never equal to an agent key at any index, and carried under the built-in agent in the pairing payload only when no custom agent has an address.
 
 ### Compatibility
 

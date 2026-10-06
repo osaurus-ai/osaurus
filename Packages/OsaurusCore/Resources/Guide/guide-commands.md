@@ -14,6 +14,8 @@ Type `/` in the chat input to open the command popup. Commands are named shortcu
 - `/model` — open the model picker.
 - `/agent` — switch the active agent.
 - `/screenshot` — capture the current screen as a chat artifact.
+- `/title` — generate a title for this chat.
+- `/compact` — summarize older messages now to free up context (same as **Compact conversation** in the context budget popover). Useful right before sending something large into an already-full chat.
 - `/help` — show available commands and shortcuts.
 
 Built-ins are fixed and cannot be edited or deleted.

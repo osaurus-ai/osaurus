@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "6eb3a8163ad214cbf9125a7a62a3f465690752fb"
+        let expectedRuntimeHardenedRevision = "2b05d39a6f43c1bc8789112fc92baa426d84c833"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -3935,11 +3935,11 @@ struct RuntimePolicySourceTests {
             picker.contains(
                 "nativeMTPManuallyBlockedModels.contains(identity) ? \"off\" : nativeMTPSelection"
             ),
-            "A globally saved manual depth must render as Off for a bundle whose runtime blocks manual MTP."
+            "A globally saved Adaptive request must render as Off for a bundle whose runtime blocks native MTP."
         )
         #expect(
-            picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
-            "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
+            picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off (AR)\"))]"),
+            "Blocked bundles must not advertise selectable Adaptive chips."
         )
     }
 }

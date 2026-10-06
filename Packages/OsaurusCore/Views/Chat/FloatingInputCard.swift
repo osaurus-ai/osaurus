@@ -880,32 +880,19 @@ struct FloatingInputCard: View {
     }
 
     private var composerContent: some View {
-        VStack(spacing: 4) {
-            // Slash command popup — appears above the input card
-            if showSlashPopup {
-                SlashCommandPopup(
-                    commands: slashFilteredCommands,
-                    selectedIndex: $slashSelectedIndex,
-                    onSelect: applySlashCommand
-                )
-                .padding(.horizontal, 20)
-                .transition(
-                    .asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
-                        removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
-                    )
-                )
-            }
-
-            // "@" file menu popup — appears above the input card
-            atFileMenuPopupView
-
-            inputCard
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
-                .onDrop(of: dropAcceptedTypes, isTargeted: $isDragOver) { providers in
-                    handleFileDrop(providers)
-                }
+        inputCard
+        // Float the slash / "@" menus above the card instead of stacking
+        // them in the layout, so opening one never shifts the selector row
+        // or the transcript. The `.top` guide lifts the overlay fully above
+        // the card's top edge.
+        .overlay(alignment: .top) {
+            composerPopupOverlay
+                .alignmentGuide(.top) { dimensions in dimensions.height + 4 }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 20)
+        .onDrop(of: dropAcceptedTypes, isTargeted: $isDragOver) { providers in
+            handleFileDrop(providers)
         }
         .transition(
             .asymmetric(
@@ -2205,6 +2192,25 @@ extension FloatingInputCard {
                     message: "Pass an onGenerateTitle handler to enable /title"
                 )
             }
+        case "compact":
+            if compactionState.isRunning {
+                ToastManager.shared.infoLocalized(
+                    "Compact Conversation",
+                    message: "Compaction is already running."
+                )
+            } else if isStreaming {
+                ToastManager.shared.infoLocalized(
+                    "Compact Conversation",
+                    message: "Wait for the current response to finish, then run /compact."
+                )
+            } else if let compact = onCompactConversation, canCompactConversation {
+                compact()
+            } else {
+                ToastManager.shared.infoLocalized(
+                    "Compact Conversation",
+                    message: "Nothing to compact yet. The recent conversation is already as small as it can get."
+                )
+            }
         case "help":
             ToastManager.shared.infoLocalized(
                 "Slash Commands",
@@ -2482,10 +2488,8 @@ extension FloatingInputCard {
             .lowercased()
     }
 
-    /// Off / Auto / 1 / 2 / 3, beside Reasoning Effort in the picker's Model
-    /// Options. Auto starts from the runtime's eligible recommendation and
-    /// explores within its configured limit. Explicit 1-3 selections activate
-    /// an eligible head and bound exploration by the selected depth.
+    /// Product selection requests adaptive admission; runtime resolution can
+    /// remain autoregressive when the bundle is missing verified tuning.
     private func nativeMTPOption(for model: String) -> ModelOptionDefinition? {
         let identity = Self.mtpIdentity(model)
         guard !isRemoteAgentRun,
@@ -2494,17 +2498,14 @@ extension FloatingInputCard {
         let manuallyBlocked = nativeMTPManuallyBlockedModels.contains(identity)
         return ModelOptionDefinition(
             id: Self.nativeMTPOptionID,
-            label: L("Speculative Depth"),
+            label: L("Native MTP"),
             icon: "hare",
             kind: .segmented(
                 manuallyBlocked
-                    ? [ModelOptionSegment(id: "off", label: L("Off"))]
+                    ? [ModelOptionSegment(id: "off", label: L("Off (AR)"))]
                     : [
-                        ModelOptionSegment(id: "off", label: L("Off")),
-                        ModelOptionSegment(id: "auto", label: L("Auto")),
-                        ModelOptionSegment(id: "1", label: "1"),
-                        ModelOptionSegment(id: "2", label: "2"),
-                        ModelOptionSegment(id: "3", label: "3"),
+                        ModelOptionSegment(id: "off", label: L("Off (AR)")),
+                        ModelOptionSegment(id: "auto", label: L("On (Adaptive)")),
                     ]
             ),
             // Depth controls speculation, not the user's sampling settings.
@@ -2513,7 +2514,7 @@ extension FloatingInputCard {
                     "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
                 )
                 : L(
-                    "Speculative decoding starts Off. Select Auto or a maximum depth of 1–3 explicitly. The runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
+                    "Off uses ordinary autoregressive decoding. On requests adaptive native MTP when the bundle passes runtime safety and tuning checks. Ineligible bundles continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged."
                 )
         )
     }
@@ -2522,15 +2523,7 @@ extension FloatingInputCard {
     private static func nativeMTPSegment(
         _ mtp: VMLXServerMTPSettings
     ) -> String {
-        if mtp.mode == .off { return "off" }
-        if mtp.mode == .forceOn, let depth = mtp.explicitDepth, (1 ... 3).contains(depth) {
-            return String(depth)
-        }
-        // Legacy saved state: the old buttons wrote auto + draftTokenLimit,
-        // which never activated anything. Render it as the depth it claimed
-        // so the migration to a real press is one click, not a mystery.
-        if let limit = mtp.draftTokenLimit, (1 ... 3).contains(limit) { return String(limit) }
-        return "auto"
+        mtp.mode == .off ? "off" : "auto"
     }
 
     /// Writes through the same path the Settings pane uses, so there is one
@@ -2553,10 +2546,7 @@ extension FloatingInputCard {
                 settings.mtp.draftTokenLimit = nil
                 settings.mtp.explicitDepth = nil
             default:
-                guard let depth = Int(segment), (1...3).contains(depth) else { return }
-                settings.mtp.mode = .forceOn
-                settings.mtp.explicitDepth = depth
-                settings.mtp.draftTokenLimit = nil
+                return
             }
             _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings)
             // A rejected save must not leave an optimistic segment displayed.
@@ -2726,12 +2716,12 @@ extension FloatingInputCard {
                 // button pinned to the right where the token meter normally sits.
                 ScrollView(.horizontal, showsIndicators: false) {
                     imageComposerChips
-                        .padding(.vertical, 1)
+                        .padding(.vertical, 2)
                 }
                 // The negative prompt sits where the token meter normally would,
                 // as a compact button that opens a themed editor on tap.
                 if selectedMediaPickerItem?.mediaModel != nil
-                    || imageCapabilities?.negativePrompt == true
+                    || imageComposerControls.negativePrompt
                 {
                     negativePromptButton
                 }
@@ -2753,7 +2743,7 @@ extension FloatingInputCard {
                 // cluster build per frame instead of ViewThatFits's three.
                 ScrollView(.horizontal, showsIndicators: false) {
                     toggleChipCluster(compact: chipsCompact)
-                        .padding(.vertical, 1)
+                        .padding(.vertical, 2)
                 }
                 .onGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.width
@@ -2954,6 +2944,14 @@ extension FloatingInputCard {
 
     private var imageCapabilities: ImageModelCapabilities? {
         selectedImagePickerItem?.imageCapabilities
+    }
+
+    private var imageComposerControls: ImageComposerRequestBuilder.Controls {
+        ImageComposerRequestBuilder.controls(
+            capabilities: imageCapabilities,
+            fallbackKind: selectedImagePickerItem?.imageKind,
+            hasReferences: pendingAttachments.hasImages
+        )
     }
 
     private var isImageComposerActive: Bool {
@@ -4131,7 +4129,7 @@ extension FloatingInputCard {
             )
             .overlay(
                 Capsule()
-                    .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 0.5)
+                    .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -4388,7 +4386,7 @@ extension FloatingInputCard {
             let advisory = MTPLayoutAdvisory.evaluate(bundleDirectory: bundleDir)
             // Selection must expose the controls before Send. This reads only
             // bundle metadata/headers; it neither loads nor warms the model.
-            let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
+            let capability = ModelRuntime.inspectLoadingModelMTP(name: model, directory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
@@ -5187,7 +5185,12 @@ extension FloatingInputCard {
     private var seedText: Binding<String> {
         Binding(
             get: { imageComposerSettings.seed },
-            set: { imageComposerSettings.seed = $0.filter(\.isNumber) }
+            set: {
+                // Remote media keeps its existing digits-only input contract.
+                // Local image requests validate the complete string at admission.
+                imageComposerSettings.seed = selectedMediaPickerItem?.mediaModel != nil
+                    ? $0.filter(\.isNumber) : $0
+            }
         )
     }
 
@@ -5204,8 +5207,22 @@ extension FloatingInputCard {
                     stepsChip
                     cfgChip
                     seedChip
-                    if imageCapabilities?.imageEdit == true {
+                    if imageComposerControls.strength {
                         strengthChip
+                    }
+                    if ImageComposerRequestBuilder.hasUnsupportedEditOverrides(
+                        controls: imageComposerControls, settings: imageComposerSettings
+                    ) {
+                        Button {
+                            if !imageComposerControls.strength {
+                                imageComposerSettings.strengthWasExplicitlySet = false
+                            }
+                            if !imageComposerControls.negativePrompt {
+                                imageComposerSettings.negativePrompt = ""
+                            }
+                        } label: {
+                            Text(localized: "Clear unsupported edit settings")
+                        }.buttonStyle(.plain)
                     }
                 }
             }
@@ -5437,6 +5454,11 @@ extension FloatingInputCard {
     }
 
     private var selectedSizeLabel: String {
+        if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1",
+            !imageComposerSettings.hasExplicitImageSize
+        {
+            return pendingAttachments.hasImages ? L("Use source aspect ratio") : "1024px"
+        }
         let w = imageComposerSettings.width
         let h = imageComposerSettings.height
         return w == h ? "\(w)px" : "\(w)×\(h)"
@@ -5476,9 +5498,19 @@ extension FloatingInputCard {
                 .padding(.top, 12)
                 .padding(.bottom, 4)
 
+            if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1" {
+                Button {
+                    imageComposerSettings.imageSizeWasExplicitlySet = false
+                    showImageSizePicker = false
+                } label: {
+                    Text(localized: "Default")
+                }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 8)
+            }
             ForEach(imageSizeOptions) { option in
                 let isSelected =
-                    imageComposerSettings.width == option.width
+                    (selectedImagePickerItem?.imageCanonicalName != "qwen-image-2.1"
+                        || imageComposerSettings.hasExplicitImageSize)
+                    && imageComposerSettings.width == option.width
                     && imageComposerSettings.height == option.height
                 Button {
                     imageComposerSettings.width = option.width
@@ -5709,8 +5741,30 @@ extension FloatingInputCard {
         }
     }
 
-    /// The "@" file completion popup, extracted from `mainContent` to keep that
-    /// view builder within the Swift type-checker's reach.
+    /// The slash-command and "@" file menus, floated over the input card by
+    /// `composerContent`.
+    private var composerPopupOverlay: some View {
+        VStack(spacing: 4) {
+            if showSlashPopup {
+                SlashCommandPopup(
+                    commands: slashFilteredCommands,
+                    selectedIndex: $slashSelectedIndex,
+                    onSelect: applySlashCommand
+                )
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                        removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
+                    )
+                )
+            }
+
+            atFileMenuPopupView
+        }
+    }
+
+    /// The "@" file completion popup, extracted from `composerPopupOverlay` to
+    /// keep that view builder within the Swift type-checker's reach.
     @ViewBuilder
     private var atFileMenuPopupView: some View {
         if showAtPopup {
@@ -5723,7 +5777,6 @@ extension FloatingInputCard {
                 onSelect: applyAtItem,
                 onGrantAccess: grantAtMenuAccess
             )
-            .padding(.horizontal, 20)
             .transition(
                 .asymmetric(
                     insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
@@ -6536,15 +6589,9 @@ private struct BudgetGroup: Identifiable {
     var isExpandable: Bool { entries.count > 1 }
 }
 
-/// Reports the natural height of the context-budget popover content so it
-/// can size its scroll container to fit (see `resolvedHeight`).
-private struct ContextPopoverHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
+/// The composer's context-budget panel, presented in the same arrowless,
+/// themed card as the wallet and model picker, aligned to the trailing edge
+/// of the context ring.
 private struct ContextBreakdownPopover: View {
     let breakdown: ContextBreakdown
     /// Usable conversation budget (model maximum × safety margin).
@@ -6569,22 +6616,23 @@ private struct ContextBreakdownPopover: View {
     /// The chat this chip belongs to; the disk-cache note is shown only when
     /// the cap took this chat's rows.
     var currentSessionKey: String? = nil
+    /// Reports the card height to request: the content's natural height,
+    /// capped at `maxPopoverHeight`.
+    var onHeightChange: (CGFloat) -> Void = { _ in }
 
     /// Fraction of the configured quota at which the footer starts warning.
     static let diskCacheWarnFraction: Double = 0.75
 
     @Environment(\.theme) private var theme
+    @Environment(\.anchoredCardMetrics) private var cardMetrics
 
     /// Which multi-entry groups are drilled open. Starts empty so the popover
     /// opens in its compact, grouped form.
     @State private var expandedGroups: Set<String> = []
 
-    /// Measured natural height of the popover content, fed back via a
-    /// preference to size the scroll container (see `resolvedHeight`).
-    @State private var measuredContentHeight: CGFloat = 0
-
-    /// Cap on the popover height; longer breakdowns scroll past this.
-    private let maxPopoverHeight: CGFloat = 420
+    /// Cap on the popover height (the model picker's cap); longer breakdowns
+    /// scroll past this.
+    private let maxPopoverHeight: CGFloat = 480
 
     private var utilization: ContextBudgetUtilization {
         computeContextBudgetUtilization(
@@ -6599,18 +6647,10 @@ private struct ContextBreakdownPopover: View {
         return theme.accentColor
     }
 
-    private var statusLabel: String {
+    private var limitLabel: String? {
         if isHardOverflow { return L("Over limit") }
         if isNearLimit { return L("Near limit") }
-        if let percent = utilization.percent { return L("\(percent)% used") }
-        return isStreaming ? L("Live") : L("Estimated")
-    }
-
-    /// Scroll-container height: nil until measured (use the content's
-    /// natural size), then clamped to `maxPopoverHeight`.
-    private var resolvedHeight: CGFloat? {
-        guard measuredContentHeight > 0 else { return nil }
-        return min(measuredContentHeight, maxPopoverHeight)
+        return nil
     }
 
     /// Each row's share of the *current* total, not of the model's full
@@ -6702,97 +6742,89 @@ private struct ContextBreakdownPopover: View {
     // MARK: - Body
 
     var body: some View {
-        // A height-capped ScrollView, not a free-growing column: the popover
-        // hugs its content, but a long "System Prompt" drill-down scrolls
-        // instead of resizing the NSPopover window — an animated/oversized
-        // popover resize crashes AppKit (EXC_BAD_ACCESS).
+        // The card hugs its content up to `maxPopoverHeight`; a long
+        // "System Prompt" drill-down scrolls past that.
         ScrollView(.vertical, showsIndicators: false) {
             contentStack
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: ContextPopoverHeightKey.self,
-                            value: proxy.size.height
-                        )
-                    }
-                )
+                .padding(PickerCardMetrics.padding)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                    ceil(geometry.size.height)
+                } action: { height in
+                    onHeightChange(min(height, maxPopoverHeight))
+                }
         }
-        .frame(width: 272, height: resolvedHeight)
-        .onPreferenceChange(ContextPopoverHeightKey.self) { measuredContentHeight = $0 }
-        .popoverCard()
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(
+            width: cardMetrics?.visibleSize.width ?? PickerCardMetrics.infoCardWidth,
+            height: cardMetrics?.visibleSize.height
+        )
+        .pickerCardSurface()
     }
 
     /// The popover's content column. Extracted so `body` can wrap it in a
-    /// height-bounded `ScrollView` (see `resolvedHeight`).
+    /// height-bounded `ScrollView`.
     private var contentStack: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            hero
+        VStack(alignment: .leading, spacing: 8) {
+            PickerCardHeading(title: L("Context budget")) { statusAccessory }
 
-            if utilization.maxTokens != nil {
-                divider
-                utilizationSection
+            VStack(alignment: .leading, spacing: PickerCardMetrics.infoSectionSpacing) {
+                hero
+
+                if let notice = autoDisableNotice {
+                    autoDisableRow(notice)
+                }
+
+                if !contextGroups.isEmpty || !breakdown.messages.isEmpty {
+                    breakdownSection
+                }
+
+                // `isDisabled` has to pass this gate on its own: a switched-off
+                // tier reports maxBytes 0, and an empty cache directory reports
+                // usedBytes 0, so the size test alone would hide the "Off" row it
+                // exists to show.
+                if let diskCache,
+                    diskCache.isDisabled || diskCache.usedBytes > 0 || diskCache.maxBytes > 0
+                {
+                    diskCacheSection(diskCache)
+                }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    if showsCompactionSection {
+                        compactionSection
+                    }
+                    contextWindowCapLink
+                }
             }
+        }
+    }
 
-            divider
-            compositionSection
-
-            if let notice = autoDisableNotice {
-                divider
-                autoDisableRow(notice)
+    /// Status beside the heading. Usage itself lives in the hero, so this
+    /// only speaks up for a limit warning or a live turn.
+    @ViewBuilder
+    private var statusAccessory: some View {
+        if let limitLabel {
+            Text(verbatim: limitLabel)
+                .font(theme.font(size: theme.pickerCardBodySize, weight: .medium))
+                .foregroundStyle(statusColor)
+        } else if isStreaming {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(theme.successColor)
+                    .frame(width: 6, height: 6)
+                Text("Live", bundle: .module)
+                    .font(theme.font(size: theme.pickerCardBodySize))
+                    .foregroundStyle(theme.secondaryText)
             }
-
-            if !contextGroups.isEmpty {
-                divider
-                sourcesSection
-            }
-
-            if !breakdown.messages.isEmpty {
-                divider
-                messagesSection
-            }
-
-            // `isDisabled` has to pass this gate on its own: a switched-off
-            // tier reports maxBytes 0, and an empty cache directory reports
-            // usedBytes 0, so the size test alone would hide the "Off" row it
-            // exists to show.
-            if let diskCache,
-                diskCache.isDisabled || diskCache.usedBytes > 0 || diskCache.maxBytes > 0
-            {
-                divider
-                diskCacheSection(diskCache)
-            }
-
-            if showsCompactionSection {
-                divider
-                compactionSection
-            }
-
-            divider
-            contextWindowCapLink
         }
     }
 
     private var contextWindowCapLink: some View {
-        Button {
+        PickerCardTextLink(title: L("Open Context Window Cap"), icon: "arrow.up.right") {
             ManagementStateManager.shared.serverSectionRequest = "cache"
             SettingsHighlightCoordinator.shared.request("settings.chat.contextLength")
             AppDelegate.shared?.showManagementWindow(initialTab: .server)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Open Context Window Cap", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            .foregroundColor(theme.accentColor)
         }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
         .localizedHelp("Open Settings… (⌘,) → Server → Settings → Cache → Context Window Cap")
     }
 
@@ -6812,34 +6844,38 @@ private struct ContextBreakdownPopover: View {
         // the note appear only when the cap took THIS chat's saved progress.
         let warn = usage.pressureAffects(session: currentSessionKey)
         let tint = warn ? theme.warningColor : theme.accentColor
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                sectionEyebrow("Disk Cache")
-                Spacer(minLength: 0)
+        return VStack(alignment: .leading, spacing: 0) {
+            PickerCardSectionTitle(title: L("Disk cache")) {
                 Text(verbatim: usage.headlineLabel)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(warn ? tint : theme.secondaryText)
+                    .fontWeight(.regular)
+                    .monospacedDigit()
+                    .foregroundStyle(warn ? tint : theme.secondaryText)
             }
             if usage.maxBytes > 0 {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(theme.tertiaryText.opacity(0.15))
-                        Capsule()
-                            .fill(tint)
-                            .frame(width: max(0, min(1, fraction)) * geo.size.width)
-                    }
-                }
-                .frame(height: 4)
+                usageBar(fraction: fraction, tint: tint, height: 4)
+                    .padding(.horizontal, PickerCardMetrics.rowInset)
+                    .padding(.top, 4)
             }
             if warn, usage.maxBytes > 0 {
-                Text(verbatim: usage.pressureText)
-                    .font(.system(size: 9))
-                    .foregroundColor(tint)
-                    .fixedSize(horizontal: false, vertical: true)
+                PickerCardFootnote(text: usage.pressureText, color: tint)
+                    .padding(.top, 6)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+    }
+
+    /// Horizontal fill gauge for the hero usage and disk-cache readouts.
+    private func usageBar(fraction: Double, tint: Color, height: CGFloat) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(theme.tertiaryBackground)
+                Capsule()
+                    .fill(tint)
+                    // Keep a sliver visible at ~0% so the bar reads as a gauge.
+                    .frame(width: max(height, min(1, fraction) * proxy.size.width))
+            }
+        }
+        .frame(height: height)
+        .animation(.easeOut(duration: 0.2), value: fraction)
     }
 
     // MARK: - Compaction
@@ -6877,170 +6913,125 @@ private struct ContextBreakdownPopover: View {
 
     @ViewBuilder
     private var compactionSection: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            sectionEyebrow("Compaction")
+        VStack(alignment: .leading, spacing: 0) {
             switch compactionState {
             case .running(let phase):
-                HStack(spacing: 7) {
+                statusRow {
                     ProgressView()
                         .controlSize(.small)
                         .scaleEffect(0.6)
-                        .frame(width: 12, height: 12)
+                        .frame(width: 16, height: 16)
+                } text: {
                     Text(verbatim: phase.label)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer(minLength: 0)
                 }
             case .completed(let savedTokens):
-                HStack(spacing: 7) {
+                statusRow {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(theme.successColor)
-                    Text(
-                        "Compacted — ~\(formatTokenCount(savedTokens)) tokens reclaimed",
-                        bundle: .module
-                    )
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    Spacer(minLength: 0)
+                        .foregroundStyle(theme.successColor)
+                } text: {
+                    Text("Compacted — ~\(formatTokenCount(savedTokens)) tokens reclaimed", bundle: .module)
                 }
             case .failed(let message):
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(alignment: .top, spacing: 7) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10.5))
-                            .foregroundColor(theme.warningColor)
-                        Text(verbatim: message)
-                            .font(.system(size: 10.5))
-                            .foregroundColor(theme.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if canCompact { compactButton(label: L("Retry compaction")) }
+                statusRow {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(theme.warningColor)
+                } text: {
+                    Text(verbatim: message)
                 }
+                if canCompact { compactLink(label: L("Retry compaction")) }
             case .idle, .needsModelSelection:
                 if canCompact {
-                    VStack(alignment: .leading, spacing: 5) {
-                        compactButton(label: L("Compact conversation"))
-                        Text(verbatim: compactionHelperText)
-                            .font(.system(size: 9.5))
-                            .foregroundColor(theme.tertiaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    compactLink(label: L("Compact conversation"))
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 
-    private func compactButton(label: String) -> some View {
-        Button {
-            onCompact?()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.system(size: 9, weight: .semibold))
-                Text(verbatim: label)
-                    .font(.system(size: 10.5, weight: .semibold))
-            }
-            .foregroundColor(theme.accentColor)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4.5)
-            .background(
-                Capsule()
-                    .fill(theme.accentColor.opacity(0.12))
-                    .overlay(
-                        Capsule().strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
-                    )
-            )
+    /// Icon + message row for a compaction state, aligned with legend rows.
+    private func statusRow<Icon: View, Label: View>(
+        @ViewBuilder icon: () -> Icon,
+        @ViewBuilder text: () -> Label
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            icon()
+                .font(.system(size: 11))
+                .frame(width: 16)
+            text()
+                .font(theme.font(size: theme.pickerCardBodySize))
+                .foregroundStyle(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
+        .padding(.vertical, 4)
+        .pickerCardRowChrome(highlighted: false, minHeight: PickerCardMetrics.valueRowHeight)
     }
 
-    /// Wallet-style hero: the number users are checking first, followed by
-    /// clear headroom rather than a composition chart masquerading as usage.
+    private func compactLink(label: String) -> some View {
+        PickerCardTextLink(title: label, icon: "arrow.down.right.and.arrow.up.left") {
+            onCompact?()
+        }
+        .help(Text(verbatim: compactionHelperText))
+    }
+
+    /// The one place usage is stated: tokens against the usable budget, its
+    /// share, a fill bar, and the headroom / model-limit caption.
     private var hero: some View {
         let prefix = isStreaming ? "" : "~"
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Image(systemName: "chart.bar.fill")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(statusColor.opacity(0.9))
-                Text("Context Budget", bundle: .module)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .textCase(.uppercase)
-                    .kerning(0.8)
-                if isStreaming {
-                    Circle()
-                        .fill(theme.successColor)
-                        .frame(width: 5, height: 5)
-                }
-                Spacer(minLength: 0)
-                Text(verbatim: statusLabel)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(statusColor)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(statusColor.opacity(0.12))
-                            .overlay(
-                                Capsule().strokeBorder(
-                                    statusColor.opacity(0.3),
-                                    lineWidth: 1
-                                )
-                            )
-                    )
-            }
-            .padding(.bottom, 5)
-
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        let captionFont = theme.font(size: theme.pickerCardCaptionSize)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(verbatim: "\(prefix)\(formatTokenCount(breakdown.total))")
-                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
-                    .foregroundColor(isHardOverflow ? theme.errorColor : theme.primaryText)
+                    .font(theme.font(size: theme.pickerCardHeroSize, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(isHardOverflow ? theme.errorColor : theme.primaryText)
                     .contentTransition(.numericText())
-                Text("tokens used", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                Group {
+                    if let maxTokens = utilization.maxTokens {
+                        Text("/ \(formatTokenCount(maxTokens)) tokens", bundle: .module)
+                    } else {
+                        Text("tokens", bundle: .module)
+                    }
+                }
+                .font(theme.font(size: theme.pickerCardBodySize))
+                .foregroundStyle(theme.secondaryText)
+                Spacer(minLength: 4)
+                if let percent = utilization.percent {
+                    Text(verbatim: "\(percent)%")
+                        .font(theme.font(size: theme.pickerCardBodySize, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(statusColor)
+                        .contentTransition(.numericText())
+                }
             }
 
-            if let remaining = utilization.remainingTokens,
-                let maxTokens = utilization.maxTokens
-            {
-                Text(
-                    "\(formatTokenCount(remaining)) remaining of \(formatTokenCount(maxTokens)) usable",
-                    bundle: .module
-                )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
-                .contentTransition(.numericText())
-            } else {
-                Text("Model context limit unavailable", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+            if let fraction = utilization.fraction {
+                usageBar(fraction: fraction, tint: statusColor, height: 6)
             }
-            if let modelMaxTokens {
-                Text(
-                    "\(modelLimitLabel) \(formatTokenCount(modelMaxTokens)) · usable budget \(Int(ContextBudgetManager.safetyMargin * 100))%",
-                    bundle: .module
-                )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if let remaining = utilization.remainingTokens {
+                    Text("\(formatTokenCount(remaining)) remaining", bundle: .module)
+                        .contentTransition(.numericText())
+                } else {
+                    Text("Model context limit unavailable", bundle: .module)
+                }
+                Spacer(minLength: 4)
+                if let modelMaxTokens {
+                    Text(verbatim: "\(modelLimitLabel) \(formatTokenCount(modelMaxTokens))")
+                        .lineLimit(1)
+                        .help(
+                            Text(
+                                "The usable budget is \(Int(ContextBudgetManager.safetyMargin * 100))% of the model maximum, leaving room for the reply.",
+                                bundle: .module
+                            )
+                        )
+                }
             }
+            .font(captionFont)
+            .foregroundStyle(theme.secondaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.top, 12)
-        .padding(.bottom, 11)
-        .background(
-            LinearGradient(
-                colors: [statusColor.opacity(0.10), statusColor.opacity(0.02)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .padding(.horizontal, PickerCardMetrics.rowInset)
     }
 
     private var modelLimitLabel: String {
@@ -7062,108 +7053,33 @@ private struct ContextBreakdownPopover: View {
         }
     }
 
-    @ViewBuilder
-    private var utilizationSection: some View {
-        if let maxTokens = utilization.maxTokens,
-            let fraction = utilization.fraction,
-            let percent = utilization.percent
-        {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 6) {
-                    Text("Usable budget", bundle: .module)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .textCase(.uppercase)
-                        .kerning(0.8)
-                    Spacer()
-                    Text(
-                        "\(formatTokenCount(utilization.usedTokens)) / \(formatTokenCount(maxTokens))",
-                        bundle: .module
-                    )
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-                    .contentTransition(.numericText())
-                    Text(verbatim: "\(percent)%")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundColor(statusColor)
-                        .frame(width: 34, alignment: .trailing)
-                        .contentTransition(.numericText())
-                }
-
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 3.5)
-                            .fill(theme.tertiaryBackground.opacity(0.65))
-                        RoundedRectangle(cornerRadius: 3.5)
-                            .fill(statusColor.opacity(0.9))
-                            .frame(width: proxy.size.width * fraction)
-                    }
-                }
-                .frame(height: 7)
-                .animation(.easeOut(duration: 0.2), value: fraction)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-        }
-    }
-
-    private var compositionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("Composition", bundle: .module)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .textCase(.uppercase)
-                    .kerning(0.8)
-                Spacer()
-                Text("share of used context", bundle: .module)
-                    .font(.system(size: 9))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            compositionBar
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
     private func autoDisableRow(_ notice: String) -> some View {
-        HStack(alignment: .top, spacing: 7) {
+        statusRow {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(theme.warningColor)
+                .foregroundStyle(theme.warningColor)
+        } text: {
             Text(verbatim: notice)
-                .font(.system(size: 10))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
     }
 
-    private var sourcesSection: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            sectionEyebrow("Sources")
-            contextGroupList
+    /// What the used tokens are made of: the stacked bar directly above its
+    /// legend, prompt sources first, then the conversation's messages.
+    private var breakdownSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PickerCardSectionTitle(L("Breakdown"))
+            compositionBar
+                .padding(.horizontal, PickerCardMetrics.rowInset)
+                .padding(.top, 2)
+                .padding(.bottom, 6)
+                .help(Text("Share of the tokens used in this chat", bundle: .module))
+            if !contextGroups.isEmpty {
+                contextGroupList
+            }
+            if !breakdown.messages.isEmpty {
+                PickerCardSectionTitle(L("Messages"))
+                entryGroup(breakdown.messages, highlightOutput: true)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private var messagesSection: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            sectionEyebrow("Messages")
-            entryGroup(breakdown.messages, highlightOutput: true)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private func sectionEyebrow(_ title: LocalizedStringKey) -> some View {
-        Text(title, bundle: .module)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(theme.tertiaryText)
-            .textCase(.uppercase)
-            .kerning(0.8)
     }
 
     // MARK: - Stacked Bar
@@ -7171,7 +7087,7 @@ private struct ContextBreakdownPopover: View {
     private var compositionBar: some View {
         let segments = barSegments
         // Composition deliberately fills its own track. Actual model-window
-        // headroom is represented separately by `utilizationSection`.
+        // headroom is represented separately by the hero's usage bar.
         let scale = max(breakdown.total, 1)
         return GeometryReader { geo in
             let gapTotal = CGFloat(max(segments.count - 1, 0))
@@ -7193,10 +7109,10 @@ private struct ContextBreakdownPopover: View {
                         .frame(width: width)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
         }
-        .frame(height: 7)
-        .background(RoundedRectangle(cornerRadius: 4).fill(theme.tertiaryBackground.opacity(0.4)))
+        .frame(height: 6)
+        .background(RoundedRectangle(cornerRadius: 3).fill(theme.tertiaryBackground))
     }
 
     // MARK: - Legend
@@ -7204,34 +7120,35 @@ private struct ContextBreakdownPopover: View {
     /// The context legend at group granularity. Expandable groups render a
     /// tappable header that reveals their per-section rows indented beneath.
     private var contextGroupList: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: PickerCardMetrics.rowSpacing) {
             ForEach(contextGroups) { group in
                 if group.isExpandable {
                     let expanded = expandedGroups.contains(group.id)
-                    Button {
-                        // No withAnimation: animating the popover resize
-                        // crashes AppKit (see `body`). Snap the size instead.
+                    BudgetDisclosureRow(expanded: expanded) {
+                        // No withAnimation: the anchored card animates its
+                        // own resize from the reported height.
                         if expanded {
                             expandedGroups.remove(group.id)
                         } else {
                             expandedGroups.insert(group.id)
                         }
                     } label: {
-                        groupHeader(group, expanded: expanded)
+                        legendRowContent(
+                            tint: group.tint,
+                            label: group.label,
+                            tokens: group.tokens,
+                            disclosure: expanded
+                        )
                     }
-                    .buttonStyle(.plain)
-                    .pointingHandCursor()
 
                     if expanded {
-                        VStack(alignment: .leading, spacing: 7) {
-                            // Key by position, not `entry.id`: a prompt section's
-                            // id isn't guaranteed unique across the manifest, so
-                            // duplicate ForEach IDs would trap. Positional
-                            // identity is what we want for a static,
-                            // display-only list anyway.
-                            ForEach(Array(group.entries.enumerated()), id: \.offset) { _, entry in
-                                entryRow(entry).padding(.leading, 25)
-                            }
+                        // Key by position, not `entry.id`: a prompt section's
+                        // id isn't guaranteed unique across the manifest, so
+                        // duplicate ForEach IDs would trap. Positional
+                        // identity is what we want for a static,
+                        // display-only list anyway.
+                        ForEach(Array(group.entries.enumerated()), id: \.offset) { _, entry in
+                            entryRow(entry, nested: true)
                         }
                     }
                 } else if let entry = group.entries.first {
@@ -7242,91 +7159,97 @@ private struct ContextBreakdownPopover: View {
     }
 
     private func entryGroup(_ entries: [ContextBreakdown.Entry], highlightOutput: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: PickerCardMetrics.rowSpacing) {
             ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                 entryRow(entry, highlighted: highlightOutput && entry.id == "output")
             }
         }
     }
 
-    /// Disclosure header for a multi-entry group: swatch, label, rotating
-    /// chevron, summed tokens, and the group's share of the budget.
-    private func groupHeader(_ group: BudgetGroup, expanded: Bool) -> some View {
-        HStack(spacing: 7) {
-            legendMarker(group.tint)
-
-            Text(group.label)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-
-            Image(systemName: "chevron.right")
-                .font(.system(size: 7, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .rotationEffect(.degrees(expanded ? 90 : 0))
-
-            Spacer(minLength: 8)
-
-            Text(formatTokenCount(group.tokens))
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-
-            Text(percent(group.tokens))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 32, alignment: .trailing)
-        }
-        .contentShape(Rectangle())
+    private func entryRow(
+        _ entry: ContextBreakdown.Entry,
+        highlighted: Bool = false,
+        nested: Bool = false
+    ) -> some View {
+        legendRowContent(
+            tint: entry.tint,
+            label: entry.label,
+            tokens: entry.tokens,
+            highlighted: highlighted,
+            nested: nested
+        )
+        .pickerCardRowChrome(highlighted: false, minHeight: PickerCardMetrics.valueRowHeight)
     }
 
-    private func entryRow(_ entry: ContextBreakdown.Entry, highlighted: Bool = false) -> some View {
-        HStack(spacing: 7) {
-            legendMarker(entry.tint)
+    /// Swatch, label, token count and share. `disclosure` adds the rotating
+    /// chevron used by expandable groups; `nested` indents a drill-down row
+    /// under its group and quiets its text.
+    private func legendRowContent(
+        tint: ContextBreakdown.Tint,
+        label: String,
+        tokens: Int,
+        disclosure: Bool? = nil,
+        highlighted: Bool = false,
+        nested: Bool = false
+    ) -> some View {
+        let textSize = theme.pickerCardBodySize - (nested ? 1 : 0)
+        return HStack(spacing: 8) {
+            Circle()
+                .fill(color(for: tint))
+                .frame(width: 7, height: 7)
+                .frame(width: 16)
 
-            Text(entry.label)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+            Text(label)
+                .font(theme.font(size: textSize))
+                .foregroundStyle(nested ? theme.secondaryText : theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
-            Spacer(minLength: 8)
+            if let disclosure {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(theme.tertiaryText)
+                    .rotationEffect(.degrees(disclosure ? 90 : 0))
+            }
 
-            Text(formatTokenCount(entry.tokens))
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(highlighted ? color(for: entry.tint) : theme.primaryText)
+            Spacer(minLength: 6)
+
+            Text(formatTokenCount(tokens))
+                .font(theme.font(size: textSize))
+                .monospacedDigit()
+                .foregroundStyle(highlighted ? color(for: tint) : theme.primaryText)
                 .contentTransition(highlighted ? .numericText() : .identity)
 
-            Text(percent(entry.tokens))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+            Text(percent(tokens))
+                .font(theme.font(size: theme.pickerCardCaptionSize))
+                .monospacedDigit()
+                .foregroundStyle(theme.tertiaryText)
                 .frame(width: 32, alignment: .trailing)
         }
+        .padding(.leading, nested ? 24 : 0)
     }
+}
 
-    private func legendMarker(_ tint: ContextBreakdown.Tint) -> some View {
-        let tintColor = color(for: tint)
-        return ZStack {
-            Circle().fill(tintColor.opacity(0.13))
-            Circle()
-                .fill(tintColor.opacity(0.9))
-                .frame(width: 5, height: 5)
+/// Expandable legend row ("System Prompt"): the picker's hover fill on an
+/// otherwise read-only list, so it reads as the one clickable row.
+private struct BudgetDisclosureRow<Label: View>: View {
+    let expanded: Bool
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .pickerCardRowChrome(highlighted: hovered, minHeight: PickerCardMetrics.valueRowHeight)
         }
-        .frame(width: 18, height: 18)
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .accessibilityValue(expanded ? L("Expanded") : L("Collapsed"))
     }
-
-    // MARK: - Chrome
-
-    private var divider: some View {
-        Divider().overlay(theme.primaryBorder.opacity(0.15))
-    }
-
 }
 
 // MARK: - Wallet Popover
-
-private enum WalletCardStyle {
-    static let shadowRadius: CGFloat = 16
-    static let shadowOffsetY: CGFloat = 8
-    // Leave room for the blur to fade out before the native window edge.
-    static let shadowPadding = 3 * shadowRadius + abs(shadowOffsetY)
-}
 
 /// The composer wallet panel, presented in the same arrowless, themed card
 /// as the model picker, aligned to the trailing edge of its credits chip.
@@ -7374,6 +7297,7 @@ private struct WalletPopover: View {
     var body: some View {
         ScrollView {
             walletContent
+                .padding(PickerCardMetrics.padding)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { geometry in
                     ceil(geometry.size.height)
@@ -7382,15 +7306,11 @@ private struct WalletPopover: View {
                 }
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(width: cardMetrics?.visibleSize.width ?? 272, height: cardMetrics?.visibleSize.height)
-        .popoverCard(
-            cornerRadius: 16,
-            backgroundColor: theme.secondaryBackground,
-            borderColor: theme.primaryBorder.opacity(theme.borderOpacity),
-            borderWidth: theme.defaultBorderWidth,
-            shadowRadius: WalletCardStyle.shadowRadius,
-            shadowOffsetY: WalletCardStyle.shadowOffsetY
+        .frame(
+            width: cardMetrics?.visibleSize.width ?? PickerCardMetrics.infoCardWidth,
+            height: cardMetrics?.visibleSize.height
         )
+        .pickerCardSurface()
         .task {
             await accountService.refreshBalance()
             await accountService.refreshUsage(reset: true)
@@ -7407,26 +7327,38 @@ private struct WalletPopover: View {
     }
 
     private var walletContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            if let sessionSpend {
-                divider
-                sessionSpendRow(sessionSpend, cachedLabel: sessionCachedInputLabel)
+        let searchGrant = accountService.webSettings?.grants?.search
+        let showsSearchCredits = (searchGrant?.includedTotal ?? 0) > 0
+        return VStack(alignment: .leading, spacing: 8) {
+            PickerCardHeading(title: L("Credits")) {
+                if accountService.isFrozen {
+                    Text("Paused", bundle: .module)
+                        .font(theme.font(size: theme.pickerCardBodySize, weight: .medium))
+                        .foregroundStyle(theme.warningColor)
+                }
             }
-            if let searchGrant = accountService.webSettings?.grants?.search,
-                searchGrant.includedTotal > 0
-            {
-                divider
-                webSearchCreditsRow(searchGrant)
+
+            VStack(alignment: .leading, spacing: PickerCardMetrics.infoSectionSpacing) {
+                header
+
+                if sessionSpend != nil || showsSearchCredits {
+                    VStack(alignment: .leading, spacing: PickerCardMetrics.rowSpacing) {
+                        if let sessionSpend {
+                            sessionSpendRow(sessionSpend, cachedLabel: sessionCachedInputLabel)
+                        }
+                        if let searchGrant, showsSearchCredits {
+                            webSearchCreditsRow(searchGrant)
+                        }
+                    }
+                }
+
+                if accountService.webSearchNeedsTopUp {
+                    webSearchFallbackNotice
+                }
+
+                activitySection
+                footerActions
             }
-            if accountService.webSearchNeedsTopUp {
-                divider
-                webSearchFallbackNotice
-            }
-            divider
-            activitySection
-            divider
-            footerActions
         }
     }
 
@@ -7434,107 +7366,81 @@ private struct WalletPopover: View {
 
     /// Hero balance at the top of the wallet.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Image(systemName: "creditcard.fill")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.accentColor.opacity(0.85))
-                Text("Wallet", bundle: .module)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .textCase(.uppercase)
-                    .kerning(0.8)
-                Spacer(minLength: 0)
-                if accountService.isFrozen {
-                    Text("Paused", bundle: .module)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.warningColor)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(theme.warningColor.opacity(0.14))
-                                .overlay(
-                                    Capsule().strokeBorder(
-                                        theme.warningColor.opacity(0.35),
-                                        lineWidth: 1
-                                    )
-                                )
-                        )
-                }
-            }
-            .padding(.bottom, 5)
-
+        VStack(alignment: .leading, spacing: 2) {
             // Hero figure only; "credits" rides along as a caption so large
-            // balances don't truncate the oversized monospaced string.
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
+            // balances don't truncate the oversized figure.
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(verbatim: accountService.formattedBalanceValue)
-                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
-                    .foregroundColor(
+                    .font(theme.font(size: theme.pickerCardHeroSize, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(
                         (isAttention || accountService.isFrozen)
                             ? theme.warningColor : theme.primaryText
                     )
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                Text("credits", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                Text("credits available", bundle: .module)
+                    .font(theme.font(size: theme.pickerCardBodySize))
+                    .foregroundStyle(theme.secondaryText)
+                    .lineLimit(1)
             }
 
             if accountService.isFrozen {
                 Text("Account paused - add credits to resume.", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(subduedTextColor)
+                    .font(theme.font(size: theme.pickerCardCaptionSize))
+                    .foregroundStyle(theme.warningColor)
                     .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("Available balance", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(subduedTextColor)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.top, 12)
-        .padding(.bottom, 11)
+        .padding(.horizontal, PickerCardMetrics.rowInset)
     }
 
-    private func sessionSpendRow(_ spend: String, cachedLabel: String?) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Image(systemName: "chart.bar.fill")
-                    .font(.system(size: 8))
-                    .foregroundColor(theme.tertiaryText)
-                Text("This session", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                Text(verbatim: spend)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-            }
-            // Prompt-cache hits: input the router billed at the cached rate.
-            // Only rendered when the router echoed a non-zero split.
-            if let cachedLabel {
-                HStack(spacing: 6) {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 8))
-                        .foregroundColor(theme.tertiaryText)
-                    Text("Prompt cache", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer()
-                    Text(verbatim: cachedLabel)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .accessibilityLabel(
-                    Text("Prompt cache: \(cachedLabel) input tokens served from cache", bundle: .module)
-                )
-            }
+    /// Read-only label/value row in the picker's row geometry.
+    private func valueRow(
+        icon: String,
+        iconColor: Color? = nil,
+        label: LocalizedStringKey,
+        value: String,
+        valueColor: Color? = nil
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundStyle(iconColor ?? theme.tertiaryText)
+                .frame(width: 16)
+            Text(label, bundle: .module)
+                .font(theme.font(size: theme.pickerCardBodySize))
+                .foregroundStyle(theme.primaryText)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Text(verbatim: value)
+                .font(theme.font(size: theme.pickerCardBodySize))
+                .monospacedDigit()
+                .foregroundStyle(valueColor ?? theme.primaryText)
+                .contentTransition(.numericText())
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .pickerCardRowChrome(highlighted: false, minHeight: PickerCardMetrics.valueRowHeight)
+    }
+
+    @ViewBuilder
+    private func sessionSpendRow(_ spend: String, cachedLabel: String?) -> some View {
+        valueRow(icon: "chart.bar.fill", label: "This session", value: spend)
+        // Prompt-cache hits: input the router billed at the cached rate.
+        // Only rendered when the router echoed a non-zero split.
+        if let cachedLabel {
+            valueRow(
+                icon: "bolt.fill",
+                label: "Prompt cache",
+                value: cachedLabel,
+                valueColor: theme.secondaryText
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                Text("Prompt cache: \(cachedLabel) input tokens served from cache", bundle: .module)
+            )
+        }
     }
 
     /// The account's search credit balance, mirrored from the Credits tab so
@@ -7544,21 +7450,13 @@ private struct WalletPopover: View {
     /// shared balance or fall back to the built-in sources).
     private func webSearchCreditsRow(_ grant: OsaurusRouterWebAllowance) -> some View {
         let exhausted = grant.remainingTotal <= 0
-        return HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 8))
-                .foregroundColor(exhausted ? theme.warningColor : theme.tertiaryText)
-            Text("Search credits", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-            Text(verbatim: "\(grant.remainingTotal)")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(exhausted ? theme.warningColor : theme.primaryText)
-                .contentTransition(.numericText())
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        return valueRow(
+            icon: "magnifyingglass",
+            iconColor: exhausted ? theme.warningColor : nil,
+            label: "Search credits",
+            value: "\(grant.remainingTotal)",
+            valueColor: exhausted ? theme.warningColor : nil
+        )
     }
 
     /// Premium web search ran out of credits and is quietly using the
@@ -7566,68 +7464,43 @@ private struct WalletPopover: View {
     /// user checks their wallet, per spec: billing outcomes reach the UI even
     /// when the search itself succeeded via fallback.
     private var webSearchFallbackNotice: some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(theme.warningColor)
-            Text(
-                "Premium search is paused - add credits to resume.",
-                bundle: .module
-            )
-            .font(.system(size: 10))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 11))
+                .foregroundStyle(theme.warningColor)
+                .frame(width: 16)
+            Text("Premium search is paused - add credits to resume.", bundle: .module)
+                .font(theme.font(size: theme.pickerCardCaptionSize))
+                .foregroundStyle(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, PickerCardMetrics.rowInset)
     }
 
     private var activitySection: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("Recent activity", bundle: .module)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(subduedTextColor)
-                .textCase(.uppercase)
-                .kerning(0.8)
+        VStack(alignment: .leading, spacing: 0) {
+            PickerCardSectionTitle(L("Recent activity"))
 
             if rows.isEmpty {
-                emptyActivity
+                PickerCardFootnote(text: L("No activity yet"), color: subduedTextColor)
+                    .padding(.vertical, 6)
             } else {
-                VStack(alignment: .leading, spacing: 9) {
+                VStack(alignment: .leading, spacing: PickerCardMetrics.rowSpacing) {
                     ForEach(rows) { row in
                         activityRow(row)
                     }
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 11)
-    }
-
-    private var emptyActivity: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "moon.zzz")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText.opacity(0.7))
-            Text("No activity yet", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(subduedTextColor)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 6)
     }
 
     private func activityRow(_ row: WalletActivityRow) -> some View {
         HStack(alignment: .center, spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(badgeTint(for: row).opacity(0.13))
-                Image(systemName: iconName(for: row))
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(badgeTint(for: row))
-            }
-            .frame(width: 20, height: 20)
+            Image(systemName: iconName(for: row))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(badgeTint(for: row))
+                .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 1) {
                 // Transaction and web-usage titles are the projector's fixed
@@ -7637,64 +7510,56 @@ private struct WalletPopover: View {
                 // underscores in ids as markdown emphasis.
                 Group {
                     if row.kind == .usage {
-                        Text(verbatim: row.title)
+                        Text(verbatim: Self.modelName(row.title))
+                            .help(Text(verbatim: row.title))
                     } else {
                         Text(LocalizedStringKey(row.title), bundle: .module)
                     }
                 }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(theme.font(size: theme.pickerCardBodySize))
+                .foregroundStyle(theme.primaryText)
                 .lineLimit(1)
-                .truncationMode(.middle)
+                .truncationMode(.tail)
                 if let timeLabel = timeLabel(for: row) {
                     Text(verbatim: timeLabel)
-                        .font(.system(size: 9))
-                        .foregroundColor(subduedTextColor)
+                        .font(theme.font(size: theme.pickerCardCaptionSize))
+                        .foregroundStyle(subduedTextColor)
                 }
             }
 
             Spacer(minLength: 8)
 
             Text(verbatim: row.amountLabel)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(row.isCredit ? theme.successColor : theme.secondaryText)
+                .font(theme.font(size: theme.pickerCardBodySize))
+                .monospacedDigit()
+                .foregroundStyle(row.isCredit ? theme.successColor : theme.secondaryText)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .padding(.vertical, 4)
+        .pickerCardRowChrome(highlighted: false)
+    }
+
+    /// Two quiet actions side by side: the primary one tinted, the
+    /// navigation one neutral.
+    private var footerActions: some View {
+        HStack(spacing: 0) {
+            PickerCardTextLink(
+                title: L("Add credits"),
+                icon: "plus",
+                tint: theme.accentColor,
+                fillsWidth: false,
+                action: onAddCredits
+            )
+            Spacer(minLength: 8)
+            PickerCardTextLink(title: L("View all"), icon: "arrow.forward", fillsWidth: false, action: onViewAll)
+                .localizedHelp("Open the Credits tab for full usage and transaction history.")
         }
     }
 
-    private var footerActions: some View {
-        HStack(spacing: 8) {
-            Button(action: onAddCredits) {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 9, weight: .bold))
-                    Text("Add credits", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(theme.accentColor))
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-
-            Spacer(minLength: 0)
-
-            Button(action: onViewAll) {
-                HStack(spacing: 3) {
-                    Text("View all", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 7, weight: .semibold))
-                }
-                .foregroundColor(theme.secondaryText)
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-            .localizedHelp("Open the Credits tab for full usage and transaction history.")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+    /// `provider/model` → `model`; the full id stays in the row's tooltip.
+    private static func modelName(_ identifier: String) -> String {
+        identifier.split(separator: "/", maxSplits: 1).last.map(String.init) ?? identifier
     }
 
     // MARK: Row styling
@@ -7732,11 +7597,6 @@ private struct WalletPopover: View {
         guard let date = row.date else { return nil }
         return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
-
-    private var divider: some View {
-        Divider().overlay(theme.primaryBorder.opacity(0.15))
-    }
-
 }
 
 // MARK: - Context Budget Segment Widths
@@ -8826,11 +8686,10 @@ private struct FloatingCreditsChip: View {
         }
         .anchoredCard(
             isPresented: $showWalletPanel,
-            size: CGSize(width: 272, height: walletPanelHeight),
+            size: CGSize(width: PickerCardMetrics.infoCardWidth, height: walletPanelHeight),
             alignment: .trailing,
             constrainToWindow: true,
             takesFocus: walletPanelPinned,
-            shadowPadding: WalletCardStyle.shadowPadding,
             accessibilityLabel: L("Credits")
         ) {
             WalletPopover(
@@ -8847,11 +8706,6 @@ private struct FloatingCreditsChip: View {
                 },
                 onHeightChange: { walletPanelHeight = $0 }
             )
-            // The native drawing window includes the shadow, which overlaps
-            // the source pill. Include that transparent margin in hover only,
-            // or opening the preview can steal hover and immediately dismiss it.
-            // Undo the padding after tracking so card layout/measurement stay put.
-            .padding(WalletCardStyle.shadowPadding)
             .contentShape(Rectangle())
             .onHover { hovering in
                 walletHover.isOverPanel = hovering
@@ -8861,7 +8715,6 @@ private struct FloatingCreditsChip: View {
                     scheduleWalletDismiss()
                 }
             }
-            .padding(-WalletCardStyle.shadowPadding)
         }
         .onChange(of: showWalletPanel) { _, isShown in
             // Outside-click dismissal flips the binding directly; unpin so the
@@ -8971,8 +8824,7 @@ private struct FloatingCreditsChip: View {
 /// from `FloatingInputCard` so popover hover/pin state re-renders only this
 /// chip. All budget math stays in the parent (it also gates sending); this
 /// view just renders the passed values. `breakdown` is a closure so the
-/// popover's content is computed only when it actually opens, matching the
-/// lazy evaluation the inline `.popover` closure had before extraction.
+/// panel's content is computed only while it is open.
 private struct FloatingContextChip: View {
     /// Read the shared disk-cache gauge. Returns nil when no quota is
     /// configured (disk cache off), so the popover hides the section rather
@@ -9030,9 +8882,13 @@ private struct FloatingContextChip: View {
     /// automatically; pinned panels remain interactive until an outside click
     /// or a second click on the trigger.
     @State private var contextPanelPinned = false
+    @State private var contextHover = HoverPreviewPresence()
+    /// Measured before the first presentation, then updated as sections
+    /// expand or the disk-cache reading lands.
+    @State private var contextPanelHeight: CGFloat = 0
     @State private var contextHoverTask: Task<Void, Never>?
-    /// Delayed dismiss for the context popover. Gives the cursor a grace
-    /// period to travel from the trigger into the popover (which lives in its
+    /// Delayed dismiss for the context panel. Gives the cursor a grace
+    /// period to travel from the trigger into the panel (which lives in its
     /// own window, so hovering it doesn't keep the trigger "hovered").
     @State private var contextDismissTask: Task<Void, Never>?
     /// Live disk-cache reading, refreshed only while the popover is open so an
@@ -9105,65 +8961,94 @@ private struct FloatingContextChip: View {
             Text("Context budget: \(tokenText) tokens", bundle: .module)
         )
         .onHover { hovering in
+            contextHover.isOverTrigger = hovering
             if hovering {
                 openContextBreakdown()
             } else if !contextPanelPinned {
                 scheduleContextDismiss()
             }
         }
-        .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
-            ContextBreakdownPopover(
-                breakdown: breakdown(),
-                maxTokens: usableTokens,
-                modelMaxTokens: modelMaxTokens,
-                modelLimitSource: windowResolution?.source,
-                isStreaming: isStreaming,
-                isNearLimit: isNearLimit,
-                isHardOverflow: isHardOverflow,
-                formatTokenCount: formatTokenCount,
-                compactionState: compactionState,
-                canCompact: canCompact,
-                onCompact: onCompact,
-                diskCache: diskCacheUsage,
-                currentSessionKey: currentSessionKey
-            )
-            .task(id: SSDQuotaNoticePollContext(
-                model: currentModel,
-                session: currentSessionKey.flatMap(UUID.init(uuidString:)),
-                eligible: showContextBreakdown
-            )) {
-                // Poll while open. The cache index is a small SQLite read, but
-                // it is still I/O, so it runs off the main actor and stops as
-                // soon as the popover closes.
-                guard showContextBreakdown else { return }
-                while !Task.isCancelled {
-                    let model = currentModel, session = currentSessionKey
-                    let reading = await Task.detached(priority: .utility) {
-                        await Self.readDiskCacheUsage(model: model, session: session)
-                    }.value
-                    guard !Task.isCancelled else { return }
-                    diskCacheUsage = reading
-                    try? await Task.sleep(for: .seconds(2))
-                }
-            }
-            // Keep the popover alive while the cursor is over it, so the user
-            // can travel from the trigger and click the disclosure headers.
-            .onPopoverHover { hovering in
-                if hovering {
-                    contextDismissTask?.cancel()
-                } else if !contextPanelPinned {
-                    scheduleContextDismiss()
-                }
+        .anchoredCard(
+            isPresented: $showContextBreakdown,
+            size: CGSize(width: PickerCardMetrics.infoCardWidth, height: contextPanelHeight),
+            alignment: .trailing,
+            constrainToWindow: true,
+            takesFocus: contextPanelPinned,
+            accessibilityLabel: L("Context Budget")
+        ) {
+            // `anchoredCard` builds its content on every render, so gate it
+            // to keep `breakdown()` from running while the panel is closed.
+            if showContextBreakdown {
+                contextPanel
             }
         }
         .onChange(of: showContextBreakdown) { _, isShown in
             // Outside-click dismissal flips the binding directly. Clear the
             // pinned state so the next hover behaves as a passive preview.
-            if !isShown { contextPanelPinned = false }
+            if !isShown {
+                contextHover.isOverPanel = false
+                contextPanelPinned = false
+                contextPanelHeight = 0
+                contextHoverTask?.cancel()
+                contextDismissTask?.cancel()
+            }
+        }
+        .onDisappear {
+            contextHoverTask?.cancel()
+            contextDismissTask?.cancel()
         }
     }
 
-    /// Open the context popover after a short hover dwell, cancelling any
+    private var contextPanel: some View {
+        ContextBreakdownPopover(
+            breakdown: breakdown(),
+            maxTokens: usableTokens,
+            modelMaxTokens: modelMaxTokens,
+            modelLimitSource: windowResolution?.source,
+            isStreaming: isStreaming,
+            isNearLimit: isNearLimit,
+            isHardOverflow: isHardOverflow,
+            formatTokenCount: formatTokenCount,
+            compactionState: compactionState,
+            canCompact: canCompact,
+            onCompact: onCompact,
+            diskCache: diskCacheUsage,
+            currentSessionKey: currentSessionKey,
+            onHeightChange: { contextPanelHeight = $0 }
+        )
+        .task(id: SSDQuotaNoticePollContext(
+            model: currentModel,
+            session: currentSessionKey.flatMap(UUID.init(uuidString:)),
+            eligible: showContextBreakdown
+        )) {
+            // Poll while open. The cache index is a small SQLite read, but
+            // it is still I/O, so it runs off the main actor and stops as
+            // soon as the panel closes.
+            guard showContextBreakdown else { return }
+            while !Task.isCancelled {
+                let model = currentModel, session = currentSessionKey
+                let reading = await Task.detached(priority: .utility) {
+                    await Self.readDiskCacheUsage(model: model, session: session)
+                }.value
+                guard !Task.isCancelled else { return }
+                diskCacheUsage = reading
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        // Keep the panel alive while the cursor is over it, so the user
+        // can travel from the trigger and click the disclosure headers.
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            contextHover.isOverPanel = hovering
+            if hovering {
+                contextDismissTask?.cancel()
+            } else if !contextPanelPinned {
+                scheduleContextDismiss()
+            }
+        }
+    }
+
+    /// Open the context panel after a short hover dwell, cancelling any
     /// pending dismiss so a quick re-entry doesn't flicker it closed.
     private func openContextBreakdown() {
         contextDismissTask?.cancel()
@@ -9175,14 +9060,17 @@ private struct FloatingContextChip: View {
         }
     }
 
-    /// Dismiss the context popover after a grace period, giving the cursor
-    /// time to cross the gap into the popover window.
+    /// Dismiss the context panel after a grace period, giving the cursor
+    /// time to cross the gap into the panel window.
     private func scheduleContextDismiss() {
         contextHoverTask?.cancel()
         contextDismissTask?.cancel()
+        guard contextHover.shouldDismiss(isPinned: contextPanelPinned) else { return }
         contextDismissTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                contextHover.shouldDismiss(isPinned: contextPanelPinned)
+            else { return }
             showContextBreakdown = false
         }
     }

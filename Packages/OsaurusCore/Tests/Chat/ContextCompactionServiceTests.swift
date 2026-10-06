@@ -85,6 +85,17 @@ struct CompactionModelConfigurationTests {
         #expect(!ContextCompactionService.usesChatModelFallback(configured: "qwen3-4b"))
     }
 
+    @Test("request failures name the compaction model that ran")
+    func requestFailureNamesModel() {
+        let error = ContextCompactionError.requestFailed(
+            model: "chatgpt/gpt-sol-6",
+            message: "Request failed: HTTP 400: {\"detail\":\"Stream must be set to true\"}"
+        )
+        let description = error.localizedDescription
+        #expect(description.contains("'chatgpt/gpt-sol-6'"))
+        #expect(description.contains("HTTP 400"))
+    }
+
     @Test("legacy JSON without compaction keys decodes to unset")
     func legacyDecode() throws {
         let data = try JSONEncoder().encode(ChatConfiguration.default)

@@ -1,0 +1,113 @@
+import Foundation
+import Testing
+@testable import OsaurusCore
+
+@Suite("Selected bundle native MTP detection without loading")
+struct NativeMTPPreloadDetectionTests {
+    @Test("affine 27B and affine/JANGH Flash Next are detected before residency")
+    func selectedBundleLayouts() throws {
+        for (modelType, format) in [("qwen3_5", "affine"), ("qwen4_exp", "affine"), ("qwen4_exp", "jangh")] {
+            let directory = try fixture(modelType: modelType, format: format)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            // This name intentionally has no catalog entry. The selected URL is authoritative.
+            let status = try #require(ModelRuntime.inspectLoadingModelMTP(name: "selected-local-alias", directory: directory))
+            #expect(status.name == "selected-local-alias")
+            #expect(status.bundleHasMTP)
+            #expect(status.isTargetMTPFamily)
+            #expect(!status.isBlocked)
+        }
+    }
+
+    @Test("head tensors omitted from index remain visible in its referenced shard")
+    func incompleteTensorIndex() throws {
+        let directory = try fixture(modelType: "qwen4_exp", indexedHead: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let status = try #require(ModelRuntime.inspectLoadingModelMTP(name: "Flash Next", directory: directory))
+        #expect(status.bundleHasMTP)
+        #expect(status.isTargetMTPFamily)
+    }
+
+    @Test("tuning refusal is separate from head availability")
+    func blockedTuningDoesNotEraseAvailability() throws {
+        let directory = try fixture(modelType: "qwen3_5")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data(#"{"native_mtp":{"blocked":true,"manual_blocked":true}}"#.utf8)
+            .write(to: directory.appendingPathComponent("vmlx_mtp_tuning.json"))
+        let status = try #require(ModelRuntime.inspectLoadingModelMTP(name: "27B", directory: directory))
+        #expect(status.bundleHasMTP)
+        #expect(status.isTargetMTPFamily)
+        #expect(status.isBlocked)
+    }
+
+    @Test("config claims alone and unrelated architectures do not imply usable native MTP")
+    func negativeLayouts() throws {
+        let headless = try fixture(modelType: "qwen3_5", includeHead: false)
+        defer { try? FileManager.default.removeItem(at: headless) }
+        let missing = try #require(ModelRuntime.inspectLoadingModelMTP(name: "Qwen", directory: headless))
+        #expect(!missing.bundleHasMTP)
+        let unrelated = try fixture(modelType: "llama")
+        defer { try? FileManager.default.removeItem(at: unrelated) }
+        let unsupported = try #require(ModelRuntime.inspectLoadingModelMTP(name: "qwen4_exp", directory: unrelated))
+        #expect(unsupported.bundleHasMTP)
+        #expect(!unsupported.isTargetMTPFamily)
+    }
+
+    @Test("malformed config fails inspection without loading a model")
+    func malformedConfig() throws {
+        let directory = try fixture(modelType: "qwen3_5")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("{broken".utf8).write(to: directory.appendingPathComponent("config.json"))
+        #expect(ModelRuntime.inspectLoadingModelMTP(name: "Qwen", directory: directory) == nil)
+    }
+
+    @Test("opt-in installed bundle inspection uses the real engine without loading")
+    func installedBundleInventory() throws {
+        guard ProcessInfo.processInfo.environment["OSAURUS_MTP_PRELOAD_LOCAL_PROBE"] == "1" else { return }
+        struct InventoryRow: Decodable {
+            let name: String
+            let path: String
+            let hasHead: Bool
+        }
+        let manifest = try #require(ProcessInfo.processInfo.environment["OSAURUS_MTP_PRELOAD_LOCAL_INVENTORY"])
+        let rows = try JSONDecoder().decode([InventoryRow].self, from: Data(contentsOf: URL(fileURLWithPath: manifest)))
+        #expect(!rows.isEmpty)
+        for row in rows {
+            let directory = URL(fileURLWithPath: row.path, isDirectory: true)
+            let status = try #require(ModelRuntime.inspectLoadingModelMTP(name: row.name, directory: directory))
+            let hasHead = row.hasHead
+            #expect(status.bundleHasMTP == hasHead)
+            #expect(status.isTargetMTPFamily)
+            print("MTP-PRELOAD-LOCAL path=\(directory.path) head=\(status.bundleHasMTP) blocked=\(status.isBlocked) status=\(status.statusLine) model_loaded=false")
+        }
+    }
+
+    private func fixture(
+        modelType: String, format: String = "affine", indexedHead: Bool = true,
+        includeHead: Bool = true
+    ) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-mtp-preload-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let config: [String: Any] = [
+            "model_type": modelType,
+            "text_config": ["model_type": modelType + "_text", "mtp_num_hidden_layers": 1],
+            "quantization": ["mode": format, "bits": format == "jangh" ? 2 : 4, "group_size": 64],
+        ]
+        try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("config.json"))
+        let head = "mtp.fc.weight", trunk = "model.embed_tokens.weight"
+        var header: [String: Any] = [trunk: ["dtype": "F32", "shape": [1], "data_offsets": [0,4]]]
+        if includeHead { header[head] = ["dtype": "F32", "shape": [1], "data_offsets": [4,8]] }
+        let json = try JSONSerialization.data(withJSONObject: header)
+        var length = UInt64(json.count).littleEndian
+        var file = Data()
+        withUnsafeBytes(of: &length) { file.append(contentsOf: $0) }
+        file.append(json)
+        file.append(Data(repeating: 0, count: includeHead ? 8 : 4))
+        try file.write(to: directory.appendingPathComponent("model.safetensors"))
+        var weightMap = [trunk: "model.safetensors"]
+        if includeHead && indexedHead { weightMap[head] = "model.safetensors" }
+        try JSONSerialization.data(withJSONObject: ["weight_map": weightMap])
+            .write(to: directory.appendingPathComponent("model.safetensors.index.json"))
+        return directory
+    }
+}

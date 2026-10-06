@@ -291,6 +291,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// `/agents/{id}/dispatch`) check this to reject non-loopback
         /// plaintext with 426.
         var isSecureChannel: Bool = false
+        /// The address that Secure Channel was opened with: the agent (or
+        /// the connect identity) the caller reaches this Mac through.
+        var secureChannelAgentAddress: String?
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -458,6 +461,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.bodyBytesSeen = 0
             stateRef.value.rejectedTooLarge = false
             stateRef.value.isSecureChannel = false
+            stateRef.value.secureChannelAgentAddress = nil
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
             stateRef.value.callerHasVerifiedAccessKey = false
@@ -1072,6 +1076,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path.hasPrefix("/artifacts/") {
+                handleArtifactFileEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path.hasPrefix("/sessions/"), path.hasSuffix("/truncate") {
                 handleSessionTruncateEndpoint(
                     head: head,
@@ -1096,7 +1108,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
-            } else if head.method == .GET || head.method == .PATCH, path.hasPrefix("/sessions/") {
+            } else if [.GET, .PATCH, .DELETE].contains(head.method), path.hasPrefix("/sessions/") {
                 handleSessionEndpoint(
                     head: head,
                     context: context,
@@ -1113,6 +1125,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/tools/preset") {
+                handleAgentToolPresetEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .PATCH || head.method == .DELETE, path.hasPrefix("/agents/"),
+                path.split(separator: "/").count == 2
+            {
+                handleEditAgentEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .PATCH, path.hasPrefix("/agents/"), path.contains("/tools/") {
                 handleUpdateAgentToolEndpoint(
                     head: head,
@@ -1851,10 +1881,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
-            let next =
+            var next =
                 ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
                     requested
                 )
+            // Match persistence before computing effects or returning settings.
+            // Legacy depth requests select Adaptive without a native depth cap.
+            next.mtp = NativeMTPSelectionDefault.adaptiveSelection(next.mtp)
 
             if previous.network != next.network {
                 let body = Self.errorBody(
@@ -4640,6 +4673,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// The agent's system prompt, on `GET /agents/{id}` and for owner
         /// callers only — a workspace peer has no business reading it.
         let system_prompt: String?
+        /// What the phone can change (§13.2): `GET /agents/{id}` for owner
+        /// callers and custom agents only.
+        var settings: PhoneAgentEditing.Settings? = nil
     }
 
     private struct AgentListResponse: Codable {
@@ -4975,9 +5011,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// Where an externally discovered local bundle came from ("LM
         /// Studio"), for the Local tab's source filter.
         let externalSource: String?
+        /// `chat` or `image`. Image models answer through `/images/generations`,
+        /// never a chat run; `edits` says `/images/edits` takes a source image.
+        let kind: String
+        let edits: Bool
 
         enum CodingKeys: String, CodingKey {
             case id, name, provider, source, vision, thinking, params, quantization, available, description, tab
+            case kind, edits
             case tabTitle = "tab_title"
             case favoriteKey = "favorite_key"
             case contextLength = "context_length"
@@ -5033,7 +5074,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let items = await ModelPickerItemCache.shared.buildModelPickerItems().chatModelCandidates
+            // Chat models plus ready on-device image models, which the Mac
+            // picker also lists (picking one puts the composer in image mode).
+            let items = await ModelPickerItemCache.shared.buildModelPickerItems()
+                .filter { $0.isLikelyChatCapable || $0.isPhoneImageModel }
             let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
             // Grouped as the Mac picker groups them, so the phone shows the
             // same tabs in the same order.
@@ -5065,7 +5109,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     contextLength: item.contextLength,
                     inputPrice: item.inputPriceMicroPerMTok,
                     outputPrice: item.outputPriceMicroPerMTok,
-                    externalSource: item.externalSource
+                    externalSource: item.externalSource,
+                    kind: item.isPhoneImageModel ? "image" : "chat",
+                    edits: item.isImageEditDelegateCandidate
                 )
             }
             let json =
@@ -5104,6 +5150,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -5202,6 +5251,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         var data = Data()
         if var body = stateRef.value.requestBodyBuffer {
@@ -5291,6 +5343,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let path = "/models/options"
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let method = head.method == .PUT ? "PUT" : "POST"
@@ -5481,6 +5536,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let remote_safe: Bool
         /// Ungranted requirements / missing system permissions, when any.
         let blocked_by: [String]?
+        /// Always loaded, not picked per agent: it follows the agent's own
+        /// switches (§14.12).
+        let built_in: Bool
+        /// The agent has it on: in its own tool list, or built in.
+        let agent_enabled: Bool
     }
 
     private struct AgentToolsResponse: Encodable {
@@ -5504,9 +5564,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // The agent the catalog is for: which of its tools it has on.
+        let agentId = path.split(separator: "/").dropFirst().first.flatMap { UUID(uuidString: String($0)) }
         runRequestTask(priority: .userInitiated) {
             let tools: [AgentToolDTO] = await MainActor.run {
-                ToolRegistry.shared.listTools().map(Self.agentToolDTO(for:))
+                let agent = agentId.flatMap { AgentManager.shared.agent(for: $0) }
+                return ToolRegistry.shared.listTools().map { Self.agentToolDTO(for: $0, agent: agent) }
             }
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
@@ -5531,24 +5594,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private struct AgentToolPatchRequest: Decodable {
         let enabled: Bool?
         let policy: String?
+        let agent_enabled: Bool?
     }
 
-    /// Parses a §14.7 body. Nil when it carries neither field or names a
-    /// policy that is not `auto` / `ask` / `deny`.
-    static func toolPatch(from data: Data) -> (enabled: Bool?, policy: ToolPermissionPolicy?)? {
-        guard let patch = try? JSONDecoder().decode(AgentToolPatchRequest.self, from: data),
-            patch.enabled != nil || patch.policy != nil
+    /// A §14.7 body: `enabled` and `policy` are Mac-wide, `agentEnabled` is
+    /// the agent's own choice (§14.12).
+    struct ToolPatch: Equatable {
+        let enabled: Bool?
+        let policy: ToolPermissionPolicy?
+        let agentEnabled: Bool?
+    }
+
+    /// Parses a §14.7 body. Nil when it carries no field, or when any field
+    /// it does carry is invalid (a policy that is not `auto` / `ask` /
+    /// `deny`, a switch that is not a boolean), so nothing is half-applied.
+    static func toolPatch(from data: Data) -> ToolPatch? {
+        guard let request = try? JSONDecoder().decode(AgentToolPatchRequest.self, from: data),
+            request.enabled != nil || request.policy != nil || request.agent_enabled != nil
         else { return nil }
-        if let raw = patch.policy {
+        var policy: ToolPermissionPolicy?
+        if let raw = request.policy {
             guard let parsed = ToolPermissionPolicy(rawValue: raw) else { return nil }
-            return (patch.enabled, parsed)
+            policy = parsed
         }
-        return (patch.enabled, nil)
+        return ToolPatch(enabled: request.enabled, policy: policy, agentEnabled: request.agent_enabled)
     }
 
     /// One row of the tool catalog, shared by the GET and the PATCH reply.
     @MainActor
-    private static func agentToolDTO(for entry: ToolRegistry.ToolEntry) -> AgentToolDTO {
+    private static func agentToolDTO(for entry: ToolRegistry.ToolEntry, agent: Agent?) -> AgentToolDTO {
         let registry = ToolRegistry.shared
         let info = registry.policyInfo(for: entry.name)
         let policy = info?.effectivePolicy ?? .auto
@@ -5566,7 +5640,205 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             enabled: entry.enabled,
             policy: policy.rawValue,
             remote_safe: policy == .auto && blocked.isEmpty && !deniedHere && entry.enabled,
-            blocked_by: blocked.isEmpty ? nil : blocked
+            blocked_by: blocked.isEmpty ? nil : blocked,
+            built_in: PhoneAgentEditing.isBuiltInTool(entry.name),
+            agent_enabled: agent.map { PhoneAgentEditing.agentHasTool(entry.name, agent: $0) } ?? true
+        )
+    }
+
+    /// PATCH /agents/{id} changes a custom agent's settings, DELETE /agents/{id}
+    /// deletes it (docs/MOBILE_PROTOCOL.md §13.3–§13.4). Owner-only.
+    private func handleEditAgentEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let method = head.method.rawValue
+        let components = path.split(separator: "/")
+        guard components.count == 2, let agentId = UUID(uuidString: String(components[1])) else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"invalid_agent_id"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        let isDelete = head.method == .DELETE
+        // The agent this request came in through, which it must not delete.
+        let connectedThrough = stateRef.value.secureChannelAgentAddress
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (status: HTTPResponseStatus, json: String)
+            do {
+                if isDelete {
+                    let deleted = try await PhoneAgentEditing.delete(agentId, connectedThrough: connectedThrough)
+                    outcome =
+                        deleted
+                        ? (.ok, #"{"ok":true}"#)
+                        : (
+                            .internalServerError,
+                            Self.jsonObjectString(["error": "delete_failed", "message": "Couldn't delete the agent."])
+                        )
+                } else {
+                    let patch = try PhoneAgentEditing.patch(from: body)
+                    try await PhoneAgentEditing.apply(patch, to: agentId)
+                    outcome = (.ok, #"{"ok":true}"#)
+                }
+            } catch let error as PhoneAgentEditing.EditError {
+                outcome = Self.agentEditFailure(error)
+            } catch {
+                // The sandbox boots after the reply (`waitForSandbox: false`),
+                // so anything here really failed.
+                outcome = (
+                    .internalServerError,
+                    Self.jsonObjectString(["error": "edit_failed", "message": error.localizedDescription])
+                )
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime,
+                    method: method
+                )
+            }
+        }
+    }
+
+    /// POST /agents/{id}/tools/preset: `{"preset":"all" | "essential" | "none"}`,
+    /// the Tools window's presets (docs/MOBILE_PROTOCOL.md §14.12). Answers
+    /// with the agent's tool catalog, as §14.4.
+    private func handleAgentToolPresetEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        struct PresetRequest: Decodable { let preset: String }
+        guard components.count == 4, let agentId = UUID(uuidString: String(components[1])),
+            let raw = try? JSONDecoder().decode(PresetRequest.self, from: body),
+            let preset = PhoneAgentEditing.ToolPreset(rawValue: raw.preset)
+        else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected {preset: all, essential or none}"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (status: HTTPResponseStatus, json: String) = await MainActor.run {
+                do {
+                    try PhoneAgentEditing.apply(preset, to: agentId)
+                } catch let error as PhoneAgentEditing.EditError {
+                    return Self.agentEditFailure(error)
+                } catch {
+                    return Self.agentEditFailure(.notEditable)
+                }
+                let agent = AgentManager.shared.agent(for: agentId)
+                let tools = ToolRegistry.shared.listTools().map { Self.agentToolDTO(for: $0, agent: agent) }
+                let json =
+                    (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? #"{"tools":[]}"#
+                return (.ok, json)
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private static func agentEditFailure(
+        _ error: PhoneAgentEditing.EditError
+    ) -> (status: HTTPResponseStatus, json: String) {
+        let reply = error.reply
+        return (
+            HTTPResponseStatus(statusCode: reply.status),
+            jsonObjectString(["error": reply.code, "message": reply.message])
+        )
+    }
+
+    private func sendAgentEditResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date,
+        method: String? = nil
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: method ?? head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
         )
     }
 
@@ -5583,6 +5855,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -5615,12 +5890,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         guard let patch = Self.toolPatch(from: data) else {
             reply(
                 .badRequest,
-                #"{"error":"bad_request","message":"Expected {enabled?, policy?} with policy auto, ask or deny"}"#
+                #"{"error":"bad_request","message":"Expected {enabled?, agent_enabled?, policy?}"}"#
             )
             return
         }
         let policy = patch.policy
         let enabled = patch.enabled
+        let agentEnabled = patch.agentEnabled
+        let agentId = UUID(uuidString: String(components[1]))
 
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
@@ -5631,12 +5908,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 guard registry.isRegistered(toolName) else {
                     return (.notFound, #"{"error":"tool_not_found"}"#)
                 }
+                if let agentEnabled {
+                    guard let agentId else { return (.badRequest, #"{"error":"invalid_agent_id"}"#) }
+                    do {
+                        try PhoneAgentEditing.setTool(toolName, enabled: agentEnabled, for: agentId)
+                    } catch {
+                        let failure = Self.agentEditFailure(
+                            error as? PhoneAgentEditing.EditError ?? .notEditable
+                        )
+                        return (failure.status, failure.json)
+                    }
+                }
+                // Only after the agent's own change, which can still be refused
+                // and changes nothing when it is: a refusal must leave the
+                // Mac-wide settings untouched too.
                 if let enabled { registry.setEnabled(enabled, for: toolName) }
                 if let policy { registry.setPolicy(policy, for: toolName) }
                 guard let entry = registry.listTools().first(where: { $0.name == toolName }) else {
                     return (.notFound, #"{"error":"tool_not_found"}"#)
                 }
-                let dto = Self.agentToolDTO(for: entry)
+                let agent = agentId.flatMap { AgentManager.shared.agent(for: $0) }
+                let dto = Self.agentToolDTO(for: entry, agent: agent)
                 let json =
                     (try? JSONEncoder.osaurusCanonical().encode(dto))
                     .map { String(decoding: $0, as: UTF8.self) } ?? #"{"ok":true}"#
@@ -5680,6 +5972,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -5855,6 +6150,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: "/agents", startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         func reply(_ status: HTTPResponseStatus, _ body: String) {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5896,7 +6194,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // control one left raw made a 201 the phone could not decode.
             let outcome: (status: HTTPResponseStatus, json: String) = await MainActor.run {
                 do {
-                    let agent = try AgentManager.shared.create(
+                    let agent = try AgentManager.shared.createFromPhone(
                         name: String(name.prefix(80)),
                         description: description,
                         systemPrompt: systemPrompt,
@@ -6042,6 +6340,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         func reply(_ status: HTTPResponseStatus, _ body: String) {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -6180,6 +6481,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         func reply(_ status: HTTPResponseStatus, _ body: String) {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -6302,6 +6606,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -6478,6 +6785,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -6945,6 +7255,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let cors = stateRef.value.corsHeaders
         let components = path.split(separator: "/")
         guard components.count == 3, let sessionId = UUID(uuidString: String(components[1])) else {
@@ -7042,7 +7355,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
-    /// GET /sessions/{id} and PATCH /sessions/{id}.
+    /// GET, PATCH and DELETE /sessions/{id}.
     private func handleSessionEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -7052,6 +7365,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         guard callerOwnsThisMac(context) else {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -7066,6 +7382,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers: headers,
                 body: #"{"error":"invalid_session_id"}"#
             )
+            return
+        }
+
+        if head.method == .DELETE {
+            let loop = context.eventLoop
+            let ctx = NIOLoopBound(context, eventLoop: loop)
+            let hop = Self.makeHop(channel: context.channel, loop: loop)
+            runRequestTask(priority: .userInitiated) {
+                let deleted = await MainActor.run { RemoteSessionContinuation.delete(sessionId) }
+                let status: HTTPResponseStatus = deleted ? .ok : .notFound
+                let json = deleted ? #"{"ok":true}"# : #"{"error":"session_not_found"}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: status,
+                        headers: headers,
+                        body: json
+                    )
+                    self.logRequest(
+                        method: "DELETE",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: json,
+                        responseStatus: Int(status.code),
+                        startTime: startTime
+                    )
+                }
+            }
             return
         }
 
@@ -7252,16 +7600,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             return SessionTurnDTO.AttachmentDTO(filename: filename, file_size: size, content: content)
         }
-        // Images by position among the turn's images, the index the image
-        // endpoint takes. Sizes come from the record, nothing is read here.
-        let images: [SessionTurnDTO.ImageDTO] = turn.attachments.filter(\.isImage).enumerated().map { index, image in
-            let size: Int
-            switch image.kind {
-            case .image(let data): size = data.count
-            case .imageRef(_, let byteCount): size = byteCount
-            default: size = 0
-            }
-            return SessionTurnDTO.ImageDTO(index: index, byte_count: size)
+        // Images by position among the turn's images (attachments, then
+        // generated ones), the index the image endpoint takes.
+        let images = SessionTurnImages.entries(for: turn).enumerated().map { index, image in
+            SessionTurnDTO.ImageDTO(index: index, byte_count: image.byteCount)
         }
         return SessionTurnDTO(
             id: turn.id.uuidString,
@@ -7321,9 +7663,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             let images = await ChatSessionStore.loadAsync(id: sessionId)?
-                .turns.first { $0.id == turnId }?
-                .attachments.filter(\.isImage)
-            guard let images, images.indices.contains(index), let data = images[index].loadImageData() else {
+                .turns.first { $0.id == turnId }
+                .map(SessionTurnImages.entries(for:))
+            guard let images, images.indices.contains(index), let data = images[index].load() else {
                 hop {
                     let body = #"{"error":"image_not_found"}"#
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -7348,6 +7690,93 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
             let contentType = Self.imageContentType(forData: data)
+            hop {
+                let context = ctx.value
+                var head2 = HTTPResponseHead(version: head.version, status: .ok)
+                var headers = HTTPHeaders()
+                headers.add(name: "Content-Type", value: contentType)
+                headers.add(name: "Content-Length", value: String(data.count))
+                headers.add(name: "Cache-Control", value: "no-store")
+                for (name, value) in cors { headers.add(name: name, value: value) }
+                head2.headers = headers
+                var buffer = context.channel.allocator.buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                context.write(NIOAny(HTTPServerResponsePart.head(head2)), promise: nil)
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)), promise: nil)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "<\(data.count) bytes \(contentType)>",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /artifacts/{context id}/{filename} — an image an agent shared
+    /// (`share_artifact`, the `image` tool), as its tool result names it
+    /// (`context_id`, `filename`). Owner-only, and over the Secure Channel
+    /// only even though it is a read: a shared image can be anything the
+    /// agent saw. Nothing but images in `~/.osaurus/artifacts/` is ever
+    /// served (docs/MOBILE_PROTOCOL.md §14.12).
+    private func handleArtifactFileEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/").map { String($0).removingPercentEncoding ?? String($0) }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let file =
+                components.count == 3 && components[0] == "artifacts"
+                ? SessionTurnImages.artifactImageFile(contextId: components[1], filename: components[2]) : nil
+            guard let file, let data = try? Data(contentsOf: file) else {
+                hop {
+                    let body = #"{"error":"artifact_not_found"}"#
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: body
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: body,
+                        responseStatus: 404,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            let contentType = SharedArtifact.mimeType(from: file.lastPathComponent)
             hop {
                 let context = ctx.value
                 var head2 = HTTPResponseHead(version: head.version, status: .ok)
@@ -7481,20 +7910,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             // Resolve the agent the client expects to talk to. Any agent with
             // a derived identity can hold sessions; access control happens on
-            // the inner request's Bearer, not here.
+            // the inner request's Bearer, not here. The Mac's own connect
+            // identity also answers, so a phone paired to a Mac with only the
+            // built-in agent still has a channel (`MobileConnectIdentity`).
             let wanted = hello.agentAddress.lowercased()
             let agents = await MainActor.run { AgentManager.shared.agents }
-            guard
-                let agent = agents.first(where: { $0.agentAddress?.lowercased() == wanted }),
-                let agentKeyPath = agent.agentKeyPath
-            else {
-                reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
-                return
+            let agentKeyPath = agents.first(where: { $0.agentAddress?.lowercased() == wanted })?.agentKeyPath
+            if agentKeyPath == nil {
+                switch MobileConnectIdentity.matches(wanted) {
+                case true?:
+                    break
+                case false?:
+                    reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
+                    return
+                case nil:
+                    // The Keychain can't be read now: worth a retry, and not
+                    // the 404 that makes a phone drop its pin.
+                    reply(
+                        status: .serviceUnavailable,
+                        body: #"{"error":"Secure channel identity unavailable, try again"}"#,
+                        code: 503
+                    )
+                    return
+                }
             }
 
             let result: (session: SecureChannelSession, serverHello: SecureChannel.ServerHello)
             do {
                 result = try SecureChannel.establishServerSession(hello: hello) { transcript in
+                    guard let agentKeyPath else {
+                        let signature = try MobileConnectIdentity.withPrivateKey {
+                            try signSecureChannelPayload(transcript, privateKey: $0)
+                        }
+                        guard let signature else { throw OsaurusIdentityError.keychainReadFailed }
+                        return signature
+                    }
                     let signContext = LAContext()
                     signContext.touchIDAuthenticationAllowableReuseDuration = 300
                     signContext.interactionNotAllowed = true
@@ -7583,6 +8033,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return nil
         }
+        stateRef.value.secureChannelAgentAddress = session.agentAddress
 
         let plaintext: Data
         let requestSeq: UInt64
@@ -7660,6 +8111,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         encryptor.arm(sealer: session.makeResponseSealer(requestSeq: requestSeq))
 
         return (newHead, normalize(extractPath(from: inner.path)))
+    }
+
+    /// The same gate for an owner route that changes something (anything but
+    /// GET): an agent's prompt, tools or sandbox, an approval, a chat. With
+    /// a master-scoped key these reach as far as a run does, so a sniffed or
+    /// leaked pairing key must not work them over plaintext. Reads stay
+    /// open, so GET-only routes don't call it. Called per route rather than
+    /// once in the dispatcher: a master key also drives the OpenAI-style
+    /// API (`/chat/completions` and the like) from other machines, which
+    /// must keep working over plain HTTP. Sends the 426 and returns `true`
+    /// when the request is refused.
+    private func requiresOwnerChannel(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) -> Bool {
+        guard head.method != .GET, head.method != .HEAD else { return false }
+        return sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
     }
 
     /// Hard-require gate for `/agents/{id}/run` and `/agents/{id}/dispatch`:
@@ -8646,6 +9123,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let relayEnabled = await MainActor.run {
                 Set(agents.map(\.id).filter { RelayTunnelManager.shared.isTunnelEnabled(for: $0) })
             }
+            // The owner's phone pins the Mac's connect identity under the
+            // built-in agent, which has no address of its own. Without it, a
+            // Mac with no custom agents leaves the phone no Secure Channel.
+            // With one, the phone rides that agent's channel instead, which
+            // the relay can carry too (`MobilePairingService.connectEntry`).
+            let needsConnectIdentity = ownerCaller && !agents.contains { !$0.isBuiltIn && $0.agentAddress != nil }
+            let connectAddress = needsConnectIdentity ? MobileConnectIdentity.address() : nil
             let items = agents.map { agent in
                 let modelId = effectiveModels[agent.id] ?? agent.defaultModel
                 let supportsVision = modelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
@@ -8666,7 +9150,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     memory_entry_count: memoryCounts[agent.id.uuidString] ?? 0,
                     created_at: formatter.string(from: agent.createdAt),
                     updated_at: formatter.string(from: agent.updatedAt),
-                    address: agent.agentAddress?.lowercased(),
+                    address: agent.id == Agent.defaultId ? connectAddress : agent.agentAddress?.lowercased(),
                     relay_url: relayEnabled.contains(agent.id)
                         ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
                     ,
@@ -8811,7 +9295,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let pinned = (try? db.pinnedFactCount(agentId: agent.id.uuidString)) ?? 0
                 return episodes + pinned
             }()
-            let item = AgentListItem(
+            var item = AgentListItem(
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
@@ -8832,6 +9316,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 custom_avatar: agent.customAvatarURL != nil ? true : nil,
                 system_prompt: ownerCaller ? agent.systemPrompt : nil
             )
+            if ownerCaller {
+                item.settings = await MainActor.run { PhoneAgentEditing.settings(for: agent) }
+            }
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
 
@@ -10547,6 +11034,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             return
         }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
         let components = path.split(separator: "/")
         guard components.count == 3, components[2] == "stop",
             let run = DetachedPhoneRuns.shared.run(id: String(components[1]))
@@ -11614,9 +12104,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed)
     }
 
-    private static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
+    static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
         if hfAuth { return HTTPResponseStatus(statusCode: 402) }
         let m = message.lowercased()
+        // The bridge's explicit request classification outranks explanatory
+        // text such as "strength ... is not implemented" in its detail.
+        if m.hasPrefix("invalid request:") { return .badRequest }
         if m.contains("not found") { return .notFound }
         if m.contains("incomplete") { return .conflict }
         if m.contains("not implemented") { return .notImplemented }
@@ -11655,6 +12148,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         image_edit: m.capabilities.imageEdit,
                         upscale: m.capabilities.upscale,
                         negative_prompt: m.capabilities.negativePrompt,
+                        edit_negative_prompt: m.capabilities.editNegativePrompt,
+                        edit_strength: m.capabilities.editStrength,
                         mask: m.capabilities.mask,
                         multiple_source_images: m.capabilities.multipleSourceImages,
                         lora: m.capabilities.lora
@@ -11663,13 +12158,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         steps: m.defaultSteps,
                         guidance: m.defaultGuidance.map { Double($0) }
                     ),
-                    limits: ImageLimitsDTO(
-                        min_steps: 1,
-                        max_steps: 50,
-                        size_multiple: 16,
-                        max_pixels: 1024 * 1024,
-                        supported_sizes: ["512x512", "768x768", "1024x1024"]
-                    ),
+                    limits: ImageHTTPParameterBuilder.limits(for: m),
                     blocked_reasons: m.blockedReasons
                 )
             }
@@ -11766,24 +12255,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         let modelId = selectedTarget.modelID
-        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
-        let params = ImageGenerationParameters(
-            model: modelId,
-            prompt: req.prompt,
-            negativePrompt: req.negative_prompt,
-            width: w.map(Self.clampImageDimension),
-            height: h.map(Self.clampImageDimension),
-            steps: req.steps.map(Self.clampImageSteps),
-            guidance: req.guidance.map { Float($0) },
-            seed: req.seed,
-            // Multi-image (`n` > 1) is force-capped to 1: the service generates the
-            // N images sequentially in one job WITHOUT a GPU drain between them, which
-            // reliably trips the MLX `tryCoalescingPreviousComputeCommandEncoder`
-            // assertion (reproduced at n=2). Re-enable once the per-image drain lands
-            // in the multi-image loop.
-            numImages: 1,
-            outputFormat: Self.imageOutputFormat(req.output_format)
-        )
+        let continuedSession = phoneImageSession(req.osaurus_session_id, context: context)
+        if continuedSession != nil,
+            requiresOwnerChannel(
+                head: head, context: context, path: "/images/generations", startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
         let jobID = Self.shortId(prefix: "img")
         runImageJob(
             head: head,
@@ -11794,8 +12272,42 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBody: bodyString,
             streaming: req.stream ?? false,
             responseFormat: req.response_format ?? "url",
-            jobID: jobID
-        ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
+            jobID: jobID,
+            onCompleted: Self.imageSessionAppender(
+                continuedSession, prompt: req.prompt, sourceImages: [], model: modelId)
+        ) { await ImageGenerationService.shared.generateHTTP(req, modelID: modelId, jobID: jobID) }
+    }
+
+    /// The Mac chat an owner's phone named with `osaurus_session_id` on an
+    /// image request (docs/MOBILE_PROTOCOL.md §12.5); nil for anyone else.
+    private func phoneImageSession(_ raw: String?, context: ChannelHandlerContext) -> UUID? {
+        guard let raw, let id = UUID(uuidString: raw), callerOwnsThisMac(context) else { return nil }
+        return id
+    }
+
+    /// Appends the finished exchange to `sessionId`, when there is one. In
+    /// the background, as a chat run's turns are: the append waits out a
+    /// reply the Mac is streaming in that chat, which must not hold the
+    /// image back from the phone.
+    private static func imageSessionAppender(
+        _ sessionId: UUID?,
+        prompt: String,
+        sourceImages: [Data],
+        model: String
+    ) -> (@Sendable ([GeneratedImage]) async -> Void)? {
+        guard let sessionId else { return nil }
+        return { images in
+            let urls = images.map(\.url)
+            Task { @MainActor in
+                await RemoteSessionContinuation.appendImageExchange(
+                    prompt: prompt,
+                    sourceImages: sourceImages,
+                    generated: urls,
+                    to: sessionId,
+                    model: model
+                )
+            }
+        }
     }
 
     private func handleRemoteImageGeneration(
@@ -12284,7 +12796,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         // Prefer the ordered `images` list; fall back to the single `image`.
         let rawSources = req.images ?? [req.image].compactMap { $0 }
-        let sources = rawSources.compactMap { Self.decodeImageInput($0) }
+        // Keep every position until actual bundle metadata chooses its policy.
+        // Older families preserve legacy compactMap; Q21 rejects any bad entry.
+        let decodedSources = rawSources.map { Self.decodeImageInput($0) }
+        let sources = decodedSources.compactMap { $0 }
         guard !sources.isEmpty else {
             sendImageError(
                 head: head,
@@ -12335,21 +12850,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
-        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
-        let params = ImageEditParameters(
-            model: editModelId,
-            prompt: req.prompt,
-            sourceImages: sources,
-            maskImage: nil,
-            negativePrompt: req.negative_prompt,
-            strength: req.strength.map { Float($0) } ?? 0.75,
-            width: w.map(Self.clampImageDimension),
-            height: h.map(Self.clampImageDimension),
-            steps: req.steps.map(Self.clampImageSteps),
-            guidance: req.guidance.map { Float($0) },
-            seed: req.seed,
-            outputFormat: Self.imageOutputFormat(req.output_format)
-        )
+        let continuedSession = phoneImageSession(req.osaurus_session_id, context: context)
+        if continuedSession != nil,
+            requiresOwnerChannel(
+                head: head, context: context, path: "/images/edits", startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
         let jobID = Self.shortId(prefix: "img")
         runImageJob(
             head: head,
@@ -12364,10 +12871,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             model: editModelId,
             activityDetails: Self.mediaActivityDetails(
                 kind: "image", operation: "edit", backend: .local,
-                count: nil, width: params.width, height: params.height,
+                count: nil, width: nil, height: nil,
                 aspect: nil, resolution: nil,
-                extra: ["source_images": String(sources.count), "job_id": jobID])
-        ) { await ImageGenerationService.shared.edit(params, jobID: jobID) }
+                extra: ["source_images": String(rawSources.count), "job_id": jobID]),
+            onCompleted: Self.imageSessionAppender(
+                continuedSession, prompt: req.prompt, sourceImages: sources, model: editModelId)
+        ) {
+            await ImageGenerationService.shared.editHTTP(req, modelID: editModelId,
+                decodedSources: decodedSources, jobID: jobID)
+        }
     }
 
     func handleImageUpscale(
@@ -12416,7 +12928,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 kind: "image", operation: "upscale", backend: .local,
                 count: nil, width: nil, height: nil, aspect: nil, resolution: nil,
                 extra: ["scale": String(params.scale), "job_id": jobID])
-        ) { await ImageGenerationService.shared.upscale(params, jobID: jobID) }
+        ) { ImageHTTPPreparedJob(stream: await ImageGenerationService.shared.upscale(params, jobID: jobID)) }
     }
 
     func handleImageCancel(
@@ -12478,7 +12990,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         jobID: String,
         model: String? = nil,
         activityDetails: [String: String] = [:],
-        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+        onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
+        build: @escaping @Sendable () async -> ImageHTTPPreparedJob
     ) {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -12500,7 +13013,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             runRequestTask(priority: .userInitiated) {
                 emit(ImageStreamEventDTO(type: "queued", job_id: jobID))
-                let stream = await build()
+                let prepared = await build()
+                let stream = prepared.stream
                 do {
                     for try await event in stream {
                         switch event {
@@ -12521,6 +13035,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             let uri = "data:image/png;base64," + pngData.base64EncodedString()
                             emit(ImageStreamEventDTO(type: "preview", job_id: jobID, step: step, image: uri))
                         case .completed(let images):
+                            await onCompleted?(images)
                             let results = images.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
                             emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
                         case .failed(let message, let hfAuth):
@@ -12549,7 +13064,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    details: activityDetails
+                    details: activityDetails.merging(prepared.activityDetails) { _, actual in actual }
                 )
             }
             return
@@ -12569,6 +13084,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             responseFormat: responseFormat,
             model: model,
             activityDetails: activityDetails,
+            onCompleted: onCompleted,
             build: build
         )
     }
@@ -12586,12 +13102,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         responseFormat: String,
         model: String? = nil,
         activityDetails: [String: String] = [:],
-        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+        onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
+        build: @escaping @Sendable () async -> ImageHTTPPreparedJob
     ) {
         runRequestTask(priority: .userInitiated) {
             var produced: [GeneratedImage] = []
             var failure: (message: String, hfAuth: Bool)?
-            let stream = await build()
+            let prepared = await build()
+            let stream = prepared.stream
             do {
                 for try await event in stream {
                     switch event {
@@ -12628,11 +13146,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     model: model,
                     errorMessage: failure.message,
-                    details: activityDetails
+                    details: activityDetails.merging(prepared.activityDetails) { _, actual in actual }
                 )
                 return
             }
 
+            await onCompleted?(produced)
             let results = produced.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
             let response = ImagesResponseDTO(created: Int(Date().timeIntervalSince1970), data: results)
             let json =
@@ -12643,7 +13162,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers.append(contentsOf: cors)
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
             }
-            var details = activityDetails
+            var details = activityDetails.merging(prepared.activityDetails) { _, actual in actual }
             details["count"] = String(produced.count)
             logSelf.logRequest(
                 method: "POST",

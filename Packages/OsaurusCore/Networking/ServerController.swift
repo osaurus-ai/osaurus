@@ -499,10 +499,11 @@ final class ServerController: ObservableObject {
         _ requestedSettings: VMLXServerRuntimeSettings,
         mtpSelectionIsFamilyDefault: Bool = false
     ) async -> RuntimeSettingsApplyEffects {
-        let settings =
+        var settings =
             ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
                 requestedSettings
             )
+        settings.mtp = NativeMTPSelectionDefault.adaptiveSelection(settings.mtp)
         let previousRuntimeSettings = runtimeSettings
         let previousConfig = configuration
         let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
@@ -599,7 +600,8 @@ final class ServerController: ObservableObject {
     /// The DEPTH does not. `draftTokenLimit` only clamps the recommended depth
     /// downward, and the depth is applied per request — so it is re-resolved
     /// from current settings on each generate instead of being frozen at load.
-    /// Auto vs Force-On likewise selects between already-loaded weights.
+    /// Auto vs Force-On admission is re-evaluated against immutable bundle
+    /// evidence on every request, without reloading already-present weights.
     nonisolated static func mtpLoadInputsChanged(
         previous: VMLXServerMTPSettings,
         next: VMLXServerMTPSettings

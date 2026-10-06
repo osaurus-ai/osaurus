@@ -41,6 +41,7 @@ struct ImageModelsDownloadView: View {
         let id: String
         let displayName: String
         let isEdit: Bool
+        let info: ImageModelInfo
     }
 
     private func state(_ id: String) -> DownloadState {
@@ -90,7 +91,8 @@ struct ImageModelsDownloadView: View {
             ImageGenerationPanelView(
                 modelId: request.id,
                 displayName: request.displayName,
-                isEdit: request.isEdit
+                isEdit: request.isEdit,
+                modelInfo: request.info
             )
             .environment(\.theme, theme)
         }
@@ -108,7 +110,8 @@ struct ImageModelsDownloadView: View {
                         leading: leadingStyle(for: model.info),
                         badges: badges(
                             kind: kindLabel(model.info.kind),
-                            quant: quantText(bits: model.info.quantizationBits, id: model.info.id)
+                            quant: quantText(bits: model.info.quantizationBits, id: model.info.id),
+                            license: ImageModelRequestPolicy.licenseLabel(canonical: model.info.canonicalName)
                         ),
                         status: rowStatus(model.id),
                         primary: installedPrimaryAction(model),
@@ -129,7 +132,11 @@ struct ImageModelsDownloadView: View {
                         title: entry.displayName,
                         subtitle: availableSubtitle(entry),
                         leading: ModelListRow.Leading(icon: "photo", tint: theme.accentColor),
-                        badges: badges(kind: nil, quant: quantText(bits: nil, id: entry.repoId)),
+                        badges: badges(
+                            kind: nil, quant: quantText(bits: nil, id: entry.repoId),
+                            license: ImageModelRequestPolicy.licenseLabel(
+                                canonical: ImageModelRequestPolicy.catalogCanonical(entry.id))
+                        ),
                         status: rowStatus(entry.id),
                         primary: ModelListRow.Action(title: "Download", icon: "arrow.down.circle") {
                             downloads.download(entry)
@@ -175,14 +182,14 @@ struct ImageModelsDownloadView: View {
     private func installedPrimaryAction(_ model: InstalledModel) -> ModelListRow.Action? {
         let info = model.info
         // Ready + runnable kind → prominent Generate/Edit (opens the manual panel).
-        if info.ready, info.kind == "imageGen" || info.kind == "imageEdit" {
-            let isEdit = info.kind == "imageEdit"
+        if info.ready, info.capabilities.textToImage || info.capabilities.imageEdit {
+            let isEdit = !info.capabilities.textToImage && info.capabilities.imageEdit
             return ModelListRow.Action(
                 title: isEdit ? "Edit" : "Generate",
                 icon: isEdit ? "wand.and.stars" : "sparkles",
                 role: .primary
             ) {
-                panel = PanelRequest(id: info.id, displayName: info.displayName, isEdit: isEdit)
+                panel = PanelRequest(id: info.id, displayName: info.displayName, isEdit: isEdit, info: info)
             }
         }
         // Not ready → surface Re-download as the primary fix (when the source repo
@@ -198,6 +205,11 @@ struct ImageModelsDownloadView: View {
     private func installedMenuItems(_ model: InstalledModel) -> [ModelListRow.Action] {
         let info = model.info
         var items: [ModelListRow.Action] = []
+        if info.ready, info.capabilities.textToImage, info.capabilities.imageEdit {
+            items.append(ModelListRow.Action(title: "Edit", icon: "wand.and.stars") {
+                panel = PanelRequest(id: info.id, displayName: info.displayName, isEdit: true, info: info)
+            })
+        }
         // Re-download for ready models lives in the menu (not-ready exposes it as
         // the primary action instead, so it isn't duplicated).
         if info.ready, let repo = model.repoId {
@@ -238,10 +250,11 @@ struct ImageModelsDownloadView: View {
 
     /// Build the row's leading badges from the optional capability (kind) and
     /// quantization labels. Both are already localized / formatted by callers.
-    private func badges(kind: String?, quant: String?) -> [ModelBadge.Item] {
+    private func badges(kind: String?, quant: String?, license: String? = nil) -> [ModelBadge.Item] {
         var items: [ModelBadge.Item] = []
         if let kind { items.append(ModelBadge.Item(text: kind, style: .accent)) }
         if let quant { items.append(ModelBadge.Item(text: quant, style: .neutral)) }
+        if let license { items.append(ModelBadge.Item(text: license, style: .neutral)) }
         return items
     }
 

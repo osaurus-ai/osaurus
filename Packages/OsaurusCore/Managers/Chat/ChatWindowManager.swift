@@ -674,6 +674,23 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
+    /// A chat is deleted from outside any window (the paired phone). Does
+    /// what History's Delete does for its own window, for every window:
+    /// cancel a registry-owned run, move each window off the chat (a save
+    /// from one would resurrect the row), delete, refresh every sidebar.
+    func deleteSession(id: UUID) {
+        if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+            BackgroundTaskManager.shared.cancelTask(liveTask.id)
+        }
+        for state in windowStates.values {
+            state.prepareForSessionDeletion(id: id)
+        }
+        ChatSessionsManager.shared.delete(id: id)
+        for state in windowStates.values {
+            state.refreshSessions()
+        }
+    }
+
     /// Returns the set of local model names selected by currently-open chat
     /// windows plus any active registry-owned (detached) background tasks.
     /// Used as a "keep loaded for next interaction" hint for GC.
@@ -1193,8 +1210,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let toolbar = NSToolbar(identifier: "ChatToolbar")
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
-        // No centered item: the tab strip is leading-aligned (Chrome-style,
-        // tabs grow left to right); the single flexible space pushes the
+        // No centered item: the tab strip is leading-aligned and its track
+        // fills the free width; the single flexible space pushes the
         // action/pin items to the trailing edge.
 
         let toolbarDelegate = ChatToolbarDelegate(windowState: windowState)
@@ -1428,8 +1445,8 @@ private struct ChatFullScreenHeaderView: View {
     var body: some View {
         HStack(spacing: 8) {
             ChatToolbarSidebarView(windowState: windowState)
-            // Leading-aligned like Chrome: tabs grow left to right, filling the
-            // row up to the trailing buttons like the toolbar item does.
+            // The track fills the row up to the trailing buttons, like the
+            // toolbar item does.
             // Trailing fallback: two 28pt buttons, their 8pt gap, the HStack
             // spacing and the row's horizontal padding — until measured.
             ChatTabStripView(windowState: windowState, leadingChromeWidth: 76, trailingChromeWidth: 84)

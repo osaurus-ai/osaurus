@@ -39,16 +39,21 @@ remain errors. Metadata checks never download or replace model weights.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
 - Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Sampling Defaults.
 
-## Speculative Depth
+## Native MTP
 
-Models with a supported native MTP head show **Speculative Depth** in the chat
-model picker's options: Off, Auto, 1, 2, and 3. Flash Next starts **Off**, across
-its quantizations; you can explicitly select Auto or a depth. Qwen3.8-27B keeps
-its existing eligible depth-3 default. An explicit choice is preserved when
-switching models or relaunching. A Flash Next default written automatically
-does not switch 27B Off. Headless bundles, including Flash Next JANG_1L, do not
-advertise MTP. Bundle safety blocks still apply. These controls do not override
-your configured sampling settings or guarantee a throughput floor.
+Native MTP starts **Off (AR)**. **On (Adaptive)** requests the runtime's adaptive
+speculative policy for an eligible local model, including Qwen 27B and Flash Next
+in supported affine and JANGH bundles. The runtime chooses its depth; there are
+no user depth buttons or native draft-token limits. Sampling remains bundle-driven
+unless you explicitly override it.
+
+On is a request, not proof of active speculation. Missing heads, blocked bundles
+and missing verified tuning can keep ordinary decoding active. Server → Settings →
+**Speculative Decoding** shows the loaded model's actual resolution and reason.
+Remote models do not expose this local control. Explicit Off survives reload;
+legacy manual depths migrate to Adaptive and are re-evaluated by runtime admission.
+A selected **DFlash 2 Drafter** remains a separate external-drafter choice; remove
+that selection to stop it. Native MTP Off does not disable an external drafter.
 
 ## Apple Foundation Models
 

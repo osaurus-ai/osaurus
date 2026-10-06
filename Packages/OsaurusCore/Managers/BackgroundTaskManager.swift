@@ -117,7 +117,13 @@ public final class BackgroundTaskManager: ObservableObject {
     private var taskObservers: [UUID: Set<AnyCancellable>] = [:]
 
     /// Continuations for callers awaiting task completion (e.g. ScheduleManager)
-    private var completionContinuations: [UUID: CheckedContinuation<DispatchResult, Never>] = [:]
+    /// Value-only terminal metadata is copied while the task still owns its
+    /// live session. It cannot be lost when cleanup releases that session.
+    struct CompletionWithToolFailure: Sendable {
+        let result: DispatchResult
+        let terminalToolFailure: DelegatedToolFailure?
+    }
+    private var completionContinuations: [UUID: CheckedContinuation<CompletionWithToolFailure, Never>] = [:]
 
     /// Tracks the number of turns already processed per chat task so we only log new tool calls.
     private var chatTurnCounts: [UUID: Int] = [:]
@@ -761,6 +767,49 @@ public final class BackgroundTaskManager: ObservableObject {
         return true
     }
 
+    /// The task currently streaming for this grouping key, or nil. The
+    /// running twin of `replyableTaskId`, used to steer a live turn.
+    public func runningTaskId(
+        source: SessionSource,
+        externalSessionKey: String,
+        target: AgentDispatchTarget
+    ) -> UUID? {
+        backgroundTasks.values.first { state in
+            guard state.source == source,
+                state.externalSessionKey == externalSessionKey,
+                state.target == target,
+                case .running = state.status
+            else { return false }
+            return state.chatSession?.isStreaming == true
+        }?.id
+    }
+
+    /// Hand a running task a new user message without stopping it. The text
+    /// joins the conversation at the loop's next iteration boundary, so the
+    /// agent sees it after the current tool call returns. Text that misses
+    /// the last boundary stays queued for `takeRemoteSteers`. Returns false
+    /// when the task is not streaming, so the caller dispatches normally.
+    public func steerTask(_ backgroundId: UUID, text: String) -> Bool {
+        // Inbound shared-agent runs belong to the remote caller; the host
+        // cannot write into their conversation.
+        guard let state = backgroundTasks[backgroundId], !state.isSubagentMirror, !state.isInboundRun,
+            let session = state.chatSession, session.isStreaming
+        else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        session.remoteSteers.append(trimmed)
+        return true
+    }
+
+    /// Steers that arrived too late for the run's last iteration boundary.
+    /// The caller that queued them sends these as the follow-up turn.
+    public func takeRemoteSteers(_ backgroundId: UUID) -> [String] {
+        guard let session = backgroundTasks[backgroundId]?.chatSession else { return [] }
+        let leftover = session.remoteSteers
+        session.remoteSteers = []
+        return leftover
+    }
+
     /// Soft-stop a running task by cancelling its current stream.
     ///
     /// When `message` is non-empty, the trimmed content is appended to the
@@ -1225,7 +1274,8 @@ public final class BackgroundTaskManager: ObservableObject {
     /// if a live in-memory task is already driving that session, to avoid
     /// double-stream into the same `ChatSession`.
     func lookupReattachableSession(for request: DispatchRequest) -> (data: ChatSessionData, live: ChatSession?)? {
-        guard let key = request.externalSessionKey,
+        guard request.reattachSession,
+            let key = request.externalSessionKey,
             !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
 
@@ -1294,11 +1344,15 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Await completion of a background task. Suspends until the task completes, is cancelled, finalized, or times out.
     /// A 30-minute timeout prevents indefinite hangs if a task never reaches a terminal state.
     public func awaitCompletion(_ id: UUID, timeoutSeconds: UInt64 = 1800) async -> DispatchResult {
+        await awaitCompletionWithToolFailure(id, timeoutSeconds: timeoutSeconds).result
+    }
+
+    func awaitCompletionWithToolFailure(_ id: UUID, timeoutSeconds: UInt64 = 1800) async -> CompletionWithToolFailure {
         if let state = backgroundTasks[id], !state.status.isActive {
-            return resultFromState(state)
+            return completionSnapshot(for: id, result: resultFromState(state))
         }
         guard backgroundTasks[id] != nil else {
-            return .failed("Background task not found")
+            return CompletionWithToolFailure(result: .failed("Background task not found"), terminalToolFailure: nil)
         }
 
         // Start a watchdog that will resume the continuation with a timeout error
@@ -1306,7 +1360,8 @@ public final class BackgroundTaskManager: ObservableObject {
         let timeoutTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
             guard !Task.isCancelled else { return }
-            completionContinuations.removeValue(forKey: id)?.resume(returning: .failed("Background task timed out"))
+            completionContinuations.removeValue(forKey: id)?.resume(returning:
+                CompletionWithToolFailure(result: .failed("Background task timed out"), terminalToolFailure: nil))
         }
 
         let result = await withCheckedContinuation { continuation in
@@ -1316,6 +1371,12 @@ public final class BackgroundTaskManager: ObservableObject {
         timeoutTask.cancel()
         return result
     }
+
+    #if DEBUG
+        func hasCompletionWaiterForTesting(_ id: UUID) -> Bool {
+            completionContinuations[id] != nil
+        }
+    #endif
 
     // MARK: - Private: Dispatch Helpers
 
@@ -1614,8 +1675,20 @@ public final class BackgroundTaskManager: ObservableObject {
         }
     }
 
+    private func completionSnapshot(for id: UUID, result: DispatchResult) -> CompletionWithToolFailure {
+        var failure: DelegatedToolFailure?
+        if case .failed = result,
+            let session = backgroundTasks[id]?.executionContext?.chatSession,
+            session.sessionId == id
+        {
+            failure = session.delegatedToolFailure.current
+        }
+        return CompletionWithToolFailure(result: result, terminalToolFailure: failure)
+    }
+
     private func resumeCompletion(for id: UUID, result: DispatchResult) {
-        completionContinuations.removeValue(forKey: id)?.resume(returning: result)
+        let snapshot = completionSnapshot(for: id, result: result)
+        completionContinuations.removeValue(forKey: id)?.resume(returning: snapshot)
     }
 
     /// Map a dispatch source to the audit-trail trigger kind we persist

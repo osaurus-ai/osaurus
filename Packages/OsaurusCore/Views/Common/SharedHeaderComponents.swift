@@ -312,6 +312,7 @@ struct AgentPill: View {
     @State private var isPopoverPresented = false
     @StateObject private var keyboard = AgentPickerKeyboardController()
     @Environment(\.theme) private var theme
+    @Environment(\.displayScale) private var displayScale
 
     // MARK: - Keyboard Navigation Items
 
@@ -399,10 +400,8 @@ struct AgentPill: View {
             // built-in default agent gets its branded image (e.g. the
             // green dinosaur). Falls back to the generic person glyph
             // when the agent has no `avatar` id or the asset is missing.
-            if let mascot = builtInMascotImage(for: agent) {
+            if let mascot = builtInMascotImage(for: agent, size: size) {
                 Image(nsImage: mascot)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
                     .frame(width: size, height: size)
                     .clipShape(Circle())
             } else {
@@ -428,9 +427,9 @@ struct AgentPill: View {
         }
     }
 
-    private func builtInMascotImage(for agent: Agent) -> NSImage? {
-        guard let avatar = agent.avatar, !avatar.isEmpty else { return nil }
-        return Bundle.module.image(forResource: "osaurus-avatar-\(avatar)")
+    private func builtInMascotImage(for agent: Agent, size: CGFloat) -> NSImage? {
+        guard let mascot = agent.avatar.flatMap(AgentMascot.init(rawValue:)) else { return nil }
+        return AvatarBitmapRenderer.shared.image(mascot: mascot, pointSize: size, scale: displayScale)
     }
 
     /// A remote agent's mascot (or name monogram) with a small transport badge

@@ -18,11 +18,16 @@ struct MCPProviderDirectoryView: View {
     let onSelectTemplate: (MCPProviderTemplate) -> Void
     let onSelectCustom: () -> Void
 
+    @State private var category: MCPProviderCategory?
+    @State private var metadataDocumentPublished = false
+
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             searchField
+
+            MCPProviderCategoryChips(selection: $category)
 
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
@@ -39,32 +44,46 @@ struct MCPProviderDirectoryView: View {
                         icon: template.iconSystemName,
                         title: template.displayName,
                         tagline: template.tagline,
+                        requiresSubscription: template.requiresSubscription,
                         action: { onSelectTemplate(template) }
                     )
                 }
             }
 
-            if filteredTemplates.isEmpty && !trimmedQuery.isEmpty {
+            if filteredTemplates.isEmpty && (!trimmedQuery.isEmpty || category != nil) {
                 noMatchesHint
             }
         }
+        .task { metadataDocumentPublished = await MCPOAuthClientMetadata.isDocumentPublished() }
     }
 
-    /// Templates that match the current query. Empty query returns the full
-    /// catalog. Match is case-insensitive across `displayName` and `tagline`
-    /// so users can find Linear by typing "issues".
+    /// Templates that match the current query and category. Empty query
+    /// returns the whole category (or catalog).
     private var filteredTemplates: [MCPProviderTemplate] {
-        Self.templates(matching: trimmedQuery)
+        Self.templates(
+            matching: trimmedQuery,
+            category: category,
+            metadataDocumentPublished: metadataDocumentPublished
+        )
     }
 
     /// Shared matcher so the inline list on Tools & MCP → Services and the
-    /// Add Service sheet filter the catalog identically.
-    static func templates(matching rawQuery: String) -> [MCPProviderTemplate] {
+    /// Add Service sheet filter the catalog identically. Match is
+    /// case-insensitive across name, tagline, and category so users can find
+    /// Linear by typing "issues" or every legal service by typing "legal".
+    nonisolated static func templates(
+        matching rawQuery: String,
+        category: MCPProviderCategory? = nil,
+        metadataDocumentPublished: Bool = false
+    ) -> [MCPProviderTemplate] {
         let query = rawQuery.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return MCPProviderTemplate.allTemplates }
-        return MCPProviderTemplate.allTemplates.filter {
-            $0.displayName.localizedCaseInsensitiveContains(query)
+        return MCPProviderTemplate.available(metadataDocumentPublished: metadataDocumentPublished).filter {
+            if let category, $0.category != category { return false }
+            guard !query.isEmpty else { return true }
+            return $0.displayName.localizedCaseInsensitiveContains(query)
                 || $0.tagline.localizedCaseInsensitiveContains(query)
+                || $0.category.displayName.localizedCaseInsensitiveContains(query)
+                || LCached($0.category.displayName).localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -117,9 +136,15 @@ struct MCPProviderDirectoryView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 22, weight: .light))
                 .foregroundColor(theme.tertiaryText)
-            Text("No services match \"\(trimmedQuery)\"", bundle: .module)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+            Group {
+                if trimmedQuery.isEmpty {
+                    Text("No services in this category", bundle: .module)
+                } else {
+                    Text("No services match \"\(trimmedQuery)\"", bundle: .module)
+                }
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(theme.secondaryText)
             Text("Try a different name, or pick Custom Server above.", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -138,6 +163,7 @@ struct MCPProviderDirectoryCard: View {
     let icon: String
     let title: String
     let tagline: String
+    var requiresSubscription = false
     let action: () -> Void
 
     @State private var isHovering = false
@@ -165,6 +191,9 @@ struct MCPProviderDirectoryCard: View {
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
+                    if requiresSubscription {
+                        MCPProviderSubscriptionNote()
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -207,6 +236,7 @@ struct MCPProviderDirectoryRow: View {
     let icon: String
     let title: String
     let tagline: String
+    var requiresSubscription = false
     let action: () -> Void
 
     @State private var isHovering = false
@@ -228,10 +258,15 @@ struct MCPProviderDirectoryRow: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)
-                    Text(LocalizedStringKey(tagline), bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(LocalizedStringKey(tagline), bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                        if requiresSubscription {
+                            MCPProviderSubscriptionNote()
+                        }
+                    }
                 }
 
                 Spacer(minLength: 8)
@@ -251,5 +286,62 @@ struct MCPProviderDirectoryRow: View {
         .buttonStyle(.plain)
         .pointingHandCursor()
         .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - Category Chips
+
+/// "All" plus one chip per category, shared by the Add Service sheet and the
+/// inline directory on Tools & MCP → Services.
+struct MCPProviderCategoryChips: View {
+    @Environment(\.theme) private var theme
+    @Binding var selection: MCPProviderCategory?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                chip(title: "All", isSelected: selection == nil) { selection = nil }
+                ForEach(MCPProviderCategory.allCases, id: \.self) { category in
+                    chip(title: category.displayName, isSelected: selection == category) {
+                        selection = selection == category ? nil : category
+                    }
+                }
+            }
+        }
+    }
+
+    private func chip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(LocalizedStringKey(title), bundle: .module)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .foregroundColor(isSelected ? .white : theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule().fill(isSelected ? theme.accentColor : theme.tertiaryBackground)
+                )
+                .overlay(
+                    Capsule().stroke(isSelected ? Color.clear : theme.primaryBorder, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Small caption for enterprise data products that need a paid account.
+struct MCPProviderSubscriptionNote: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 8, weight: .semibold))
+            Text("Requires subscription", bundle: .module)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(theme.tertiaryText)
+        .lineLimit(1)
+        .fixedSize()
     }
 }

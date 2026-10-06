@@ -185,6 +185,19 @@ HMAC-SHA512(
 
 The distinct domain prefixes (`osaurus-agent-v1` / `osaurus-agent-v2`) prevent cross-protocol and cross-version key reuse: a v2 address at index 0 is unrelated to the v1 address at index 0. The big-endian index encoding ensures a canonical byte representation across platforms. Each unique path produces a completely independent keypair.
 
+**Connect identity (one per Mac, for the paired phone):**
+
+```
+HMAC-SHA512(
+    key:  masterKey,
+    data: "osaurus-connect-v1" || utf8(deviceId) || 0x00   // empty deviceId without one
+)
+    → first 32 bytes of HMAC output
+    → same address derivation as master key
+```
+
+Not an agent key and not stored on any agent: it exists so a phone paired to a Mac with no custom agents still has an address to pin, since the built-in Default agent has none. Only `POST /secure/session` accepts it; the relay, Bonjour, access keys and invites never see it. Its own domain keeps it apart from every agent key at every index. See [`MOBILE_PROTOCOL.md` §11.3](MOBILE_PROTOCOL.md) and `MobileConnectIdentity.swift`.
+
 Agent keys are **never persisted**. They are re-derived from the master key whenever a signature is needed, which requires biometric authentication to access the master key. The derived `agentAddress` is persisted on the `Agent` model so it can be displayed without triggering biometric prompts.
 
 ### Device Key
@@ -528,7 +541,7 @@ All Osaurus-to-Osaurus agent traffic — LAN peers discovered over Bonjour and r
 **Handshake (`POST /secure/session`).** A SIGMA-style signed-ephemeral exchange:
 
 1. The client sends an ephemeral X25519 public key, a freshness nonce, and the agent address it expects to reach (pinned at pairing/discovery time).
-2. The server replies with its own ephemeral X25519 key, a session id, an expiry (1 hour), and a secp256k1 **agent-key signature over the full handshake transcript** (domain prefix `Osaurus Secure Channel`).
+2. The server replies with its own ephemeral X25519 key, a session id, an expiry (1 hour), and a secp256k1 **agent-key signature over the full handshake transcript** (domain prefix `Osaurus Secure Channel`). For the paired phone the signer may instead be the Mac's connect identity (see [Agent Key](#agent-key)); an address that is neither gets `404 Unknown agent address`.
 3. The client recovers the signer address from the signature and requires it to match the pinned agent address — a MITM cannot fake this without the agent's private key.
 4. Both sides derive directional ChaCha20-Poly1305 keys via HKDF-SHA256 over the X25519 shared secret, salted with the transcript hash.
 

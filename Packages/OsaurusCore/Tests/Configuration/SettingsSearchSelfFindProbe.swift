@@ -77,6 +77,8 @@ struct SettingsSearchSelfFindProbe {
             ("Swap local models for subagents", "settings.orchestrator.delegation.swapModels"),
             ("native mtp", "server.speculative"),
             ("speculative depth", "server.speculative"),
+            ("On Adaptive", "server.speculative"),
+            ("Off AR", "server.speculative"),
             ("keep model loaded", "server.residency"),
             ("unload after", "server.residency"),
             ("eviction policy", "server.residency"),

@@ -242,6 +242,7 @@ final class ChatSession: ObservableObject {
     }
 
     @Published var lastStreamError: String?
+    var delegatedToolFailure = DelegatedToolFailureState()
 
     /// Set when an Osaurus Router send fails because the account is out of
     /// credits (HTTP 402 INSUFFICIENT_FUNDS). Drives the "out of credits"
@@ -367,6 +368,13 @@ final class ChatSession: ObservableObject {
     /// stops the current run and dispatches the queued payload as a new
     /// user turn.
     @Published var queuedSend: QueuedSend?
+
+    /// Text from a remote surface (a channel message) that arrived while a
+    /// run was streaming. Joined into the next iteration boundary like a
+    /// composer steer, but never flushed at run end: whoever queued it owns
+    /// the follow-up turn and drains leftovers with
+    /// `BackgroundTaskManager.takeRemoteSteers`, so it can wait for that reply.
+    var remoteSteers: [String] = []
 
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
@@ -752,6 +760,8 @@ final class ChatSession: ObservableObject {
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
+    /// A native image progress row still awaiting its terminal event.
+    private var pendingNativeImageTurnId: UUID?
     /// Outer task that parks a send behind an in-flight model-switch/warm-up
     /// handshake. Retaining it is required for lifecycle cancellation: a
     /// fire-and-forget task can otherwise resume after Stop, reset, or a
@@ -2634,6 +2644,13 @@ final class ChatSession: ObservableObject {
         // mounted, and the input bar hit-test disabled.
         promptQueue.drainAll()
         stopRequested = true
+        if preservesCancelledMarker, let turnId = pendingNativeImageTurnId,
+            let turn = turns.first(where: { $0.id == turnId && $0.role == .assistant })
+        {
+            turn.content = L("Image generation cancelled.")
+            isDirty = true
+        }
+        pendingNativeImageTurnId = nil
         // Background workers this run launched sit outside the task tree:
         // stop them explicitly before the run's own cancellation.
         interruptBackgroundSpawnsOfCurrentRun()
@@ -2742,15 +2759,23 @@ final class ChatSession: ObservableObject {
     /// stay queued for the run-end flush / Send Now. The injected text rides
     /// the normal outbound request pipeline, so the privacy filter scrubs it
     /// exactly like any other user message.
+    ///
+    /// Remote steers (`remoteSteers`) join the same turn ahead of the
+    /// composer's, in arrival order.
     @discardableResult
     func injectQueuedSteerIfEligible() -> Bool {
-        guard let pending = queuedSend,
+        var texts = remoteSteers
+        remoteSteers = []
+        if let pending = queuedSend,
             pending.attachments.isEmpty,
             pending.oneOffSkillId == nil,
             !pending.text.isEmpty
-        else { return false }
-        queuedSend = nil
-        let turn = ChatTurn(role: .user, content: pending.text)
+        {
+            queuedSend = nil
+            texts.append(pending.text)
+        }
+        guard !texts.isEmpty else { return false }
+        let turn = ChatTurn(role: .user, content: texts.joined(separator: "\n\n"))
         appendMidRunUserTurn(turn)
         isDirty = true
         rebuildVisibleBlocks()
@@ -3003,6 +3028,7 @@ final class ChatSession: ObservableObject {
         pendingAttachments = []
         pendingOneOffSkillId = nil
         queuedSend = nil
+        remoteSteers = []
         modelSwitchContinuityWarning = nil
         voiceInputState = .idle
         showVoiceOverlay = false
@@ -3601,6 +3627,7 @@ final class ChatSession: ObservableObject {
         restoreDraft()
         pendingOneOffSkillId = nil
         queuedSend = nil
+        remoteSteers = []
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
         awaitingPreSendHandshake = false
@@ -4327,6 +4354,7 @@ final class ChatSession: ObservableObject {
     }
 
     private func beginRun(_ runId: UUID, context: RunContext) {
+        delegatedToolFailure.begin(runID: runId)
         activeRunId = runId
         activeRunContext = context
     }
@@ -4783,6 +4811,7 @@ final class ChatSession: ObservableObject {
             return
         }
 
+        delegatedToolFailure.finish(runID: runId)
         let context = activeRunContext
         let runCompletedCleanly = !stopRequested && lastStreamError == nil
 
@@ -5728,6 +5757,19 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Record presentation ownership before the native producer starts. Stop
+    /// can then replace progress synchronously, before cleanup saves the turn.
+    func beginNativeImagePresentation(on turn: ChatTurn) {
+        pendingNativeImageTurnId = turn.id
+        turn.content = L("Generating image…")
+    }
+
+    func finishNativeImagePresentation(on turn: ChatTurn) {
+        if pendingNativeImageTurnId == turn.id {
+            pendingNativeImageTurnId = nil
+        }
+    }
+
     /// Run a text→image generation for the active image model, streaming
     /// progress into `turn` and rendering the final PNG as a markdown image
     /// (the existing assistant markdown renderer displays `file://` images).
@@ -5767,7 +5809,8 @@ final class ChatSession: ObservableObject {
             return
         }
 
-        turn.content = L("Generating image…")
+        beginNativeImagePresentation(on: turn)
+        defer { finishNativeImagePresentation(on: turn) }
         rebuildVisibleBlocks()
 
         var lastRebuild = Date.distantPast
@@ -5782,44 +5825,22 @@ final class ChatSession: ObservableObject {
         var reachedTerminal = false
         let sourceImages = attachments.loadImages()
         let stream: AsyncThrowingStream<ImageGenerationEvent, Error>
-        if imageItem.imageCapabilities?.imageEdit == true || imageItem.imageKind == "imageEdit" {
-            guard !sourceImages.isEmpty else {
-                turn.content = L("Attach one source image to edit with this model.")
-                rebuildVisibleBlocks()
-                return
-            }
-            let params = ImageEditParameters(
-                model: model,
-                prompt: prompt,
-                sourceImages: sourceImages,
-                negativePrompt: settings.normalizedNegativePrompt,
-                strength: settings.clampedStrength,
-                width: settings.clampedWidth,
-                height: settings.clampedHeight,
-                steps: settings.clampedSteps,
-                guidance: settings.clampedGuidance,
-                seed: settings.normalizedSeed
+        do {
+            let request = try ImageComposerRequestBuilder.build(
+                item: imageItem, prompt: prompt, sourceImages: sourceImages,
+                expectedSourceCount: attachments.filter(\.isImage).count, settings: settings
             )
-            stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
-        } else {
-            guard sourceImages.isEmpty else {
-                turn.content = L("Selected image model does not accept source images.")
-                rebuildVisibleBlocks()
-                return
+            switch request {
+            case .generate(let params):
+                stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+            case .edit(let params):
+                stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
             }
-            let params = ImageGenerationParameters(
-                model: model,
-                prompt: prompt,
-                negativePrompt: settings.normalizedNegativePrompt,
-                width: settings.clampedWidth,
-                height: settings.clampedHeight,
-                steps: settings.clampedSteps,
-                guidance: settings.clampedGuidance,
-                seed: settings.normalizedSeed,
-                numImages: 1,
-                outputFormat: .png
-            )
-            stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+        } catch {
+            turn.content = (error as? ImageComposerRequestBuilder.RequestError)?.localizedMessage
+                ?? String(describing: error)
+            rebuildVisibleBlocks()
+            return
         }
         do {
             for try await event in stream {
@@ -5835,6 +5856,7 @@ final class ChatSession: ObservableObject {
                 case .preview:
                     break
                 case .completed(let images):
+                    finishNativeImagePresentation(on: turn)
                     reachedTerminal = true
                     if images.isEmpty {
                         turn.content = L("Image generation produced no image.")
@@ -5846,10 +5868,12 @@ final class ChatSession: ObservableObject {
                     }
                     refresh(force: true)
                 case .failed(let message, _):
+                    finishNativeImagePresentation(on: turn)
                     reachedTerminal = true
                     turn.content = "\(L("Image generation failed:")) \(message)"
                     refresh(force: true)
                 case .cancelled:
+                    finishNativeImagePresentation(on: turn)
                     if !reachedTerminal {
                         reachedTerminal = true
                         turn.content = L("Image generation cancelled.")
@@ -5858,6 +5882,7 @@ final class ChatSession: ObservableObject {
                 }
             }
         } catch {
+            guard isRunActive(runId) else { return }
             if !reachedTerminal {
                 turn.content = "\(L("Image generation failed:")) \(error)"
                 refresh(force: true)
@@ -8365,6 +8390,10 @@ final class ChatSession: ObservableObject {
                             assistantTurn.content
                         }
                     )
+                    loopHooks.recordTerminalToolRejection = { [weak self] envelope in
+                        guard let self, self.activeRunId == runId else { return }
+                        self.delegatedToolFailure.record(envelope, runID: runId)
+                    }
                     // What this run may execute, read live: the driver folds
                     // `osaurus_help!!` onto `osaurus_help` only when the
                     // canonical name is in scope, and lists these names in the

@@ -53,6 +53,62 @@ struct ServerRuntimeSettingsStoreTests {
         }
     }
 
+    @Test @MainActor func legacyNativeDepthsMigrateThroughLoadSaveAndSnapshot() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, saved) { defaults.set(value, forKey: key) } }
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            defaults.set(true, forKey: NativeMTPSelectionDefault.userChoseKey)
+            defaults.set(false, forKey: NativeMTPSelectionDefault.familyDefaultKey)
+            for mode in [VMLXMTPServerMode.off, .auto, .forceOn] {
+                for depth in 1...3 {
+                    var original = VMLXServerRuntimeSettings()
+                    original.generation.diffusionMaxDenoisingSteps = 16
+                    original.mtp = .init(mode: mode, draftTokenLimit: depth, explicitDepth: depth)
+                    try writeSettings(original, to: dir)
+                    ServerRuntimeSettingsStore.invalidateSnapshot()
+                    let loaded = try #require(ServerRuntimeSettingsStore.load())
+                    #expect(loaded.mtp == NativeMTPSelectionDefault.adaptiveSelection(original.mtp))
+                    #expect(loaded.generation == original.generation)
+                    ServerRuntimeSettingsStore.save(original)
+                    ServerRuntimeSettingsStore.invalidateSnapshot()
+                    #expect(ServerRuntimeSettingsStore.snapshot().mtp == loaded.mtp)
+                    #expect(try #require(ServerRuntimeSettingsStore.load()).mtp == loaded.mtp)
+                }
+            }
+        }
+    }
+
+    @Test @MainActor func coldUnrelatedSaveDoesNotClaimLegacyMTPChoice() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, saved) { defaults.set(value, forKey: key) } }
+        for mode in [VMLXMTPServerMode.forceOn, .off] {
+            let dir = try makeTempDirectory()
+            try await withOverriddenDirectory(dir) {
+                defaults.set(false, forKey: NativeMTPSelectionDefault.userChoseKey)
+                defaults.set(true, forKey: NativeMTPSelectionDefault.familyDefaultKey)
+                var settings = VMLXServerRuntimeSettings()
+                settings.mtp = .init(mode: mode, explicitDepth: 3)
+                try writeSettings(settings, to: dir)
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+                settings.network.port = (settings.network.port ?? ServerConfiguration.default.port) + 1
+                ServerRuntimeSettingsStore.save(settings)
+                #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+                #expect(defaults.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey))
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+                let loaded = try #require(ServerRuntimeSettingsStore.load())
+                #expect(loaded.network.port == settings.network.port)
+                #expect(loaded.mtp.mode == .off)
+                #expect(loaded.mtp.explicitDepth == nil)
+                #expect(loaded.mtp.draftTokenLimit == nil)
+            }
+        }
+    }
+
     @Test @MainActor func apiOnlyColdLoadRetiresOwnedD3WithoutChatSelection() async throws {
         let defaults = UserDefaults.standard
         let keys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
@@ -546,7 +602,7 @@ struct ServerRuntimeSettingsStoreTests {
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = try #require(ServerRuntimeSettingsStore.load())
             #expect(loaded.mtp.mode == .off)
-            #expect(loaded.mtp.draftTokenLimit == 2)
+            #expect(loaded.mtp.draftTokenLimit == nil) // Native depth controls retire even while Off.
         }
     }
 

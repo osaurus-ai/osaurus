@@ -79,7 +79,7 @@ struct AgentChannelInboundActivityTests {
             "inbound_dispatch_disabled",
             "inbound_dispatch_not_configured",
             "inbound_agent_unavailable",
-            "conversation_already_running",
+            "conversation_queue_full",
             "invalid_dispatch_payload",
             "rate_limited",
         ]

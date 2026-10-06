@@ -177,8 +177,8 @@ enum AgentChannelInboundActivityPresentation {
             return L("Dispatch to an agent is turned off. Enable it and pick an agent in the channel settings.")
         case "inbound_agent_unavailable":
             return L("The selected agent no longer exists. Pick a different agent in the channel settings.")
-        case "conversation_already_running":
-            return L("This conversation already has an agent turn in flight; the message will need to be re-sent once it finishes.")
+        case "conversation_queue_full":
+            return L("Too many messages are waiting for this conversation's current turn to finish. Send this one again once the agent replies.")
         case "invalid_dispatch_payload":
             return L("The message had no usable content to dispatch.")
         case "no_route_matched":

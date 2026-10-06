@@ -5,7 +5,7 @@
 //  RFC 9728 (OAuth 2.0 Protected Resource Metadata) +
 //  RFC 8414 (Authorization Server Metadata) discovery for MCP servers.
 //
-//  Two-step discovery flow per the MCP `2025-06-18` authorization spec:
+//  Two-step discovery flow per the MCP `2025-11-25` authorization spec:
 //
 //  1. Find PRM:
 //     - Use `resource_metadata=` URL from a `WWW-Authenticate` header if present.
@@ -58,6 +58,11 @@ public struct MCPAuthorizationServerMetadata: Decodable, Sendable, Equatable {
     public let codeChallengeMethodsSupported: [String]?
     public let grantTypesSupported: [String]?
     public let tokenEndpointAuthMethodsSupported: [String]?
+    /// Client ID Metadata Documents (MCP 2025-11-25): the AS accepts an HTTPS
+    /// URL as `client_id` and fetches the client's metadata from it.
+    public let clientIdMetadataDocumentSupported: Bool?
+    /// RFC 9207: the AS always returns `iss` on the authorization response.
+    public let authorizationResponseIssParameterSupported: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case issuer
@@ -68,6 +73,8 @@ public struct MCPAuthorizationServerMetadata: Decodable, Sendable, Equatable {
         case codeChallengeMethodsSupported = "code_challenge_methods_supported"
         case grantTypesSupported = "grant_types_supported"
         case tokenEndpointAuthMethodsSupported = "token_endpoint_auth_methods_supported"
+        case clientIdMetadataDocumentSupported = "client_id_metadata_document_supported"
+        case authorizationResponseIssParameterSupported = "authorization_response_iss_parameter_supported"
     }
 
     public init(
@@ -78,7 +85,9 @@ public struct MCPAuthorizationServerMetadata: Decodable, Sendable, Equatable {
         scopesSupported: [String]?,
         codeChallengeMethodsSupported: [String]?,
         grantTypesSupported: [String]?,
-        tokenEndpointAuthMethodsSupported: [String]?
+        tokenEndpointAuthMethodsSupported: [String]?,
+        clientIdMetadataDocumentSupported: Bool? = nil,
+        authorizationResponseIssParameterSupported: Bool? = nil
     ) {
         self.issuer = issuer
         self.authorizationEndpoint = authorizationEndpoint
@@ -88,6 +97,8 @@ public struct MCPAuthorizationServerMetadata: Decodable, Sendable, Equatable {
         self.codeChallengeMethodsSupported = codeChallengeMethodsSupported
         self.grantTypesSupported = grantTypesSupported
         self.tokenEndpointAuthMethodsSupported = tokenEndpointAuthMethodsSupported
+        self.clientIdMetadataDocumentSupported = clientIdMetadataDocumentSupported
+        self.authorizationResponseIssParameterSupported = authorizationResponseIssParameterSupported
     }
 }
 
@@ -320,10 +331,33 @@ public actor MCPOAuthDiscovery {
     }
 
     /// Convenience: PRM + first usable ASM in one call.
+    ///
+    /// Servers built against MCP `2025-03-26` publish no PRM; their
+    /// authorization server is the MCP server's origin. When no PRM exists
+    /// (and no `resource_metadata` hint pointed elsewhere) discovery falls back
+    /// to ASM at the origin with a synthesized PRM.
     public func discover(serverURL: URL, hint: URL?) async throws -> (
         MCPProtectedResourceMetadata, MCPAuthorizationServerMetadata
     ) {
-        let prm = try await fetchProtectedResourceMetadata(serverURL: serverURL, hint: hint)
+        let prm: MCPProtectedResourceMetadata
+        do {
+            prm = try await fetchProtectedResourceMetadata(serverURL: serverURL, hint: hint)
+        } catch MCPOAuthDiscoveryError.prmNotFound where hint == nil {
+            guard let origin = Self.origin(of: serverURL) else { throw MCPOAuthDiscoveryError.prmNotFound }
+            let asm: MCPAuthorizationServerMetadata
+            do {
+                asm = try await fetchAuthorizationServerMetadata(authServerURL: origin, resourceServerURL: serverURL)
+            } catch {
+                throw MCPOAuthDiscoveryError.prmNotFound
+            }
+            let legacy = MCPProtectedResourceMetadata(
+                resource: nil,
+                authorizationServers: [origin.absoluteString],
+                scopesSupported: nil,
+                bearerMethodsSupported: ["header"]
+            )
+            return (legacy, asm)
+        }
         for raw in prm.authorizationServers {
             guard let url = URL(string: raw) else { continue }
             guard MCPOAuthURLPolicy.allowsDiscoveredURL(url, from: serverURL) else { continue }
@@ -338,6 +372,14 @@ public actor MCPOAuthDiscovery {
     }
 
     // MARK: - Internal helpers
+
+    static func origin(of url: URL) -> URL? {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+        return components.url
+    }
 
     /// Build the ordered list of ASM URLs to try for a given authorization-server URL.
     /// Per RFC 8414 the well-known path is inserted between the host and the issuer's

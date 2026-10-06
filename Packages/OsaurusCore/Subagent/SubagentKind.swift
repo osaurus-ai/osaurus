@@ -165,6 +165,10 @@ extension SubagentKind {
 /// `PassthroughHandoff`. Implemented as an "around" combinator so restore is
 /// guaranteed even when the run throws.
 public protocol SubagentHandoff: Sendable {
+    /// Cleanup may unload/reload local graphs after the child body returns.
+    /// Unknown/wrapped handoffs conservatively retain GPU admission.
+    var requiresAdmissionForCleanup: Bool { get }
+
     func around(
         scope: SubagentScope,
         resolved: ResolvedModel,
@@ -173,10 +177,15 @@ public protocol SubagentHandoff: Sendable {
     ) async throws -> SubagentResult
 }
 
+extension SubagentHandoff {
+    public var requiresAdmissionForCleanup: Bool { true }
+}
+
 /// No-op handoff: same-model kinds (computer_use) run the
 /// body directly with no preflight / unload / restore.
 public struct PassthroughHandoff: SubagentHandoff {
     public init() {}
+    public var requiresAdmissionForCleanup: Bool { false }
     public func around(
         scope: SubagentScope,
         resolved: ResolvedModel,

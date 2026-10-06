@@ -110,80 +110,71 @@ public struct VoiceInputOverlay: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            // Main content card
-            VStack(spacing: 12) {
-                // Header with status and controls
-                HStack(alignment: .center, spacing: 12) {
-                    // status indicator is hidden during .sending to avoid duplicate
-                    // "Processing" with the bottom center action area indicator.
-                    if state != .sending {
-                        VoiceStatusIndicator(
-                            state: voiceStatusFromState,
-                            showLabel: true,
-                            compact: false
-                        )
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            header
 
-                    // Waveform visualization (when recording)
-                    if case .recording = state {
-                        WaveformView(level: audioLevel, style: .bars, barCount: 16)
-                            .frame(height: 28)
-                            .frame(maxWidth: .infinity)
-                            .transition(.opacity)
-                    } else {
-                        Spacer()
-                    }
-
-                    // Silence timeout hint (all voice input modes, but only when it's user's turn)
-                    if silenceTimeoutDuration > 0 && !isStreaming {
-                        SilenceTimeoutIndicator(
-                            silenceDuration: silenceTimeoutProgress,
-                            timeoutDuration: silenceTimeoutDuration
-                        )
-                    }
-
-                    // Cancel button
-                    Button(action: { cancelRecording() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(8)
-                            .background(
-                                ZStack {
-                                    Circle()
-                                        .fill(theme.tertiaryBackground)
-                                    Circle()
-                                        .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                                }
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .localizedHelp("Cancel voice input")
-                }
-
-                // live transcription area is hidden during .sending since the
-                // bottom "Processing..." indicator is the sole state signal
-                if state != .sending {
-                    transcriptionArea
-                        .frame(minHeight: 60)
-                }
-
-                // Action area (countdown or buttons)
-                actionArea
+            // live transcription area is hidden during .sending since the
+            // bottom "Processing..." indicator is the sole state signal
+            if state != .sending {
+                transcriptionArea
+                    .frame(minHeight: 48, alignment: .topLeading)
             }
-            .padding(16)
-            .frame(minHeight: 160)
-            .background(overlayBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 1)
-            )
-            .shadow(color: shadowColor, radius: 16, x: 0, y: 6)
+
+            actionArea
         }
+        .padding(PickerCardMetrics.padding)
+        .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
+        .pickerCardSurface(elevated: true)
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
+    }
+
+    // MARK: - Header
+
+    /// Status as the card heading, the live waveform beside it, and a quiet
+    /// close control — the same heading row the composer's other cards use.
+    private var header: some View {
+        HStack(alignment: .center, spacing: 10) {
+            // Hidden while sending: the centred "Processing..." row is then
+            // the sole state signal.
+            if state != .sending {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 7, height: 7)
+                    Text(voiceStatusFromState.label)
+                        .font(theme.font(size: CGFloat(theme.smallBodySize) + 2))
+                        .foregroundStyle(theme.secondaryText)
+                        .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
+
+            if case .recording = state {
+                WaveformView(level: audioLevel, style: .bars, barCount: 16)
+                    .frame(height: 24)
+                    .frame(maxWidth: .infinity)
+                    .transition(.opacity)
+            } else {
+                Spacer(minLength: 0)
+            }
+
+            // Silence timeout hint (all voice input modes, but only when it's user's turn)
+            if silenceTimeoutDuration > 0 && !isStreaming {
+                SilenceTimeoutIndicator(
+                    silenceDuration: silenceTimeoutProgress,
+                    timeoutDuration: silenceTimeoutDuration
+                )
+            }
+
+            VoiceOverlayCloseButton(action: cancelRecording)
+                .localizedHelp("Cancel voice input")
+        }
+    }
+
+    private var statusColor: Color {
+        if case .recording = state { return theme.accentColor }
+        return theme.tertiaryText
     }
 
     private var voiceStatusFromState: VoiceState {
@@ -197,55 +188,38 @@ public struct VoiceInputOverlay: View {
 
     // MARK: - Transcription Area
 
+    /// The transcript sits on the card itself, inset like the other cards'
+    /// row content; a bordered box here read as an editable text field.
     private var transcriptionArea: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Combined transcription display
-            HStack(alignment: .top, spacing: 2) {
-                // full text with styling
-                if state == .recording {
-                    // hide live transcription jitter while recording
-                    Text("Listening...", bundle: .module)
-                        .font(.system(size: 15))
-                        .foregroundColor(theme.tertiaryText)
-                        .italic()
-                } else if visibleFullText.isEmpty {
-                    Text("Listening...", bundle: .module)
-                        .font(.system(size: 15))
-                        .foregroundColor(theme.tertiaryText)
-                        .italic()
-                } else {
-                    Text(visibleFullText)
-                        .font(.system(size: 15))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                // Blinking cursor when recording
-                if case .recording = state {
-                    Rectangle()
-                        .fill(theme.accentColor)
-                        .frame(width: 2, height: 18)
-                        .modifier(BlinkingCursor())
-                }
-
-                Spacer(minLength: 0)
+        let font = theme.font(size: CGFloat(theme.bodySize) + 1)
+        return HStack(alignment: .firstTextBaseline, spacing: 2) {
+            // hide live transcription jitter while recording
+            if state == .recording || visibleFullText.isEmpty {
+                Text("Speak now…", bundle: .module)
+                    .font(font)
+                    .foregroundStyle(theme.tertiaryText)
+            } else {
+                Text(visibleFullText)
+                    .font(font)
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
+
+            if case .recording = state {
+                Rectangle()
+                    .fill(theme.accentColor)
+                    .frame(width: 2, height: 17)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
+                    .modifier(BlinkingCursor())
+            }
+
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.inputBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(
-                    state == .recording ? theme.accentColor.opacity(0.4) : theme.inputBorder,
-                    lineWidth: state == .recording ? 1.5 : 1
-                )
-        )
+        .padding(.horizontal, PickerCardMetrics.rowInset)
+        .padding(.top, 4)
     }
 
     // MARK: - Action Area
@@ -259,29 +233,10 @@ public struct VoiceInputOverlay: View {
         case .recording:
             // Recording controls
             HStack(spacing: 10) {
-                // Edit button (transfers to text input)
-                Button(action: { onEdit?() }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 12, weight: .medium))
-                        Text("Edit", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(theme.tertiaryBackground)
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                        }
-                    )
-                }
-                .buttonStyle(.plain)
-                .opacity(visibleFullText.isEmpty ? 0.5 : 1)
-                .disabled(visibleFullText.isEmpty)
+                // Edit transfers the transcript to the text input.
+                PickerCardTextLink(title: L("Edit"), icon: "pencil", fillsWidth: false) { onEdit?() }
+                    .opacity(visibleFullText.isEmpty ? 0.5 : 1)
+                    .disabled(visibleFullText.isEmpty)
 
                 Spacer()
 
@@ -289,17 +244,14 @@ public struct VoiceInputOverlay: View {
                     Button(action: { sendMessage() }) {
                         HStack(spacing: 6) {
                             Image(systemName: "stop.fill")
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: 10, weight: .bold))
                             Text("Stop", bundle: .module)
-                                .font(.system(size: 13, weight: .bold))
+                                .font(theme.font(size: theme.pickerCardBodySize, weight: .semibold))
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule()
-                                .fill(theme.errorColor)
-                        )
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 28)
+                        .background(Capsule().fill(theme.errorColor))
                     }
                     .buttonStyle(.plain)
                     .opacity(visibleFullText.isEmpty ? 0.5 : 1)
@@ -335,80 +287,13 @@ public struct VoiceInputOverlay: View {
             // processing indicator (LLM cleanup runs here)
             HStack(spacing: 8) {
                 ProgressView()
-                    .scaleEffect(0.8)
+                    .controlSize(.small)
                 Text("Processing...", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(theme.font(size: theme.pickerCardBodySize))
+                    .foregroundStyle(theme.secondaryText)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
-        }
-    }
-
-    // MARK: - Styling
-
-    private var overlayBackground: some View {
-        ZStack {
-            // Layer 1: Glass material
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-
-            // Layer 2: Semi-transparent card background
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(theme.cardBackground.opacity(theme.isDark ? 0.85 : 0.92))
-
-            // Layer 3: State-based accent gradient
-            LinearGradient(
-                colors: [stateAccentColor.opacity(theme.isDark ? 0.08 : 0.05), Color.clear],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-    }
-
-    private var stateAccentColor: Color {
-        switch state {
-        case .recording: return theme.accentColor
-        case .paused: return theme.accentColor
-        case .sending: return theme.successColor
-        default: return theme.accentColor
-        }
-    }
-
-    private var borderColor: LinearGradient {
-        let primaryColor: Color
-        let secondaryColor: Color
-
-        switch state {
-        case .recording:
-            primaryColor = theme.glassEdgeLight.opacity(0.2)
-            secondaryColor = theme.cardBorder
-        case .paused:
-            primaryColor = theme.accentColor.opacity(0.4)
-            secondaryColor = theme.accentColor.opacity(0.15)
-        case .sending:
-            primaryColor = theme.successColor.opacity(0.4)
-            secondaryColor = theme.successColor.opacity(0.15)
-        default:
-            primaryColor = theme.glassEdgeLight.opacity(0.15)
-            secondaryColor = theme.cardBorder
-        }
-
-        return LinearGradient(
-            colors: [primaryColor, secondaryColor],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var shadowColor: Color {
-        switch state {
-        case .paused: return theme.accentColor.opacity(0.15)
-        case .sending: return theme.successColor.opacity(0.15)
-        default: return theme.shadowColor.opacity(0.12)
         }
     }
 
@@ -432,6 +317,26 @@ public struct VoiceInputOverlay: View {
         // lifecycle. It runs cleanup, then resets state/dismisses the overlay.
         // We intentionally do not auto reset here as doing so caused a visible
         // flicker between .sending and dismissal while cleanup was in flight
+    }
+}
+
+/// Quiet × for the card heading: no chrome at rest, a soft circle on hover.
+private struct VoiceOverlayCloseButton: View {
+    let action: () -> Void
+    @Environment(\.theme) private var theme
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(hovered ? theme.primaryText : theme.tertiaryText)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(hovered ? theme.tertiaryBackground : .clear))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
     }
 }
 

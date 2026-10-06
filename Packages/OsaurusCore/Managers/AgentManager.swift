@@ -475,6 +475,53 @@ public final class AgentManager: ObservableObject {
         )
     }
 
+    /// Creates an agent from the paired phone (`POST /agents`) with every
+    /// capability off; see `phoneAgentRecord`.
+    public func createFromPhone(
+        name: String,
+        description: String = "",
+        systemPrompt: String = "",
+        defaultModel: String? = nil
+    ) -> Agent {
+        let agent = Self.phoneAgentRecord(
+            name: name,
+            description: AgentDescriptionPolicy.normalized(description),
+            systemPrompt: systemPrompt,
+            defaultModel: defaultModel
+        )
+        add(agent)
+        return agent
+    }
+
+    /// A custom agent made on the phone. Nothing starts on (tools, web
+    /// search, memory, the sandbox): each is a deliberate switch the user
+    /// turns on afterwards, from the Mac's agent settings or from the
+    /// phone's (`PATCH /agents/{id}`, which only arrives over the Secure
+    /// Channel), never a default that comes with typing a name. The
+    /// Orchestrator and the Mac's own create flow keep the usual defaults.
+    static func phoneAgentRecord(
+        name: String,
+        description: String = "",
+        systemPrompt: String = "",
+        defaultModel: String? = nil,
+        now: Date = Date()
+    ) -> Agent {
+        var agent = newCustomAgentRecord(
+            name: name,
+            description: description,
+            systemPrompt: systemPrompt,
+            defaultModel: defaultModel,
+            now: now
+        )
+        agent.toolsEnabled = false
+        agent.memoryEnabled = false
+        // An explicit opt-out: nil would resolve to on where the sandbox runs.
+        agent.autonomousExec = AutonomousExecConfig(enabled: false)
+        agent.settings.webSearchEnabled = false
+        agent.settings.screenContextEnabled = false
+        return agent
+    }
+
     /// Build the record used by the Agents UI's duplicate action.
     ///
     /// `autonomousExec` is copied verbatim rather than re-seeded from the
@@ -1290,7 +1337,15 @@ extension AgentManager {
     /// coalesced first-use task, so UI success means real tools are ready.
     /// Provisioning itself still has one owner (`SandboxToolRegistrar`);
     /// this manager never races a direct `ensureProvisioned` call against it.
-    public func updateAutonomousExec(_ config: AutonomousExecConfig?, for agentId: UUID) async throws {
+    /// `waitForSandbox: false` saves the switch and starts the sandbox without
+    /// waiting for it, as the paired phone needs: a cold boot can download for
+    /// minutes, longer than its request lives. A failure is then only logged,
+    /// as it is for the Mac's own launch-time boot.
+    public func updateAutonomousExec(
+        _ config: AutonomousExecConfig?,
+        for agentId: UUID,
+        waitForSandbox: Bool = true
+    ) async throws {
         let wasEnabled = effectiveAutonomousExec(for: agentId)?.enabled ?? false
         let willBeEnabled = config?.enabled ?? false
 
@@ -1313,7 +1368,17 @@ extension AgentManager {
             // provisioning if needed), bypassing the `setupComplete` gate that
             // keeps the default-ON chip from auto-downloading at launch.
             // `provisionOnDemand` resets the startup-failure tracking for us.
-            try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+            if waitForSandbox {
+                try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+            } else {
+                Task { @MainActor in
+                    do {
+                        try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+                    } catch {
+                        print("[Osaurus] Sandbox failed to start for agent \(agentId): \(error)")
+                    }
+                }
+            }
         }
 
         // Mirror the per-agent egress choice onto the shared sandbox config

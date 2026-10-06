@@ -1548,10 +1548,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await runWithDeadline(seconds: 2) {
                 await MCPProviderManager.shared.shutdownAllStdioRunners()
             }
-            await runWithDeadline(seconds: 2) {
-                await MCPServerManager.shared.stopAll()
-            }
-
             // ── Phase 2: must-not-orphan — network + VM teardown ──
             // ensureShutdown is idempotent when already clean. The NIO
             // graceful shutdown is itself bounded inside `stop(gracefully:

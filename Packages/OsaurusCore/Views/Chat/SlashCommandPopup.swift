@@ -14,88 +14,41 @@ struct SlashCommandPopup: View {
     let onSelect: (SlashCommand) -> Void
 
     @Environment(\.theme) private var theme
-    @Environment(\.colorScheme) private var colorScheme
 
     @State private var hoveredIndex: Int? = nil
 
-    private let rowHeight: CGFloat = 44
     private let maxVisibleRows: Int = 6
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
-                .opacity(0.2)
-            commandList
-            Divider()
-                .opacity(0.2)
-            newCommandFooter
-        }
-        .frame(maxWidth: .infinity)
-        .background(popupBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5)
-        )
-        .shadow(color: theme.shadowColor.opacity(0.18), radius: 16, x: 0, y: 6)
-    }
-
-    // MARK: - New Command Footer
-
-    private var newCommandFooter: some View {
-        Button {
-            AppDelegate.shared?.showManagementWindow(initialTab: .commands)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "plus.circle")
-                    .font(.system(size: 11, weight: .medium))
-                Text("New Command", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
+        VStack(alignment: .leading, spacing: 4) {
+            PickerCardHeading(title: L("Commands")) {
+                PickerCardKeyHints()
             }
-            .foregroundColor(theme.accentColor.opacity(0.8))
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 8)
+            commandList
+            PickerCardTextLink(title: L("New Command"), icon: "plus", fillsWidth: false) {
+                AppDelegate.shared?.showManagementWindow(initialTab: .commands)
+            }
         }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "command")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-            Text("Commands", bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-            Spacer()
-            Text("↑↓ navigate  ↵ select  esc dismiss", bundle: .module)
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText.opacity(0.6))
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.horizontal, PickerCardMetrics.padding)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity)
+        .pickerCardSurface(elevated: true)
     }
 
     // MARK: - Command List
 
     private var commandList: some View {
-        let visibleCount = min(commands.count, maxVisibleRows)
-        let listHeight = CGFloat(visibleCount) * rowHeight
+        let visibleCount = CGFloat(min(commands.count, maxVisibleRows))
+        let listHeight =
+            visibleCount * PickerCardMetrics.rowHeight + max(0, visibleCount - 1) * PickerCardMetrics.rowSpacing
 
         return ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: PickerCardMetrics.rowSpacing) {
                     ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
                         commandRow(command: command, index: index)
                             .id(index)
-                        if index < commands.count - 1 {
-                            Divider()
-                                .padding(.leading, 40)
-                                .opacity(0.1)
-                        }
                     }
                 }
             }
@@ -111,64 +64,38 @@ struct SlashCommandPopup: View {
     // MARK: - Command Row
 
     private func commandRow(command: SlashCommand, index: Int) -> some View {
-        let isSelected = index == selectedIndex
-        let isHovered = index == hoveredIndex
-        let isHighlighted = isSelected || isHovered
+        let isHighlighted = index == selectedIndex || index == hoveredIndex
+        let bodyFont = theme.font(size: theme.pickerCardBodySize)
 
         return Button {
             onSelect(command)
         } label: {
-            HStack(spacing: 10) {
-                // Icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(
-                            isHighlighted
-                                ? theme.accentColor.opacity(0.15)
-                                : theme.tertiaryBackground.opacity(0.5)
-                        )
-                        .frame(width: 26, height: 26)
-                    Image(systemName: command.icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(isHighlighted ? theme.accentColor : theme.secondaryText)
+            HStack(spacing: 8) {
+                Image(systemName: command.icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isHighlighted ? theme.primaryText : theme.secondaryText)
+                    .frame(width: 16)
+                Text(verbatim: "/\(command.name)")
+                    .font(theme.font(size: theme.pickerCardBodySize, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                if !command.description.isEmpty {
+                    Text(verbatim: command.description)
+                        .font(bodyFont)
+                        .foregroundStyle(theme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-
-                // Text
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text("/\(command.name)")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(isHighlighted ? theme.accentColor : theme.primaryText)
-                        if command.isBuiltIn {
-                            Text("built-in", bundle: .module)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground.opacity(0.6))
-                                )
-                        }
-                    }
-                    if !command.description.isEmpty {
-                        Text(command.description)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(1)
-                    }
+                Spacer(minLength: 8)
+                // Built-ins are the norm; only user commands get a tag.
+                if !command.isBuiltIn {
+                    Text("Custom", bundle: .module)
+                        .font(theme.font(size: theme.pickerCardCaptionSize))
+                        .foregroundStyle(theme.tertiaryText)
                 }
-
-                Spacer()
             }
-            .padding(.horizontal, 12)
-            .frame(height: rowHeight)
-            .background(
-                isHighlighted
-                    ? theme.accentColor.opacity(theme.isDark ? 0.12 : 0.08)
-                    : Color.clear
-            )
-            .contentShape(Rectangle())
+            .pickerCardRowChrome(highlighted: isHighlighted)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -177,18 +104,6 @@ struct SlashCommandPopup: View {
             } else if hoveredIndex == index {
                 hoveredIndex = nil
             }
-        }
-    }
-
-    // MARK: - Background
-
-    private var popupBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.92 : 0.97))
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .opacity(0.4)
         }
     }
 }
