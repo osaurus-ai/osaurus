@@ -69,7 +69,7 @@ struct OsaurusConnectView: View {
     private var pairingIntro: AttributedString {
         var text = AttributedString(
             localized:
-                "Open [Osaurus](https://testflight.apple.com/join/yTF86bVb) on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing.",
+                "Open [Osaurus](https://testflight.apple.com/join/yTF86bVb) (in TestFlight currently) on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing.",
             bundle: .module
         )
         for run in text.runs where run.link != nil {
