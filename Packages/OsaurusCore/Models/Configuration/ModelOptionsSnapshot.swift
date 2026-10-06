@@ -174,13 +174,8 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
             id: nativeMTPOptionId,
             label: L("Native MTP"),
             icon: "hare",
-            help: nativeMTP.blocked
-                ? L(
-                    "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
-                )
-                : L(
-                    "Off uses ordinary autoregressive decoding. On requests adaptive native MTP when the bundle passes runtime safety and tuning checks. Ineligible bundles continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged."
-                ),
+            // The phone shows the choice alone, without the composer's copy.
+            help: nil,
             kind: "segmented",
             segments: nativeMTP.blocked ? [off] : [off, adaptive],
             selected: selected,
