@@ -259505,7 +259505,38 @@
       }
     },
     "The server isn't running." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Server läuft nicht."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서버가 실행 중이 아닙니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не запущен."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器未在运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "伺服器未在執行。"
+          }
+        }
+      }
     },
     "The setupComplete flag is false, so tool and agent startup still require provisioning." : {
       "localizations" : {
@@ -294090,7 +294121,38 @@
 
     },
     "Your Mac can't take a pairing right now. %@" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dein Mac kann gerade kein Pairing annehmen. %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지금은 Mac에서 페어링을 받을 수 없습니다. %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сейчас ваш Mac не может принять сопряжение. %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 Mac 目前无法接受配对。%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 Mac 目前無法接受配對。%@"
+          }
+        }
+      }
     },
     "Your Mac has %lld GB unified memory; for smooth performance, choose models estimated below %@ while running." : {
 
