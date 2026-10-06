@@ -5385,8 +5385,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Off-main bundle read, so local models report their real
             // thinking / effort contract instead of the cold-cache miss.
             _ = await LocalReasoningCapability.resolveForDispatch(modelId: request.model)
-            let outcome: (HTTPResponseStatus, String) = await MainActor.run {
-                if isWrite, let option = request.option {
+            // Native MTP is a server setting, written through its own async
+            // route rather than the per-model option store.
+            let nativeMTP = ModelOptionsSnapshot.NativeMTP.inspect(model: request.model)
+            let isNativeMTPWrite = isWrite && request.option == ModelOptionsSnapshot.nativeMTPOptionId
+            var nativeMTPFailure: (HTTPResponseStatus, String)?
+            if isNativeMTPWrite {
+                do {
+                    try await ModelOptionsSnapshot.applyNativeMTP(request.value, nativeMTP: nativeMTP)
+                } catch ModelOptionsSnapshot.ApplyError.unknownOption {
+                    nativeMTPFailure = (.notFound, #"{"error":"unknown_option"}"#)
+                } catch {
+                    nativeMTPFailure = (.badRequest, #"{"error":"invalid_value"}"#)
+                }
+            }
+            let outcome: (HTTPResponseStatus, String) = await MainActor.run { [nativeMTPFailure] in
+                if let nativeMTPFailure { return nativeMTPFailure }
+                if isWrite, !isNativeMTPWrite, let option = request.option {
                     do {
                         try ModelOptionsSnapshot.apply(model: request.model, optionId: option, value: request.value)
                     } catch ModelOptionsSnapshot.ApplyError.unknownOption {
@@ -5395,7 +5410,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         return (.badRequest, #"{"error":"invalid_value"}"#)
                     }
                 }
-                let snapshot = ModelOptionsSnapshot.make(for: request.model)
+                let snapshot = ModelOptionsSnapshot.make(for: request.model, nativeMTP: nativeMTP)
                 guard let json = try? JSONEncoder.osaurusCanonical().encode(snapshot) else {
                     return (.internalServerError, #"{"error":"encoding_failed"}"#)
                 }

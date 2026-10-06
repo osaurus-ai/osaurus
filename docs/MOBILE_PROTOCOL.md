@@ -966,6 +966,11 @@ applies and nothing is sent to the model. Fields without a value (`icon`,
 stores one choice (`null` resets it) and answers with the same body as
 `POST`. `404 unknown_option`, `400 invalid_value`.
 
+A local bundle with a native MTP head also gets a last `nativeMTPDepth`
+option (Native MTP: `off` / `auto`, only `off` when its tuning blocks MTP).
+Unlike the others it is the Mac's global Speculative Decoding setting, not a
+per-model choice; setting it writes that setting, `null` meaning `off`.
+
 ### 12.4 `PUT /models/favorites`
 
 `{"key":"<favorite_key from 12.1>","favorite":true}` adds the model to the

@@ -56,11 +56,30 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
         case invalidValue
     }
 
+    /// Option id of the Native MTP row, the composer's
+    /// `FloatingInputCard.nativeMTPOptionID`.
+    static let nativeMTPOptionId = "nativeMTPDepth"
+
+    /// What the model's bundle offers for Native MTP, as composer selection
+    /// reads it: nil without an MTP head, `blocked` when its tuning artifact
+    /// refuses MTP.
+    struct NativeMTP: Equatable, Sendable {
+        let blocked: Bool
+
+        /// File-only bundle inspection; run it off the main thread.
+        static func inspect(model: String) -> NativeMTP? {
+            guard let status = ModelRuntime.inspectLoadingModelMTP(name: model),
+                status.bundleHasMTP, status.isTargetMTPFamily
+            else { return nil }
+            return NativeMTP(blocked: status.isBlocked)
+        }
+    }
+
     /// Built after `LocalReasoningCapability.resolveForDispatch` so local
     /// bundles report their real thinking / effort contract, not the cold
     /// main-thread miss.
     @MainActor
-    static func make(for model: String) -> ModelOptionsSnapshot {
+    static func make(for model: String, nativeMTP: NativeMTP? = nil) -> ModelOptionsSnapshot {
         let values = ModelProfileRegistry.normalizedOptions(
             for: model,
             persisted: ModelOptionsStore.shared.loadOptions(for: model)
@@ -135,7 +154,56 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
                 )
             }
         }
-        return ModelOptionsSnapshot(model: model, thinking: thinking, options: options)
+        return ModelOptionsSnapshot(
+            model: model,
+            thinking: thinking,
+            options: options + [nativeMTP.map(nativeMTPOption)].compactMap { $0 }
+        )
+    }
+
+    /// The composer's Native MTP row. MTP lives in the global server
+    /// settings, not the per-model store, so the selection is read there;
+    /// a blocked bundle only offers Off.
+    @MainActor
+    private static func nativeMTPOption(_ nativeMTP: NativeMTP) -> Option {
+        let off = Segment(id: "off", label: L("Off (AR)"), description: nil)
+        let adaptive = Segment(id: "auto", label: L("On (Adaptive)"), description: nil)
+        let mode = ServerController.runtimeSettingsForConfigureTool().settings.mtp.mode
+        let selected = nativeMTP.blocked || mode == .off ? "off" : "auto"
+        return Option(
+            id: nativeMTPOptionId,
+            label: L("Native MTP"),
+            icon: "hare",
+            help: nativeMTP.blocked
+                ? L(
+                    "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
+                )
+                : L(
+                    "Off uses ordinary autoregressive decoding. On requests adaptive native MTP when the bundle passes runtime safety and tuning checks. Ineligible bundles continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged."
+                ),
+            kind: "segmented",
+            segments: nativeMTP.blocked ? [off] : [off, adaptive],
+            selected: selected,
+            on: nil,
+            // Off is the default, as the composer shows it.
+            explicit: selected != "off"
+        )
+    }
+
+    /// Stores a Native MTP choice through the composer's and Settings' one
+    /// route. A nil value resets to the default, Off.
+    @MainActor
+    static func applyNativeMTP(_ value: ModelOptionValue?, nativeMTP: NativeMTP?) async throws {
+        guard let nativeMTP else { throw ApplyError.unknownOption }
+        let segment = value?.stringValue ?? "off"
+        guard segment == "off" || (segment == "auto" && !nativeMTP.blocked) else {
+            throw ApplyError.invalidValue
+        }
+        var settings = ServerController.runtimeSettingsForConfigureTool().settings
+        settings.mtp.mode = segment == "off" ? .off : .auto
+        settings.mtp.draftTokenLimit = nil
+        settings.mtp.explicitDepth = nil
+        _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings)
     }
 
     /// Stores one choice the way the Mac composer's picker rows do. A nil
