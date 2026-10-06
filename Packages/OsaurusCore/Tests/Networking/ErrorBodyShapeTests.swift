@@ -11,12 +11,24 @@
 //
 
 import Foundation
+import MLXLMCommon
 import Testing
 
 @testable import OsaurusCore
 
 @Suite
 struct ErrorBodyShapeTests {
+    @Test func nativeReasoningContractMappingDoesNotMatchErrorText() {
+        let typed = K2HorizonTemplateContract.ContractError.unsupportedReasoningMode(expectedEffort: "high")
+        let unrelated = NSError(
+            domain: "UnrelatedRuntimeFailure", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: typed.localizedDescription])
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: typed).code == 400)
+        #expect(HTTPHandler.openAIErrorType(for: typed) == "invalid_request_error")
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: unrelated).code == 500)
+        #expect(HTTPHandler.openAIErrorType(for: unrelated) == "internal_error")
+    }
+
     @Test func invalidImageMapsToClientErrorAcrossProtocols() {
         let error = ModelRuntime.ImageInputError(imageIndex: 1, reason: "image data is corrupt.")
         #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 400)

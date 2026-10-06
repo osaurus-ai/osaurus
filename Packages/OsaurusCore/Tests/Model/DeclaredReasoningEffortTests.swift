@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 import Testing
 
 @testable import OsaurusCore
@@ -93,6 +94,116 @@ struct DeclaredReasoningEffortTests {
         }
         defer { DeclaredReasoningEffort.testDeclarationOverride = nil }
         return try body()
+    }
+
+    private static let fixedNativeFixture = Data(#"""
+        {
+          "capabilities": {"supports_reasoning_toggle": false, "reasoning_efforts": []},
+          "chat": {"reasoning": {
+            "supported": true, "default_mode": "think", "modes": ["think"],
+            "template_flag": "reasoning_effort",
+            "mode_kwargs": {"think": {"reasoning_effort": "high"}}
+          }}
+        }
+        """#.utf8)
+
+    @Test("fixed native reasoning metadata exposes no picker and preserves explicit effort")
+    func fixedNativeEffortPreservesExplicitValuesWithoutPicker() throws {
+        let declaration = try #require(DeclaredReasoningEffort.parseJangDeclaration(data: Self.fixedNativeFixture))
+        #expect(declaration.control == .fixedNativeEffort("high"))
+        let model = "proof/native-single-mode"
+        withOverride(declaration, forModelId: model) {
+            #expect(DeclaredReasoningEffort.capabilities(forModelId: model) == nil)
+            for effort in ["high", "low", "medium", "banana"] {
+                let context = MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(temperature: nil, maxTokens: 256,
+                        modelOptions: ["reasoningEffort": .string(effort)]), modelName: model)
+                #expect(context["reasoning_effort"] as? String == effort)
+                #expect(context["enable_thinking"] as? Bool == true)
+            }
+        }
+    }
+
+    @Test("fixed native omission and tool omission leave bundle defaults untouched")
+    func fixedNativeOmissionPreservesBundleDefaults() throws {
+        let declaration = try #require(DeclaredReasoningEffort.parseJangDeclaration(data: Self.fixedNativeFixture))
+        let model = "proof/native-single-mode"
+        withOverride(declaration, forModelId: model) {
+            let generation = GenerationParameters(temperature: nil, maxTokens: 256)
+            for context in [MLXBatchAdapter.additionalContext(for: generation, modelName: model),
+                            MLXBatchAdapter.additionalContext(for: generation, modelName: model,
+                                toolChoice: .required)] {
+                #expect(context["reasoning_effort"] == nil)
+                #expect(context["enable_thinking"] == nil)
+            }
+            for options: [String: ModelOptionValue] in [
+                ["disableThinking": .bool(true)], ["reasoningEffort": .string("none")],
+                ["reasoningEffort": .string("medium"), "disableThinking": .bool(true)]
+            ] {
+                let context = MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(temperature: nil, maxTokens: 256, modelOptions: options),
+                    modelName: model)
+                #expect(context["enable_thinking"] as? Bool == false)
+            }
+        }
+    }
+
+    @Test("fixed native omitted and high requests satisfy the engine declaration")
+    func fixedNativeDefaultAndHighSatisfyEngineContract() throws {
+        let declaration = try #require(DeclaredReasoningEffort.parseJangDeclaration(data: Self.fixedNativeFixture))
+        let engineDeclaration = try #require(K2HorizonTemplateContract.fixedReasoningDeclaration(
+            metadata: Self.fixedNativeFixture, modelType: "k2_horizon"))
+        let model = "proof/native-single-mode"
+        try withOverride(declaration, forModelId: model) {
+            for options: [String: ModelOptionValue] in [[:], ["reasoningEffort": .string("high")]] {
+                let context = MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(temperature: nil, maxTokens: 256, modelOptions: options),
+                    modelName: model)
+                try K2HorizonTemplateContract.validateContext(
+                    context, modelType: "k2_horizon", declaration: engineDeclaration)
+            }
+        }
+    }
+
+    @Test("fixed native low and off requests become typed HTTP client errors")
+    func fixedNativeLowAndOffMapToHTTP400() throws {
+        let declaration = try #require(DeclaredReasoningEffort.parseJangDeclaration(data: Self.fixedNativeFixture))
+        let engineDeclaration = try #require(K2HorizonTemplateContract.fixedReasoningDeclaration(
+            metadata: Self.fixedNativeFixture, modelType: "k2_horizon"))
+        let model = "proof/native-single-mode"
+        withOverride(declaration, forModelId: model) {
+            for options: [String: ModelOptionValue] in [
+                ["reasoningEffort": .string("low")], ["reasoningEffort": .string("off")],
+                ["disableThinking": .bool(true)]
+            ] {
+                let context = MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(temperature: nil, maxTokens: 256, modelOptions: options),
+                    modelName: model)
+                do {
+                    try K2HorizonTemplateContract.validateContext(
+                        context, modelType: "k2_horizon", declaration: engineDeclaration)
+                    Issue.record("Explicit unsupported native reasoning control was accepted")
+                } catch {
+                    #expect(error is K2HorizonTemplateContract.ContractError)
+                    #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 400)
+                    #expect(HTTPHandler.openAIErrorType(for: error) == "invalid_request_error")
+                    #expect(HTTPHandler.openResponsesErrorCode(for: error) == "invalid_request_error")
+                    #expect(HTTPHandler.anthropicErrorType(for: error) == "invalid_request_error")
+                    #expect(HTTPHandler.ollamaErrorType(for: error) == "invalid_request_error")
+                }
+            }
+        }
+    }
+
+    @Test("incomplete fixed-mode declarations retain the prior no-effort contract")
+    func fixedNativeRequiresExplicitMetadataContract() throws {
+        var root = try #require(JSONSerialization.jsonObject(with: Self.fixedNativeFixture) as? [String: Any])
+        root.removeValue(forKey: "capabilities")
+        let missingCapabilities = try JSONSerialization.data(withJSONObject: root)
+        #expect(DeclaredReasoningEffort.parseJangDeclaration(data: missingCapabilities)?.control == .noEffortControl)
+        root["capabilities"] = ["supports_reasoning_toggle": true, "reasoning_efforts": []] as [String: Any]
+        let toggle = try JSONSerialization.data(withJSONObject: root)
+        #expect(DeclaredReasoningEffort.parseJangDeclaration(data: toggle)?.control == .noEffortControl)
     }
 
     // MARK: - jang_config parsing

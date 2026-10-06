@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 import NIOHTTP1
 
 extension HTTPHandler {
@@ -61,6 +62,7 @@ extension HTTPHandler {
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+            || error is K2HorizonTemplateContract.ContractError
         {
             return .badRequest
         }
@@ -82,6 +84,7 @@ extension HTTPHandler {
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+            || error is K2HorizonTemplateContract.ContractError
         {
             return "invalid_request_error"
         }
@@ -129,6 +132,7 @@ extension HTTPHandler {
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+            || error is K2HorizonTemplateContract.ContractError
         {
             return "invalid_request_error"
         }
@@ -147,6 +151,7 @@ extension HTTPHandler {
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+            || error is K2HorizonTemplateContract.ContractError
         {
             return "invalid_request_error"
         }
@@ -165,6 +170,7 @@ extension HTTPHandler {
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+            || error is K2HorizonTemplateContract.ContractError
         {
             return "invalid_request_error"
         }

@@ -1198,6 +1198,11 @@ struct MLXBatchAdapter {
                     ontoLevels: levels,
                     defaultLevel: defaultLevel
                 ) ?? requested
+            case .fixedNativeEffort:
+                // The bundle exposes no picker, but its engine still owns a
+                // strict native effort contract. Preserve explicit input so
+                // incompatible requests are rejected there instead of ignored.
+                return requested
             case .noEffortControl:
                 return nil
             case nil:
