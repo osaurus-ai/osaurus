@@ -3933,7 +3933,7 @@ struct RuntimePolicySourceTests {
         #expect(picker.contains("manual=blocked"))
         #expect(
             picker.contains(
-                "nativeMTPManuallyBlockedModels.contains(identity) ? \"off\" : nativeMTPSelection"
+                "nativeMTPManuallyBlockedModels.contains(identity) ? \"off\" : shown"
             ),
             "A globally saved Adaptive request must render as Off for a bundle whose runtime blocks native MTP."
         )

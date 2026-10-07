@@ -630,6 +630,10 @@ final class ServerController: ObservableObject {
         next: VMLXServerMTPSettings
     ) -> Bool {
         (previous.mode == .off) != (next.mode == .off)
+            // The family default loads without the MTP head for every family except Qwen3.8 Flash-Next
+            // (`resolvedMTPLaunch`), so leaving or entering it can change what the load must contain. Without a
+            // reload, choosing On (Adaptive) for such a bundle kept a head-less resident model and never speculated.
+            || (previous.mode == .familyDefault) != (next.mode == .familyDefault)
             || previous.dflash2DrafterPath != next.dflash2DrafterPath
             || previous.dflash2BlockSize != next.dflash2BlockSize
             || previous.keepDraftCacheSeparate != next.keepDraftCacheSeparate

@@ -11,7 +11,8 @@ import Testing
             #expect(result.mode == .off)
             #expect(result.explicitDepth == nil && result.draftTokenLimit == nil)
         }
-        #expect(NativeMTPSelectionDefault.adaptiveSelection(.init()).mode == .off)
+        // The shipped default is the bundle-aware family default; it is preserved, never promoted to Adaptive.
+        #expect(NativeMTPSelectionDefault.adaptiveSelection(.init()).mode == .familyDefault)
     }
 
     @Test func legacyPositiveSelectionsBecomeUncappedAdaptive() {
@@ -39,13 +40,48 @@ import Testing
         #expect(next.acceptedTokensOnlyEnterBaseCache == old.acceptedTokensOnlyEnterBaseCache)
     }
 
+    /// Tiny DFlash 2 drafter: real config plus a header-only safetensors file sized to every required tensor.
+    private static func writeCompleteDrafter(at directory: URL) throws {
+        let config: [String: Any] = [
+            "model_type": "qwen3", "hidden_size": 64, "num_hidden_layers": 1, "num_attention_heads": 2,
+            "num_key_value_heads": 1, "head_dim": 32, "intermediate_size": 128, "vocab_size": 100,
+            "rms_norm_eps": 1e-6, "num_target_layers": 2, "sliding_window": 64, "is_causal": false,
+            "layer_types": ["sliding_attention"],
+            "rope_parameters": ["rope_theta": 10_000, "rope_type": "default"],
+            "dflash_config": [
+                "block_size": 8, "conv_group_size": 16, "conv_kernel_size": 2, "mask_token_id": 99,
+                "selector_rank": 1, "selector_top_k": 1, "target_layer_ids": [0, 1],
+            ],
+        ]
+        let configData = try JSONSerialization.data(withJSONObject: config)
+        try configData.write(to: directory.appendingPathComponent("config.json"))
+        var header: [String: Any] = [:]
+        var offset = 0
+        for (name, shape) in try DFlash2ArtifactMetadata.requiredShapes(configData: configData)
+            .sorted(by: { $0.key < $1.key })
+        {
+            let key = name.hasPrefix("candidate_selector.") && name.contains("codebook")
+                ? String(name.dropLast(7)) : name
+            let end = offset + shape.reduce(2, *)
+            header[key] = ["dtype": "BF16", "shape": shape, "data_offsets": [offset, end]]
+            offset = end
+        }
+        let bytes = try JSONSerialization.data(withJSONObject: header)
+        var length = UInt64(bytes.count).littleEndian
+        var file = withUnsafeBytes(of: &length) { Data($0) }
+        file.append(bytes)
+        file.append(Data(count: offset))
+        try file.write(to: directory.appendingPathComponent("model.safetensors"))
+    }
+
     @Test func selectedExternalDrafterEffectiveWidthIsUnchanged() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        try Data(#"{"vocab_size":100,"num_target_layers":2,"dflash_config":{"selector_top_k":1,"selector_rank":1,"conv_kernel_size":2,"target_layer_ids":[0,1],"block_size":8}}"#.utf8)
-            .write(to: directory.appendingPathComponent("config.json"))
-        let target = Data(#"{"model_type":"qwen3_5","vocab_size":100,"num_hidden_layers":2}"#.utf8)
+        // A drafter is only selectable when its weights are complete (the engine validates safetensors headers
+        // against the config's required shapes), so the fixture writes a sparse but complete artifact.
+        try Self.writeCompleteDrafter(at: directory)
+        let target = Data(#"{"model_type":"qwen3_5","vocab_size":100,"hidden_size":64,"num_hidden_layers":2}"#.utf8)
         for block in [nil, 4, 8] as [Int?] {
             for limit in 1...3 {
                 var before = VMLXServerRuntimeSettings()
