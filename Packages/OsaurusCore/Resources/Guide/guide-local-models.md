@@ -41,19 +41,22 @@ remain errors. Metadata checks never download or replace model weights.
 
 ## Native MTP
 
-Native MTP starts **Off (AR)**. **On (Adaptive)** requests the runtime's adaptive
-speculative policy for an eligible local model, including Qwen 27B and Flash Next
-in supported affine and JANGH bundles. The runtime chooses its depth; there are
-no user depth buttons or native draft-token limits. Sampling remains bundle-driven
-unless you explicitly override it.
+Speculative Decoding defaults to **Default**, resolved from the selected bundle.
+Qwen Flash-Next with a usable native MTP head starts **On (Adaptive)**, including
+supported affine and JANGH variants. Qwen 27B automatically uses a compatible
+bundled DFlash2 drafter when present. A bundle without compatible draft support
+runs ordinary autoregressive decoding.
 
-On is a request, not proof of active speculation. Missing heads, blocked bundles
-and missing verified tuning can keep ordinary decoding active. Server → Settings →
-**Speculative Decoding** shows the loaded model's actual resolution and reason.
-Remote models do not expose this local control. Explicit Off survives reload;
-legacy manual depths migrate to Adaptive and are re-evaluated by runtime admission.
-A selected **DFlash 2 Drafter** remains a separate external-drafter choice; remove
-that selection to stop it. Native MTP Off does not disable an external drafter.
+The picker shows **Off (AR)** or **On (Adaptive)**. The runtime chooses depth;
+there are no manual depth buttons. Explicit Off disables speculation, including
+bundled and selected external drafters, and survives reload. **Reset to default**
+restores bundle-aware policy, so a capable bundle can show Adaptive again.
+Legacy manual depths migrate to Adaptive and are re-evaluated by runtime admission.
+
+On is a request, not proof of active speculation. Unsupported media and
+schema-constrained requests run AR. Server → Settings → **Speculative Decoding**
+shows the loaded model's actual resolution and reason. Sampling stays bundle-driven
+unless explicitly overridden. Remote models do not expose this local control.
 
 ## Apple Foundation Models
 

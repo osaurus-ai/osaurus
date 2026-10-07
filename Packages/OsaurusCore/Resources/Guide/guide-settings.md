@@ -127,7 +127,9 @@ The model picker shows **Off (AR)** or **On (Adaptive)** before weights load.
 The runtime chooses depth; there are no manual D1/D2/D3 buttons. Explicit Off
 turns speculation off, including external and bundled drafters. Saved explicit
 choices survive reload. Legacy manual depths migrate to Adaptive and are
-re-evaluated by runtime admission.
+re-evaluated by runtime admission. **Reset to default** restores the selected
+bundle's policy, so a capable bundle can show Adaptive again. Included evaluations
+and benchmarks inherit that policy unless explicitly overridden.
 
 On is a request, not proof that a particular request uses speculation. Unsupported
 media and schema-constrained requests run AR. Server → Settings → **Speculative
