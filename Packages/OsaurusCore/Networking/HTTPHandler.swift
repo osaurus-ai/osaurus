@@ -13677,6 +13677,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
+        if let reason = RequestValidator.rawResponseSchemaReason(data, responses: false) {
+            sendResponse(context: context, version: head.version, status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: Self.errorBody(.openai(type: "invalid_request_error"), message: reason))
+            return
+        }
+
         guard var req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
             let body = Self.errorBody(.openai(type: "invalid_request_error"), message: "Invalid request format")
             sendResponse(
@@ -15341,7 +15348,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// underlying logic lives at module scope so the eval kit can exercise
     /// it without depending on `HTTPHandler` / `ChatCompletionRequest`.
     nonisolated static func unsupportedSamplerReason(_ req: ChatCompletionRequest) -> String? {
-        RequestValidator.unsupportedSamplerReason(
+        RequestValidator.responseFormatReason(req.response_format)
+            ?? RequestValidator.unsupportedSamplerReason(
             n: req.n,
             responseFormatType: req.response_format?.type,
             logprobs: req.logprobs,
@@ -17315,6 +17323,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
+        if let reason = RequestValidator.rawResponseSchemaReason(data, responses: true) {
+            let errorResponse = OpenResponsesErrorResponse(code: "invalid_request_error", message: reason)
+            let body = (try? JSONEncoder.osaurusCanonical().encode(errorResponse))
+                .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            sendResponse(context: context, version: head.version, status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")], body: body)
+            return
+        }
+
         // Parse Open Responses request
         let openResponsesReq: OpenResponsesRequest
         do {
@@ -17359,6 +17376,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             previousResponseId: openResponsesReq.previous_response_id
         )
         internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        if let reason = Self.unsupportedSamplerReason(internalReq) {
+            let response = OpenResponsesErrorResponse(code: "invalid_request_error", message: reason)
+            let body = (try? JSONEncoder.osaurusCanonical().encode(response))
+                .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            sendResponse(context: context, version: head.version, status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")], body: body)
+            return
+        }
 
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false

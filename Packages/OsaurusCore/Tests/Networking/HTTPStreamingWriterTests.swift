@@ -63,6 +63,38 @@ struct HTTPStreamingWriterTests {
         _ = try channel.finish()
     }
 
+    @Test func structuredOutputRefusalKeepsItsTypeInEveryStreamingEnvelope() throws {
+        let error = ChatEngine.EngineError(kind: .invalidStructuredOutput("Unsupported schema decoder"))
+        let writers: [(ChannelHandlerContext) -> Void] = [
+            { context in
+                let writer: any ResponseWriter = SSEResponseWriter()
+                writer.writeErrorFromThrown(error, context: context)
+            },
+            { context in
+                let writer: any ResponseWriter = NDJSONResponseWriter()
+                writer.writeErrorFromThrown(error, context: context)
+            },
+            { OllamaGenerateNDJSONResponseWriter().writeErrorFromThrown(error, context: $0) },
+            { AnthropicSSEResponseWriter().writeErrorFromThrown(error, context: $0) },
+            { OpenResponsesSSEWriter().writeErrorFromThrown(error, context: $0) },
+        ]
+        for write in writers {
+            let channel = EmbeddedChannel()
+            let context = try channel.embeddedContext()
+            write(context)
+            var body = ""
+            while let part = try channel.readOutbound(as: HTTPServerResponsePart.self) {
+                if case .body(.byteBuffer(var buffer)) = part {
+                    body += buffer.readString(length: buffer.readableBytes) ?? ""
+                }
+            }
+            #expect(body.contains("invalid_request_error"))
+            #expect(body.contains("Unsupported schema decoder"))
+            #expect(!body.contains("internal_error"))
+            _ = try channel.finish()
+        }
+    }
+
     @Test func nativeMTPRefusalKeepsItsTypeInEveryStreamingEnvelope() throws {
         let error = NativeMTPAdmission.Refusal(reason: "Missing verified tuning")
         let writers: [(ChannelHandlerContext) -> Void] = [

@@ -50,6 +50,12 @@ extension HTTPHandler {
         }
     }
 
+    private static func isStructuredOutputRequestError(_ error: Error) -> Bool {
+        guard let error = error as? ChatEngine.EngineError else { return false }
+        if case .invalidStructuredOutput = error.kind { return true }
+        return false
+    }
+
     static func localRuntimeHTTPStatus(for error: Error) -> HTTPResponseStatus {
         if error is CancellationError {
             return HTTPResponseStatus(statusCode: 499, reasonPhrase: "Client Closed Request")
@@ -60,7 +66,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return .serviceUnavailable
         }
-        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+        if isStructuredOutputRequestError(error)
+            || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
         {
@@ -82,7 +89,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+        if isStructuredOutputRequestError(error)
+            || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
         {
@@ -130,7 +138,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "overloaded_error"
         }
-        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+        if isStructuredOutputRequestError(error)
+            || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
         {
@@ -149,7 +158,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+        if isStructuredOutputRequestError(error)
+            || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
         {
@@ -168,7 +178,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+        if isStructuredOutputRequestError(error)
+            || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
         {

@@ -49,8 +49,18 @@ public struct OpenResponsesTextConfig: Codable, Sendable {
 public struct OpenResponsesTextFormat: Codable, Sendable {
     public let type: String
 
-    public init(type: String) {
+    public let name: String?
+    public let description: String?
+    public let schema: JSONValue?
+    public let strict: Bool?
+
+    public init(type: String, name: String? = nil, description: String? = nil,
+                schema: JSONValue? = nil, strict: Bool? = nil) {
         self.type = type
+        self.name = name
+        self.description = description
+        self.schema = schema
+        self.strict = strict
     }
 }
 
@@ -1268,6 +1278,13 @@ extension OpenResponsesRequest {
             }
         )
         request.reasoning_effort = reasoning?.effort
+        if let format = text?.format {
+            request.response_format = ResponseFormat(type: format.type,
+                json_schema: format.schema.map {
+                    ResponseJSONSchema(name: format.name ?? "", description: format.description,
+                        schema: $0, strict: format.strict)
+                })
+        }
         return request
     }
 }

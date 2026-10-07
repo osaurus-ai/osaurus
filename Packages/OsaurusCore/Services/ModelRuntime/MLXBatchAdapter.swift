@@ -1751,6 +1751,7 @@ struct MLXBatchAdapter {
             if let soloLease { await soloLease.release() }
             throw error
         }
+        mlxParams.jsonSchema = generation.jsonSchema
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams
@@ -2369,6 +2370,16 @@ struct MLXBatchAdapter {
                 )
             }
 
+            if let schema = generation.jsonSchema {
+                var schemaParameters = MLXLMCommon.GenerateParameters()
+                schemaParameters.jsonSchema = schema
+                do {
+                    try MLXLMCommon.validateStructuredOutputRequest(
+                        input: lmInput, parameters: schemaParameters, context: context)
+                } catch {
+                    throw ChatEngine.EngineError(kind: .invalidStructuredOutput(error.localizedDescription))
+                }
+            }
             box.result = PreparedInput(input: lmInput, promptTokens: tokens)
         }
 
