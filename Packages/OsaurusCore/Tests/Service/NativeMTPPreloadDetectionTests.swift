@@ -10,7 +10,9 @@ struct NativeMTPPreloadDetectionTests {
             let directory = try fixture(modelType: modelType, format: format)
             defer { try? FileManager.default.removeItem(at: directory) }
             // This name intentionally has no catalog entry. The selected URL is authoritative.
-            let status = try #require(ModelRuntime.inspectLoadingModelMTP(name: "selected-local-alias", directory: directory))
+            let status = try #require(
+                ModelRuntime.inspectLoadingModelMTP(name: "selected-local-alias", directory: directory)
+            )
             #expect(status.name == "selected-local-alias")
             #expect(status.bundleHasMTP)
             #expect(status.isTargetMTPFamily)
@@ -77,7 +79,9 @@ struct NativeMTPPreloadDetectionTests {
             let hasHead = row.hasHead
             #expect(status.bundleHasMTP == hasHead)
             #expect(status.isTargetMTPFamily)
-            print("MTP-PRELOAD-LOCAL path=\(directory.path) head=\(status.bundleHasMTP) blocked=\(status.isBlocked) status=\(status.statusLine) model_loaded=false")
+            print(
+                "MTP-PRELOAD-LOCAL path=\(directory.path) head=\(status.bundleHasMTP) blocked=\(status.isBlocked) status=\(status.statusLine) model_loaded=false"
+            )
         }
     }
 
@@ -85,16 +89,37 @@ struct NativeMTPPreloadDetectionTests {
     func bundledDrafterCapabilityBeforeLoad() throws {
         let directory = try fixture(modelType: "qwen3_5", includeHead: false)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let config = #"{"model_type":"qwen3_5","text_config":{"model_type":"qwen3_5_text","hidden_size":5120,"vocab_size":248320,"num_hidden_layers":64}}"#
+        let config =
+            #"{"model_type":"qwen3_5","text_config":{"model_type":"qwen3_5_text","hidden_size":5120,"vocab_size":248320,"num_hidden_layers":64}}"#
         try Data(config.utf8).write(to: directory.appendingPathComponent("config.json"))
         let drafter = directory.appendingPathComponent("dflash2")
         try FileManager.default.createDirectory(at: drafter, withIntermediateDirectories: true)
-        try Data(#"{"hidden_size":5120,"vocab_size":248320,"num_target_layers":64,"dflash_config":{"selector_top_k":16,"selector_rank":256,"conv_kernel_size":2,"target_layer_ids":[5,19,33,47,61]}}"#.utf8)
-            .write(to: drafter.appendingPathComponent("config.json"))
+        try Data(
+            #"{"hidden_size":5120,"vocab_size":248320,"num_target_layers":64,"num_hidden_layers":1,"num_attention_heads":40,"num_key_value_heads":8,"head_dim":128,"intermediate_size":64,"dflash_config":{"selector_top_k":16,"selector_rank":256,"conv_kernel_size":2,"conv_group_size":16,"mask_token_id":248070,"target_layer_ids":[5,19,33,47,61]}}"#
+                .utf8
+        )
+        .write(to: drafter.appendingPathComponent("config.json"))
         let before = try #require(ModelRuntime.inspectLoadingModelMTP(name: "27B", directory: directory))
         #expect(!before.speculationAvailable)
-        try FileManager.default.copyItem(at: directory.appendingPathComponent("model.safetensors"),
-            to: drafter.appendingPathComponent("model.safetensors"))
+        let shapes = try DFlash2ArtifactMetadata.requiredShapes(
+            configData: Data(contentsOf: drafter.appendingPathComponent("config.json"))
+        )
+        var offset = 0
+        var header: [String: Any] = [:]
+        for (name, shape) in shapes {
+            let end = offset + shape.reduce(2, *)
+            header[name] = ["dtype": "BF16", "shape": shape, "data_offsets": [offset, end]]
+            offset = end
+        }
+        let bytes = try JSONSerialization.data(withJSONObject: header)
+        var length = UInt64(bytes.count).littleEndian
+        var prefix = withUnsafeBytes(of: &length) { Data($0) }
+        prefix.append(bytes)
+        let file = drafter.appendingPathComponent("model.safetensors")
+        try prefix.write(to: file)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: UInt64(prefix.count + offset))
+        try handle.close()
         let after = try #require(ModelRuntime.inspectLoadingModelMTP(name: "27B", directory: directory))
         #expect(!after.bundleHasMTP)
         #expect(after.bundledDFlash2)
@@ -105,21 +130,35 @@ struct NativeMTPPreloadDetectionTests {
 
     @Test("selected drafter capability and labels agree before loading")
     func selectedDrafterPresentationPolicy() {
-        let selected = ModelRuntime.LoadingModelMTPStatus(name: "27B", bundleHasMTP: false,
-            isTargetMTPFamily: true, isBlocked: true, measuredFamilyAutoDepth: nil,
-            selectedDFlash2: true, statusLine: "fixture")
+        let selected = ModelRuntime.LoadingModelMTPStatus(
+            name: "27B",
+            bundleHasMTP: false,
+            isTargetMTPFamily: true,
+            isBlocked: true,
+            measuredFamilyAutoDepth: nil,
+            selectedDFlash2: true,
+            statusLine: "fixture"
+        )
         #expect(selected.speculationAvailable)
         #expect(selected.familyDefaultOn)
         #expect(!selected.speculationBlocked)
         #expect(selected.speculationCapabilityDescription == "Compatible selected DFlash 2 drafter detected")
-        let bundled = ModelRuntime.LoadingModelMTPStatus(name: "27B", bundleHasMTP: false,
-            isTargetMTPFamily: true, isBlocked: false, measuredFamilyAutoDepth: nil,
-            bundledDFlash2: true, statusLine: "fixture")
+        let bundled = ModelRuntime.LoadingModelMTPStatus(
+            name: "27B",
+            bundleHasMTP: false,
+            isTargetMTPFamily: true,
+            isBlocked: false,
+            measuredFamilyAutoDepth: nil,
+            bundledDFlash2: true,
+            statusLine: "fixture"
+        )
         #expect(bundled.speculationCapabilityDescription == "Compatible bundled DFlash 2 drafter detected")
     }
 
     private func fixture(
-        modelType: String, format: String = "affine", indexedHead: Bool = true,
+        modelType: String,
+        format: String = "affine",
+        indexedHead: Bool = true,
         includeHead: Bool = true
     ) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
@@ -132,8 +171,8 @@ struct NativeMTPPreloadDetectionTests {
         ]
         try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("config.json"))
         let head = "mtp.fc.weight", trunk = "model.embed_tokens.weight"
-        var header: [String: Any] = [trunk: ["dtype": "F32", "shape": [1], "data_offsets": [0,4]]]
-        if includeHead { header[head] = ["dtype": "F32", "shape": [1], "data_offsets": [4,8]] }
+        var header: [String: Any] = [trunk: ["dtype": "F32", "shape": [1], "data_offsets": [0, 4]]]
+        if includeHead { header[head] = ["dtype": "F32", "shape": [1], "data_offsets": [4, 8]] }
         let json = try JSONSerialization.data(withJSONObject: header)
         var length = UInt64(json.count).littleEndian
         var file = Data()
