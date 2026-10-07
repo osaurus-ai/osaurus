@@ -5068,16 +5068,56 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// never a chat run; `edits` says `/images/edits` takes a source image.
         let kind: String
         let edits: Bool
+        /// For `kind: image` only: what the Mac's composer offers for this
+        /// model (size, steps, CFG, seed, strength, negative prompt), so the
+        /// phone can show the same controls (MOBILE_PROTOCOL.md §12.5).
+        let image: PickerImageDTO?
 
         enum CodingKeys: String, CodingKey {
             case id, name, provider, source, vision, thinking, params, quantization, available, description, tab
             case kind, edits
+            case image
             case tabTitle = "tab_title"
             case favoriteKey = "favorite_key"
             case contextLength = "context_length"
             case inputPrice = "input_price"
             case outputPrice = "output_price"
             case externalSource = "external_source"
+        }
+    }
+
+    /// Image controls for one model: the `/images/models` capabilities,
+    /// defaults and limits, plus the ranges the composer clamps to on send.
+    private struct PickerImageDTO: Encodable {
+        let capabilities: ImageCapabilitiesDTO
+        let defaults: ImageDefaultsDTO
+        let limits: ImageLimitsDTO
+        let maxGuidance: Double
+
+        enum CodingKeys: String, CodingKey {
+            case capabilities, defaults, limits
+            case maxGuidance = "max_guidance"
+        }
+
+        init?(_ item: ModelPickerItem) {
+            guard item.isPhoneImageModel, let caps = item.imageCapabilities else { return nil }
+            capabilities = ImageCapabilitiesDTO(
+                text_to_image: caps.textToImage,
+                image_edit: caps.imageEdit,
+                upscale: caps.upscale,
+                negative_prompt: caps.negativePrompt,
+                edit_negative_prompt: caps.editNegativePrompt,
+                edit_strength: caps.editStrength,
+                mask: caps.mask,
+                multiple_source_images: caps.multipleSourceImages,
+                lora: caps.lora
+            )
+            defaults = ImageDefaultsDTO(
+                steps: item.imageDefaultSteps,
+                guidance: item.imageDefaultGuidance.map { Double($0) }
+            )
+            limits = ImageHTTPParameterBuilder.limits(canonicalName: item.imageCanonicalName, capabilities: caps)
+            maxGuidance = 20
         }
     }
 
@@ -5164,7 +5204,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     outputPrice: item.outputPriceMicroPerMTok,
                     externalSource: item.externalSource,
                     kind: item.isPhoneImageModel ? "image" : "chat",
-                    edits: item.isImageEditDelegateCandidate
+                    edits: item.isImageEditDelegateCandidate,
+                    image: PickerImageDTO(item)
                 )
             }
             let json =

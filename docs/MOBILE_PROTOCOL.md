@@ -1039,6 +1039,28 @@ PNG data URL), `completed` (`images[].b64_json`), `error` (`message`) or
 `cancelled`; every event carries `job_id`, which `POST /images/cancel`
 (`{"job_id":"…"}`) takes.
 
+**Controls.** Each `kind: "image"` entry in `/models/picker` carries an
+`image` block: the same `capabilities`, `defaults` and `limits` as
+`GET /images/models`, plus `max_guidance`, the CFG ceiling the Mac's
+composer clamps to.
+
+```json
+"image":{"capabilities":{"text_to_image":true,"image_edit":true,"negative_prompt":true,
+          "edit_negative_prompt":false,"edit_strength":true,…},
+         "defaults":{"steps":20,"guidance":3.5},
+         "limits":{"min_steps":1,"max_steps":50,"size_multiple":16,"max_pixels":1048576,
+                   "supported_sizes":["512x512","768x768","1024x1024"]},
+         "max_guidance":20}
+```
+
+The phone shows the composer's controls from it and adds what the user
+set to the request: `size` (`"WxH"` from `supported_sizes`), `steps`,
+`guidance`, `seed`, `negative_prompt` (when `negative_prompt`, or
+`edit_negative_prompt` for edits, is true) and, on `/images/edits` only,
+`strength` 0–1 (when `edit_strength`). A field left out takes the model's
+own default; Qwen-Image 2.1 relies on that, as its unset size follows the
+source image.
+
 With `osaurus_session_id` naming a chat the phone may continue (§14.5), the
 prompt (with its source images) and the reply are appended to it once the
 image is done, written as the Mac's own image mode writes them, so §14.2

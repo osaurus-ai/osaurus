@@ -30,9 +30,14 @@ struct ImageHTTPPreparedJob: Sendable {
 /// Classification is exclusively the resolved ImageModelInfo canonical field.
 enum ImageHTTPParameterBuilder {
     static func limits(for info: ImageModelInfo) -> ImageLimitsDTO {
-        let q21 = info.canonicalName == "qwen-image-2.1"
+        limits(canonicalName: info.canonicalName, capabilities: info.capabilities)
+    }
+
+    /// The same limits from a picker item's fields, for `/models/picker`.
+    static func limits(canonicalName: String?, capabilities: ImageModelCapabilities) -> ImageLimitsDTO {
+        let q21 = canonicalName == "qwen-image-2.1"
         return ImageLimitsDTO(min_steps: q21 ? 2 : 1, max_steps: 50,
-            size_multiple: info.capabilities.dimensionMultiple,
+            size_multiple: capabilities.dimensionMultiple,
             max_pixels: q21 ? 2048 * 2048 : 1024 * 1024,
             supported_sizes: q21
                 ? ["512x512", "768x768", "1024x1024", "1248x832", "2048x2048"]
