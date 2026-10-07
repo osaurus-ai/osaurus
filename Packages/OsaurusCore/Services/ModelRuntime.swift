@@ -6582,7 +6582,8 @@ public actor ModelRuntime {
         modelDirectory: URL,
         settings: VMLXServerRuntimeSettings
     ) throws -> NativeMTPLaunchPlan {
-        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
+        let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
+        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName, configData: configData) {
             try NativeMTPAdmission().validateLoad(settings: settings, externalDrafterSelected: false)
             let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
                 modelName: modelName,
@@ -6599,7 +6600,6 @@ public actor ModelRuntime {
                 memorySafetySummary: memorySafetyPlan.displaySummary
             )
         }
-        let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
         let jangConfig = try? JangLoader.loadConfig(at: modelDirectory)
         let status: MTPBundleStatus?
         do {

@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "ce2bfb2ef7658892fff8c14a61c5eae0641af7ec"
+        let expectedRuntimeHardenedRevision = "59f9323c57d1de8e783b1d5d32777a0a693cf7bc"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -2757,11 +2757,11 @@ struct RuntimePolicySourceTests {
         )
         let mtpFastPath = try #require(
             runtime.range(
-                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName)",
-                range: mtpStart.lowerBound ..< mtpJSONRead.lowerBound
+                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName, configData: configData)",
+                range: mtpJSONRead.upperBound ..< runtime.endIndex
             )
         )
-        #expect(mtpFastPath.lowerBound < mtpJSONRead.lowerBound)
+        #expect(mtpJSONRead.lowerBound < mtpFastPath.lowerBound)
     }
 
     @Test("MTP bundles auto-resolve vmlx tuning into load and generation")

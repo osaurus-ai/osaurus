@@ -21,6 +21,49 @@ struct NativeMTPPreloadDetectionTests {
         }
     }
 
+    @Test("MiMo and N2 aliases cannot suppress another architecture's native head")
+    func misleadingTextRuntimeAliases() throws {
+        let aliases = ["MiMo-V2.5-JANG_4M", "Nex-N2-Pro-JANGH2"]
+        for (modelType, format) in [("qwen3_5", "affine"), ("qwen4_exp", "affine"), ("qwen4_exp", "jangh")] {
+            let directory = try fixture(modelType: modelType, format: format)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let configData = try Data(contentsOf: directory.appendingPathComponent("config.json"))
+            let status = try MTPBundleInspector.inspect(modelDirectory: directory, jangConfig: nil)
+            for alias in aliases {
+                // Exercise the same exception predicate used before launch inspection.
+                #expect(ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(alias))
+                #expect(!ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(alias, configData: configData))
+                let capability = try #require(ModelRuntime.inspectLoadingModelMTP(name: alias, directory: directory))
+                #expect(capability.bundleHasMTP)
+                #expect(capability.isTargetMTPFamily)
+                var settings = VMLXServerRuntimeSettings()
+                settings.mtp.mode = .off
+                #expect(
+                    settings.resolvedMTPDraftStrategy(
+                        configData: configData, jangConfig: nil, status: status, bundleDirectory: directory
+                    ) == nil
+                )
+            }
+        }
+    }
+
+    @Test("MiMo and N2 launch exception requires matching config architecture")
+    func textRuntimeExceptionRequiresConfig() throws {
+        for alias in ["MiMo-V2.5-JANG_4M", "Nex-N2-Pro-JANGH2"] {
+            for type in ["mimo_v2", "mimo_v2_flash"] {
+                let config = try JSONSerialization.data(withJSONObject: ["model_type": type])
+                #expect(ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(alias, configData: config))
+            }
+            for config in [nil, Data("{broken".utf8), Data("{}".utf8),
+                Data(#"{"model_type":"mimo_v2","text_config":{"model_type":"qwen4_exp"}}"#.utf8)]
+            {
+                #expect(!ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(alias, configData: config))
+            }
+        }
+        #expect(!ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(
+            "MiMo-V2.5", configData: Data(#"{"model_type":"mimo_v2"}"#.utf8)))
+    }
+
     @Test("head tensors omitted from index remain visible in its referenced shard")
     func incompleteTensorIndex() throws {
         let directory = try fixture(modelType: "qwen4_exp", indexedHead: false)
