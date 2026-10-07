@@ -192,19 +192,21 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
     }
 
     /// Stores a Native MTP choice through the composer's and Settings' one
-    /// route. A nil value resets to the default, Off.
+    /// route. A nil value restores the bundle-aware default.
     @MainActor
     static func applyNativeMTP(_ value: ModelOptionValue?, nativeMTP: NativeMTP?) async throws {
         guard let nativeMTP else { throw ApplyError.unknownOption }
-        let segment = value?.stringValue ?? "off"
-        guard segment == "off" || (segment == "auto" && !nativeMTP.blocked) else {
+        guard let mode = NativeMTPSelectionDefault.mode(for: value?.stringValue),
+            mode != .auto || !nativeMTP.blocked
+        else {
             throw ApplyError.invalidValue
         }
         var settings = ServerController.runtimeSettingsForConfigureTool().settings
-        settings.mtp.mode = segment == "off" ? .off : .auto
+        settings.mtp.mode = mode
         settings.mtp.draftTokenLimit = nil
         settings.mtp.explicitDepth = nil
-        _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings)
+        _ = await ServerController.applyRuntimeSettingsFromConfigureTool(
+            settings, mtpSelectionIsFamilyDefault: mode == .familyDefault)
     }
 
     /// Stores one choice the way the Mac composer's picker rows do. A nil

@@ -2534,24 +2534,17 @@ extension FloatingInputCard {
     ///
     /// Depth-only changes apply to the next request; changes that require a
     /// different loaded model graph follow the guarded reload lifecycle.
-    private func applyNativeMTPSegment(_ segment: String) {
+    private func applyNativeMTPSegment(_ segment: String?) {
         Task { @MainActor in
             // Read the latest settings when the task executes; only an
             // explicit control action writes MTP. Selection is read-only.
             var settings = ServerController.runtimeSettingsForConfigureTool().settings
-            switch segment {
-            case "off":
-                settings.mtp.mode = .off
-                settings.mtp.draftTokenLimit = nil
-                settings.mtp.explicitDepth = nil
-            case "auto":
-                settings.mtp.mode = .auto
-                settings.mtp.draftTokenLimit = nil
-                settings.mtp.explicitDepth = nil
-            default:
-                return
-            }
-            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings)
+            guard let mode = NativeMTPSelectionDefault.mode(for: segment) else { return }
+            settings.mtp.mode = mode
+            settings.mtp.draftTokenLimit = nil
+            settings.mtp.explicitDepth = nil
+            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(
+                settings, mtpSelectionIsFamilyDefault: mode == .familyDefault)
             // A rejected save must not leave an optimistic segment displayed.
             nativeMTPSelection = Self.nativeMTPSegment(
                 ServerController.runtimeSettingsForConfigureTool().settings.mtp)
@@ -3305,7 +3298,7 @@ extension FloatingInputCard {
                 // per-model would persist a value the load path never reads.
                 if optionId == Self.nativeMTPOptionID {
                     DispatchQueue.main.async {
-                        applyNativeMTPSegment(newValue?.stringValue ?? "off")
+                        applyNativeMTPSegment(newValue?.stringValue)
                     }
                     return
                 }

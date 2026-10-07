@@ -5,6 +5,13 @@ import Testing
 @testable import OsaurusCore
 
 @Suite struct NativeMTPSelectionDefaultTests {
+    @Test func resetRestoresBundleDefaultWhileOffRemainsExplicit() {
+        #expect(NativeMTPSelectionDefault.mode(for: nil) == .familyDefault)
+        #expect(NativeMTPSelectionDefault.mode(for: "off") == .off)
+        #expect(NativeMTPSelectionDefault.mode(for: "auto") == .auto)
+        #expect(NativeMTPSelectionDefault.mode(for: "d3") == nil)
+    }
+
     @Test func onlyOwnedUnmodifiedDefaultsAreRetired() throws {
         let name = "MTPChoiceProof-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))

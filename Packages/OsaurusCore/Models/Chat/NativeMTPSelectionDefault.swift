@@ -8,6 +8,16 @@ enum NativeMTPSelectionDefault {
     static let userChoseKey = "nativeMTPSegmentUserChose"
     static let familyDefaultKey = "nativeMTPSegmentIsFamilyDefault"
 
+    /// A missing value means Reset to default, never an explicit Off choice.
+    static func mode(for segment: String?) -> VMLXMTPServerMode? {
+        switch segment {
+        case nil: return .familyDefault
+        case "off": return .off
+        case "auto": return .auto
+        default: return nil
+        }
+    }
+
     /// Product controls expose only Off (AR) and On (Adaptive). Keep the
     /// engine's legacy fields decodable, but never persist a native depth cap.
     /// Keep external drafter selection stored; Off still disables its execution.
