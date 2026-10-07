@@ -17571,6 +17571,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         hop {
                             if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
                             writerBound.value.setOutputTokens(stats.tokenCount)
+                            writerBound.value.setTokensPerSecond(stats.tokensPerSecond)
                         }
                         continue
                     }

@@ -11,6 +11,22 @@ struct StructuredOutputRequestTests {
         "additionalProperties": .bool(false),
     ])
 
+    @Test func responsesUsagePreservesOnlyMeasuredRatesAndDecodesLegacyPayload() throws {
+        let old = try JSONDecoder().decode(OpenResponsesUsage.self,
+            from: Data(#"{"input_tokens":2,"output_tokens":3,"total_tokens":5}"#.utf8))
+        #expect(old.tokens_per_second == nil)
+        for rate in [Double.nan, .infinity, -.infinity, 0, -1] {
+            let usage = OpenResponsesUsage(inputTokens: 2, outputTokens: 3, tokensPerSecond: rate)
+            let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(usage)) as? [String: Any])
+            #expect(object["tokens_per_second"] == nil)
+        }
+        let chat = ChatCompletionResponse(id: "chat-test", created: 1, model: "fake",
+            choices: [ChatChoice(index: 0, message: ChatMessage(role: "assistant", content: "answer"), finish_reason: "stop")],
+            usage: Usage(prompt_tokens: 2, completion_tokens: 3, total_tokens: 5, tokens_per_second: 37.25),
+            system_fingerprint: nil)
+        #expect(chat.toOpenResponsesResponse(responseId: "resp-test").usage?.tokens_per_second == 37.25)
+    }
+
     @Test func rawNumericConstraintsAreCheckedBeforeDoubleDecoding() {
         let invalid = ["9007199254740993", "-9007199254740993", "9.007199254740993e15",
                        "1.0000000000000001", "0.00000000000000000000000000000000000000001",

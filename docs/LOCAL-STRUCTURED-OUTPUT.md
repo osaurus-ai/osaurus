@@ -99,3 +99,7 @@ This is the inference integration point. It does not implement a workflow graph,
 The engine imports the grammar bridge from upstream `mlx-swift-lm` commit `22157fc397b59acfb03e91c370bcbf2cfb10970e`, embedding XGrammar v0.1.30 (`d476a48dcd8fa3b5afeddbe850e73bb3b1dcf505`) with retained licenses and documented compatibility changes. It does not import the upstream guided loop, completion reserve or output-bias helpers.
 
 Engine CPU/source checks and app DTO/error tests are distinct from live proof. Before a release/readiness claim, record actual model output, natural completion, tokens/s, stream/nonstream errors, multi-turn changed-schema behavior, cache-hit/SSD evidence and ordinary unconstrained chat/tool regressions. Those live gates remain pending in this document until updated with receipts.
+
+## Deterministic JSON formatting
+
+Schema grammar compilation uses deterministic structural formatting: no indentation and explicit comma/colon separators, with `any_whitespace=false`. This removes unbounded structural whitespace choices that can otherwise consume the token budget. String spaces, escaped newlines/tabs, Unicode, enum/const values and property names retain their data semantics. This is a serialization grammar policy, not a whitespace logit bias or forced EOS. Generic unconstrained collection rules in the pinned donor retain a fixed comma-space separator; that bounded formatting does not introduce a whitespace loop. Natural grammar-authorized completion is still required; formatting alone is not a successful-generation proof.

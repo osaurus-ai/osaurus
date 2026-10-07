@@ -866,10 +866,14 @@ public struct OpenResponsesUsage: Codable, Sendable {
     public let output_tokens: Int
     public let total_tokens: Int
 
-    public init(inputTokens: Int, outputTokens: Int) {
+    /// Optional measured runtime decode rate; absent when upstream did not report one.
+    public let tokens_per_second: Double?
+
+    public init(inputTokens: Int, outputTokens: Int, tokensPerSecond: Double? = nil) {
         self.input_tokens = inputTokens
         self.output_tokens = outputTokens
         self.total_tokens = inputTokens + outputTokens
+        self.tokens_per_second = tokensPerSecond.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
     }
 }
 
@@ -1328,7 +1332,8 @@ extension ChatCompletionResponse {
             output: outputItems,
             usage: OpenResponsesUsage(
                 inputTokens: usage.prompt_tokens,
-                outputTokens: usage.completion_tokens
+                outputTokens: usage.completion_tokens,
+                tokensPerSecond: usage.tokens_per_second
             )
         )
     }
