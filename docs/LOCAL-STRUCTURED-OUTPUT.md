@@ -1,6 +1,6 @@
 # Local JSON Schema output
 
-Status: proposed source implementation, unmerged. Real local-model, streaming, multi-turn and cache proof is pending. This document describes the intended contract, not a release or readiness claim.
+Status: implementation with bounded local-model qualification; PR3028 depends on engine PR564. This is not a release or universal model-family qualification.
 
 `json_schema` requests pass the supplied schema through the local MLX runtime to a genuine next-token grammar mask. The existing bundle/request sampler selects among grammar-allowed tokens. This feature adds no prompt instruction, closing-token bias, whitespace bias, repetition penalty or hidden sampler override.
 
@@ -78,6 +78,8 @@ Unsupported syntax produces an explicit typed engine error, mapped to request re
 
 The bundle tokenizer adapter currently requires BPE with a plain ByteLevel decoder, empty continuation/end-of-word suffixes and explicitly disabled tokenization-space cleanup. Added-token bytes, non-stop special IDs and vocabulary gaps are handled explicitly. Other decoder families or ambiguous metadata are rejected; individual decoded tokens are not used to guess vocabulary bytes.
 
+Numeric values inside `const` or `enum` (including nested instance data) require plain integer literals from -9007199254740991 through9007199254740991. Fractional/exponent spellings are rejected before DTO conversion can round them. Ordinary `type:number` remains supported.
+
 ## Completion, streaming and cache contract
 
 Schema requests use request-local autoregressive decoding. MTP/speculative decoding is disabled only for that request; ordinary requests and global settings retain their behavior. Full-precision SSD/prefix cache state remains model state. Every schema request creates an independent matcher, including cache-hit requests and requests changing their schema. Matcher state is not restored from a cached prompt.
@@ -98,7 +100,7 @@ This is the inference integration point. It does not implement a workflow graph,
 
 The engine imports the grammar bridge from upstream `mlx-swift-lm` commit `22157fc397b59acfb03e91c370bcbf2cfb10970e`, embedding XGrammar v0.1.30 (`d476a48dcd8fa3b5afeddbe850e73bb3b1dcf505`) with retained licenses and documented compatibility changes. It does not import the upstream guided loop, completion reserve or output-bias helpers.
 
-Engine CPU/source checks and app DTO/error tests are distinct from live proof. Before a release/readiness claim, record actual model output, natural completion, tokens/s, stream/nonstream errors, multi-turn changed-schema behavior, cache-hit/SSD evidence and ordinary unconstrained chat/tool regressions. Those live gates remain pending in this document until updated with receipts.
+Engine CPU/source checks and app DTO/error tests are distinct from live proof. Before a release/readiness claim, record actual model output, natural completion, tokens/s, stream/nonstream errors, multi-turn changed-schema behavior, cache-hit/SSD evidence and ordinary unconstrained chat/tool regressions. The isolated Release app qualification on 2026-10-06 passed 15 API cases on Raptor0.6.1 JANG_6M with native reasoning explicitly off: both endpoints streaming/nonstreaming, independently validated nested schemas and literal markers/Unicode, changed-schema and multi-turn SSD reuse, explicit length/unsupported errors, ordinary chat/tool continuation, disconnect drain and fresh-schema recovery. Streaming cache telemetry reported an actual disk restore of 659/662 tokens. Effective KV was fp16, 9 ordinary plus27 rotating layers, paged RAM off and TurboQuant0. The visible model picker/native reasoning control and ordinary chat were also exercised. See the PR proof comments for source identities and raw-artifact receipts. These short outputs do not establish sustained speed, other tokenizer/model families, media, active reasoning, schema-plus-tools, or full-disk eviction behavior.
 
 ## Deterministic JSON formatting
 
