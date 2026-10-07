@@ -64,7 +64,7 @@ struct MTPSection: View {
             SettingsField(
                 label: "Mode",
                 hint:
-                    "Default turns speculation on where it is measured to win: adaptive native MTP for Qwen3.8 Flash-Next, and a Qwen 27B bundle's own DFlash 2 drafter. Off uses autoregressive decoding everywhere. On requests adaptive native MTP for every bundle whose safety and verified tuning allow it. See the resolved reason below. A selected DFlash 2 drafter replaces native MTP for the model it fits."
+                    "Default enables adaptive native MTP for supported Qwen3.8 Flash-Next bundles and compatible bundled DFlash 2 for Qwen 27B. Off uses autoregressive decoding everywhere. On requests a compatible bundled or selected DFlash 2 drafter, or adaptive native MTP where supported. See the resolved reason below. Speed depends on the model and workload."
             ) {
                 Picker("", selection: Binding(
                     get: {
