@@ -73,6 +73,15 @@ private final class SendableClientIPBox: @unchecked Sendable {
     }
 }
 
+private final class SendableFlagBox: @unchecked Sendable {
+    private var _value = false
+    private let _lock = NSLock()
+    var value: Bool {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
 private final class ChannelCloseFutureBox: @unchecked Sendable {
     private var future: EventLoopFuture<Void>?
     private let lock = NSLock()
@@ -226,6 +235,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// (loopback / LAN peer / first `X-Forwarded-For` hop for relay traffic).
     /// Attribution hint for Insights `inboundAPI` rows, never an identity claim.
     private let _clientIP = SendableClientIPBox()
+    /// Off-loop-readable mirror of `RequestState.isSecureChannel`, for
+    /// `logRequest`, which also runs from request tasks off the event loop.
+    private let _isSecureChannel = SendableFlagBox()
     private static let openResponsesContextStore = OpenResponsesContextStore()
 
     /// Internal marker header stamped by `RelayTunnelManager` on every request
@@ -461,6 +473,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.bodyBytesSeen = 0
             stateRef.value.rejectedTooLarge = false
             stateRef.value.isSecureChannel = false
+            _isSecureChannel.value = false
             stateRef.value.secureChannelAgentAddress = nil
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
@@ -612,6 +625,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 stateRef.value.requestHead = head
                 stateRef.value.normalizedPath = path
                 stateRef.value.isSecureChannel = true
+                _isSecureChannel.value = true
             }
 
             // Access key authentication gate (all data snapshotted at server start, zero locks)
@@ -18454,7 +18468,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         // What travelled sealed end to end stays out of the log: a Secure
         // Channel call keeps only the size of its bodies.
-        let sealed = stateRef.value.isSecureChannel
+        let sealed = _isSecureChannel.value
         func redacted(_ body: String?) -> String? {
             guard sealed, let body else { return body }
             return "[sealed, \(body.utf8.count) bytes]"
