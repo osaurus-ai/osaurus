@@ -2458,12 +2458,24 @@ public actor ModelRuntime {
         let retiredCacheCounters = modelCache[name].flatMap {
             Self.processLifetimeCacheCounters(for: $0)
         }
+        let retiredDrafterPath = modelCache[name]?.draftStrategy?.dflash2DrafterPath
         rememberDiskQuotaBeforeUnload(name: name)
         modelCache[name]?.container.disableCaching()
 
         Stream.gpu.synchronize()
         let didRemove = autoreleasepool {
-            modelCache.removeValue(forKey: name) != nil
+            let removed = modelCache.removeValue(forKey: name) != nil
+            // The resolver strongly owns loaded draft weights independently of
+            // the target container. Release that owner only after draining the
+            // target and only when no other resident holder shares its bundle.
+            if removed, let retiredDrafterPath,
+                Self.shouldEvictDFlashDrafter(
+                    retiredPath: retiredDrafterPath,
+                    residentPaths: modelCache.values.compactMap { $0.draftStrategy?.dflash2DrafterPath })
+            {
+                DFlash2DrafterResolver.shared.evict(path: retiredDrafterPath)
+            }
+            return removed
         }
         residentMetadata.removeValue(forKey: name)
         lastUseSource.removeValue(forKey: name)
@@ -2486,6 +2498,14 @@ public actor ModelRuntime {
         Stream.gpu.synchronize()
         await MetalGate.shared.exitModelTeardown(model: name)
         return true
+    }
+
+    /// Match the resolver's canonical path key, including symlink aliases.
+    nonisolated static func shouldEvictDFlashDrafter(
+        retiredPath: URL, residentPaths: [URL]
+    ) -> Bool {
+        let retiredKey = retiredPath.resolvingSymlinksInPath().path
+        return !residentPaths.contains { $0.resolvingSymlinksInPath().path == retiredKey }
     }
 
     /// Remove only the claim generation owned by this caller, then release all
@@ -2668,6 +2688,9 @@ public actor ModelRuntime {
 
         autoreleasepool {
             modelCache.removeAll()
+            // The quit branch returned above without freeing GPU objects.
+            // Normal clear drains all holders, so no shared drafter remains.
+            DFlash2DrafterResolver.shared.evictAll()
         }
         if hasRetiredCacheCounters {
             await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
