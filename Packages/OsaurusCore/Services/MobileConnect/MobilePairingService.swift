@@ -43,6 +43,46 @@ struct MobilePairResponse: Codable, Sendable {
     let sealed: PairingKeyEnvelope.Sealed
 }
 
+/// Pairing v2, step one (`POST /pair/code`, `v: 2`): the phone's SPAKE2
+/// share. The code itself never travels.
+struct MobilePairStartRequest: Decodable, Sendable {
+    let v: Int
+    let deviceId: String
+    let deviceName: String
+    /// pA (base64url, compressed secp256k1 point).
+    let share: String
+    var isSimulator: Bool? = nil
+}
+
+struct MobilePairStartResponse: Codable, Sendable {
+    let v: Int
+    /// Names this exchange in step two.
+    let exchange: String
+    /// pB (base64url).
+    let share: String
+    /// cB (base64url): the Mac's proof it used the same code.
+    let confirm: String
+}
+
+/// Step two (`POST /pair/confirm`): cA, the phone's proof.
+struct MobilePairConfirmRequest: Decodable, Sendable {
+    let v: Int
+    let exchange: String
+    let confirm: String
+}
+
+struct MobilePairConfirmResponse: Codable, Sendable {
+    let v: Int
+    /// `MobilePairPayload` JSON sealed under the SPAKE2 session key.
+    let sealed: String
+}
+
+extension Encodable {
+    fileprivate var encoded: String {
+        (try? JSONEncoder().encode(self)).map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"encoding_failed"}"#
+    }
+}
+
 /// Plaintext inside `MobilePairResponse.sealed`.
 struct MobilePairPayload: Codable, Sendable, Equatable {
     struct AgentEntry: Codable, Sendable, Equatable {
@@ -95,6 +135,8 @@ final class MobilePairingService: ObservableObject {
 
     enum RedeemOutcome: Equatable, Sendable {
         case paired(MobilePairResponse, deviceName: String)
+        /// A v2 step answered: the JSON body to send, and its log-safe twin.
+        case answered(String, logBody: String)
         /// Wrong, expired, locked-out, or no code at all — deliberately one
         /// outcome so a guesser learns nothing about which.
         case invalidCode
@@ -105,6 +147,7 @@ final class MobilePairingService: ObservableObject {
             case (.invalidCode, .invalidCode): return true
             case (.badRequest(let a), .badRequest(let b)): return a == b
             case (.paired(_, let a), .paired(_, let b)): return a == b
+            case (.answered(let a, _), .answered(let b, _)): return a == b
             default: return false
             }
         }
@@ -182,6 +225,7 @@ final class MobilePairingService: ObservableObject {
     func cancelCode() {
         expiryTask?.cancel()
         expiryTask = nil
+        exchanges.removeAll()
         activeCode = nil
         if let pending = pendingKey {
             APIKeyManager.shared.delete(id: pending.info.id)
@@ -233,14 +277,7 @@ final class MobilePairingService: ObservableObject {
             return .invalidCode
         }
 
-        let agents = Self.remoteAgents(includeRelay: Self.isReachAnywhereEnabled(in: defaults))
-        let payload = MobilePairPayload(
-            apiKey: pending.fullKey,
-            keyExpiresAt: pending.info.expiresAt.map { Int($0.timeIntervalSince1970) },
-            hostName: Host.current().localizedName ?? "Mac",
-            agents: agents.isEmpty ? Self.connectEntry(address: pendingConnectAddress) : agents
-        )
-        guard let plaintext = try? JSONEncoder().encode(payload),
+        guard let plaintext = try? JSONEncoder().encode(makePayload(pending)),
             let sealed = try? PairingKeyEnvelope.seal(
                 secret: String(decoding: plaintext, as: UTF8.self),
                 recipientPublicKeyBase64url: request.encPub,
@@ -251,7 +288,35 @@ final class MobilePairingService: ObservableObject {
             return .badRequest("Invalid encryption key")
         }
 
-        // One phone per Mac: the previous phone's key stops working now.
+        completePairing(
+            pending,
+            deviceId: deviceId,
+            deviceName: deviceName,
+            isSimulator: request.isSimulator,
+            now: now
+        )
+        return .paired(MobilePairResponse(v: Self.wireVersion, sealed: sealed), deviceName: deviceName)
+    }
+
+    private func makePayload(_ pending: (fullKey: String, info: AccessKeyInfo)) -> MobilePairPayload {
+        let agents = Self.remoteAgents(includeRelay: Self.isReachAnywhereEnabled(in: defaults))
+        return MobilePairPayload(
+            apiKey: pending.fullKey,
+            keyExpiresAt: pending.info.expiresAt.map { Int($0.timeIntervalSince1970) },
+            hostName: Host.current().localizedName ?? "Mac",
+            agents: agents.isEmpty ? Self.connectEntry(address: pendingConnectAddress) : agents
+        )
+    }
+
+    /// Records the phone and spends the code. One phone per Mac: the
+    /// previous phone's key stops working now.
+    private func completePairing(
+        _ pending: (fullKey: String, info: AccessKeyInfo),
+        deviceId: String,
+        deviceName: String,
+        isSimulator: Bool?,
+        now: Date
+    ) {
         if let previous = pairedDevice {
             APIKeyManager.shared.revoke(id: previous.keyId)
         }
@@ -259,6 +324,7 @@ final class MobilePairingService: ObservableObject {
         expiryTask = nil
         activeCode = nil
         pendingKey = nil
+        exchanges.removeAll()
         setPairedDevice(
             PairedMobileDevice(
                 deviceId: deviceId,
@@ -266,10 +332,89 @@ final class MobilePairingService: ObservableObject {
                 keyId: pending.info.id,
                 pairedAt: now,
                 keyExpiresAt: pending.info.expiresAt,
-                isSimulator: request.isSimulator == true ? true : nil
+                isSimulator: isSimulator == true ? true : nil
             )
         )
-        return .paired(MobilePairResponse(v: Self.wireVersion, sealed: sealed), deviceName: deviceName)
+    }
+
+    // MARK: Redeem v2 (POST /pair/code, then POST /pair/confirm)
+
+    /// An exchange the Mac has answered, waiting for the phone to prove it
+    /// used the same code.
+    private struct PendingExchange {
+        let deviceId: String
+        let deviceName: String
+        let isSimulator: Bool?
+        let keys: PairingSPAKE2.Keys
+    }
+
+    private var exchanges: [String: PendingExchange] = [:]
+
+    /// Step one: answer the phone's SPAKE2 share with the Mac's and its
+    /// confirmation. Spends one of the code's attempts whatever the phone
+    /// typed — the Mac can't tell — so the budget caps guessing.
+    func startExchange(_ request: MobilePairStartRequest, now: Date = Date()) -> RedeemOutcome {
+        guard request.v == PairingSPAKE2.version else { return .badRequest("Unsupported version") }
+        let deviceId = request.deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let deviceName = String(request.deviceName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        guard !deviceId.isEmpty, deviceId.count <= 128, !deviceName.isEmpty else {
+            return .badRequest("Missing device id or name")
+        }
+        guard let phoneShare = Data(base64urlEncoded: request.share) else { return .badRequest("Invalid key share") }
+
+        guard var code = activeCode, pendingKey != nil else { return .invalidCode }
+        switch code.spendAttempt(at: now) {
+        case .accepted:
+            activeCode = code
+        case .rejected, .lockedOut, .expired:
+            cancelCode()
+            return .invalidCode
+        }
+
+        let identity = PairingSPAKE2.phoneIdentity(deviceId: deviceId, deviceName: deviceName)
+        guard let mac = try? PairingSPAKE2.Party(role: .mac, code: code.code),
+            let keys = try? mac.finish(peerShare: phoneShare, phoneIdentity: identity)
+        else { return .badRequest("Invalid key share") }
+
+        let exchange = UUID().uuidString
+        exchanges[exchange] = PendingExchange(
+            deviceId: deviceId,
+            deviceName: deviceName,
+            isSimulator: request.isSimulator,
+            keys: keys
+        )
+        let response = MobilePairStartResponse(
+            v: PairingSPAKE2.version,
+            exchange: exchange,
+            share: mac.share.base64urlEncoded,
+            confirm: keys.macConfirmation.base64urlEncoded
+        )
+        return .answered(response.encoded, logBody: #"{"v":2,"exchange":"<redacted>"}"#)
+    }
+
+    /// Step two: the phone's confirmation proves it used the same code. Only
+    /// then is the key handed over, sealed under the agreed session key.
+    func confirmExchange(_ request: MobilePairConfirmRequest, now: Date = Date()) -> RedeemOutcome {
+        guard request.v == PairingSPAKE2.version else { return .badRequest("Unsupported version") }
+        guard let exchange = exchanges.removeValue(forKey: request.exchange),
+            let code = activeCode, !code.isExpired(at: now), let pending = pendingKey,
+            let confirm = Data(base64urlEncoded: request.confirm),
+            PairingSPAKE2.constantTimeEquals(confirm, exchange.keys.phoneConfirmation)
+        else { return .invalidCode }
+
+        guard let plaintext = try? JSONEncoder().encode(makePayload(pending)),
+            let sealed = try? PairingSPAKE2.seal(plaintext, key: exchange.keys.sessionKey, deviceId: exchange.deviceId)
+        else { return .badRequest("Couldn't seal the pairing") }
+
+        completePairing(
+            pending,
+            deviceId: exchange.deviceId,
+            deviceName: exchange.deviceName,
+            isSimulator: exchange.isSimulator,
+            now: now
+        )
+        let response = MobilePairConfirmResponse(v: PairingSPAKE2.version, sealed: sealed)
+        return .answered(response.encoded, logBody: #"{"v":2,"sealed":"<redacted>"}"#)
     }
 
     /// Binds the envelope to this exchange's device so it can't be replayed

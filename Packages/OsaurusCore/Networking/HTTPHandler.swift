@@ -618,7 +618,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
             let publicPaths: Set<String> = [
-                "/", "/health", "/pair", "/pair/hello", "/pair/challenge", "/pair/code", "/pair-invite", "/secure/session",
+                "/", "/health", "/pair", "/pair/hello", "/pair/challenge", "/pair/code", "/pair/confirm", "/pair-invite",
+                "/secure/session",
             ]
             let isPluginRoute = path.hasPrefix("/plugins/")
             // Agent Channel webhook routes are authenticated by the connection's
@@ -987,8 +988,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handlePairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/pair/hello" {
                 handlePairHelloEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
-            } else if head.method == .POST, path == "/pair/code" {
-                handlePairCodeEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/pair/code" || path == "/pair/confirm" {
+                handlePairCodeEndpoint(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair/unpair" {
                 handlePairUnpairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair-invite" {
@@ -3632,7 +3633,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// ever carry a small JSON envelope.
     private func bodyByteLimit(for head: HTTPRequestHead) -> Int {
         let path = normalize(extractPath(from: head.uri))
-        if path == "/pair" || path == "/pair/code" || path == "/pair-invite" || path == "/secure/session" {
+        if path == "/pair" || path == "/pair/code" || path == "/pair/confirm" || path == "/pair-invite"
+            || path == "/secure/session"
+        {
             return configuration.maxPairingBodyBytes
         }
         return configuration.maxRequestBodyBytes
@@ -4842,10 +4845,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private func handlePairCodeEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
+        path: String,
         startTime: Date,
         userAgent: String?
     ) {
-        let path = "/pair/code"
         let cors = stateRef.value.corsHeaders
 
         func reply(status: HTTPResponseStatus, body: String, logBody: String? = nil) {
@@ -4890,7 +4893,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         if var body = stateRef.value.requestBodyBuffer {
             data = Data(body.readBytes(length: body.readableBytes) ?? [])
         }
-        guard let request = try? JSONDecoder().decode(MobilePairRequest.self, from: data) else {
+        // v1 sends the code and a key to seal to; v2 (SPAKE2) never sends
+        // the code, and confirms in a second step on `/pair/confirm`.
+        struct Version: Decodable { let v: Int }
+        let decoder = JSONDecoder()
+        let redeem: @MainActor @Sendable () -> MobilePairingService.RedeemOutcome
+        if path == "/pair/confirm", let request = try? decoder.decode(MobilePairConfirmRequest.self, from: data) {
+            redeem = { MobilePairingService.shared.confirmExchange(request) }
+        } else if path == "/pair/code", (try? decoder.decode(Version.self, from: data))?.v == PairingSPAKE2.version,
+            let request = try? decoder.decode(MobilePairStartRequest.self, from: data)
+        {
+            redeem = { MobilePairingService.shared.startExchange(request) }
+        } else if path == "/pair/code", let request = try? decoder.decode(MobilePairRequest.self, from: data) {
+            redeem = { MobilePairingService.shared.redeem(request) }
+        } else {
             reply(status: .badRequest, body: #"{"error":"bad_request","message":"Invalid pairing request"}"#)
             return
         }
@@ -4899,7 +4915,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let outcome = await MainActor.run { MobilePairingService.shared.redeem(request) }
+            let outcome = await MainActor.run { redeem() }
             hop {
                 let context = ctx.value
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -4915,6 +4931,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) }
                         ?? #"{"error":"encoding_failed"}"#
                     logBody = #"{"v":1,"sealed":"<redacted>"}"#
+                case .answered(let answer, let redacted):
+                    MobileConnectLog.write("\(path): answered a v2 pairing step from \(pairingIP)")
+                    status = .ok
+                    body = answer
+                    logBody = redacted
                 case .invalidCode:
                     MobileConnectLog.write("pair/code: wrong or expired code from \(pairingIP)")
                     PairingRateLimiter.shared.penalize(ip: pairingIP)

@@ -49,6 +49,16 @@ struct PairingCode: Equatable, Sendable {
         return failedAttempts >= Self.maxFailedAttempts ? .lockedOut : .rejected
     }
 
+    /// Pairing v2 (SPAKE2): the code never travels, so the Mac can't tell a
+    /// right guess from a wrong one when it answers — every exchange it
+    /// answers is one guess, spent from the same budget.
+    mutating func spendAttempt(at now: Date) -> AttemptResult {
+        guard !isExpired(at: now) else { return .expired }
+        guard failedAttempts < Self.maxFailedAttempts else { return .lockedOut }
+        failedAttempts += 1
+        return .accepted
+    }
+
     /// Uniformly random `digitCount`-digit code (leading zeros allowed),
     /// via rejection sampling so no digit string is favoured by modulo bias.
     static func generate() -> String {

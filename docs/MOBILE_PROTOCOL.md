@@ -850,6 +850,45 @@ finds the pin, and should tell the user to update Osaurus on the Mac: unlike
 an unpaired phone, it never learns identities from Bonjour, so joining the
 Mac's network does not help.
 
+
+#### v2: SPAKE2 (current)
+
+v1 sends the code in the clear and seals to whatever key arrives with it, so
+an active LAN attacker can swap in its own key (§11.5). v2 never sends the
+code. It runs SPAKE2 (RFC 9382) over secp256k1, keyed by the code, in two
+steps; both apps implement it in `PairingSPAKE2.swift`.
+
+```
+POST /pair/code            (unauthenticated, LAN only, rate-limited per IP)
+{"v":2,"deviceId":"…","deviceName":"My iPhone","share":"<base64url pA>",
+ "isSimulator":true}   // optional
+
+→ 200 {"v":2,"exchange":"<id>","share":"<base64url pB>","confirm":"<base64url cB>"}
+
+POST /pair/confirm         (unauthenticated, LAN only, rate-limited per IP)
+{"v":2,"exchange":"<id>","confirm":"<base64url cA>"}
+
+→ 200 {"v":2,"sealed":"<base64url ChaCha20-Poly1305 combined box>"}
+  sealed under the session key, AAD = utf8("osaurus-pair-v2:payload:<deviceId>");
+  plaintext = the v1 payload above
+```
+
+- Points are compressed secp256k1. M and N hash the labels `M` / `N` to an
+  x coordinate on the curve (even y); w hashes the code to a scalar.
+  pA = x·G + w·M, pB = y·G + w·N, K = x·y·G.
+- TT is the length-prefixed (8-byte little-endian) concatenation of
+  `osaurus-pair-v2`, the phone identity (length-prefixed deviceId and
+  deviceName), an empty Mac identity, pA, pB, K and w. HKDF-SHA256 over
+  SHA-256(TT) gives the session key and the two confirmation keys; cA and cB
+  are HMAC-SHA256 of TT under them.
+- The phone checks cB before it sends cA. A mismatch means a wrong code (or
+  someone in the middle), and the phone says the code was wrong.
+- Every exchange the Mac answers spends one of the code's 5 attempts,
+  whether or not the code was right: the Mac can't tell until step two. The
+  Mac records the phone and revokes the previous one only after a matching cA.
+- A v2 phone against a Mac without v2 gets `400`, and tells the user to
+  update Osaurus on the Mac. v1 stays accepted for one release so phones
+  paired by older builds can pair again, then goes.
 ### 11.4 Lifecycle
 
 - Keys last 90 days; re-pair to renew. Unpair on the Mac revokes the key
@@ -864,14 +903,19 @@ Mac's network does not help.
 
 ### 11.5 Security notes
 
-The code travels in cleartext on the LAN. A passive observer learns a
-single-use code that is useless after redemption, and the key itself is
-sealed to the phone's ephemeral key. An **active** LAN attacker who
-intercepts the code inside its 5-minute window can redeem it first; the Mac
-then shows the attacker's device name under "Paired iPhone", and the real
-phone's redemption fails. The residual risk is accepted for v1 (LAN-only,
-short-lived, user-initiated); a PAKE (e.g. SPAKE2 over the code) would remove
-it.
+**v1** sends the code in cleartext and seals the key to whatever `encPub`
+arrives with it. An **active** LAN attacker inside the 5-minute window can
+replace `encPub` with its own, open the sealed payload, take the access key,
+and hand the phone a roster of its own addresses to pin. Every later Secure
+Channel session then terminates at the attacker, and the Mac shows the real
+phone's name. This is a silent, lasting man in the middle, not just a race to
+redeem first.
+
+**v2** (SPAKE2) closes this. The code never travels, and a share swapped in
+transit yields different keys, so confirmation fails and nothing is handed
+over. An attacker gets one online guess per answered exchange (5 per code),
+and nothing to test guesses against offline. The device id and name are bound
+into the transcript, so they can't be relabelled either.
 
 ### 11.6 Reaching the Mac away from the LAN
 

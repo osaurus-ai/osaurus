@@ -152,7 +152,7 @@ These codes arrive outside the encryption (the handshake's answer, or `/secure/c
 
 The Secure Channel composes with — it does not replace — the existing layers documented in [`IDENTITY.md`](IDENTITY.md) and [`SECURITY.md`](SECURITY.md):
 
-- **Pairing** establishes *who* a peer is (HPKE-sealed key delivery, challenge-response, server signature verification) and pins the agent address the channel later verifies on every handshake.
+- **Pairing** establishes *who* a peer is (for the phone, a SPAKE2 exchange keyed by the pairing code — MOBILE_PROTOCOL.md §11.3; between Macs, HPKE-sealed key delivery, challenge-response, server signature verification) and pins the agent address the channel later verifies on every handshake.
 - **`osk-v1` access keys** still authenticate *every* call — now inside the ciphertext — with unchanged scoping (`403 agent_scope_denied` for cross-agent use, on both the run route `/agents/{id}/run` and the `GET /agents/{id}` metadata route) and instant revocation.
 - **Relay trust hardening** (no loopback trust for relay-origin traffic) still applies to the decrypted inner request.
 - **Per-agent host workspace** rides on this trust boundary: only a caller that completed the handshake and passed the agent-scope gate can have a remote agent read/write files inside the folder its owner granted (host **file** tools only — `shell_run` / `git_commit` / `file_undo` stay denied). See [`SECURITY.md`](SECURITY.md) and [`OpenAI_API_GUIDE.md`](OpenAI_API_GUIDE.md).
