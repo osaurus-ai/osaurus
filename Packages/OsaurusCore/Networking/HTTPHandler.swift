@@ -8089,7 +8089,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         guard let inner = try? JSONDecoder().decode(SecureChannel.InnerRequest.self, from: plaintext),
             inner.path.hasPrefix("/"),
-            !inner.path.hasPrefix("/secure/")
+            // On the path as routed: `/v1/secure/call` normalises to
+            // `/secure/call`, so checking the raw path alone lets one nest.
+            !Self.isSecureChannelPath(normalize(extractPath(from: inner.path)))
         else {
             reject(status: .badRequest, code: "secure_malformed", message: "Malformed inner request")
             return nil
@@ -8186,6 +8188,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         "/computer-use", "/secrets", "/approvals", "/workspaces", "/workspace-agents", "/projects", "/sessions",
         "/runs", "/artifacts", "/pair/unpair",
     ]
+
+    static func isSecureChannelPath(_ path: String) -> Bool {
+        path == "/secure" || path.hasPrefix("/secure/")
+    }
 
     static func isOwnerChannelRoute(_ path: String) -> Bool {
         ownerChannelRoutes.contains { path == $0 || path.hasPrefix($0 + "/") }

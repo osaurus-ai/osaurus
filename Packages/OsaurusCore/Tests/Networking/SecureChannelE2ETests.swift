@@ -746,18 +746,21 @@ struct SecureChannelE2ETests {
         defer { Task { await server.shutdown() } }
         let session = try establishSession()
 
-        // No nesting: an inner request pointing back at /secure/* is malformed.
-        let inner = SecureChannel.InnerRequest(
-            method: "POST",
-            path: "/secure/call",
-            authorization: nil
-        )
-        let (call, _) = try session.sealCall(innerRequest: JSONEncoder().encode(inner))
-        let request = try secureCallRequest(server: server, call: call)
+        // No nesting: an inner request pointing back at /secure/* is
+        // malformed, under any prefix that normalises to it.
+        for path in ["/secure/call", "/v1/secure/call", "/api/secure/session", "/v1/api/secure/call?x=1"] {
+            let inner = SecureChannel.InnerRequest(
+                method: "POST",
+                path: path,
+                authorization: nil
+            )
+            let (call, _) = try session.sealCall(innerRequest: JSONEncoder().encode(inner))
+            let request = try secureCallRequest(server: server, call: call)
 
-        let (data, resp) = try await URLSession.shared.data(for: request)
-        #expect((resp as? HTTPURLResponse)?.statusCode == 400)
-        #expect(String(decoding: data, as: UTF8.self).contains("secure_malformed"))
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 400, "\(path)")
+            #expect(String(decoding: data, as: UTF8.self).contains("secure_malformed"), "\(path)")
+        }
     }
 }
 
