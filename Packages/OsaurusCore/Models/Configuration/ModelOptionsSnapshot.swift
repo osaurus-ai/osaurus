@@ -72,10 +72,10 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
         /// File-only bundle inspection; run it off the main thread.
         static func inspect(model: String) -> NativeMTP? {
             guard let status = ModelRuntime.inspectLoadingModelMTP(name: model),
-                status.bundleHasMTP, status.isTargetMTPFamily
+                status.speculationAvailable
             else { return nil }
             return NativeMTP(
-                blocked: status.isBlocked, familyDefaultOn: status.measuredFamilyAutoDepth != nil)
+                blocked: status.speculationBlocked, familyDefaultOn: status.familyDefaultOn)
         }
     }
 
@@ -178,7 +178,7 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
         let selected = nativeMTP.blocked || !effectiveOn ? "off" : "auto"
         return Option(
             id: nativeMTPOptionId,
-            label: L("Native MTP"),
+            label: L("Speculative Decoding"),
             icon: "hare",
             // The phone shows the choice alone, without the composer's copy.
             help: nil,

@@ -1,9 +1,9 @@
 import Foundation
 import MLXLMCommon
 
-/// Native MTP is opt-in. Selecting a model only discovers capability; it never
-/// activates speculation. Retain the old provenance keys so an automatic
-/// family default can be retired without overwriting an explicit choice.
+/// Selecting a model discovers the family-default capability without loading it.
+/// Preserve explicit Off/Adaptive and historical provenance; never infer that a
+/// persisted Off was unintentional.
 enum NativeMTPSelectionDefault {
     static let userChoseKey = "nativeMTPSegmentUserChose"
     static let familyDefaultKey = "nativeMTPSegmentIsFamilyDefault"

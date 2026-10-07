@@ -81,6 +81,28 @@ struct NativeMTPPreloadDetectionTests {
         }
     }
 
+    @Test("bundled drafter enables default control without inventing a native head")
+    func bundledDrafterCapabilityBeforeLoad() throws {
+        let directory = try fixture(modelType: "qwen3_5", includeHead: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = #"{"model_type":"qwen3_5","text_config":{"model_type":"qwen3_5_text","hidden_size":5120,"vocab_size":248320,"num_hidden_layers":64}}"#
+        try Data(config.utf8).write(to: directory.appendingPathComponent("config.json"))
+        let drafter = directory.appendingPathComponent("dflash2")
+        try FileManager.default.createDirectory(at: drafter, withIntermediateDirectories: true)
+        try Data(#"{"hidden_size":5120,"vocab_size":248320,"num_target_layers":64,"dflash_config":{"selector_top_k":16,"selector_rank":256,"conv_kernel_size":2,"target_layer_ids":[5,19,33,47,61]}}"#.utf8)
+            .write(to: drafter.appendingPathComponent("config.json"))
+        let before = try #require(ModelRuntime.inspectLoadingModelMTP(name: "27B", directory: directory))
+        #expect(!before.speculationAvailable)
+        try FileManager.default.copyItem(at: directory.appendingPathComponent("model.safetensors"),
+            to: drafter.appendingPathComponent("model.safetensors"))
+        let after = try #require(ModelRuntime.inspectLoadingModelMTP(name: "27B", directory: directory))
+        #expect(!after.bundleHasMTP)
+        #expect(after.bundledDFlash2)
+        #expect(after.speculationAvailable)
+        #expect(after.familyDefaultOn)
+        #expect(!after.speculationBlocked)
+    }
+
     private func fixture(
         modelType: String, format: String = "affine", indexedHead: Bool = true,
         includeHead: Bool = true

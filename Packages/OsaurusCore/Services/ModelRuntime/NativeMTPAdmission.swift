@@ -34,6 +34,7 @@ struct NativeMTPAdmission: Sendable {
         loaded: DraftStrategy?,
         mtp: VMLXServerMTPSettings
     ) throws -> DraftStrategy? {
+        guard mtp.mode != .off else { return nil }
         if externalDrafterSelected { return loaded }
         var settings = VMLXServerRuntimeSettings()
         settings.mtp = mtp

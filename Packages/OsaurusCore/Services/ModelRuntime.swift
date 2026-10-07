@@ -287,6 +287,10 @@ public actor ModelRuntime {
         /// would show a lying control.
         let isBlocked: Bool
         let measuredFamilyAutoDepth: Int?
+        var bundledDFlash2 = false
+        var speculationAvailable: Bool { bundledDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
+        var speculationBlocked: Bool { !bundledDFlash2 && isBlocked }
+        var familyDefaultOn: Bool { bundledDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
         let statusLine: String
     }
 
@@ -317,6 +321,9 @@ public actor ModelRuntime {
     ) -> LoadingModelMTPStatus? {
         guard let status = try? MTPBundleInspector.inspect(modelDirectory: directory)
         else { return nil }
+        let config = try? Data(contentsOf: directory.appendingPathComponent("config.json"))
+        let bundledDFlash2 = VMLXServerRuntimeSettings().bundledDFlash2Drafter(
+            configData: config, bundleDirectory: directory) != nil
         return LoadingModelMTPStatus(
             name: name,
             bundleHasMTP: status.bundleHasMTP,
@@ -324,6 +331,7 @@ public actor ModelRuntime {
             isBlocked: status.isExplicitlyBlocked
                 || status.nativeMTPTuning?.manualBlocked == true,
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
+            bundledDFlash2: bundledDFlash2,
             statusLine: status.statusLine
         )
     }
@@ -6722,12 +6730,12 @@ public actor ModelRuntime {
         _ loaded: MLXLMCommon.DraftStrategy?,
         mtp settings: VMLXServerMTPSettings? = nil
     ) -> MLXLMCommon.DraftStrategy? {
+        let mtp = settings ?? ServerRuntimeSettingsStore.snapshot().mtp
+        if mtp.mode == .off { return nil }
         guard case .some(.nativeMTP(let depth, let verifierMode)) = loaded else {
             // DFlash 2 and the no-drafter case are load-time decisions.
             return loaded
         }
-        let mtp = settings ?? ServerRuntimeSettingsStore.snapshot().mtp
-        if mtp.mode == .off { return nil }
         // Match resolvedMTPLaunch: explicit depth takes precedence over the
         // legacy Auto draft-token cap, regardless of the resident head's depth.
         // It sets the initial depth and the request's exploration ceiling.

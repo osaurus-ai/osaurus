@@ -38,9 +38,9 @@ import OsaurusCore
 
 /// Parsed value of the `--mtp` eval flag.
 public enum EvalMTPControl: Equatable, Sendable {
-    /// Native MTP must not run at all.
+    /// No speculative strategy may run (native MTP or external/bundled DFlash).
     case off
-    /// Production default resolution (tuning-stamp gated).
+    /// Explicit Adaptive resolution; omitting --mtp inherits production family defaults.
     case auto
     /// Force-on at an exact configured draft depth (1...3), bypassing the
     /// measured tuning gate but still requiring MTP tensor evidence.
@@ -170,9 +170,9 @@ public enum EvalMTPControlState {
                     "requested off but the runtime resolution could not be captured — absent MTP stats alone cannot distinguish off from gate-excluded"
                 )
             }
-            if resolution.isNativeMTP {
+            if resolution.requestStrategy != "none" {
                 return .violation(
-                    "MTP control violated: requested off but the runtime resolved requestStrategy=\(resolution.requestStrategy)"
+                    "MTP control violated: requested off but a speculative strategy resolved requestStrategy=\(resolution.requestStrategy)"
                 )
             }
             return .honored

@@ -388,7 +388,7 @@ public enum ServerRuntimeSettingsStore {
         // Run and persist engine schema migrations. Current migrations preserve
         // explicit percentages and legacy GB; only an unset size is Automatic.
         normalized.migrateToCurrentSchema()
-        // Native MTP now requires opt-in. Never repair an explicit Off to Auto.
+        // Family defaults apply only to unset choices. Never replace a stored Off.
         // Retire only defaults whose provenance was recorded by the old family
         // selector, including API-only launches with no chat view present.
         normalized.mtp = NativeMTPSelectionDefault.adaptiveSelection(

@@ -2501,7 +2501,7 @@ extension FloatingInputCard {
         let manuallyBlocked = nativeMTPManuallyBlockedModels.contains(identity)
         return ModelOptionDefinition(
             id: Self.nativeMTPOptionID,
-            label: L("Native MTP"),
+            label: L("Speculative Decoding"),
             icon: "hare",
             kind: .segmented(
                 manuallyBlocked
@@ -2587,20 +2587,20 @@ extension FloatingInputCard {
                     loadingNames.compactMap { name in
                         guard
                             let status = ModelRuntime.inspectLoadingModelMTP(name: name),
-                            status.bundleHasMTP, status.isTargetMTPFamily
+                            status.speculationAvailable
                         else { return nil }
                         return status
                     }
                 }.value
                 nativeMTPCapableModels.formUnion(early.map { Self.mtpIdentity($0.name) })
                 nativeMTPFamilyDefaultOnModels.formUnion(
-                    early.filter { $0.measuredFamilyAutoDepth != nil }.map { Self.mtpIdentity($0.name) })
+                    early.filter { $0.familyDefaultOn }.map { Self.mtpIdentity($0.name) })
                 // A blocked tuning artifact must gate the EARLY window too —
                 // the resident-summary blocked set only covers loaded models,
                 // so without this the whole warmup would show depth segments
                 // the engine will refuse.
                 nativeMTPManuallyBlockedModels.formUnion(
-                    early.filter(\.isBlocked).map { Self.mtpIdentity($0.name) }
+                    early.filter(\.speculationBlocked).map { Self.mtpIdentity($0.name) }
                 )
             }
             let residentIdentities = Set(summaries.map { Self.mtpIdentity($0.name) })
@@ -4398,14 +4398,14 @@ extension FloatingInputCard {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
                 let identity = Self.mtpIdentity(model)
-                if let capability, capability.bundleHasMTP, capability.isTargetMTPFamily {
+                if let capability, capability.speculationAvailable {
                     nativeMTPCapableModels.insert(identity)
-                    if capability.measuredFamilyAutoDepth != nil {
+                    if capability.familyDefaultOn {
                         nativeMTPFamilyDefaultOnModels.insert(identity)
                     } else {
                         nativeMTPFamilyDefaultOnModels.remove(identity)
                     }
-                    if capability.isBlocked {
+                    if capability.speculationBlocked {
                         nativeMTPManuallyBlockedModels.insert(identity)
                     } else {
                         nativeMTPManuallyBlockedModels.remove(identity)
