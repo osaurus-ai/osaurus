@@ -10,7 +10,7 @@ enum NativeMTPSelectionDefault {
 
     /// Product controls expose only Off (AR) and On (Adaptive). Keep the
     /// engine's legacy fields decodable, but never persist a native depth cap.
-    /// External DFlash selection and its block size are independent.
+    /// Keep external drafter selection stored; Off still disables its execution.
     static func adaptiveSelection(_ settings: VMLXServerMTPSettings) -> VMLXServerMTPSettings {
         var result = settings
         // Off and the family default are kept as-is; everything else is On (Adaptive).
@@ -49,7 +49,8 @@ enum NativeMTPSelectionDefault {
             defaults.bool(forKey: familyDefaultKey),
             settings == .init(mode: .forceOn, explicitDepth: 3)
                 || settings == .init(mode: .auto)
+                || settings == .init(mode: .off)
         else { return settings }
-        return .init(mode: .off)
+        return .init(mode: .familyDefault)
     }
 }

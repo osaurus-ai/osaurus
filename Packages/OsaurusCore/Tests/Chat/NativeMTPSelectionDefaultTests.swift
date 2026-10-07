@@ -21,10 +21,11 @@ import Testing
                     .init(mode: .auto, draftTokenLimit: 1),
                     .init(mode: .forceOn, dflash2DrafterPath: "/explicit/drafter", explicitDepth: 3),
                 ] {
-                    let oldDefault = settings == .init(mode: .auto)
+                    let oldDefault = settings == .init(mode: .off)
+                        || settings == .init(mode: .auto)
                         || settings == .init(mode: .forceOn, explicitDepth: 3)
                     let expected: VMLXServerMTPSettings = !chosen && owned && oldDefault
-                        ? .init(mode: .off) : settings
+                        ? .init(mode: .familyDefault) : settings
                     #expect(NativeMTPSelectionDefault.retiringOwnedDefault(
                         settings, defaults: defaults) == expected)
                 }
