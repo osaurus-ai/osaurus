@@ -51,6 +51,9 @@ final class SecureChannelResponseEncryptor: ChannelOutboundHandler, @unchecked S
 
     private var sealer: SecureResponseSealer?
     private var mode: Mode?
+    /// Set once a response couldn't be sealed: the connection is closing,
+    /// and nothing more may reach the wire, sealed or not.
+    private var failed = false
 
     /// Called by `HTTPHandler` (same event loop) after decrypting a
     /// `/secure/call` envelope. The next response written is encrypted.
@@ -60,6 +63,10 @@ final class SecureChannelResponseEncryptor: ChannelOutboundHandler, @unchecked S
     }
 
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        if failed {
+            promise?.fail(ChannelError.ioOnClosedChannel)
+            return
+        }
         guard let sealer else {
             context.write(data, promise: promise)
             return
@@ -70,8 +77,16 @@ final class SecureChannelResponseEncryptor: ChannelOutboundHandler, @unchecked S
             let contentType = head.headers.first(name: "Content-Type") ?? ""
             if contentType.lowercased().hasPrefix("text/event-stream") {
                 mode = .streaming
-                var newHead = head
-                newHead.headers.replaceOrAdd(name: Self.markerHeaderName, value: "1")
+                // A fresh head: the route's own status and headers stay
+                // inside the channel, and a Content-Length sized for the
+                // plaintext would not fit the sealed frames.
+                var newHead = HTTPResponseHead(version: head.version, status: .ok)
+                newHead.headers.add(name: "Content-Type", value: "text/event-stream")
+                newHead.headers.add(name: "Cache-Control", value: "no-cache")
+                newHead.headers.add(name: Self.markerHeaderName, value: "1")
+                if let connection = head.headers.first(name: "Connection") {
+                    newHead.headers.add(name: "Connection", value: connection)
+                }
                 context.write(wrapOutboundOut(.head(newHead)), promise: promise)
             } else {
                 mode = .buffered(head: head, body: nil)
@@ -80,9 +95,10 @@ final class SecureChannelResponseEncryptor: ChannelOutboundHandler, @unchecked S
 
         case .body(let ioData):
             guard case .byteBuffer(var buffer) = ioData else {
-                // File regions are never produced by Osaurus routes; pass
-                // through rather than crash if that ever changes.
-                context.write(data, promise: promise)
+                // File regions are never produced by Osaurus routes. If one
+                // ever is, drop the connection: it can't be sealed, and
+                // passing it through would put plaintext on the wire.
+                failClosed(context: context, promise: promise)
                 return
             }
             switch mode {
@@ -98,8 +114,8 @@ final class SecureChannelResponseEncryptor: ChannelOutboundHandler, @unchecked S
                 mode = .buffered(head: head, body: held)
                 promise?.succeed(())
             case nil:
-                // Body before head — malformed; pass through untouched.
-                context.write(data, promise: promise)
+                // Body before head — malformed, and never sent in the clear.
+                failClosed(context: context, promise: promise)
             }
 
         case .end:
@@ -138,14 +154,23 @@ final class SecureChannelResponseEncryptor: ChannelOutboundHandler, @unchecked S
                     context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
                     context.write(wrapOutboundOut(.end(nil)), promise: promise)
                 } catch {
+                    failed = true
                     promise?.fail(error)
                     context.close(promise: nil)
                 }
             case nil:
-                finish()
-                context.write(data, promise: promise)
+                // End before any head: nothing sealed to finish, so the
+                // client would see no fin. Close instead.
+                failClosed(context: context, promise: promise)
             }
         }
+    }
+
+    private func failClosed(context: ChannelHandlerContext, promise: EventLoopPromise<Void>?) {
+        failed = true
+        finish()
+        promise?.fail(ChannelError.ioOnClosedChannel)
+        context.close(promise: nil)
     }
 
     private func writeFrame(
@@ -164,6 +189,7 @@ final class SecureChannelResponseEncryptor: ChannelOutboundHandler, @unchecked S
             buffer.writeString("\n\n")
             context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: promise)
         } catch {
+            failed = true
             promise?.fail(error)
             context.close(promise: nil)
         }
