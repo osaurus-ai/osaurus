@@ -327,7 +327,7 @@ let package = Package(
         // text-only cache checkpoints use exact active-template prefix proofs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "7c5a8a0895f94f4a1784d13e105abe2c9b5de1d4"
+            revision: "a468573fbe5b2c166d8d1dabea78c205c41e6716"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
