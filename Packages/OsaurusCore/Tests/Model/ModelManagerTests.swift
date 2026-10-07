@@ -659,10 +659,13 @@ struct ModelManagerTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("osu-missing-model-root-\(UUID().uuidString)", isDirectory: true)
 
-        let detected = ModelManager.scanLocalModels(at: root)
+        var invocationDiagnostic: [String: Any]?
+        let detected = ModelManager.scanLocalModels(at: root) { diagnostic in
+            invocationDiagnostic = diagnostic
+        }
 
         #expect(detected.isEmpty)
-        let diagnostic = try #require(ModelManager.localModelsScanDiagnosticJSONObject())
+        let diagnostic = try #require(invocationDiagnostic)
         #expect(diagnostic["root"] as? String == root.path)
         #expect(diagnostic["root_exists"] as? Bool == false)
         #expect(diagnostic["status"] as? String == "failed")

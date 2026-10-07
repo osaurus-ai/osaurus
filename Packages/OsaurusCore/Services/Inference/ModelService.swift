@@ -48,6 +48,8 @@ struct GenerationParameters: Sendable {
     /// + post-validate; remotes forward natively when the upstream
     /// supports it.
     let jsonMode: Bool
+    /// Explicit constrained-decoding schema; never implemented with prompt injection.
+    let jsonSchema: String?
     /// Model-specific options resolved from the active `ModelProfile` (e.g. aspect ratio).
     let modelOptions: [String: ModelOptionValue]
     /// Session identifier for chat/history grouping. Not threaded into the
@@ -162,6 +164,7 @@ struct GenerationParameters: Sendable {
         presencePenalty: Float? = nil,
         seed: UInt64? = nil,
         jsonMode: Bool = false,
+        jsonSchema: String? = nil,
         modelOptions: [String: ModelOptionValue] = [:],
         sessionId: String? = nil,
         activityID: UUID = UUID(),
@@ -196,6 +199,7 @@ struct GenerationParameters: Sendable {
         self.presencePenalty = presencePenalty
         self.seed = seed
         self.jsonMode = jsonMode
+        self.jsonSchema = jsonSchema
         self.modelOptions = modelOptions
         self.sessionId = sessionId
         self.activityID = activityID

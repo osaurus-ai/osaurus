@@ -735,8 +735,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// Deterministic-sampling seed (OpenAI v1.x). When set, identical
     /// requests should yield identical completions on the same backend.
     var seed: Int? = nil
-    /// `{"type":"json_object"}` for OpenAI JSON mode. Other shapes
-    /// (`text`, `json_schema`) are rejected at request validation.
+    /// OpenAI JSON mode or an explicit JSON schema for constrained output.
+    /// Unsupported schema features are rejected at request validation.
     var response_format: ResponseFormat? = nil
     /// `{"include_usage": true}` instructs the SSE producer to emit a
     /// final chunk carrying `usage` (prompt/completion/total tokens).
@@ -1010,11 +1010,24 @@ extension ChatCompletionRequest {
     }
 }
 
-/// OpenAI `response_format`. We only act on `json_object`; other kinds
-/// (`text`, `json_schema`) flow through unchanged so the request
-/// validator can accept or reject them with a clear, specific error.
+/// OpenAI output-format envelope. Preserve the full schema for validation
+/// and request-local constrained decoding rather than dropping unknown fields.
 struct ResponseFormat: Codable, Sendable, Equatable {
     let type: String
+    var json_schema: ResponseJSONSchema? = nil
+}
+
+struct ResponseJSONSchema: Codable, Sendable, Equatable {
+    let name: String
+    var description: String? = nil
+    let schema: JSONValue
+    var strict: Bool? = nil
+
+    func encodedSchema() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: try encoder.encode(schema), as: UTF8.self)
+    }
 }
 
 /// OpenAI `stream_options` shape. Today we only honor `include_usage`.
