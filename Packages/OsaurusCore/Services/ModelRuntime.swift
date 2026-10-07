@@ -2958,10 +2958,27 @@ public actor ModelRuntime {
         if let holder, !residents.contains(where: { $0 === holder }) {
             residents.append(holder)
         }
-        return residents.map(\.allocatorCacheLimitBytes) + [Self.allocatorCacheBudgetHeadroom(
-            workingSets: residents.map(\.admittedWorkingSetBytes),
-            budgets: residents.map(\.admittedLoadBudgetBytes)
-        )]
+        return residents.map(\.allocatorCacheLimitBytes) + [Self.allocatorCacheCapFromHeadroom(
+            Self.allocatorCacheBudgetHeadroom(
+                workingSets: residents.map(\.admittedWorkingSetBytes),
+                budgets: residents.map(\.admittedLoadBudgetBytes)
+            ))]
+    }
+
+    /// The admitted working set already prices a scratch floor
+    /// (`estimatedMemorySafetyWorkingSetBytes`: ≥ 2 GiB for load/activation/
+    /// allocator scratch), and MLX's freed-buffer pool IS where that scratch
+    /// lives. So the remaining-budget clamp may shrink the pool, but never
+    /// below that already-admitted floor. Without the floor a large model whose
+    /// estimate meets the budget got a 0-byte pool: every decode step
+    /// re-allocated every intermediate and paid a Metal residency commit
+    /// (`ResidencySets::insert` → IOGPUResourceGroupUpdateResources) per buffer.
+    /// Measured live on Qwen3.8 Flash-Next JANG_4S under Safe Auto: 31.4 ms per
+    /// target forward vs 21.6 ms with a working pool (same build, same prompt).
+    nonisolated static let admittedAllocatorScratchFloorBytes = 2 << 30
+
+    nonisolated static func allocatorCacheCapFromHeadroom(_ headroom: Int?) -> Int? {
+        headroom.map { max($0, admittedAllocatorScratchFloorBytes) }
     }
 
     nonisolated static func allocatorCacheBudgetHeadroom(
