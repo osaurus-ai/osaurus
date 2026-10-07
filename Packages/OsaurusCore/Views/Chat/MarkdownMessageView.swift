@@ -284,15 +284,11 @@ struct ContentSegment: Identifiable {
 
 // MARK: - Block Grouping
 
-/// True when a fenced block should render as markdown prose
+/// True when a fenced block should render as markdown prose. Only bare fences
+/// qualify, since small models often wrap a plain answer in one. Any info string,
+/// even `markdown` or `text`, means the source itself was meant to be shown.
 private func isProseFenceLanguage(_ lang: String?) -> Bool {
-    let n = lang?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-    if n.isEmpty { return true }
-    let prose = Set([
-        "text", "plain", "plaintext", "markdown", "md", "poem", "poetry", "verse", "prose",
-        "output", "ascii", "chat", "letter",
-    ])
-    return prose.contains(n)
+    lang?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
 }
 
 /// Groups consecutive text blocks into segments for efficient rendering with NSTextView.

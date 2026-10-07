@@ -74,6 +74,35 @@ struct CodeFenceParsingTests {
         #expect(blocks.first?.kind == .code("let x = 1", nil))
     }
 
+    // MARK: - Prose fences (#3026)
+
+    /// A labeled fence renders as code even when the label names a prose format,
+    /// so the reader can see and copy the source.
+    @Test(arguments: [
+        "```markdown\n# Title\n**bold**\n```",
+        "````markdown\n# Title\n```\nx\n```\n````",
+        "```text\n# Title\n```",
+        "```ascii\n+--+\n|  |\n+--+\n```",
+    ])
+    func labeledFenceRendersAsCodeBlock(_ source: String) {
+        let segments = groupBlocksIntoSegments(parseBlocks(source))
+        #expect(segments.count == 1)
+        guard case .codeBlock = segments.first?.kind else {
+            Issue.record("expected a code block, got \(String(describing: segments.first?.kind))")
+            return
+        }
+    }
+
+    @Test(arguments: ["```\n# Title\n```", "````\n# Title\n````"])
+    func bareFenceStillRendersAsProse(_ source: String) {
+        let segments = groupBlocksIntoSegments(parseBlocks(source))
+        #expect(segments.count == 1)
+        guard case .textGroup = segments.first?.kind else {
+            Issue.record("expected prose, got \(String(describing: segments.first?.kind))")
+            return
+        }
+    }
+
     // MARK: - Streaming balancer
 
     /// Mid-stream between a nested inner pair, the old split on "```" flipped
