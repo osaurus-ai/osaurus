@@ -64,7 +64,7 @@ enum PairingSPAKE2 {
         while true {
             var input = Data("\(domain):point:\(label):".utf8)
             input.append(counter)
-            let x = [UInt8](SHA256.hash(data: input))
+            let x = [UInt8](CryptoKit.SHA256.hash(data: input))
             if (try? Point(dataRepresentation: [0x02] + x, format: .compressed)) != nil { return Data([0x02] + x) }
             counter &+= 1
         }
@@ -78,7 +78,7 @@ enum PairingSPAKE2 {
             var input = Data("\(domain):password:".utf8)
             input.append(lengthPrefixed(Data(code.utf8)))
             input.append(counter)
-            let w = [UInt8](SHA256.hash(data: input))
+            let w = [UInt8](CryptoKit.SHA256.hash(data: input))
             if (try? P256K.Signing.PrivateKey(dataRepresentation: w)) != nil { return w }
             counter &+= 1
         }
@@ -139,9 +139,9 @@ enum PairingSPAKE2 {
         for part in [Data(domain.utf8), phoneIdentity, Data(), pA, pB, k, w] {
             transcript.append(lengthPrefixed(part))
         }
-        let ikm = SymmetricKey(data: SHA256.hash(data: transcript))
+        let ikm = SymmetricKey(data: CryptoKit.SHA256.hash(data: transcript))
         func derive(_ label: String) -> SymmetricKey {
-            HKDF<SHA256>.deriveKey(
+            HKDF<CryptoKit.SHA256>.deriveKey(
                 inputKeyMaterial: ikm,
                 salt: Data(),
                 info: Data("\(domain):\(label)".utf8),
@@ -149,7 +149,7 @@ enum PairingSPAKE2 {
             )
         }
         func confirmation(_ label: String) -> Data {
-            Data(HMAC<SHA256>.authenticationCode(for: transcript, using: derive(label)))
+            Data(HMAC<CryptoKit.SHA256>.authenticationCode(for: transcript, using: derive(label)))
         }
         return Keys(
             sessionKey: derive("session"),
