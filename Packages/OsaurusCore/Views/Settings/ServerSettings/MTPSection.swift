@@ -64,10 +64,16 @@ struct MTPSection: View {
             SettingsField(
                 label: "Mode",
                 hint:
-                    "Off uses autoregressive decoding. On requests adaptive native MTP when bundle safety and verified tuning allow it; otherwise ordinary decoding remains active. See the resolved reason below. A selected DFlash 2 drafter is separate and replaces native MTP."
+                    "Default turns speculation on where it is measured to win: adaptive native MTP for Qwen3.8 Flash-Next, and a Qwen 27B bundle's own DFlash 2 drafter. Off uses autoregressive decoding everywhere. On requests adaptive native MTP for every bundle whose safety and verified tuning allow it. See the resolved reason below. A selected DFlash 2 drafter replaces native MTP for the model it fits."
             ) {
                 Picker("", selection: Binding(
-                    get: { draft.mtp.mode == .off ? VMLXMTPServerMode.off : .auto },
+                    get: {
+                        switch draft.mtp.mode {
+                        case .off: VMLXMTPServerMode.off
+                        case .familyDefault: VMLXMTPServerMode.familyDefault
+                        default: VMLXMTPServerMode.auto
+                        }
+                    },
                     set: { mode in
                         var selection = draft.mtp
                         selection.mode = mode
@@ -75,6 +81,7 @@ struct MTPSection: View {
                     }
                 )) {
                     Text(L("Off (AR)")).tag(VMLXMTPServerMode.off)
+                    Text(L("Default")).tag(VMLXMTPServerMode.familyDefault)
                     Text(L("On (Adaptive)")).tag(VMLXMTPServerMode.auto)
                 }
                 .pickerStyle(.segmented)

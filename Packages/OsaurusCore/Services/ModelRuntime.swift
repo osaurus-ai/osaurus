@@ -3784,16 +3784,13 @@ public actor ModelRuntime {
             if !Self.materializedLoadFits(requiredBytes: required, availableBytes: available) {
                 let requiredDescription = required.map { "~\($0 >> 30) GiB" } ?? "an unavailable working-set estimate"
                 let message = "Not enough reclaimable memory to load \(modelName): resident weights, KV, working state and host reserve require \(requiredDescription), but only ~\(max(0, available) >> 30) GiB is available. Close other apps or unload other models, then retry."
-                lastMemorySafetyLoadDecision = lastMemorySafetyLoadDecision?.refusingHostCapacity(message)
-                genLog.error(
-                    "loadContainer: refusing materialized load of \(modelName, privacy: .public): required=\(requiredDescription, privacy: .public) available=\(available, privacy: .public)"
-                )
-                throw NSError(
-                    domain: "ModelRuntime",
-                    code: 507,
-                    userInfo: [
-                        NSLocalizedDescriptionKey: message
-                    ]
+                // ADVISORY ONLY (Eric, 2026-10-06; CLAUDE.md "estimates may advise, never refuse"). This estimate
+                // refused Qwen3.8 Flash-Next JANG_4S (72 GB bundle; "require ~92 GiB, only ~53 GiB available")
+                // on a 128 GB Mac with a fresh profile, a model that loads and runs at 55-115 tok/s. The available
+                // figure excludes reclaimable file cache; macOS pages, compresses and evicts, and the allocator
+                // fails loudly if something truly does not fit. Warn and attempt the load.
+                genLog.warning(
+                    "loadContainer: memory estimate tight for \(modelName, privacy: .public): required=\(requiredDescription, privacy: .public) available=\(available, privacy: .public) — loading anyway (\(message, privacy: .public))"
                 )
             }
         }
@@ -6583,7 +6580,8 @@ public actor ModelRuntime {
             configData: configData,
             jangConfig: jangConfig,
             status: status,
-            externalDrafterSelected: settings.resolvedDFlash2Selection(configData: configData) != nil
+            externalDrafterSelected: settings.resolvedDFlash2Selection(
+                configData: configData, bundleDirectory: modelDirectory) != nil
         )
         try admission.validateLoad(
             settings: settings,
@@ -6605,7 +6603,8 @@ public actor ModelRuntime {
         let draftStrategy = unclampedSettings.resolvedMTPDraftStrategy(
             configData: configData,
             jangConfig: jangConfig,
-            status: status
+            status: status,
+            bundleDirectory: modelDirectory
         )
         // `DFlash2TokenIterator` resolves its width as
         // `requestedBlockSize ?? config.blockSize`. Mirror exactly that, from
@@ -6615,7 +6614,8 @@ public actor ModelRuntime {
         // running when none is.
         let dflash2BlockSize: Int? = {
             guard draftStrategy?.dflash2DrafterPath != nil,
-                let selection = settings.resolvedDFlash2Selection(configData: configData)
+                let selection = settings.resolvedDFlash2Selection(
+                    configData: configData, bundleDirectory: modelDirectory)
             else { return nil }
             return settings.mtp.dflash2BlockSize ?? selection.blockSize
         }()

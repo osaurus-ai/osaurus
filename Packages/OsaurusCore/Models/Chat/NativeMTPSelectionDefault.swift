@@ -13,7 +13,8 @@ enum NativeMTPSelectionDefault {
     /// External DFlash selection and its block size are independent.
     static func adaptiveSelection(_ settings: VMLXServerMTPSettings) -> VMLXServerMTPSettings {
         var result = settings
-        result.mode = settings.mode == .off ? .off : .auto
+        // Off and the family default are kept as-is; everything else is On (Adaptive).
+        result.mode = (settings.mode == .off || settings.mode == .familyDefault) ? settings.mode : .auto
         result.explicitDepth = nil
         result.draftTokenLimit = nil
         return result

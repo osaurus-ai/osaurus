@@ -65,13 +65,17 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
     /// refuses MTP.
     struct NativeMTP: Equatable, Sendable {
         let blocked: Bool
+        /// The bundle is in the family the default turns on (Qwen3.8 Flash-Next): under
+        /// `mtp.mode == .familyDefault` it runs Adaptive without a user choice.
+        var familyDefaultOn: Bool = false
 
         /// File-only bundle inspection; run it off the main thread.
         static func inspect(model: String) -> NativeMTP? {
             guard let status = ModelRuntime.inspectLoadingModelMTP(name: model),
                 status.bundleHasMTP, status.isTargetMTPFamily
             else { return nil }
-            return NativeMTP(blocked: status.isBlocked)
+            return NativeMTP(
+                blocked: status.isBlocked, familyDefaultOn: status.measuredFamilyAutoDepth != nil)
         }
     }
 
@@ -169,7 +173,9 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
         let off = Segment(id: "off", label: L("Off (AR)"), description: nil)
         let adaptive = Segment(id: "auto", label: L("On (Adaptive)"), description: nil)
         let mode = ServerController.runtimeSettingsForConfigureTool().settings.mtp.mode
-        let selected = nativeMTP.blocked || mode == .off ? "off" : "auto"
+        // `.familyDefault` shows what the engine will actually run for THIS bundle.
+        let effectiveOn = mode == .familyDefault ? nativeMTP.familyDefaultOn : mode != .off
+        let selected = nativeMTP.blocked || !effectiveOn ? "off" : "auto"
         return Option(
             id: nativeMTPOptionId,
             label: L("Native MTP"),
@@ -180,8 +186,8 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
             segments: nativeMTP.blocked ? [off] : [off, adaptive],
             selected: selected,
             on: nil,
-            // Off is the default, as the composer shows it.
-            explicit: selected != "off"
+            // Only an explicit Off / On choice is an override; the family default is not.
+            explicit: mode != .familyDefault
         )
     }
 

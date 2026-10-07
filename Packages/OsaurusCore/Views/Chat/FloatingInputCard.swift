@@ -478,6 +478,9 @@ struct FloatingInputCard: View {
     /// Mirrors `mtp.mode` / `mtp.draftTokenLimit` so the row renders the value
     /// that is actually saved rather than a local guess.
     @State private var nativeMTPSelection: String = "off"
+    /// Bundles the shipped default turns on (Qwen3.8 Flash-Next, `measuredFamilyAutoDepth != nil`). Under
+    /// `mtp.mode == .familyDefault` the row shows On only for these, i.e. what the engine will run.
+    @State private var nativeMTPFamilyDefaultOnModels: Set<String> = []
 
     // MARK: - MTP Bundle-Layout Advisory State
 
@@ -2590,6 +2593,8 @@ extension FloatingInputCard {
                     }
                 }.value
                 nativeMTPCapableModels.formUnion(early.map { Self.mtpIdentity($0.name) })
+                nativeMTPFamilyDefaultOnModels.formUnion(
+                    early.filter { $0.measuredFamilyAutoDepth != nil }.map { Self.mtpIdentity($0.name) })
                 // A blocked tuning artifact must gate the EARLY window too —
                 // the resident-summary blocked set only covers loaded models,
                 // so without this the whole warmup would show depth segments
@@ -3279,12 +3284,14 @@ extension FloatingInputCard {
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
             let identity = Self.mtpIdentity(model)
+            let mode = ServerController.runtimeSettingsForConfigureTool().settings.mtp.mode
+            let familyDefault = nativeMTPFamilyDefaultOnModels.contains(identity) ? "auto" : "off"
+            let shown = mode == .familyDefault ? familyDefault : nativeMTPSelection
             values[Self.nativeMTPOptionID] = .string(
-                nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
+                nativeMTPManuallyBlockedModels.contains(identity) ? "off" : shown
             )
-            displayDefaults[Self.nativeMTPOptionID] = .string(
-                "off"
-            )
+            // The default this bundle gets without a user choice (Flash-Next: On).
+            displayDefaults[Self.nativeMTPOptionID] = .string(familyDefault)
         }
 
         return ModelPickerOptionsControl(
@@ -4393,6 +4400,11 @@ extension FloatingInputCard {
                 let identity = Self.mtpIdentity(model)
                 if let capability, capability.bundleHasMTP, capability.isTargetMTPFamily {
                     nativeMTPCapableModels.insert(identity)
+                    if capability.measuredFamilyAutoDepth != nil {
+                        nativeMTPFamilyDefaultOnModels.insert(identity)
+                    } else {
+                        nativeMTPFamilyDefaultOnModels.remove(identity)
+                    }
                     if capability.isBlocked {
                         nativeMTPManuallyBlockedModels.insert(identity)
                     } else {
