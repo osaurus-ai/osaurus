@@ -76,6 +76,8 @@ struct SettingsSearchSelfFindProbe {
             ("agent description", "agents.description"),
             ("Swap local models for subagents", "settings.orchestrator.delegation.swapModels"),
             ("native mtp", "server.speculative"),
+            ("Speculative Decoding", "server.speculative"),
+            ("bundle default", "server.speculative"),
             ("speculative depth", "server.speculative"),
             ("On Adaptive", "server.speculative"),
             ("Off AR", "server.speculative"),

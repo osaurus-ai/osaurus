@@ -967,7 +967,7 @@ stores one choice (`null` resets it) and answers with the same body as
 `POST`. `404 unknown_option`, `400 invalid_value`.
 
 A local bundle with a native MTP head also gets a last `nativeMTPDepth`
-option (Native MTP: `off` / `auto`, only `off` when its tuning blocks MTP).
+option (`off` / `auto`, meaning Off (AR) / On (Adaptive)). Default resolution is bundle-aware: a usable Flash-Next native head enables Adaptive; a compatible bundled Qwen27B DFlash2 drafter enables DFlash2. Explicit Off takes precedence. Capability discovery must not require loading weights.
 Unlike the others it is the Mac's global Speculative Decoding setting, not a
 per-model choice; setting it writes that setting, `null` meaning `off`.
 

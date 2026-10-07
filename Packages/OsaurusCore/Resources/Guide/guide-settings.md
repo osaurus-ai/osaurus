@@ -117,19 +117,23 @@ rewrite those server settings. Decisions report `ram_safety_enabled`; when false
 
 ## Native MTP
 
-Native MTP starts **Off (AR)**. **On (Adaptive)** requests the runtime's adaptive
-speculative policy for an eligible local model, including Qwen 27B and Flash Next
-in supported affine and JANGH bundles. The runtime chooses its depth; there are
-no user depth buttons or native draft-token limits. Sampling remains bundle-driven
-unless you explicitly override it.
+Speculative Decoding defaults to **Default**, which resolves from the selected
+bundle. Qwen Flash-Next bundles with a usable native MTP head start **On
+(Adaptive)**, including supported affine and JANGH variants. Qwen 27B uses a
+compatible bundled DFlash2 drafter automatically when one is present. A bundle
+without compatible draft support runs ordinary autoregressive decoding.
 
-On is a request, not proof of active speculation. Missing heads, blocked bundles
-and missing verified tuning can keep ordinary decoding active. Server → Settings →
-**Speculative Decoding** shows the loaded model's actual resolution and reason.
-Remote models do not expose this local control. Explicit Off survives reload;
-legacy manual depths migrate to Adaptive and are re-evaluated by runtime admission.
-A selected **DFlash 2 Drafter** remains a separate external-drafter choice; remove
-that selection to stop it. Native MTP Off does not disable an external drafter.
+The model picker shows **Off (AR)** or **On (Adaptive)** before weights load.
+The runtime chooses depth; there are no manual D1/D2/D3 buttons. Explicit Off
+turns speculation off, including external and bundled drafters. Saved explicit
+choices survive reload. Legacy manual depths migrate to Adaptive and are
+re-evaluated by runtime admission.
+
+On is a request, not proof that a particular request uses speculation. Unsupported
+media and schema-constrained requests run AR. Server → Settings → **Speculative
+Decoding** shows the loaded model's actual resolution and reason. Sampling stays
+bundle-driven unless explicitly overridden. Remote models do not expose this
+local control.
 
 ## Local model memory
 
