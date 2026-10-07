@@ -3789,11 +3789,9 @@ public actor ModelRuntime {
 
         lastRAMFeasibility = assessment
 
-        // Resident compute needs actual reclaimable capacity for weights,
-        // KV and working state. The host sample already credits file cache;
-        // adding 10% "slack" would instead borrow from anonymous memory and
-        // leave no host reserve during the first prefill. Zero/failed samples
-        // must also refuse rather than silently bypass this check.
+        // Report the materialized-load estimate without treating a transient
+        // host-capacity sample as a hard admission limit. Explicit runtime
+        // memory limits and Strict-mode validation remain separate gates.
         if refuseOnShortfall {
             let required = Self.materializedLoadRequiredAvailableBytes(
                 loadFootprintBytes: incomingLoadFootprintBytes,
@@ -3807,11 +3805,9 @@ public actor ModelRuntime {
             if !Self.materializedLoadFits(requiredBytes: required, availableBytes: available) {
                 let requiredDescription = required.map { "~\($0 >> 30) GiB" } ?? "an unavailable working-set estimate"
                 let message = "Not enough reclaimable memory to load \(modelName): resident weights, KV, working state and host reserve require \(requiredDescription), but only ~\(max(0, available) >> 30) GiB is available. Close other apps or unload other models, then retry."
-                // ADVISORY ONLY (Eric, 2026-10-06; CLAUDE.md "estimates may advise, never refuse"). This estimate
-                // refused Qwen3.8 Flash-Next JANG_4S (72 GB bundle; "require ~92 GiB, only ~53 GiB available")
-                // on a 128 GB Mac with a fresh profile, a model that loads and runs at 55-115 tok/s. The available
-                // figure excludes reclaimable file cache; macOS pages, compresses and evicts, and the allocator
-                // fails loudly if something truly does not fit. Warn and attempt the load.
+                // This is a heuristic capacity warning, not proof that an
+                // allocation will fail or that every mapped page must be
+                // resident. Keep the warning visible in load diagnostics.
                 genLog.warning(
                     "loadContainer: memory estimate tight for \(modelName, privacy: .public): required=\(requiredDescription, privacy: .public) available=\(available, privacy: .public) — loading anyway (\(message, privacy: .public))"
                 )
