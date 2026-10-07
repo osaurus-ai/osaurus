@@ -295,13 +295,38 @@ struct SecureChannelE2ETests {
         }
     }
 
-    /// Owner reads stay open over plaintext.
-    @Test func plaintextOwnerRead_relayOrigin_isNot426() async throws {
+    /// Owner reads are as private as the writes: chat history, live runs,
+    /// review queues and secret prompts are 426'd over plaintext too.
+    @Test func plaintextOwnerReads_relayOrigin_return426() async throws {
         let server = try await startSecureTestServer(trustLoopback: true)
         defer { Task { await server.shutdown() } }
-        let request = plaintextOwnerRequest(server: server, method: "GET", path: "/sessions")
+        let id = UUID().uuidString
+        let reads = [
+            "/sessions", "/sessions/\(id)", "/runs/\(id)/events", "/privacy/reviews", "/secrets/prompts",
+            "/approvals", "/agents", "/models/picker",
+        ]
+        for path in reads {
+            let request = plaintextOwnerRequest(server: server, method: "GET", path: path)
+            let (_, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 426, "GET \(path)")
+        }
+    }
+
+    /// OpenAI-style routes stay plaintext for third-party SDKs.
+    @Test func plaintextModels_relayOrigin_isNot426() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let request = plaintextOwnerRequest(server: server, method: "GET", path: "/models")
         let (_, resp) = try await URLSession.shared.data(for: request)
         #expect((resp as? HTTPURLResponse)?.statusCode != 426)
+    }
+
+    @Test func ownerChannelRoutes_matchWholeSegments() {
+        #expect(HTTPHandler.isOwnerChannelRoute("/sessions"))
+        #expect(HTTPHandler.isOwnerChannelRoute("/agents/abc/run"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/agentsx"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/models"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/chat/completions"))
     }
 
     /// Loopback (the Mac's own CLI) still edits in plaintext.

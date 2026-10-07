@@ -749,6 +749,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stateRef.value.requestBodyBuffer = nil
                     return
                 }
+
+                // An owner key from a remote caller only ever travels inside
+                // the Secure Channel, reads included: chat history, live run
+                // streams, review queues and secret prompts are as private as
+                // the writes `requiresOwnerChannel` already guards.
+                if stateRef.value.authedScopeIsMaster, Self.isOwnerChannelRoute(path),
+                    sendSecureChannelUpgradeRequiredIfNeeded(
+                        head: head,
+                        context: context,
+                        path: path,
+                        startTime: startTime,
+                        userAgent: userAgent
+                    )
+                {
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
             }
 
             // Loopback callers skip the auth gate entirely, but some
@@ -8160,6 +8178,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// `true` when the request must be rejected. Loopback callers (CLI, App
     /// Intents) stay plaintext; there is deliberately no downgrade path for
     /// remote peers.
+    /// Routes a remote owner key may only reach through the Secure Channel,
+    /// whatever the method. OpenAI-style routes (`/chat/completions`,
+    /// `/models`, `/images/*`, …) stay plaintext for third-party SDKs.
+    static let ownerChannelRoutes = [
+        "/agents", "/models/picker", "/models/favorites", "/models/options", "/privacy", "/config/approvals",
+        "/computer-use", "/secrets", "/approvals", "/workspaces", "/workspace-agents", "/projects", "/sessions",
+        "/runs", "/artifacts", "/pair/unpair",
+    ]
+
+    static func isOwnerChannelRoute(_ path: String) -> Bool {
+        ownerChannelRoutes.contains { path == $0 || path.hasPrefix($0 + "/") }
+    }
+
     private func sendSecureChannelUpgradeRequiredIfNeeded(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
