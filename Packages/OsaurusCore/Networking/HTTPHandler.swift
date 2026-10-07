@@ -5072,17 +5072,95 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// model (size, steps, CFG, seed, strength, negative prompt), so the
         /// phone can show the same controls (MOBILE_PROTOCOL.md §12.5).
         let image: PickerImageDTO?
+        /// For a cloud image model only: its target, the choices its catalog
+        /// offers and its starting price, for the phone's controls and its
+        /// spend confirmation (MOBILE_PROTOCOL.md §12.5).
+        let cloud: PickerCloudImageDTO?
 
         enum CodingKeys: String, CodingKey {
             case id, name, provider, source, vision, thinking, params, quantization, available, description, tab
             case kind, edits
             case image
+            case cloud
             case tabTitle = "tab_title"
             case favoriteKey = "favorite_key"
             case contextLength = "context_length"
             case inputPrice = "input_price"
             case outputPrice = "output_price"
             case externalSource = "external_source"
+        }
+    }
+
+    /// A cloud image model: where `/images/generations` sends it (`target`),
+    /// the catalog's choices, and the cheapest price, in USD and as the
+    /// Mac's own "From … credits" label. Billable: the phone confirms before
+    /// it sends `allow_remote_media_spend`.
+    private struct PickerCloudImageDTO: Encodable {
+        struct Target: Encodable {
+            let backend: String
+            let providerId: String?
+            let model: String
+
+            enum CodingKeys: String, CodingKey {
+                case backend, model
+                case providerId = "provider_id"
+            }
+        }
+
+        let target: Target
+        let aspectRatios: [String]
+        let defaultAspectRatio: String?
+        let resolutions: [String]
+        let defaultResolution: String?
+        let qualities: [String]
+        let defaultQuality: String?
+        let defaultSteps: Int?
+        let maxSteps: Int?
+        let promptCharacterLimit: Int?
+        let formats: [String]
+        let maxCount: Int
+        let minPriceUSD: Double?
+        let priceLabel: String?
+        let privacy: String?
+
+        enum CodingKeys: String, CodingKey {
+            case target, resolutions, qualities, formats, privacy
+            case aspectRatios = "aspect_ratios"
+            case defaultAspectRatio = "default_aspect_ratio"
+            case defaultResolution = "default_resolution"
+            case defaultQuality = "default_quality"
+            case defaultSteps = "default_steps"
+            case maxSteps = "max_steps"
+            case promptCharacterLimit = "prompt_character_limit"
+            case maxCount = "max_count"
+            case minPriceUSD = "min_price_usd"
+            case priceLabel = "price_label"
+        }
+
+        init?(_ item: ModelPickerItem) {
+            guard let media = item.mediaModel, media.kind == .image, media.isAvailable else { return nil }
+            switch media.target.backend {
+            case .local: return nil
+            case .remoteProvider(let id):
+                target = Target(backend: "remote_provider", providerId: id.uuidString, model: media.target.modelID)
+            case .osaurusCloud:
+                target = Target(backend: "osaurus_cloud", providerId: nil, model: media.target.modelID)
+            }
+            let c = media.constraints
+            aspectRatios = c.aspectRatios
+            defaultAspectRatio = c.defaultAspectRatio
+            resolutions = c.resolutions
+            defaultResolution = c.defaultResolution
+            qualities = c.qualities
+            defaultQuality = c.defaultQuality
+            defaultSteps = c.defaultSteps
+            maxSteps = c.maxSteps
+            promptCharacterLimit = c.promptCharacterLimit
+            formats = ImageOutputFormat.allCases.map(\.rawValue)
+            maxCount = 4
+            minPriceUSD = media.pricing?.minimumUSD
+            priceLabel = minPriceUSD.map { "From \(OsaurusRouter.formatUSDAsCredits($0))" }
+            privacy = media.privacy
         }
     }
 
@@ -5167,10 +5245,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            // Chat models plus ready on-device image models, which the Mac
-            // picker also lists (picking one puts the composer in image mode).
+            // Chat models, ready on-device image models and available cloud
+            // image models, which the Mac picker also lists (picking one puts
+            // the composer in image mode).
             let items = await ModelPickerItemCache.shared.buildModelPickerItems()
-                .filter { $0.isLikelyChatCapable || $0.isPhoneImageModel }
+                .filter { $0.isLikelyChatCapable || $0.isPhoneImageModel || PickerCloudImageDTO($0) != nil }
             let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
             // Grouped as the Mac picker groups them, so the phone shows the
             // same tabs in the same order.
@@ -5185,6 +5264,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 case .remote: source = "remote"
                 case .imageGeneration: source = "image"
                 }
+                let cloud = PickerCloudImageDTO(item)
                 return PickerModelDTO(
                     id: item.id,
                     name: item.displayName,
@@ -5203,9 +5283,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     inputPrice: item.inputPriceMicroPerMTok,
                     outputPrice: item.outputPriceMicroPerMTok,
                     externalSource: item.externalSource,
-                    kind: item.isPhoneImageModel ? "image" : "chat",
-                    edits: item.isImageEditDelegateCandidate,
-                    image: PickerImageDTO(item)
+                    kind: item.isPhoneImageModel || cloud != nil ? "image" : "chat",
+                    // Cloud models can't edit over HTTP yet.
+                    edits: cloud == nil && item.isImageEditDelegateCandidate,
+                    image: PickerImageDTO(item),
+                    cloud: cloud
                 )
             }
             let json =
@@ -12376,9 +12458,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            // Into the Mac chat the phone named, as local images are; the same
+            // owner-and-Secure-Channel rule applies.
+            let remoteSession = phoneImageSession(req.osaurus_session_id, context: context)
+            if remoteSession != nil,
+                requiresOwnerChannel(
+                    head: head,
+                    context: context,
+                    path: "/images/generations",
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            {
+                return
+            }
             handleRemoteImageGeneration(
                 request: req,
                 target: selectedTarget,
+                sessionId: remoteSession,
                 head: head,
                 context: context,
                 startTime: startTime,
@@ -12446,6 +12543,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private func handleRemoteImageGeneration(
         request req: ImageGenerationRequestDTO,
         target: MediaModelTarget,
+        sessionId: UUID? = nil,
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
         startTime: Date,
@@ -12476,12 +12574,73 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // Into the Mac chat the phone named, once the images are in.
+        let appendToChat: @Sendable ([URL]) -> Void = { urls in
+            guard let sessionId else { return }
+            let prompt = req.prompt
+            let model = target.modelID
+            Task { @MainActor in
+                await RemoteSessionContinuation.appendImageExchange(
+                    prompt: prompt,
+                    sourceImages: [],
+                    generated: urls,
+                    to: sessionId,
+                    model: model
+                )
+            }
+        }
+        // A provider call doesn't stream, but a client that asked for SSE
+        // (the phone) still gets its answer as SSE: a `completed` or `error`
+        // event once the provider is done.
+        if req.stream == true {
+            let writer = NIOLoopBound(SSEResponseWriter(), eventLoop: loop)
+            hop { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            func emit(_ event: ImageStreamEventDTO) {
+                let json =
+                    (try? JSONEncoder.osaurusCanonical().encode(event))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                hop { writer.value.writeRawJSONData(json, context: ctx.value) }
+            }
+            let jobID = Self.shortId(prefix: "img")
+            runRequestTask(priority: .userInitiated) {
+                var status = 200
+                do {
+                    let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
+                    guard !generated.isEmpty else { throw MediaGenerationError.invalidResponse }
+                    appendToChat(generated.map(\.url))
+                    let results = try generated.map { media in
+                        ImageResultDTO(
+                            url: nil,
+                            b64_json: try Data(contentsOf: media.url).base64EncodedString(),
+                            seed: req.seed ?? 0
+                        )
+                    }
+                    emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
+                } catch {
+                    status = Int(Self.mediaErrorStatus(error).code)
+                    emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: error.localizedDescription))
+                }
+                hop { writer.value.writeEnd(ctx.value) }
+                self.logRequest(
+                    method: "POST",
+                    path: "/images/generations",
+                    userAgent: userAgent,
+                    requestBody: requestBody,
+                    responseBody: "[stream]",
+                    responseStatus: status,
+                    startTime: startTime,
+                    model: target.modelID
+                )
+            }
+            return
+        }
         runRequestTask(priority: .userInitiated) {
             do {
                 let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
                 guard !generated.isEmpty else {
                     throw MediaGenerationError.invalidResponse
                 }
+                appendToChat(generated.map(\.url))
                 let results = try generated.map { media -> ImageResultDTO in
                     if req.response_format == "b64_json" {
                         let bytes = try Data(contentsOf: media.url)

@@ -597,8 +597,8 @@ extension ModelPickerItem {
     }
 
     /// A ready on-device image model, the kind the paired phone can generate
-    /// with (docs/MOBILE_PROTOCOL.md §12.5). Remote media models are left to
-    /// the Mac, which confirms their credit spend.
+    /// with (docs/MOBILE_PROTOCOL.md §12.5). Cloud image models reach the
+    /// phone separately, with their price, so it can confirm the spend itself.
     var isPhoneImageModel: Bool {
         source.isImageGeneration && isImageGenerationDelegateCandidate
     }

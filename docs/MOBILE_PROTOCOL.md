@@ -1061,6 +1061,32 @@ set to the request: `size` (`"WxH"` from `supported_sizes`), `steps`,
 own default; Qwen-Image 2.1 relies on that, as its unset size follows the
 source image.
 
+**Cloud image models.** Available cloud image models (a remote provider's
+catalog, or Osaurus Cloud) are listed too, `kind: "image"` with
+`edits: false` and a `cloud` block in place of `image`:
+
+```json
+"cloud":{"target":{"backend":"osaurus_cloud","model":"<catalog id>"},
+         "aspect_ratios":["1:1","16:9"],"default_aspect_ratio":"1:1",
+         "resolutions":[],"qualities":["standard","high"],"default_quality":"standard",
+         "default_steps":null,"max_steps":null,"prompt_character_limit":4000,
+         "formats":["png","jpeg","webp"],"max_count":4,
+         "min_price_usd":0.04,"price_label":"From … credits","privacy":"…"}
+```
+
+They bill. The phone confirms each generation, showing `price_label`, and
+only then sends `target` (with `provider_id` for `remote_provider`),
+`allow_remote_media_spend: true`, and what the user picked: `aspect_ratio`,
+`resolution`, `quality`, `n` (1–`max_count`), `output_format`, and `size`,
+`steps`, `guidance`, `seed`, `negative_prompt` where the catalog leaves room
+for them (`size` only when it lists no aspect ratios or resolutions). Without
+the flag the Mac answers `403`. A provider call doesn't stream: asked for
+SSE, the Mac sends one `completed` (or `error`) event when it is done, with
+no `queued`, so there is no job to cancel. `osaurus_session_id` works as for
+local models. Edits aren't supported yet. Provider failures arrive as the
+`error` event's `message` (no credentials, insufficient balance, content
+policy).
+
 With `osaurus_session_id` naming a chat the phone may continue (§14.5), the
 prompt (with its source images) and the reply are appended to it once the
 image is done, written as the Mac's own image mode writes them, so §14.2
