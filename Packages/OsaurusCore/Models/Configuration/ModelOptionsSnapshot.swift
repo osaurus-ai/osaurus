@@ -196,7 +196,8 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
     @MainActor
     static func applyNativeMTP(_ value: ModelOptionValue?, nativeMTP: NativeMTP?) async throws {
         guard let nativeMTP else { throw ApplyError.unknownOption }
-        guard let mode = NativeMTPSelectionDefault.mode(for: value?.stringValue),
+        guard value == nil || value?.stringValue != nil,
+            let mode = NativeMTPSelectionDefault.mode(for: value?.stringValue),
             mode != .auto || !nativeMTP.blocked
         else {
             throw ApplyError.invalidValue
