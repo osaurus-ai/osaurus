@@ -18426,14 +18426,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         errorMessage: String? = nil,
         details: [String: String]? = nil
     ) {
+        // What travelled sealed end to end stays out of the log: a Secure
+        // Channel call keeps only the size of its bodies.
+        let sealed = stateRef.value.isSecureChannel
+        func redacted(_ body: String?) -> String? {
+            guard sealed, let body else { return body }
+            return "[sealed, \(body.utf8.count) bytes]"
+        }
         let durationMs = Date().timeIntervalSince(startTime) * 1000
         InsightsService.logAsync(
             method: method,
             path: path,
             clientIP: _clientIP.value,
             userAgent: userAgent,
-            requestBody: requestBody,
-            responseBody: responseBody,
+            requestBody: redacted(requestBody),
+            responseBody: redacted(responseBody),
             responseStatus: responseStatus,
             durationMs: durationMs,
             model: model,
