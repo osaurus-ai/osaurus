@@ -2168,7 +2168,10 @@ extension ModelManager {
     /// Internal entry point used by tests so they can supply a fixture root.
     /// Detects both the flat (`<root>/<modelDir>/`) and nested (`<root>/<org>/<repo>/`)
     /// layouts.
-    internal nonisolated static func scanLocalModels(at root: URL) -> [MLXModel] {
+    internal nonisolated static func scanLocalModels(
+        at root: URL,
+        diagnosticHandler: (([String: Any]) -> Void)? = nil
+    ) -> [MLXModel] {
         let fm = FileManager.default
         var rootIsDir: ObjCBool = false
         let rootExists = fm.fileExists(atPath: root.path, isDirectory: &rootIsDir)
@@ -2189,6 +2192,9 @@ extension ModelManager {
             localModelsCacheCondition.lock()
             lastLocalModelsScanDiagnostic = diagnostic
             localModelsCacheCondition.unlock()
+            // Synchronous per-invocation observation remains valid even when
+            // another background scan replaces the global last diagnostic.
+            diagnosticHandler?(diagnostic)
         }
         publishDiagnostic(status: "started", modelCount: 0, error: nil)
 
