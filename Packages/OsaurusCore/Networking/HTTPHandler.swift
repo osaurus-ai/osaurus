@@ -7870,13 +7870,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// the encrypted envelope) but rate-limited like the pairing endpoints.
     /// Signs the transcript with the target agent's key so the client can
     /// verify it is talking to the agent address it pinned at pairing.
+    /// Handshakes get their own budget: a phone opens one per agent and route
+    /// and again every hour, which must neither lock out its own pairing nor
+    /// be locked out by someone spamming pairing codes.
+    static let secureSessionRateLimiter = PairingRateLimiter(window: 60, maxPerWindow: 30, denialCooldown: 10)
+
     private func handleSecureSessionEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
         startTime: Date,
         userAgent: String?
     ) {
-        guard PairingRateLimiter.shared.allow(ip: remoteIP(context)) else {
+        guard Self.secureSessionRateLimiter.allow(ip: remoteIP(context)) else {
             sendPairingRateLimited(
                 head: head,
                 context: context,
