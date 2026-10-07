@@ -1,4 +1,5 @@
 import Foundation
+import MLXLMCommon
 import Testing
 @testable import OsaurusCore
 
