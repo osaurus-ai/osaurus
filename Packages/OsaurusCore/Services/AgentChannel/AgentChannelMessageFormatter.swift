@@ -204,10 +204,11 @@ enum AgentChannelMessageFormatter {
             case .list(let items):
                 return AgentChannelRenderedBlock(body: renderMarkdownList(items))
             case .code(let code, let lang):
+                let fence = codeFence(for: code)
                 return AgentChannelRenderedBlock(
-                    prefix: "```\(lang ?? "")\n",
+                    prefix: "\(fence)\(lang ?? "")\n",
                     body: code,
-                    suffix: "\n```"
+                    suffix: "\n\(fence)"
                 )
             case .table(let headers, let rows):
                 let table = renderPipeTable(headers: headers, rows: rows)
@@ -228,6 +229,18 @@ enum AgentChannelMessageFormatter {
                 return AgentChannelRenderedBlock(body: "---")
             }
         }
+    }
+
+    /// A backtick fence longer than any backtick run in the code, so fence lines
+    /// inside the code (Markdown showing Markdown) cannot close the block early.
+    private static func codeFence(for code: String) -> String {
+        var longest = 0
+        var run = 0
+        for ch in code {
+            run = ch == "`" ? run + 1 : 0
+            longest = max(longest, run)
+        }
+        return String(repeating: "`", count: max(3, longest + 1))
     }
 
     private static func renderMarkdownList(_ items: [ListItem]) -> String {

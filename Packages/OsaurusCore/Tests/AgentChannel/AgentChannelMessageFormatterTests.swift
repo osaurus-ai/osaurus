@@ -158,6 +158,12 @@ struct AgentChannelMessageFormatterTests {
         }
     }
 
+    @Test func codeContainingFencesGetsALongerFence() {
+        let markdown = "````markdown\n```\ninner\n```\n````"
+        let chunks = AgentChannelMessageFormatter.discordChunks(markdown)
+        #expect(chunks == ["````markdown\n```\ninner\n```\n````"])
+    }
+
     @Test func packNeverSplitsEmojiGraphemes() {
         // Family emoji: 11 UTF-16 units each, indivisible.
         let family = "👨‍👩‍👧‍👦"
