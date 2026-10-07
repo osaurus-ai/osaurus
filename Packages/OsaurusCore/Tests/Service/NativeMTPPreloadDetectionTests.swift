@@ -103,6 +103,21 @@ struct NativeMTPPreloadDetectionTests {
         #expect(!after.speculationBlocked)
     }
 
+    @Test("selected drafter capability and labels agree before loading")
+    func selectedDrafterPresentationPolicy() {
+        let selected = ModelRuntime.LoadingModelMTPStatus(name: "27B", bundleHasMTP: false,
+            isTargetMTPFamily: true, isBlocked: true, measuredFamilyAutoDepth: nil,
+            selectedDFlash2: true, statusLine: "fixture")
+        #expect(selected.speculationAvailable)
+        #expect(selected.familyDefaultOn)
+        #expect(!selected.speculationBlocked)
+        #expect(selected.speculationCapabilityDescription == "Compatible selected DFlash 2 drafter detected")
+        let bundled = ModelRuntime.LoadingModelMTPStatus(name: "27B", bundleHasMTP: false,
+            isTargetMTPFamily: true, isBlocked: false, measuredFamilyAutoDepth: nil,
+            bundledDFlash2: true, statusLine: "fixture")
+        #expect(bundled.speculationCapabilityDescription == "Compatible bundled DFlash 2 drafter detected")
+    }
+
     private func fixture(
         modelType: String, format: String = "affine", indexedHead: Bool = true,
         includeHead: Bool = true

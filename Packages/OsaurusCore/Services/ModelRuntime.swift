@@ -288,9 +288,18 @@ public actor ModelRuntime {
         let isBlocked: Bool
         let measuredFamilyAutoDepth: Int?
         var bundledDFlash2 = false
-        var speculationAvailable: Bool { bundledDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
-        var speculationBlocked: Bool { !bundledDFlash2 && isBlocked }
-        var familyDefaultOn: Bool { bundledDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
+        var selectedDFlash2 = false
+        var hasCompatibleDFlash2: Bool { bundledDFlash2 || selectedDFlash2 }
+        var speculationAvailable: Bool { hasCompatibleDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
+        var speculationBlocked: Bool { !hasCompatibleDFlash2 && isBlocked }
+        var familyDefaultOn: Bool { hasCompatibleDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
+        var speculationCapabilityDescription: String {
+            if selectedDFlash2 { return "Compatible selected DFlash 2 drafter detected" }
+            if bundledDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
+            if !bundleHasMTP { return "No MTP head or compatible drafter detected" }
+            if isBlocked { return "MTP head detected · blocked by tuning" }
+            return measuredFamilyAutoDepth.map { "MTP head detected · auto depth \($0)" } ?? "MTP head detected"
+        }
         let statusLine: String
     }
 
@@ -324,6 +333,11 @@ public actor ModelRuntime {
         let config = try? Data(contentsOf: directory.appendingPathComponent("config.json"))
         let bundledDFlash2 = VMLXServerRuntimeSettings().bundledDFlash2Drafter(
             configData: config, bundleDirectory: directory) != nil
+        // Availability remains discoverable under Off, so re-enabling never
+        // requires loading weights. The selected mode controls execution/display.
+        var selectedSettings = ServerRuntimeSettingsStore.snapshot()
+        selectedSettings.mtp.mode = .familyDefault
+        let selectedDFlash2 = selectedSettings.resolvedDFlash2Selection(configData: config) != nil
         return LoadingModelMTPStatus(
             name: name,
             bundleHasMTP: status.bundleHasMTP,
@@ -332,6 +346,7 @@ public actor ModelRuntime {
                 || status.nativeMTPTuning?.manualBlocked == true,
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
             bundledDFlash2: bundledDFlash2,
+            selectedDFlash2: selectedDFlash2,
             statusLine: status.statusLine
         )
     }

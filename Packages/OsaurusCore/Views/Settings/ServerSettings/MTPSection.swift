@@ -151,7 +151,7 @@ struct MTPSection: View {
                     } else {
                         Text(
                             L(
-                                "None selected — speculation falls back to the model's own MTP head, per Mode above."
+                                "No external folder selected — a compatible bundled DFlash 2 drafter is used first, otherwise the model's native MTP policy applies. Off (AR) disables both."
                             )
                         )
                         .font(.system(size: 11))
@@ -188,7 +188,7 @@ struct MTPSection: View {
                 // only target-family loads surface early.
                 let resolvedNames = Set(loadedModels.map(\.name))
                 loadingMTP = inspected.filter {
-                    $0.isTargetMTPFamily && !resolvedNames.contains($0.name)
+                    $0.speculationAvailable && !resolvedNames.contains($0.name)
                 }
                 try? await Task.sleep(for: .seconds(2))
             }
@@ -207,13 +207,7 @@ struct MTPSection: View {
             ForEach(loadingMTP, id: \.name) { model in
                 resolvedRow(
                     label: model.name,
-                    value: model.bundleHasMTP
-                        ? (model.isBlocked
-                            ? "MTP head detected · blocked by tuning"
-                            : (model.measuredFamilyAutoDepth.map {
-                                "MTP head detected · auto depth \($0)"
-                            } ?? "MTP head detected"))
-                        : "No MTP head",
+                    value: model.speculationCapabilityDescription,
                     detail: "Warming up — \(model.statusLine)"
                 )
             }
