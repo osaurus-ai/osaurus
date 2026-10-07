@@ -5271,7 +5271,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     provider: item.source.displayName,
                     source: source,
                     vision: item.isVLM,
-                    thinking: ModelProfileRegistry.profile(for: item.id)?.thinkingOption != nil,
+                    // An image model never thinks, whatever chat profile its name matches.
+                    thinking: cloud == nil && !item.isPhoneImageModel
+                        && ModelProfileRegistry.profile(for: item.id)?.thinkingOption != nil,
                     params: item.parameterCount,
                     quantization: item.quantization,
                     available: source != "local" || item.isMLXFormat,
@@ -5558,6 +5560,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let isWrite = head.method == .PUT
         runRequestTask(priority: .userInitiated) {
+            // An image model has no chat options: a name that matches a chat
+            // profile (Thinking and all) mustn't lend it any. Its controls are
+            // the picker's `image` block.
+            let imageModelIds = ((try? await ImageGenerationService.shared.availableModels()) ?? []).map(\.id)
+            if imageModelIds.contains(request.model) {
+                let body =
+                    isWrite
+                    ? #"{"error":"unknown_option"}"#
+                    : ((try? JSONEncoder.osaurusCanonical().encode(
+                        ModelOptionsSnapshot(model: request.model, thinking: nil, options: [])
+                    )).map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"encoding_failed"}"#)
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: isWrite ? .notFound : .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                return
+            }
             // Off-main bundle read, so local models report their real
             // thinking / effort contract instead of the cold-cache miss.
             _ = await LocalReasoningCapability.resolveForDispatch(modelId: request.model)
