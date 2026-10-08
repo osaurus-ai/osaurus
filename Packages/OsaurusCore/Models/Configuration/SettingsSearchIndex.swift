@@ -821,7 +821,7 @@ public enum SettingsSearchIndex {
             section: "Speculative Decoding",
             title: "Speculative Decoding",
             keywords: [
-                "speculative", "mtp", "native mtp", "draft model", "speculative depth", "default off",
+                "speculative", "mtp", "native mtp", "draft model", "speculative depth", "bundle default", "default", "on adaptive", "off ar", "adaptive",
                 // The drafter picker lives in this card. Someone who has
                 // just downloaded a DFlash 2 checkpoint searches for its
                 // name, not for "speculative decoding".
@@ -1951,7 +1951,10 @@ public enum SettingsSearchIndex {
             title: "Directory",
             keywords: [
                 "browse services", "mcp directory", "discover mcp", "provider catalog", "linear",
-                "github", "notion", "custom server",
+                "github", "notion", "custom server", "connectors", "legal connectors",
+                "accounting connectors", "finance connectors", "healthcare connectors", "quickbooks",
+                "xero", "docusign", "google drive", "gmail", "slack", "dropbox", "gusto",
+                "microsoft 365", "outlook", "harvey",
             ],
             subTab: "Services"
         ),

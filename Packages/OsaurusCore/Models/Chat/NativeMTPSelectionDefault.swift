@@ -1,12 +1,34 @@
 import Foundation
 import MLXLMCommon
 
-/// Native MTP is opt-in. Selecting a model only discovers capability; it never
-/// activates speculation. Retain the old provenance keys so an automatic
-/// family default can be retired without overwriting an explicit choice.
+/// Selecting a model discovers the family-default capability without loading it.
+/// Preserve explicit Off/Adaptive and historical provenance; never infer that a
+/// persisted Off was unintentional.
 enum NativeMTPSelectionDefault {
     static let userChoseKey = "nativeMTPSegmentUserChose"
     static let familyDefaultKey = "nativeMTPSegmentIsFamilyDefault"
+
+    /// A missing value means Reset to default, never an explicit Off choice.
+    static func mode(for segment: String?) -> VMLXMTPServerMode? {
+        switch segment {
+        case nil: return .familyDefault
+        case "off": return .off
+        case "auto": return .auto
+        default: return nil
+        }
+    }
+
+    /// Product controls expose only Off (AR) and On (Adaptive). Keep the
+    /// engine's legacy fields decodable, but never persist a native depth cap.
+    /// Keep external drafter selection stored; Off still disables its execution.
+    static func adaptiveSelection(_ settings: VMLXServerMTPSettings) -> VMLXServerMTPSettings {
+        var result = settings
+        // Off and the family default are kept as-is; everything else is On (Adaptive).
+        result.mode = (settings.mode == .off || settings.mode == .familyDefault) ? settings.mode : .auto
+        result.explicitDepth = nil
+        result.draftTokenLimit = nil
+        return result
+    }
 
     /// Called only after the runtime settings write succeeds. An unrelated
     /// sampler or network edit must not become an explicit MTP choice.
@@ -37,7 +59,8 @@ enum NativeMTPSelectionDefault {
             defaults.bool(forKey: familyDefaultKey),
             settings == .init(mode: .forceOn, explicitDepth: 3)
                 || settings == .init(mode: .auto)
+                || settings == .init(mode: .off)
         else { return settings }
-        return .init(mode: .off)
+        return .init(mode: .familyDefault)
     }
 }

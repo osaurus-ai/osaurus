@@ -36,12 +36,21 @@ public struct PromptSection: Sendable {
         case dynamic
     }
 
-    public var estimatedTokens: Int {
-        TokenEstimator.estimate(content.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
+    /// Precomputed at init: `content` is immutable, and these are read from
+    /// SwiftUI body evaluation (context budget popover) on every render.
+    /// Recomputing the whitespace trim per read was an O(n) main-thread
+    /// cost that showed up as app hangs with large system prompts.
+    public let estimatedTokens: Int
+    public let isEmpty: Bool
 
-    public var isEmpty: Bool {
-        content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    public init(id: String, label: String, content: String, cacheability: Cacheability) {
+        self.id = id
+        self.label = label
+        self.content = content
+        self.cacheability = cacheability
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.estimatedTokens = TokenEstimator.estimate(trimmed)
+        self.isEmpty = trimmed.isEmpty
     }
 
     public static func `static`(id: String, label: String, content: String) -> PromptSection {

@@ -116,6 +116,8 @@ final class MobilePairingService: ObservableObject {
     @Published private(set) var lastError: String?
 
     private var pendingKey: (fullKey: String, info: AccessKeyInfo)?
+    /// Read off-main with the key, so `redeem` never touches the Keychain.
+    private var pendingConnectAddress: String?
     private var expiryTask: Task<Void, Never>?
     private var keepAwakeToken: NSObjectProtocol?
     private let defaults: UserDefaults
@@ -151,12 +153,21 @@ final class MobilePairingService: ObservableObject {
         }
         isGeneratingCode = true
         defer { isGeneratingCode = false }
+        // A code is only worth showing with the server up to take it: the
+        // phone would otherwise search for a Mac that never answers.
+        await ServerController.ensureRunning()
+        if let reason = ServerController.notRunningReason() {
+            MobileConnectLog.write("pairing: no code, the server isn't running: \(reason)")
+            lastError = L("Your Mac can't take a pairing right now. \(reason)")
+            return
+        }
         do {
             let label = Self.keyLabel
-            let minted = try await Task.detached(priority: .userInitiated) {
-                try APIKeyManager.shared.generate(label: label, expiration: .days90)
+            let (minted, connectAddress) = try await Task.detached(priority: .userInitiated) {
+                (try APIKeyManager.shared.generate(label: label, expiration: .days90), MobileConnectIdentity.address())
             }.value
             pendingKey = minted
+            pendingConnectAddress = connectAddress
             let code = PairingCode(code: PairingCode.generate(), issuedAt: Date())
             activeCode = code
             scheduleExpiry(of: code)
@@ -189,8 +200,14 @@ final class MobilePairingService: ObservableObject {
 
     /// Test seam: install a code and an already-minted key, skipping the
     /// biometric mint in `generateCode()`.
-    func installPendingCodeForTesting(_ code: PairingCode, fullKey: String, info: AccessKeyInfo) {
+    func installPendingCodeForTesting(
+        _ code: PairingCode,
+        fullKey: String,
+        info: AccessKeyInfo,
+        connectAddress: String? = nil
+    ) {
         pendingKey = (fullKey, info)
+        pendingConnectAddress = connectAddress
         activeCode = code
     }
 
@@ -216,11 +233,12 @@ final class MobilePairingService: ObservableObject {
             return .invalidCode
         }
 
+        let agents = Self.remoteAgents(includeRelay: Self.isReachAnywhereEnabled(in: defaults))
         let payload = MobilePairPayload(
             apiKey: pending.fullKey,
             keyExpiresAt: pending.info.expiresAt.map { Int($0.timeIntervalSince1970) },
             hostName: Host.current().localizedName ?? "Mac",
-            agents: Self.remoteAgents(includeRelay: Self.isReachAnywhereEnabled(in: defaults))
+            agents: agents.isEmpty ? Self.connectEntry(address: pendingConnectAddress) : agents
         )
         guard let plaintext = try? JSONEncoder().encode(payload),
             let sealed = try? PairingKeyEnvelope.seal(
@@ -272,6 +290,15 @@ final class MobilePairingService: ObservableObject {
                 relayURL: includeRelay ? RelayTunnelManager.publicURL(forAddress: address) : nil
             )
         }
+    }
+
+    /// The built-in agent's roster entry, carrying the Mac's connect identity
+    /// (`MobileConnectIdentity`) so a Mac with no custom agents still gives
+    /// the phone a Secure Channel to pin. Only offered then: otherwise the
+    /// phone rides a custom agent's channel, which the relay can also carry.
+    static func connectEntry(address: String?) -> [MobilePairPayload.AgentEntry] {
+        guard let address, !address.isEmpty else { return [] }
+        return [.init(id: Agent.defaultId.uuidString, name: Agent.default.name, address: address)]
     }
 
     /// Nonce of the paired phone's access key, which run rows carry as their

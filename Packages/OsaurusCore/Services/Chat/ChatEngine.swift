@@ -120,12 +120,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             /// loopback-trusted callers are refused unless the user opted in.
             /// Maps to 403.
             case routerSpendNotAuthorized
+            case invalidStructuredOutput(String)
         }
 
         let kind: Kind
 
         var errorDescription: String? {
             switch kind {
+            case .invalidStructuredOutput(let message): return message
             case .modelNotFound(let requested):
                 return "Model '\(requested)' is not installed or registered with any provider."
             case .noServiceAvailable(let requested):
@@ -145,6 +147,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             case .noServiceAvailable: return 503
             case .remoteAgentUnavailable: return 503
             case .routerSpendNotAuthorized: return 403
+            case .invalidStructuredOutput: return 400
             }
         }
     }
@@ -173,7 +176,23 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private func prepareDispatch(
         request: ChatCompletionRequest,
         trace: TTFTTrace?
-    ) async -> Dispatch {
+    ) async throws -> Dispatch {
+        if let reason = RequestValidator.responseFormatReason(request.response_format)
+            ?? RequestValidator.unsupportedSamplerReason(
+                n: nil, responseFormatType: request.response_format?.type)
+        {
+            throw EngineError(kind: .invalidStructuredOutput(reason))
+        }
+        let jsonSchema = request.response_format?.type == "json_schema"
+            ? try request.response_format?.json_schema?.encodedSchema() : nil
+        if jsonSchema != nil && request.stop?.isEmpty == false {
+            throw EngineError(kind: .invalidStructuredOutput(
+                "JSON schema output cannot be combined with text stop strings; completion uses the schema and EOS."))
+        }
+        if jsonSchema != nil && (request.runAsRemoteAgent || request.tools?.isEmpty == false) {
+            throw EngineError(kind: .invalidStructuredOutput(
+                "JSON schema output is not yet supported with tools or remote agent execution."))
+        }
         let temperature = request.temperature
         let maxTokens = request.resolvedMaxTokens ?? 16384
         // OpenAI `frequency_penalty` / `presence_penalty` ride
@@ -285,6 +304,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             presencePenalty: request.presence_penalty,
             seed: seedBits,
             jsonMode: isJSONObject,
+            jsonSchema: jsonSchema,
             modelOptions: modelOptions,
             sessionId: request.session_id,
             activitySource: activitySource,
@@ -341,10 +361,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             services: services,
             remoteServices: []
         )
-        if case .service = localRoute {
+        if case .service(let service, _) = localRoute {
+            if jsonSchema != nil && !(service is MLXService) {
+                throw EngineError(kind: .invalidStructuredOutput(
+                    "JSON schema output is currently supported only by the local MLX runtime."))
+            }
             return Dispatch(route: localRoute, params: params, remoteServices: [])
         }
 
+        if jsonSchema != nil {
+            throw EngineError(kind: .invalidStructuredOutput(
+                "JSON schema output is currently supported only by the local MLX runtime."))
+        }
         // Only touch remote provider state after local services decline the
         // model. Provider startup can block on Keychain; local MLX requests
         // must not inherit that unrelated startup dependency.
@@ -838,7 +866,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let temperature = request.temperature
         let maxTokens = request.resolvedMaxTokens ?? 16384
 
-        let dispatch = await prepareDispatch(request: request, trace: trace)
+        let dispatch = try await prepareDispatch(request: request, trace: trace)
         let params = dispatch.params
         let route = dispatch.route
         debugLog("[ChatEngine] streamChat: route=\(route)")
@@ -1480,7 +1508,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // Carry the caller's `ttftTrace` through to non-streaming requests
         // for parity with `streamChat` — useful when an HTTP route runs the
         // same `request.ttftTrace` across both code paths.
-        let dispatch = await prepareDispatch(request: request, trace: request.ttftTrace)
+        let dispatch = try await prepareDispatch(request: request, trace: request.ttftTrace)
         let params = dispatch.params
         let route = dispatch.route
 

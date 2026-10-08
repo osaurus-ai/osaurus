@@ -13,6 +13,51 @@ import Testing
 
 struct HTTPStreamingWriterTests {
     @Test(arguments: [true, false])
+    func responsesTerminalRetainsOutputItemsAndMeasuredRate(hasMeasuredRate: Bool) throws {
+        let channel = EmbeddedChannel()
+        let context = try channel.embeddedContext()
+        let writer = OpenResponsesSSEWriter()
+        writer.writeResponseCreated(responseId: "resp-proof", model: "fake", inputTokens: 2, context: context)
+        writer.writeReasoningDelta("brief thought", itemId: "reasoning-proof", context: context)
+        writer.writeReasoningItemDone(context: context)
+        writer.writeReasoningItemDone(context: context) // guarded repeated closure
+        writer.writeMessageItemAdded(itemId: "message-proof", context: context)
+        writer.writeContentPartAdded(context: context)
+        writer.writeTextDelta("café ", context: context)
+        writer.writeTextDelta("雪", context: context)
+        writer.writeTextDone(context: context)
+        writer.writeMessageItemDone(context: context)
+        writer.writeFunctionCallItemAdded(itemId: "function-proof", callId: "call-proof", name: "lookup_fixture", context: context)
+        writer.writeFunctionCallArgumentsDelta(callId: "call-proof", delta: "{\"id\":\"alpha\"}", context: context)
+        writer.writeFunctionCallArgumentsDone(callId: "call-proof", context: context)
+        writer.writeFunctionCallItemDone(callId: "call-proof", name: "lookup_fixture", context: context)
+        writer.setOutputTokens(3)
+        if hasMeasuredRate { writer.setTokensPerSecond(37.25) }
+        writer.writeResponseCompleted(context: context)
+        var body = ""
+        while let part = try channel.readOutbound(as: HTTPServerResponsePart.self) {
+            if case .body(.byteBuffer(var buffer)) = part {
+                body += buffer.readString(length: buffer.readableBytes) ?? ""
+            }
+        }
+        let events = body.components(separatedBy: .newlines).filter { $0.hasPrefix("data: ") }.compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8))) as? [String: Any]
+        }
+        let terminal = try #require(events.last(where: { $0["type"] as? String == "response.completed" })?["response"] as? [String: Any])
+        let output = try #require(terminal["output"] as? [[String: Any]])
+        #expect(output.compactMap { $0["id"] as? String } == ["reasoning-proof", "message-proof", "function-proof"])
+        let completed = events.filter { $0["type"] as? String == "response.output_item.done" }.compactMap { $0["item"] as? [String: Any] }
+        #expect(try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: completed, options: [.sortedKeys]))
+        let deltas = events.filter { $0["type"] as? String == "response.output_text.delta" }.compactMap { $0["delta"] as? String }.joined()
+        #expect(terminal["output_text"] as? String == deltas)
+        #expect(deltas == "café 雪")
+        let usage = try #require(terminal["usage"] as? [String: Any])
+        #expect(usage["tokens_per_second"] as? Double == (hasMeasuredRate ? 37.25 : nil))
+        #expect(usage["output_tokens"] as? Int == 3)
+        _ = try channel.finish()
+    }
+
+    @Test(arguments: [true, false])
     func anthropicDeferredStartPrecedesFirstContent(withPreparedCount: Bool) throws {
         let channel = EmbeddedChannel()
         let context = try channel.embeddedContext()
@@ -61,6 +106,38 @@ struct HTTPStreamingWriterTests {
         #expect(!body.contains("message_start"))
         #expect(!body.contains("usage"))
         _ = try channel.finish()
+    }
+
+    @Test func structuredOutputRefusalKeepsItsTypeInEveryStreamingEnvelope() throws {
+        let error = ChatEngine.EngineError(kind: .invalidStructuredOutput("Unsupported schema decoder"))
+        let writers: [(ChannelHandlerContext) -> Void] = [
+            { context in
+                let writer: any ResponseWriter = SSEResponseWriter()
+                writer.writeErrorFromThrown(error, context: context)
+            },
+            { context in
+                let writer: any ResponseWriter = NDJSONResponseWriter()
+                writer.writeErrorFromThrown(error, context: context)
+            },
+            { OllamaGenerateNDJSONResponseWriter().writeErrorFromThrown(error, context: $0) },
+            { AnthropicSSEResponseWriter().writeErrorFromThrown(error, context: $0) },
+            { OpenResponsesSSEWriter().writeErrorFromThrown(error, context: $0) },
+        ]
+        for write in writers {
+            let channel = EmbeddedChannel()
+            let context = try channel.embeddedContext()
+            write(context)
+            var body = ""
+            while let part = try channel.readOutbound(as: HTTPServerResponsePart.self) {
+                if case .body(.byteBuffer(var buffer)) = part {
+                    body += buffer.readString(length: buffer.readableBytes) ?? ""
+                }
+            }
+            #expect(body.contains("invalid_request_error"))
+            #expect(body.contains("Unsupported schema decoder"))
+            #expect(!body.contains("internal_error"))
+            _ = try channel.finish()
+        }
     }
 
     @Test func nativeMTPRefusalKeepsItsTypeInEveryStreamingEnvelope() throws {

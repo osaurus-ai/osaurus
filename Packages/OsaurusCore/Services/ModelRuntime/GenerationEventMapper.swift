@@ -382,7 +382,7 @@ enum GenerationEventMapper {
             "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public) stop=\(String(describing: info.stopReason), privacy: .public) unclosedReasoning=\(info.unclosedReasoning, privacy: .public)"
         )
 
-        // Which decode path actually ran. vmlx populates `nativeMTPStats` ONLY
+        // Whether native MTP actually ran. vmlx populates `nativeMTPStats` ONLY
         // when the native-MTP iterator was the one that produced these tokens;
         // every other path (plain AR, dFlash-2) leaves it nil. Nothing in the
         // app read this field, so a turn that requested MTP and was silently
@@ -392,7 +392,7 @@ enum GenerationEventMapper {
         // Both just showed a tok/s number. That made every MTP measurement
         // unfalsifiable, so it is logged before anything else is measured.
         //
-        // `mtp=off` here does NOT by itself mean the gate rejected the turn —
+        // `nativeMTP=off` does NOT by itself mean the gate rejected the turn —
         // it means native MTP did not produce these tokens, which also covers
         // "not requested". Distinguishing REQUESTED-but-excluded from
         // not-requested needs the gate itself to report its reason, and the
@@ -413,8 +413,9 @@ enum GenerationEventMapper {
                     + "verifier=\(mtp.verifierMode) cacheMode=\(mtp.cacheMode)"
             )
         } else {
-            mapperLog.info("[perf] decodePath=plain mtp=off")
-            PrefillDebugLog.shared.log("     STEP-MTP   decodePath=plain mtp=off")
+            // Nil native-MTP statistics cannot distinguish AR from DFlash2.
+            mapperLog.info("[perf] nativeMTP=off decodePath=unreported")
+            PrefillDebugLog.shared.log("     STEP-MTP   nativeMTP=off decodePath=unreported")
         }
 
         // Prefill diagnostics: vmlx's actual processed-prompt count + prefill

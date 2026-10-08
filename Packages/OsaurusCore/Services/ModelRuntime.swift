@@ -287,6 +287,19 @@ public actor ModelRuntime {
         /// would show a lying control.
         let isBlocked: Bool
         let measuredFamilyAutoDepth: Int?
+        var bundledDFlash2 = false
+        var selectedDFlash2 = false
+        var hasCompatibleDFlash2: Bool { bundledDFlash2 || selectedDFlash2 }
+        var speculationAvailable: Bool { hasCompatibleDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
+        var speculationBlocked: Bool { !hasCompatibleDFlash2 && isBlocked }
+        var familyDefaultOn: Bool { hasCompatibleDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
+        var speculationCapabilityDescription: String {
+            if selectedDFlash2 { return "Compatible selected DFlash 2 drafter detected" }
+            if bundledDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
+            if !bundleHasMTP { return "No MTP head or compatible drafter detected" }
+            if isBlocked { return "MTP head detected · blocked by tuning" }
+            return measuredFamilyAutoDepth.map { "MTP head detected · auto depth \($0)" } ?? "MTP head detected"
+        }
         let statusLine: String
     }
 
@@ -304,16 +317,36 @@ public actor ModelRuntime {
     /// `bundleHasMTP == false`; a non-target family returns
     /// `isTargetMTPFamily == false` — no false positives on other families.
     nonisolated static func inspectLoadingModelMTP(name: String) -> LoadingModelMTPStatus? {
-        guard let dir = findLocalDirectory(forModelId: name),
-            let status = try? MTPBundleInspector.inspect(modelDirectory: dir)
+        guard let directory = findLocalDirectory(forModelId: name) else { return nil }
+        return inspectLoadingModelMTP(name: name, directory: directory)
+    }
+
+    /// Selection already resolved the installed bundle. Inspect that exact
+    /// directory rather than resolving its display name a second time, which
+    /// can select a different local alias or miss an externally found bundle.
+    /// Availability is tensor evidence; tuning eligibility stays a separate field.
+    nonisolated static func inspectLoadingModelMTP(
+        name: String, directory: URL
+    ) -> LoadingModelMTPStatus? {
+        guard let status = try? MTPBundleInspector.inspect(modelDirectory: directory)
         else { return nil }
+        let config = try? Data(contentsOf: directory.appendingPathComponent("config.json"))
+        let bundledDFlash2 = VMLXServerRuntimeSettings().bundledDFlash2Drafter(
+            configData: config, bundleDirectory: directory) != nil
+        // Availability remains discoverable under Off, so re-enabling never
+        // requires loading weights. The selected mode controls execution/display.
+        var selectedSettings = ServerRuntimeSettingsStore.snapshot()
+        selectedSettings.mtp.mode = .familyDefault
+        let selectedDFlash2 = selectedSettings.resolvedDFlash2Selection(configData: config) != nil
         return LoadingModelMTPStatus(
             name: name,
             bundleHasMTP: status.bundleHasMTP,
-            isTargetMTPFamily: modelTypeIsMTPControlTarget(directory: dir),
+            isTargetMTPFamily: modelTypeIsMTPControlTarget(directory: directory),
             isBlocked: status.isExplicitlyBlocked
                 || status.nativeMTPTuning?.manualBlocked == true,
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
+            bundledDFlash2: bundledDFlash2,
+            selectedDFlash2: selectedDFlash2,
             statusLine: status.statusLine
         )
     }
@@ -2425,12 +2458,24 @@ public actor ModelRuntime {
         let retiredCacheCounters = modelCache[name].flatMap {
             Self.processLifetimeCacheCounters(for: $0)
         }
+        let retiredDrafterPath = modelCache[name]?.draftStrategy?.dflash2DrafterPath
         rememberDiskQuotaBeforeUnload(name: name)
         modelCache[name]?.container.disableCaching()
 
         Stream.gpu.synchronize()
         let didRemove = autoreleasepool {
-            modelCache.removeValue(forKey: name) != nil
+            let removed = modelCache.removeValue(forKey: name) != nil
+            // The resolver strongly owns loaded draft weights independently of
+            // the target container. Release that owner only after draining the
+            // target and only when no other resident holder shares its bundle.
+            if removed, let retiredDrafterPath,
+                Self.shouldEvictDFlashDrafter(
+                    retiredPath: retiredDrafterPath,
+                    residentPaths: modelCache.values.compactMap { $0.draftStrategy?.dflash2DrafterPath })
+            {
+                DFlash2DrafterResolver.shared.evict(path: retiredDrafterPath)
+            }
+            return removed
         }
         residentMetadata.removeValue(forKey: name)
         lastUseSource.removeValue(forKey: name)
@@ -2453,6 +2498,14 @@ public actor ModelRuntime {
         Stream.gpu.synchronize()
         await MetalGate.shared.exitModelTeardown(model: name)
         return true
+    }
+
+    /// Match the resolver's canonical path key, including symlink aliases.
+    nonisolated static func shouldEvictDFlashDrafter(
+        retiredPath: URL, residentPaths: [URL]
+    ) -> Bool {
+        let retiredKey = retiredPath.resolvingSymlinksInPath().path
+        return !residentPaths.contains { $0.resolvingSymlinksInPath().path == retiredKey }
     }
 
     /// Remove only the claim generation owned by this caller, then release all
@@ -2635,6 +2688,9 @@ public actor ModelRuntime {
 
         autoreleasepool {
             modelCache.removeAll()
+            // The quit branch returned above without freeing GPU objects.
+            // Normal clear drains all holders, so no shared drafter remains.
+            DFlash2DrafterResolver.shared.evictAll()
         }
         if hasRetiredCacheCounters {
             await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
@@ -2902,10 +2958,27 @@ public actor ModelRuntime {
         if let holder, !residents.contains(where: { $0 === holder }) {
             residents.append(holder)
         }
-        return residents.map(\.allocatorCacheLimitBytes) + [Self.allocatorCacheBudgetHeadroom(
-            workingSets: residents.map(\.admittedWorkingSetBytes),
-            budgets: residents.map(\.admittedLoadBudgetBytes)
-        )]
+        return residents.map(\.allocatorCacheLimitBytes) + [Self.allocatorCacheCapFromHeadroom(
+            Self.allocatorCacheBudgetHeadroom(
+                workingSets: residents.map(\.admittedWorkingSetBytes),
+                budgets: residents.map(\.admittedLoadBudgetBytes)
+            ))]
+    }
+
+    /// The admitted working set already prices a scratch floor
+    /// (`estimatedMemorySafetyWorkingSetBytes`: ≥ 2 GiB for load/activation/
+    /// allocator scratch), and MLX's freed-buffer pool IS where that scratch
+    /// lives. So the remaining-budget clamp may shrink the pool, but never
+    /// below that already-admitted floor. Without the floor a large model whose
+    /// estimate meets the budget got a 0-byte pool: every decode step
+    /// re-allocated every intermediate and paid a Metal residency commit
+    /// (`ResidencySets::insert` → IOGPUResourceGroupUpdateResources) per buffer.
+    /// Measured live on Qwen3.8 Flash-Next JANG_4S under Safe Auto: 31.4 ms per
+    /// target forward vs 21.6 ms with a working pool (same build, same prompt).
+    nonisolated static let admittedAllocatorScratchFloorBytes = 2 << 30
+
+    nonisolated static func allocatorCacheCapFromHeadroom(_ headroom: Int?) -> Int? {
+        headroom.map { max($0, admittedAllocatorScratchFloorBytes) }
     }
 
     nonisolated static func allocatorCacheBudgetHeadroom(
@@ -3756,11 +3829,9 @@ public actor ModelRuntime {
 
         lastRAMFeasibility = assessment
 
-        // Resident compute needs actual reclaimable capacity for weights,
-        // KV and working state. The host sample already credits file cache;
-        // adding 10% "slack" would instead borrow from anonymous memory and
-        // leave no host reserve during the first prefill. Zero/failed samples
-        // must also refuse rather than silently bypass this check.
+        // Report the materialized-load estimate without treating a transient
+        // host-capacity sample as a hard admission limit. Explicit runtime
+        // memory limits and Strict-mode validation remain separate gates.
         if refuseOnShortfall {
             let required = Self.materializedLoadRequiredAvailableBytes(
                 loadFootprintBytes: incomingLoadFootprintBytes,
@@ -3774,16 +3845,11 @@ public actor ModelRuntime {
             if !Self.materializedLoadFits(requiredBytes: required, availableBytes: available) {
                 let requiredDescription = required.map { "~\($0 >> 30) GiB" } ?? "an unavailable working-set estimate"
                 let message = "Not enough reclaimable memory to load \(modelName): resident weights, KV, working state and host reserve require \(requiredDescription), but only ~\(max(0, available) >> 30) GiB is available. Close other apps or unload other models, then retry."
-                lastMemorySafetyLoadDecision = lastMemorySafetyLoadDecision?.refusingHostCapacity(message)
-                genLog.error(
-                    "loadContainer: refusing materialized load of \(modelName, privacy: .public): required=\(requiredDescription, privacy: .public) available=\(available, privacy: .public)"
-                )
-                throw NSError(
-                    domain: "ModelRuntime",
-                    code: 507,
-                    userInfo: [
-                        NSLocalizedDescriptionKey: message
-                    ]
+                // This is a heuristic capacity warning, not proof that an
+                // allocation will fail or that every mapped page must be
+                // resident. Keep the warning visible in load diagnostics.
+                genLog.warning(
+                    "loadContainer: memory estimate tight for \(modelName, privacy: .public): required=\(requiredDescription, privacy: .public) available=\(available, privacy: .public) — loading anyway (\(message, privacy: .public))"
                 )
             }
         }
@@ -6516,7 +6582,8 @@ public actor ModelRuntime {
         modelDirectory: URL,
         settings: VMLXServerRuntimeSettings
     ) throws -> NativeMTPLaunchPlan {
-        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
+        let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
+        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName, configData: configData) {
             try NativeMTPAdmission().validateLoad(settings: settings, externalDrafterSelected: false)
             let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
                 modelName: modelName,
@@ -6533,7 +6600,6 @@ public actor ModelRuntime {
                 memorySafetySummary: memorySafetyPlan.displaySummary
             )
         }
-        let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
         let jangConfig = try? JangLoader.loadConfig(at: modelDirectory)
         let status: MTPBundleStatus?
         do {
@@ -6573,7 +6639,8 @@ public actor ModelRuntime {
             configData: configData,
             jangConfig: jangConfig,
             status: status,
-            externalDrafterSelected: settings.resolvedDFlash2Selection(configData: configData) != nil
+            externalDrafterSelected: settings.resolvedDFlash2Selection(
+                configData: configData, bundleDirectory: modelDirectory) != nil
         )
         try admission.validateLoad(
             settings: settings,
@@ -6595,7 +6662,8 @@ public actor ModelRuntime {
         let draftStrategy = unclampedSettings.resolvedMTPDraftStrategy(
             configData: configData,
             jangConfig: jangConfig,
-            status: status
+            status: status,
+            bundleDirectory: modelDirectory
         )
         // `DFlash2TokenIterator` resolves its width as
         // `requestedBlockSize ?? config.blockSize`. Mirror exactly that, from
@@ -6605,7 +6673,8 @@ public actor ModelRuntime {
         // running when none is.
         let dflash2BlockSize: Int? = {
             guard draftStrategy?.dflash2DrafterPath != nil,
-                let selection = settings.resolvedDFlash2Selection(configData: configData)
+                let selection = settings.resolvedDFlash2Selection(
+                    configData: configData, bundleDirectory: modelDirectory)
             else { return nil }
             return settings.mtp.dflash2BlockSize ?? selection.blockSize
         }()
@@ -6712,12 +6781,12 @@ public actor ModelRuntime {
         _ loaded: MLXLMCommon.DraftStrategy?,
         mtp settings: VMLXServerMTPSettings? = nil
     ) -> MLXLMCommon.DraftStrategy? {
+        let mtp = settings ?? ServerRuntimeSettingsStore.snapshot().mtp
+        if mtp.mode == .off { return nil }
         guard case .some(.nativeMTP(let depth, let verifierMode)) = loaded else {
             // DFlash 2 and the no-drafter case are load-time decisions.
             return loaded
         }
-        let mtp = settings ?? ServerRuntimeSettingsStore.snapshot().mtp
-        if mtp.mode == .off { return nil }
         // Match resolvedMTPLaunch: explicit depth takes precedence over the
         // legacy Auto draft-token cap, regardless of the resident head's depth.
         // It sets the initial depth and the request's exploration ceiling.

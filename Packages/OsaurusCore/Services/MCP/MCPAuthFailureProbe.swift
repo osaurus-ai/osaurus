@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import MCP
 
 /// Outcome of re-probing an MCP endpoint after a failed connect.
 public struct MCPAuthFailureProbeResult: Sendable, Equatable {
@@ -47,7 +48,7 @@ public enum MCPAuthFailureProbe {
     /// would make the probe misclassify an auth failure as a protocol one.
     public static func handshakeBody() -> Data {
         Data(
-            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"Osaurus","version":"1.0.0"}}}"#
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"\#(MCP.Version.latest)","capabilities":{},"clientInfo":{"name":"Osaurus","version":"1.0.0"}}}"#
                 .utf8
         )
     }

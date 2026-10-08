@@ -44,7 +44,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 Rules that follow from the current host implementation:
 
 - A client **never opens a relay tunnel**. The relay maps each agent address to exactly one tunnel; only the device that hosts the agent authenticates it. A client that did so would evict the real host (`agent_removed reason:"superseded"`, [`RelayTunnelManager.swift`](../Packages/OsaurusCore/Networking/RelayTunnelManager.swift)).
-- The **built-in Default agent is not reachable remotely** from any device, including the owner's own. `Agent.rejectBuiltInForExternalSurface` fires on every external surface ([`BuiltInAgentGuard.swift`](../Packages/OsaurusCore/Models/Agent/BuiltInAgentGuard.swift)); owner redeem returns `403` for it (§5.1). Only custom agents are addressable.
+- The **built-in Default agent is not reachable remotely** except by the owner's own paired phone. `Agent.rejectBuiltInForExternalSurface` fires on every other external surface ([`BuiltInAgentGuard.swift`](../Packages/OsaurusCore/Models/Agent/BuiltInAgentGuard.swift)); owner redeem returns `403` for it (§5.1). It has no agent address, so it is never addressable by one: the paired phone reaches it inside another agent's Secure Channel, or the Mac's connect identity (§11.3), with a master-scoped key (§18).
 - "Same identity" means the client can produce EIP-191 signatures with the **master** secp256k1 key whose address equals the host's master address. That is the entire trust root for owner access; there is no account, session, or server-side registry of devices.
 - Two Macs sharing an identity are just two hosts. Each mints device-scoped addresses (§3), so their agents never collide at the relay.
 
@@ -446,8 +446,11 @@ the tunnel that authenticated that address. No client auth at the relay.
 
 ### 6.2 Secure Channel v1 — mandatory
 
-Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch` that arrive
-in plaintext are refused with `426`:
+Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch`, and every
+owner-only request that changes something (any method but `GET`: creating,
+editing or deleting an agent, its tools, answering an approval or a privacy
+review, editing or deleting a chat, stopping a run), that arrive in plaintext
+are refused with `426`. Loopback callers are exempt; owner reads stay open:
 
 ```json
 {"error":{"code":"secure_channel_required","message":"…","type":"upgrade_required"}}
@@ -471,6 +474,10 @@ salt   = SHA256(transcript)
 c2s    = HKDF-SHA256(shared, salt, info = "osaurus-sc1:c2s", 32)
 s2c    = HKDF-SHA256(shared, salt, info = "osaurus-sc1:s2c", 32)
 ```
+
+`agentAddress` must be one of the Mac's agent addresses or its connect
+identity (§11.3); anything else gets `404 {"error":"Unknown agent address"}`,
+which a client should read as "this pin is stale, drop it".
 
 Session TTL 1 h (`expiresAt`); re-handshake on `401 secure_session_unknown`.
 
@@ -640,7 +647,7 @@ prefixes are never interchangeable:
 | `Ethereum Signed Message` | master | router headers, owner/workspace redeem proofs, relay `add_agent` |
 | `Osaurus Signed Access` | agent child | `osk-v1` |
 | `Osaurus Signed Invite` | agent child | `AgentInvite.sig` |
-| `Osaurus Secure Channel` | agent child | `ServerHello.signature` |
+| `Osaurus Secure Channel` | agent child, or the connect identity (§11.3) | `ServerHello.signature` |
 | `Osaurus Signed Pairing` / `… Pairing Server` | connector / agent child | LAN `/pair` (not used by a relay-only client) |
 | `Osaurus Signed Message` | master | `TokenPayload` internal tokens (not used on the wire by a client) |
 
@@ -809,6 +816,40 @@ key as the Bearer inside the Secure Channel. `GET /agents` and
 pairing can be learned; fetch the roster **inside** the Secure Channel of an
 already-pinned agent so the new addresses are authenticated.
 
+**Connect identity.** The built-in Default agent has no address of its own,
+so the phone normally reaches it inside a custom agent's channel (§18). A Mac
+with no custom agents (with addresses) has no such channel to offer, so
+instead it lists the built-in agent's id with the Mac's **connect identity**:
+
+```
+HMAC-SHA512(key: masterKey, data: "osaurus-connect-v1" || utf8(deviceId) || 0x00)
+    → first 32 bytes → secp256k1 key → address, as for agent keys
+```
+
+(`deviceId` is empty on a Mac without one, §2.4.)
+
+- Device-scoped like v2 agent keys, so a master restored on another Mac
+  answers to a different address. Its own domain, so it never equals an
+  agent key.
+- Accepted only by `POST /secure/session` (§6.2). It is not an agent address:
+  the relay, Bonjour, access keys and invites never see it, and it grants
+  nothing by itself — the inner Bearer still decides.
+- Offered only while the Mac has no custom agent with an address, both in
+  the pairing payload and as the built-in agent's `address` in the owner's
+  `GET /agents`. Once a custom agent exists the built-in entry goes back to
+  `address: null`. A phone that already pinned the connect identity keeps it
+  (a null never removes a pin); the Mac keeps accepting it on the LAN, and on
+  the relay route the phone rides an agent the relay serves (§11.6).
+- A phone paired before the Mac offered it picks it up from the roster on its
+  next `GET /agents`, with no re-pairing.
+
+Without it, such a phone had nothing to pin, sent runs as plaintext, and got
+`426 secure_channel_required` on every message. A paired phone that still
+gets that `426` should refetch `GET /agents` before reporting it, so a retry
+finds the pin, and should tell the user to update Osaurus on the Mac: unlike
+an unpaired phone, it never learns identities from Bonjour, so joining the
+Mac's network does not help.
+
 ### 11.4 Lifecycle
 
 - Keys last 90 days; re-pair to renew. Unpair on the Mac revokes the key
@@ -845,6 +886,10 @@ created later are added automatically.
 - The phone keeps both routes and sends the same Secure Channel envelopes
   (§6.2) to either base URL; nothing else changes. Prefer the LAN address
   when it answers `/health` quickly, otherwise use the relay URL.
+- An agent the relay doesn't serve — the built-in agent, pinned to the
+  connect identity (§11.3) or not at all, or one created moments ago — rides
+  the channel of an agent the relay does serve. The connect identity is never
+  relayed, so a Mac with no custom agents is reachable on the LAN only.
 - Relay failures surface as the outer errors in §7.1 (`502 agent_offline`
   when the Mac is asleep, offline, or the tunnel is off).
 - `/pair/code` still refuses relay traffic (§11.3); pairing is LAN only.
@@ -858,9 +903,9 @@ get `403 owner_only`). Send inside the Secure Channel like any other call.
 
 ### 12.1 `GET /models/picker`
 
-The chat models the Mac composer's picker lists
-(`ModelPickerItemCache.chatModelCandidates`), in the picker's tab order and
-its order within each tab, plus the Mac's favourites:
+The models the Mac composer's picker lists — chat models
+(`ModelPickerItem.isLikelyChatCapable`) plus ready on-device image models — in the
+picker's tab order and its order within each tab, plus the Mac's favourites:
 
 ```json
 {"models":[{"id":"mlx-community/Qwen3-8B-4bit","name":"Qwen3 8B","provider":"Local Models",
@@ -871,7 +916,9 @@ its order within each tab, plus the Mac's favourites:
  "favorites":["local\u001fmlx-community/Qwen3-8B-4bit"]}
 ```
 
-`source` is `foundation | local | remote | claude-code`. `tab` / `tab_title`
+`source` is `foundation | local | remote | claude-code | image`. `kind` is
+`chat` or `image`: an image model never takes a chat run, it generates through
+`/images/generations` (and `/images/edits` when `edits` is true). `tab` / `tab_title`
 name the picker tab holding the model (`local`, `claude-code`,
 `remote-<provider uuid>`). `available: false` marks bundles the Mac can't run.
 The picker's sort and filters read `context_length` (tokens), `input_price` /
@@ -919,11 +966,40 @@ applies and nothing is sent to the model. Fields without a value (`icon`,
 stores one choice (`null` resets it) and answers with the same body as
 `POST`. `404 unknown_option`, `400 invalid_value`.
 
+A local bundle with a native MTP head also gets a last `nativeMTPDepth`
+option (`off` / `auto`, meaning Off (AR) / On (Adaptive)). Default resolution is bundle-aware: a usable Flash-Next native head enables Adaptive; a compatible bundled Qwen27B DFlash2 drafter enables DFlash2. Explicit Off takes precedence. Capability discovery must not require loading weights.
+Unlike the others it is the Mac's global Speculative Decoding setting, not a
+per-model choice; setting it writes that setting, `null` meaning `off`.
+
 ### 12.4 `PUT /models/favorites`
 
 `{"key":"<favorite_key from 12.1>","favorite":true}` adds the model to the
 Mac's favourites (`false` removes it), as the heart on a picker row does, and
 answers with the whole list: `{"favorites":["…"]}`.
+
+### 12.5 Image models
+
+A `kind: "image"` model from 12.1 never takes a §14.5 run. The phone sends
+the prompt to `POST /images/generations` (or `POST /images/edits` with
+`images` as data URLs when the model has `edits`), with `stream: true` and
+`response_format: "b64_json"`:
+
+```json
+{"model":"<id>","prompt":"…","stream":true,"response_format":"b64_json",
+ "osaurus_session_id":"<Mac chat uuid, optional>"}
+```
+
+The stream is SSE, one JSON object per `data:` line, `type` being `queued`,
+`loading_model`, `step` (`step`, `total`, `progress`), `preview` (`image`, a
+PNG data URL), `completed` (`images[].b64_json`), `error` (`message`) or
+`cancelled`; every event carries `job_id`, which `POST /images/cancel`
+(`{"job_id":"…"}`) takes.
+
+With `osaurus_session_id` naming a chat the phone may continue (§14.5), the
+prompt (with its source images) and the reply are appended to it once the
+image is done, written as the Mac's own image mode writes them, so §14.2
+lists the result under `images`. Requests naming a session need the Secure
+Channel (426 otherwise) and the master key; anyone else's id is ignored.
 
 ---
 
@@ -947,6 +1023,53 @@ mascot images themselves ship inside each client.
 phone can show what the agent was told to be. It is absent (null) for
 agent-scoped callers — a workspace peer has no business reading it — and is
 never included in the `GET /agents` list, which stays small.
+
+## 13.2 The agent's settings
+
+`GET /agents/{id}` also carries `settings` for owner callers and custom
+agents (never the Orchestrator, whose settings live in the Mac's
+Orchestrator settings):
+
+```json
+"settings":{"tools_enabled":true,"memory_enabled":false,"web_search_enabled":true,
+            "autonomous_exec_enabled":false,"autonomous_exec_available":true,
+            "temperature":0.7,"max_tokens":null}
+```
+
+`autonomous_exec_available: false` means this Mac can't run the sandbox, so
+the switch can't turn on. `temperature` / `max_tokens` are null while the
+model's own defaults apply. Web search (and the agent's other built-in
+tools) only work while `tools_enabled` is true.
+
+## 13.3 `PATCH /agents/{id}`
+
+Changes a custom agent as the Mac's agent editor does. Any of `name`,
+`description`, `system_prompt` (strings), `tools_enabled`, `memory_enabled`,
+`web_search_enabled`, `autonomous_exec_enabled` (booleans), `temperature`
+(0–2) and `max_tokens` (1–1,000,000); a field left out is untouched, and
+`null` puts `temperature` / `max_tokens` back to the model's default. The
+name is trimmed and capped at 80 characters; the description is kept to one
+line. Turning `autonomous_exec_enabled` on also starts the sandbox, without
+waiting for it: a cold start can download for minutes. A failed start is
+logged on the Mac and the switch stays on, as when the Mac starts it at launch.
+
+`{"ok":true}` on success; `GET /agents/{id}` then has the new values.
+`500 edit_failed` when saving fails.
+`400 bad_request` for a malformed or out-of-range field, `403
+agent_not_editable` for an unknown or built-in agent, `409
+sandbox_unavailable` for Autonomous Execution on a Mac that can't run it.
+Owner-only.
+
+## 13.4 `DELETE /agents/{id}`
+
+Deletes a custom agent, as the Mac's Delete Agent does: its sandbox is
+cleaned up, and the Mac's windows and new chats fall back to the
+Orchestrator. `{"ok":true}`, or `403 agent_not_editable` for an unknown or
+built-in agent, `409 agent_shared` while it is shared to a workspace (unshare
+it on the Mac first, as the Mac's own Delete requires), `409 agent_in_use`
+for the agent whose Secure Channel the request came through (with it gone
+the phone would have no channel or relay tunnel left; delete it on the
+Mac), `500 delete_failed` when the delete itself fails. Owner-only.
 
 ---
 
@@ -1020,6 +1143,17 @@ Images a client sends in a §14.5 run (`image_url` data URLs) are stored on
 the user turn they came with, as a Mac chat stores its own, so they come
 back in `images`.
 
+An image model's reply keeps its images as markdown links to files in the
+Mac's generated-images folder (`![prompt](file:///…/generated-images/x.png)`)
+in `content`. Those files are listed in `images` too, after the turn's
+attachments, so a client shows them from §14.9 and drops the `file://` links
+from the text. Links outside that folder are never served.
+
+Images an agent shared with a tool (the `image` tool, `share_artifact`) follow
+them in `images`: the tool result keeps a `---SHARED_ARTIFACT_START---` marker
+whose metadata names the file (`context_id`, `filename`, `mime_type`), and
+every image one names that is still in `~/.osaurus/artifacts/` is listed.
+
 ### 14.3 `PATCH /sessions/{id}`
 
 `{"title"?: "…", "archived"?: bool, "pinned"?: bool}` → `{"ok":true}`. Each
@@ -1039,6 +1173,11 @@ surface allows it — an `ask` tool would block on a card the phone can't
 answer yet (that arrives with remote approvals), and only when the tool is
 enabled. `blocked_by` lists ungranted requirements or missing system
 permissions.
+`enabled` is the Mac-wide switch; `agent_enabled` whether this agent has the
+tool on, and `built_in` marks the tools every agent has while its Tools
+switch is on, which can't be picked one by one (§14.11). A built-in is
+`agent_enabled` only while that switch is on, and an Apple app's tools only
+while the app is on in the agent's Abilities.
 
 ### 14.5 Continuing a Mac chat
 
@@ -1072,9 +1211,20 @@ Owner-only.
 Body `{"enabled":false}` and/or `{"policy":"auto"}` — turn a tool off, or
 change its permission behaviour, as the Mac's Tools catalog does. The reply
 is that tool's row in the §14.4 shape, already reflecting the change, so a
-client can redraw without refetching the catalog. Tool settings are global
-on this Mac, so `{id}` only scopes the route. `404 tool_not_found` when the
-name is not registered; the name is percent-decoded. Owner-only.
+client can redraw without refetching the catalog. `enabled` and `policy`
+are Mac-wide, so for them `{id}` only scopes the route. `404 tool_not_found`
+when the name is not registered; the name is percent-decoded. Owner-only.
+
+`{"agent_enabled":false}` turns a plugin or MCP tool off for `{id}` alone
+(§14.11), leaving it on for other agents. `400 bad_request` for a built-in
+tool, `403 agent_not_editable` for a built-in agent, `409 tools_loading` while
+the Mac has no plugin or MCP tools loaded to start the agent's own list from
+(written then, it would leave every other tool off once they load).
+
+A body is applied whole or not at all: any field that is present but invalid
+(an unknown `policy`, a non-boolean switch) refuses it with `400
+bad_request`, and when `agent_enabled` is refused, `enabled` and `policy` are
+left as they were too.
 
 ### 14.8 `POST /sessions/{id}/truncate`
 
@@ -1096,6 +1246,43 @@ there. `Content-Type` is the image's own (`image/jpeg`, `image/png`, …, read
 from its first bytes; `application/octet-stream` when unrecognised).
 `404 image_not_found` when the chat, turn or index doesn't exist,
 `400 invalid_image_path` for a malformed path. Owner-only.
+
+### 14.10 `DELETE /sessions/{id}`
+
+Deletes the chat for good, as the Mac's History Delete does: a run in it
+is cancelled, every window showing it moves to a fresh chat, and the row
+and its turns go. Archiving (§14.3) is the reversible alternative.
+`{"ok":true}` on success; `404 session_not_found` for an unknown id or a
+workspace chat served for a teammate (the chats §14.5 would ignore).
+Owner-only.
+
+### 14.11 An agent's own tools, and `POST /agents/{id}/tools/preset`
+
+Each custom agent keeps its own list of the plugin and MCP tools it may
+use, the list the Mac's agent Tools picker edits. Built-in tools are not on
+it: every agent has them while its Tools switch is on, and some follow the
+agent's own switches (web search, §13.2). An agent with no list yet has
+every tool; the first tool turned off (§14.7) starts the list from all of
+them, as the Mac's picker does.
+
+`POST /agents/{id}/tools/preset` with `{"preset":"…"}` sets the list in one
+go: `all` (every plugin and MCP tool on), `essential` (the built-in tools
+only, every plugin and MCP tool off) or `none` (the agent's Tools switch off,
+its list kept for when it goes back on); `all` and `essential` turn Tools on.
+The reply is the §14.4 catalog for that agent. `400 bad_request` for another
+preset, `403 agent_not_editable` for an unknown or built-in agent.
+Owner-only.
+
+### 14.12 `GET /artifacts/{context id}/{filename}`
+
+The bytes of an image an agent shared, named as its `share_artifact` tool
+result names it (`context_id`, `filename` in the marker's metadata), so a
+client can show it while the run is still going, before the chat is saved.
+`Content-Type` follows the file's extension. Only images in
+`~/.osaurus/artifacts/` are served: `404 artifact_not_found` for any other
+file, a missing one, a directory, or a name `share_artifact` would not have
+written. Owner-only, and over the Secure Channel only (426 otherwise),
+though it is a read.
 
 ---
 
@@ -1249,8 +1436,12 @@ default. The reply is `201 {"id":"<uuid>","name":"…"}`, and `GET /agents/{id}`
 then returns the full record, so a client can open a chat with the new agent
 straight away.
 
-Owner-only: a new agent is a new identity on this Mac. The agent is created
-exactly as the Mac's own New Agent flow creates it, sandbox policy included.
+Owner-only, inside the Secure Channel (§6.2): a new agent is a new identity
+on this Mac. Unlike the Mac's own New Agent flow, the agent starts with every
+capability off: tools (web search included), memory and the sandbox. Each is
+turned on deliberately afterwards, from the Mac's agent settings or with
+`PATCH /agents/{id}` (§13.2), which a remote caller can only send over the
+Secure Channel, so a leaked pairing key on the LAN can't switch them on.
 
 ---
 
@@ -1270,7 +1461,9 @@ tools stay off the open surface.
 
 It has no agent address of its own, so a client reaches it inside the Secure
 Channel of one of its pinned agents: the channel authenticates the phone, and
-the inner request names the Orchestrator.
+the inner request names the Orchestrator. On a Mac with no custom agents that
+channel is the Mac's connect identity (§11.3), which the owner's `GET /agents`
+reports as the Orchestrator's `address`.
 
 `PUT /agents/{id}/model` (§12.2) accepts it for owner callers. The
 Orchestrator's model belongs to the Mac's Orchestrator settings

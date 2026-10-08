@@ -252,6 +252,72 @@ struct SecureChannelE2ETests {
         #expect(status != 426)
     }
 
+    // MARK: - 426 For Owner Writes
+
+    /// A relay-origin owner request, plaintext, with the master Bearer.
+    private func plaintextOwnerRequest(
+        server: SecureTestServer,
+        method: String,
+        path: String,
+        body: String? = nil
+    ) -> URLRequest {
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+        request.httpMethod = method
+        request.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+        request.authenticate()
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = Data(body.utf8)
+        }
+        return request
+    }
+
+    /// A leaked pairing key must not change an agent, its tools, an approval
+    /// or a chat over plaintext: each owner write is 426'd before it runs.
+    @Test func plaintextOwnerWrites_relayOrigin_return426() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let id = UUID().uuidString
+        let writes: [(String, String, String?)] = [
+            ("POST", "/agents", #"{"name":"x"}"#),
+            ("PATCH", "/agents/\(id)", #"{"autonomous_exec_enabled":true}"#),
+            ("DELETE", "/agents/\(id)", nil),
+            ("POST", "/agents/\(id)/tools/preset", #"{"preset":"all"}"#),
+            ("PATCH", "/agents/\(id)/tools/shell", #"{"enabled":true}"#),
+            ("PATCH", "/sessions/\(id)", #"{"title":"x"}"#),
+            ("DELETE", "/sessions/\(id)", nil),
+        ]
+        for (method, path, body) in writes {
+            let request = plaintextOwnerRequest(server: server, method: method, path: path, body: body)
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 426, "\(method) \(path)")
+            #expect(String(decoding: data, as: UTF8.self).contains("secure_channel_required"), "\(method) \(path)")
+        }
+    }
+
+    /// Owner reads stay open over plaintext.
+    @Test func plaintextOwnerRead_relayOrigin_isNot426() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let request = plaintextOwnerRequest(server: server, method: "GET", path: "/sessions")
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode != 426)
+    }
+
+    /// Loopback (the Mac's own CLI) still edits in plaintext.
+    @Test func plaintextOwnerWrite_loopback_isNot426() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/agents/\(UUID().uuidString)")!
+        )
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode != 426)
+    }
+
     @Test func secureRun_relayOrigin_passes426Gate() async throws {
         let server = try await startSecureTestServer(trustLoopback: true)
         defer { Task { await server.shutdown() } }

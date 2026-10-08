@@ -473,7 +473,10 @@ public final class ScheduleManager {
             folderPath: triggeredSchedule.folderPath,
             folderBookmark: triggeredSchedule.folderBookmark,
             source: .schedule,
+            // The key groups runs under this schedule in the sidebar; each
+            // run still gets its own chat.
             externalSessionKey: triggeredSchedule.id.uuidString,
+            reattachSession: false,
             loadIntent: loadIntent
         )
 

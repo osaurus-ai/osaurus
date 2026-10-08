@@ -303,8 +303,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/modelcontextprotocol/swift-sdk.git",
       "state": {
-        "revision": "6132fd4b5b4217ce4717c4775e4607f5c3120129",
-        "version": "0.12.0"
+        "revision": "a0ae212ebf6eab5f754c3129608bc5557637e605",
+        "version": "0.12.1"
       }
     },
     {
@@ -374,7 +374,7 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/osaurus-ai/vmlx-swift",
       "state": {
-        "revision": "6eb3a8163ad214cbf9125a7a62a3f465690752fb"
+        "revision": "a468573fbe5b2c166d8d1dabea78c205c41e6716"
       }
     },
     {

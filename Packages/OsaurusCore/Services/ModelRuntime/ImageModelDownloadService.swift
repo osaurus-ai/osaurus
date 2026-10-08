@@ -62,9 +62,9 @@ final class ImageModelDownloadService: ObservableObject {
     /// Curated image bundles that aren't published under the OsaurusAI org, so
     /// they'd otherwise never appear in Available. These are mflux mirrors the
     /// engine's family registry recognizes; users can still Import any other
-    /// repo. The official `ideogram-ai` fp8/nf4 repos are CUDA/PyTorch
-    /// checkpoints (no diffusers/MLX support) and are deliberately excluded
-    /// because they would not load in the MLX engine.
+    /// repo. The port also supports the official Ideogram fp8 layout; those
+    /// gated repositories require the user's existing Hub access and are not
+    /// added to this public curated mirror list.
     static let curatedCatalog: [ImageModelDownload] = [
         ImageModelDownload(
             repoId: "cocktailpeanut/ideogram-4-fp8",
@@ -82,6 +82,7 @@ final class ImageModelDownloadService: ObservableObject {
     /// subdirectories, so nested `transformer/*.safetensors` etc. are included.
     private static let patterns = [
         "*.safetensors", "*.json", "*.txt", "*.model", "*.jinja", "*.bin", "*.merges",
+        "LICENSE", "LICENSE.md", "NOTICE", "NOTICE.md",
     ]
     private static let excluded: Set<String> = ["README.md", ".gitattributes"]
 

@@ -335,6 +335,50 @@ struct SpawnToolTests {
         )
     }
 
+    /// Delegated usage reports the runtime's prefilled prompt (template + tool schemas + history), not the
+    /// message estimator. Final sweep 2026-10-07: a 4-tool child reported 92 prompt tokens for 1,455 prefilled.
+    @Test func childRunnerReportsRuntimePromptTokensOverEstimate() async throws {
+        let result = try await AgentSubagentRunner.run(
+            modelName: "scripted-usage-model",
+            seedMessages: [ChatMessage(role: "user", content: "Answer briefly.")],
+            maxTokens: 16,
+            maxIterations: 1,
+            deadline: Date().addingTimeInterval(10),
+            sessionId: "usage-prompt-tokens-regression",
+            streamProvider: { _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(1455))
+                    continuation.yield("Done.")
+                    continuation.yield(StreamingStatsHint.encode(tokenCount: 3, tokensPerSecond: 40))
+                    continuation.finish()
+                }
+            }
+        )
+        #expect(result.usage.promptTokens == 1455)
+        #expect(result.usage.completionTokens == 3)
+        #expect(result.digest == "Done.")
+    }
+
+    /// Without any runtime count the estimator remains the fallback (remote providers that send no hint).
+    @Test func childRunnerFallsBackToEstimateWithoutRuntimeCount() async throws {
+        let result = try await AgentSubagentRunner.run(
+            modelName: "scripted-usage-model",
+            seedMessages: [ChatMessage(role: "user", content: "Answer briefly.")],
+            maxTokens: 16,
+            maxIterations: 1,
+            deadline: Date().addingTimeInterval(10),
+            sessionId: "usage-prompt-tokens-fallback",
+            streamProvider: { _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield("Done.")
+                    continuation.finish()
+                }
+            }
+        )
+        #expect(result.usage.promptTokens > 0)
+        #expect(result.usage.promptTokens < 1455)
+    }
+
     @Test func childRunnerPreservesInterleavedReasoningWithoutInlineThinkLeakage() async throws {
         let probe = InterleavedReasoningStreamProbe()
         let channelProbe = ChannelDeltaProbe()

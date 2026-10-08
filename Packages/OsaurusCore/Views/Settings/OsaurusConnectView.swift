@@ -64,13 +64,25 @@ struct OsaurusConnectView: View {
 
     // MARK: Pairing
 
+    /// The pairing intro, "Osaurus" linking to the iPhone app's TestFlight
+    /// for anyone who has yet to install it, underlined like a web link.
+    private var pairingIntro: AttributedString {
+        var text = AttributedString(
+            localized:
+                "Open [Osaurus](https://testflight.apple.com/join/yTF86bVb) (in TestFlight currently) on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing.",
+            bundle: .module
+        )
+        for run in text.runs where run.link != nil {
+            text[run.range].underlineStyle = .single
+            text[run.range].foregroundColor = theme.accentColor
+        }
+        return text
+    }
+
     @ViewBuilder private var pairingSection: some View {
         SettingsSection(title: L("Pair an iPhone"), icon: "iphone.gen3") {
             VStack(alignment: .leading, spacing: 14) {
-                Text(
-                    "Open Osaurus on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing.",
-                    bundle: .module
-                )
+                Text(pairingIntro)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 

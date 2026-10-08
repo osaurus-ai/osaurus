@@ -1513,6 +1513,8 @@ private struct ThemeColorPickerButton: View {
 struct ThemeChatPreview: View {
     let theme: CustomTheme
 
+    @Environment(\.displayScale) private var displayScale
+
     /// Decoded copy of the theme's background image, refreshed off the
     /// main actor whenever the base64 string changes.
     @State private var backgroundImage: NSImage?
@@ -1613,10 +1615,8 @@ struct ThemeChatPreview: View {
 
     @ViewBuilder
     private func previewAvatar(size: CGFloat, name: String, tint: Color) -> some View {
-        if let mascot = Bundle.module.image(forResource: "osaurus-avatar-green") {
+        if let mascot = AvatarBitmapRenderer.shared.image(mascot: .green, pointSize: size, scale: displayScale) {
             Image(nsImage: mascot)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
                 .frame(width: size, height: size)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(c(theme.colors.secondaryText).opacity(0.35), lineWidth: 1))

@@ -11,12 +11,60 @@
 //
 
 import Foundation
+import MLXLMCommon
 import Testing
 
 @testable import OsaurusCore
 
 @Suite
 struct ErrorBodyShapeTests {
+    @Test func nativeReasoningContractMappingDoesNotMatchErrorText() {
+        let typed = K2HorizonTemplateContract.ContractError.unsupportedReasoningMode(expectedEffort: "high")
+        let unrelated = NSError(
+            domain: "UnrelatedRuntimeFailure", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: typed.localizedDescription])
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: typed).code == 400)
+        #expect(HTTPHandler.openAIErrorType(for: typed) == "invalid_request_error")
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: unrelated).code == 500)
+        #expect(HTTPHandler.openAIErrorType(for: unrelated) == "internal_error")
+    }
+
+    @Test func templatePreparationPreservesNativeReasoningRefusalAcrossProtocols() throws {
+        let refusal = K2HorizonTemplateContract.ContractError.unsupportedReasoningMode(expectedEffort: "high")
+        let error = MLXBatchAdapter.templatePreparationError(refusal)
+        #expect(error is K2HorizonTemplateContract.ContractError)
+        #expect(error.localizedDescription == refusal.localizedDescription)
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 400)
+        #expect(HTTPHandler.openAIErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.anthropicErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.openResponsesErrorCode(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.ollamaErrorType(for: error) == "invalid_request_error")
+        // Both JSON and streaming routes consume this same classification.
+        let body = HTTPHandler.errorBody(
+            .openai(type: HTTPHandler.openAIErrorType(for: error)), message: error.localizedDescription)
+        let object = try #require(decode(body))
+        let payload = try #require(object["error"] as? [String: Any])
+        #expect(payload["type"] as? String == "invalid_request_error")
+        #expect(payload["message"] as? String == refusal.localizedDescription)
+    }
+
+    @Test func unrelatedTemplateFailureRetainsInternalErrorDespiteIdenticalMessage() {
+        let refusal = K2HorizonTemplateContract.ContractError.unsupportedReasoningMode(expectedEffort: "high")
+        let underlying = NSError(
+            domain: "UnrelatedTemplateFailure", code: 17,
+            userInfo: [NSLocalizedDescriptionKey: refusal.localizedDescription])
+        let error = MLXBatchAdapter.templatePreparationError(underlying)
+        #expect(!(error is K2HorizonTemplateContract.ContractError))
+        #expect((error as NSError).domain == "MLXBatchAdapter")
+        #expect((error as NSError).code == 1)
+        #expect(error.localizedDescription.hasPrefix("Chat template error: "))
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 500)
+        #expect(HTTPHandler.openAIErrorType(for: error) == "internal_error")
+        #expect(HTTPHandler.anthropicErrorType(for: error) == "api_error")
+        #expect(HTTPHandler.openResponsesErrorCode(for: error) == "api_error")
+        #expect(HTTPHandler.ollamaErrorType(for: error) == "internal_error")
+    }
+
     @Test func invalidImageMapsToClientErrorAcrossProtocols() {
         let error = ModelRuntime.ImageInputError(imageIndex: 1, reason: "image data is corrupt.")
         #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 400)

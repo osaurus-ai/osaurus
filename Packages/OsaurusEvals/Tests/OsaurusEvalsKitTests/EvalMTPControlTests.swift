@@ -18,6 +18,15 @@ import Testing
 
 struct EvalMTPControlTests {
 
+    @Test func offRejectsDFlashEvenWithoutNativeDepthTelemetry() {
+        let verdict = EvalMTPControlState.verdict(requested: .off,
+            resolution: resolution(strategy: "dflash2:fixture"), tokenStepConfiguredDepths: [nil])
+        guard case .violation = verdict else {
+            Issue.record("Off must reject DFlash as well as native MTP")
+            return
+        }
+    }
+
     private func resolution(
         strategy: String, depth: Int? = nil,
         loadStatus: String? = nil, loadReason: String? = nil

@@ -35,6 +35,9 @@ public final class MCPProviderManager: ObservableObject {
     /// Registered tool instances keyed by provider ID
     private var registeredTools: [UUID: [MCPProviderTool]] = [:]
 
+    /// In-flight connect attempt per provider; see `coalescedConnect`.
+    private var inFlightConnects: [UUID: Task<Void, Error>] = [:]
+
     /// Host-resident stdio subprocess owners keyed by provider ID. Held so
     /// `disconnect(...)` can terminate them — the subprocess only stays
     /// alive while we hold the runner.
@@ -118,6 +121,8 @@ public final class MCPProviderManager: ObservableObject {
     /// Update an existing provider
     public func updateProvider(_ provider: MCPProvider, token: String?) {
         let wasConnected = providerStates[provider.id]?.isConnected ?? false
+        // An attempt still running with the old settings must not win.
+        inFlightConnects.removeValue(forKey: provider.id)?.cancel()
 
         // Disconnect if connected
         if wasConnected {
@@ -219,7 +224,29 @@ public final class MCPProviderManager: ObservableObject {
         guard let provider = configuration.provider(id: providerId) else {
             throw MCPProviderError.providerNotFound
         }
-        try await performConnect(provider: provider, allowOAuthRetry: true)
+        try await coalescedConnect(provider: provider)
+    }
+
+    /// One connect per provider at a time. A second caller (add-flow connect
+    /// racing a manual Connect, a recovery sweep, or a tool call's reconnect)
+    /// awaits the in-flight attempt instead of starting another: a parallel
+    /// attempt would replace the first one's client and tear down its
+    /// session, failing both with "Client disconnected".
+    private func coalescedConnect(provider: MCPProvider) async throws {
+        let providerId = provider.id
+        if let inFlight = inFlightConnects[providerId] {
+            return try await inFlight.value
+        }
+        let attempt = Task { @MainActor in
+            try await self.performConnect(provider: provider, allowOAuthRetry: true)
+        }
+        inFlightConnects[providerId] = attempt
+        defer {
+            if inFlightConnects[providerId] == attempt {
+                inFlightConnects[providerId] = nil
+            }
+        }
+        try await attempt.value
     }
 
     private func performConnect(provider: MCPProvider, allowOAuthRetry: Bool) async throws {
@@ -253,9 +280,11 @@ public final class MCPProviderManager: ObservableObject {
             // Create MCP client
             let client = MCP.Client(
                 name: "Osaurus",
-                version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+                version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0",
+                capabilities: Self.clientCapabilities
             )
             attemptClient = client
+            await Self.installElicitationHandling(on: client, providerName: provider.name)
 
             // Connect under a timeout. Without this, a stdio subprocess that
             // spawned successfully but never speaks MCP would leave the card
@@ -265,6 +294,7 @@ public final class MCPProviderManager: ObservableObject {
             try await withTimeout(seconds: provider.discoveryTimeout) {
                 _ = try await client.connect(transport: transport)
             }
+            try Task.checkCancellation()
 
             // Store client, tearing down any client we're replacing (a
             // connect on an already-connected provider must not leak the
@@ -274,10 +304,11 @@ public final class MCPProviderManager: ObservableObject {
             }
             clients[providerId] = client
 
-            await registerRemoteToolListChangedHandler(client: client, providerId: providerId)
+            await registerClientNotificationHandlers(client: client, providerId: providerId)
 
             // Discover tools
             try await discoverTools(for: providerId, client: client, provider: provider)
+            try Task.checkCancellation()
 
             // Update state to connected (re-read state since discoverTools modified it)
             if var updatedState = providerStates[providerId] {
@@ -296,6 +327,21 @@ public final class MCPProviderManager: ObservableObject {
             notifyStatusChanged()
 
         } catch {
+            // Superseded by `disconnect` (explicit reconnect, credential
+            // change): drop only this attempt's client and leave provider
+            // state to whoever replaced it.
+            if Task.isCancelled {
+                if let attemptClient {
+                    if clients[providerId] === attemptClient {
+                        clients.removeValue(forKey: providerId)
+                        if let tools = registeredTools.removeValue(forKey: providerId) {
+                            ToolRegistry.shared.unregister(names: tools.map { $0.name })
+                        }
+                    }
+                    Task.detached { await attemptClient.disconnect() }
+                }
+                throw CancellationError()
+            }
             // Stdio transports talk to a local subprocess, not an HTTP server,
             // so there's no 401 to probe — the error is either a spawn
             // failure or a protocol mismatch.
@@ -342,6 +388,7 @@ public final class MCPProviderManager: ObservableObject {
             state.isConnected = false
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
+            state.discoveredToolSummaries = []
             // An auth challenge is terminal (requires sign-in); everything
             // else is classified so the launch/network/wake/activation
             // recovery paths know whether a retry can help.
@@ -381,6 +428,8 @@ public final class MCPProviderManager: ObservableObject {
 
     /// Disconnect from a provider
     public func disconnect(providerId: UUID) {
+        inFlightConnects.removeValue(forKey: providerId)?.cancel()
+
         // Unregister tools
         if let tools = registeredTools[providerId] {
             let toolNames = tools.map { $0.name }
@@ -406,6 +455,7 @@ public final class MCPProviderManager: ObservableObject {
             state.isConnecting = false
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
+            state.discoveredToolSummaries = []
             // Disconnecting clears any "needs auth" flag; the next connect attempt
             // will re-detect it if the server still demands sign-in.
             state.requiresAuth = false
@@ -465,6 +515,8 @@ public final class MCPProviderManager: ObservableObject {
     /// by the launch/recovery paths so orchestration tests don't open
     /// network connections.
     var testConnectOverride: (@MainActor (UUID) async throws -> Void)?
+    /// Test seam: replaces the HTTP/stdio transport a real connect builds.
+    var testTransportFactory: (@MainActor (MCPProvider) async throws -> any MCP.Transport)?
 
     /// Connect one provider with bounded retry on *transient* failures
     /// (offline at launch, DNS not up yet, handshake timeout). Terminal
@@ -706,7 +758,7 @@ public final class MCPProviderManager: ObservableObject {
         // at launch, earlier session loss) is recoverable — reconnect instead
         // of failing the model's tool call outright.
         if clients[providerId] == nil, provider.enabled {
-            try await performConnect(provider: provider, allowOAuthRetry: true)
+            try await coalescedConnect(provider: provider)
         }
         guard let client = clients[providerId] else {
             throw MCPProviderError.notConnected
@@ -728,29 +780,37 @@ public final class MCPProviderManager: ObservableObject {
         )
 
         // Run the network call off MainActor so it doesn't block the UI thread.
-        var content: [MCP.Tool.Content] = []
-        var isError: Bool? = nil
+        let result: MCP.CallTool.Result
         do {
             do {
-                (content, isError) = try await Self.callMCPTool(
+                result = try await Self.callMCPTool(
                     client: client,
                     toolName: toolName,
                     arguments: arguments,
                     timeout: timeout
                 )
             } catch let error where Self.isRecoverableSessionError(error) {
-                try await reconnectAndRetry(
+                result = try await reconnectAndRetry(
                     provider: provider, providerId: providerId, toolName: toolName,
-                    arguments: arguments, timeout: timeout, into: &content, isError: &isError)
+                    arguments: arguments, timeout: timeout)
             }
         } catch {
+            if provider.authType == .oauth, Self.isForbiddenError(error) {
+                let stepUp = await recordScopeStepUp(for: provider)
+                activity.finish(.failure(stepUp))
+                throw stepUp
+            }
+            if Self.isAuthRequiredError(error) {
+                let signIn = await recordAuthRequired(for: provider)
+                activity.finish(.failure(signIn))
+                throw signIn
+            }
             activity.finish(.failure(error))
             throw error
         }
 
-        // Check for error
-        if let isError = isError, isError {
-            let errorText = content.compactMap { item -> String? in
+        if result.isError == true {
+            let errorText = result.content.compactMap { item -> String? in
                 if case .text(let text, _, _) = item { return text }
                 return nil
             }.joined(separator: "\n")
@@ -759,7 +819,11 @@ public final class MCPProviderManager: ObservableObject {
             throw error
         }
 
-        let prepared = try await MCPProviderTool.prepareMCPContent(content, toolName: exposedToolName ?? toolName)
+        let prepared = try await MCPProviderTool.prepareMCPContent(
+            result.content,
+            structuredContent: result.structuredContent,
+            toolName: exposedToolName ?? toolName
+        )
         activity.finish(.success(prepared))
         return prepared
     }
@@ -772,10 +836,8 @@ public final class MCPProviderManager: ObservableObject {
         providerId: UUID,
         toolName: String,
         arguments: [String: MCP.Value],
-        timeout: TimeInterval,
-        into content: inout [MCP.Tool.Content],
-        isError: inout Bool?
-    ) async throws {
+        timeout: TimeInterval
+    ) async throws -> MCP.CallTool.Result {
         if var reconnectState = providerStates[providerId] {
             reconnectState.isAutoReconnecting = true
             providerStates[providerId] = reconnectState
@@ -791,7 +853,7 @@ public final class MCPProviderManager: ObservableObject {
         // OAuth/bearer credentials and negotiates a new session. If the
         // reconnect fails we surface the reconnect error (it is the more
         // actionable one: auth required, server down, ...).
-        try await performConnect(provider: provider, allowOAuthRetry: true)
+        try await coalescedConnect(provider: provider)
         guard let freshClient = clients[providerId] else {
             throw MCPProviderError.notConnected
         }
@@ -800,7 +862,7 @@ public final class MCPProviderManager: ObservableObject {
             providerStates[providerId] = reconnected
             notifyStatusChanged()
         }
-        (content, isError) = try await Self.callMCPTool(
+        return try await Self.callMCPTool(
             client: freshClient,
             toolName: toolName,
             arguments: arguments,
@@ -834,24 +896,162 @@ public final class MCPProviderManager: ObservableObject {
         }
     }
 
+    /// The SDK reports any HTTP 403 as this string and drops the response
+    /// headers, so the `insufficient_scope` challenge itself is not visible.
+    nonisolated static func isForbiddenError(_ error: Error) -> Bool {
+        guard case .internalError(let message)? = error as? MCPError else { return false }
+        return message == "Access forbidden"
+    }
+
+    /// The SDK reports any HTTP 401 as this string. Reaching the caller means
+    /// the reconnect retry (fresh token, new session) was refused too.
+    nonisolated static func isAuthRequiredError(_ error: Error) -> Bool {
+        guard case .internalError(let message)? = error as? MCPError else { return false }
+        return message == "Authentication required"
+    }
+
+    static let authRequiredProviderMessage = "A tool call needs you to sign in to this service."
+
+    /// Longest a single tool call may run while the server keeps reporting progress.
+    nonisolated static let progressHardCap: TimeInterval = 600
+
+    nonisolated static func authRequiredToolMessage(providerName: String, authType: MCPProviderAuthType) -> String {
+        let action =
+            authType == .bearerToken
+            ? "add a valid API token for \(providerName)"
+            : "sign in to \(providerName)"
+        return "\(providerName) requires sign-in for this tool (HTTP 401). Ask the user to \(action) "
+            + "from Tools & MCP → Services, then call the tool again."
+    }
+
+    /// A tool call was refused with 401 after the reconnect retry. Servers
+    /// such as Descrybe list tools anonymously but require sign-in to call
+    /// them, so a provider saved with no auth can reach this state. Flag the
+    /// provider so the card shows the right sign-in affordance; sign-in is
+    /// never started silently because it opens a browser.
+    private func recordAuthRequired(for provider: MCPProvider) async -> Error {
+        let providerId = provider.id
+        let probe = await probeAuthFailure(for: provider)
+        var oauthAvailable = provider.authType == .oauth
+        if provider.authType == .none, let url = URL(string: provider.url) {
+            oauthAvailable =
+                (try? await MCPOAuthDiscovery.shared.discover(
+                    serverURL: url, hint: probe?.challenge?.resourceMetadataURL)) != nil
+        }
+        if var state = providerStates[providerId] {
+            state.requiresAuth = true
+            state.oauthAvailable = oauthAvailable
+            if let resourceMetadataURL = probe?.challenge?.resourceMetadataURL {
+                state.resourceMetadataURL = resourceMetadataURL
+            }
+            state.lastError = Self.authRequiredProviderMessage
+            providerStates[providerId] = state
+        }
+        notifyStatusChanged()
+        return MCPProviderError.toolExecutionFailed(
+            Self.authRequiredToolMessage(providerName: provider.name, authType: provider.authType))
+    }
+
+    /// A tool call was refused with 403 even after a reconnect retry with a
+    /// fresh token, so the session is valid but the grant does not cover the
+    /// tool. Re-probe for a `scope=` hint, queue the merged scope set for the
+    /// next sign-in, and flag the provider so the Sign In button appears.
+    /// Re-authorization is never started silently: it opens a browser.
+    private func recordScopeStepUp(for provider: MCPProvider) async -> Error {
+        let providerId = provider.id
+        let probe = await probeAuthFailure(for: provider)
+        let granted = await Task.detached(priority: .userInitiated) {
+            MCPProviderKeychain.getOAuthTokens(for: providerId)?.scope
+        }.value
+        let current = granted.map { MCPScopeStepUp.split($0) } ?? provider.oauth?.scopes ?? []
+        let required = probe?.challenge?.scope.map { MCPScopeStepUp.split($0) } ?? []
+        let scopes = MCPScopeStepUp.merged(current: current, required: required)
+
+        if var state = providerStates[providerId] {
+            state.requiresAuth = true
+            state.stepUpScopes = scopes
+            if let resourceMetadataURL = probe?.challenge?.resourceMetadataURL {
+                state.resourceMetadataURL = resourceMetadataURL
+            }
+            state.lastError = MCPScopeStepUp.providerMessage
+            providerStates[providerId] = state
+        }
+        notifyStatusChanged()
+        return MCPProviderError.toolExecutionFailed(MCPScopeStepUp.toolMessage(providerName: provider.name))
+    }
+
     /// Trampoline that runs the MCP network call outside MainActor isolation.
     /// Non-rejoining timeout (see `withTimeout`): a tool call the SDK cannot
     /// cancel is abandoned at the deadline instead of pinning the agent turn.
-    private nonisolated static func callMCPTool(
+    /// Sent via `send` rather than `callTool` so the full result (including
+    /// `structuredContent`) and the request id survive; on deadline or caller
+    /// cancellation the server gets `notifications/cancelled` so it can stop.
+    ///
+    /// `timeout` is an idle budget: each `notifications/progress` for this
+    /// call's token restarts it, up to `progressHardCap` in total.
+    nonisolated static func callMCPTool(
         client: MCP.Client,
         toolName: String,
         arguments: [String: MCP.Value],
-        timeout: TimeInterval
-    ) async throws -> ([MCP.Tool.Content], Bool?) {
-        do {
-            return try await valueWithDeadline(
-                seconds: timeout,
-                operationName: "MCP tool \(toolName)"
-            ) {
-                try await client.callTool(name: toolName, arguments: arguments)
+        timeout: TimeInterval,
+        progressHardCap: TimeInterval = MCPProviderManager.progressHardCap
+    ) async throws -> MCP.CallTool.Result {
+        let token = UUID().uuidString
+        let toolCallId = ChatExecutionContext.currentToolCallId
+        let clock = MCPActivityClock()
+        MCPProgressRouter.shared.register(token: token) { params in
+            clock.touch()
+            if let toolCallId {
+                MCPToolProgressRegistry.shared.update(toolCallId: toolCallId, params: params)
             }
+        }
+        let elicitationCall = MCPElicitationCoordinator.shared.beginCall(
+            client: client,
+            interactive: MCPElicitationCoordinator.currentTaskCanPrompt,
+            clock: clock
+        )
+        defer {
+            MCPProgressRouter.shared.unregister(token: token)
+            MCPElicitationCoordinator.shared.endCall(elicitationCall)
+            if let toolCallId { MCPToolProgressRegistry.shared.clear(toolCallId: toolCallId) }
+        }
+
+        let context = try await client.send(
+            MCP.CallTool.request(
+                .init(name: toolName, arguments: arguments, meta: Metadata(progressToken: .string(token)))
+            )
+        )
+        let work = Task { try await context.value }
+        do {
+            return try await valueWithActivityDeadline(
+                idleTimeout: timeout,
+                hardCap: progressHardCap,
+                clock: clock,
+                operationName: "MCP tool \(toolName)",
+                work: work
+            )
         } catch is DeadlineExceededError {
+            notifyServerOfCancellation(
+                client: client,
+                requestID: context.requestID,
+                reason: "Timed out after \(Int(timeout))s"
+            )
             throw MCPProviderError.timeout
+        } catch is CancellationError {
+            notifyServerOfCancellation(client: client, requestID: context.requestID, reason: "Cancelled by user")
+            throw CancellationError()
+        }
+    }
+
+    /// Fire-and-forget `notifications/cancelled`. Cancellation is advisory in
+    /// MCP; a failed notify must never replace the caller's own error.
+    private nonisolated static func notifyServerOfCancellation(
+        client: MCP.Client,
+        requestID: MCP.ID,
+        reason: String
+    ) {
+        Task.detached {
+            try? await client.cancelRequest(requestID, reason: reason)
         }
     }
 
@@ -967,9 +1167,15 @@ public final class MCPProviderManager: ObservableObject {
             throw MCPProviderError.providerNotFound
         }
 
-        // Use any cached resource_metadata hint from the last 401 to skip well-known probing.
-        let hint = providerStates[providerId]?.resourceMetadataURL
-            .map { MCPBearerChallenge(resourceMetadataURL: $0) }
+        // Use any cached resource_metadata hint from the last 401 to skip well-known
+        // probing, and any step-up scopes from a refused tool call so the new grant
+        // covers what the server asked for.
+        let cachedState = providerStates[providerId]
+        let stepUpScope = cachedState?.stepUpScopes.flatMap { $0.isEmpty ? nil : $0.joined(separator: " ") }
+        let hint: MCPBearerChallenge? =
+            (cachedState?.resourceMetadataURL != nil || stepUpScope != nil)
+            ? MCPBearerChallenge(scope: stepUpScope, resourceMetadataURL: cachedState?.resourceMetadataURL)
+            : nil
 
         // Make sure the provider record reflects the OAuth auth type *before* sign-in,
         // so any client_id we cache survives even if the user toggled the picker.
@@ -1009,6 +1215,7 @@ public final class MCPProviderManager: ObservableObject {
         if var state = providerStates[providerId] {
             state.requiresAuth = false
             state.resourceMetadataURL = nil
+            state.stepUpScopes = nil
             state.lastError = nil
             providerStates[providerId] = state
         }
@@ -1031,6 +1238,9 @@ public final class MCPProviderManager: ObservableObject {
     /// provider's `executionHost`. The runner is retained in the manager
     /// so `disconnect(...)` can stop the subprocess later.
     private func createTransport(for provider: MCPProvider) async throws -> any MCP.Transport {
+        if let testTransportFactory {
+            return try await testTransportFactory(provider)
+        }
         switch provider.transport {
         case .http:
             return try await createHTTPTransport(for: provider)
@@ -1226,6 +1436,7 @@ public final class MCPProviderManager: ObservableObject {
             state.isConnecting = false
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
+            state.discoveredToolSummaries = []
             state.lastStderrTail = stderrTail.isEmpty ? nil : stderrTail
             let codeSuffix = exitCode >= 0 ? " (exit \(exitCode))" : ""
             if stderrTail.isEmpty {
@@ -1239,11 +1450,34 @@ public final class MCPProviderManager: ObservableObject {
         notifyStatusChanged()
     }
 
-    private func registerRemoteToolListChangedHandler(client: MCP.Client, providerId: UUID) async {
+    private func registerClientNotificationHandlers(client: MCP.Client, providerId: UUID) async {
         await client.onNotification(ToolListChangedNotification.self) { [weak self] _ in
             Task { @MainActor in
                 await self?.handleRemoteToolListChanged(providerId: providerId)
             }
+        }
+        await Self.routeProgressNotifications(from: client)
+    }
+
+    nonisolated static func routeProgressNotifications(from client: MCP.Client) async {
+        await client.onNotification(ProgressNotification.self) { message in
+            MCPProgressRouter.shared.deliver(message.params)
+        }
+    }
+
+    nonisolated static let clientCapabilities = MCP.Client.Capabilities(
+        elicitation: .init(form: .init(), url: .init())
+    )
+
+    /// Must run before `connect` so a server can elicit during the first call.
+    nonisolated static func installElicitationHandling(on client: MCP.Client, providerName: String) async {
+        let clientKey = ObjectIdentifier(client)
+        _ = await client.withElicitationHandler { params in
+            try await MCPElicitationCoordinator.shared.handle(
+                params, clientKey: clientKey, providerName: providerName)
+        }
+        await client.onNotification(ElicitationCompleteNotification.self) { message in
+            MCPElicitationCoordinator.shared.complete(elicitationId: message.params.elicitationId)
         }
     }
 
@@ -1361,6 +1595,7 @@ public final class MCPProviderManager: ObservableObject {
         if var state = providerStates[providerId] {
             state.discoveredToolCount = tools.count
             state.discoveredToolNames = tools.map(\.mcpToolName)
+            state.discoveredToolSummaries = tools.map(\.summary)
             providerStates[providerId] = state
         }
         return tools

@@ -25,6 +25,9 @@ public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
     public var imageEdit: Bool
     public var upscale: Bool
     public var negativePrompt: Bool
+    public var editNegativePrompt: Bool
+    public var editStrength: Bool
+    public var dimensionMultiple: Int
     public var mask: Bool
     public var multipleSourceImages: Bool
     public var lora: Bool
@@ -34,6 +37,9 @@ public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
         imageEdit: Bool = false,
         upscale: Bool = false,
         negativePrompt: Bool = false,
+        editNegativePrompt: Bool? = nil,
+        editStrength: Bool = true,
+        dimensionMultiple: Int = 16,
         mask: Bool = false,
         multipleSourceImages: Bool = false,
         lora: Bool = false
@@ -42,6 +48,9 @@ public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
         self.imageEdit = imageEdit
         self.upscale = upscale
         self.negativePrompt = negativePrompt
+        self.editNegativePrompt = editNegativePrompt ?? negativePrompt
+        self.editStrength = editStrength
+        self.dimensionMultiple = dimensionMultiple
         self.mask = mask
         self.multipleSourceImages = multipleSourceImages
         self.lora = lora
@@ -146,7 +155,7 @@ public struct ImageEditParameters: Sendable {
     public var sourceImages: [Data]
     public var maskImage: Data?
     public var negativePrompt: String?
-    public var strength: Float
+    public var strength: Float?
     public var width: Int?
     public var height: Int?
     public var steps: Int?
@@ -160,7 +169,7 @@ public struct ImageEditParameters: Sendable {
         sourceImages: [Data],
         maskImage: Data? = nil,
         negativePrompt: String? = nil,
-        strength: Float = 0.75,
+        strength: Float? = nil,
         width: Int? = nil,
         height: Int? = nil,
         steps: Int? = nil,
@@ -188,12 +197,18 @@ public struct ImageEditParameters: Sendable {
 /// and `ImageEditParameters`.
 public struct ImageComposerSettings: Sendable, Codable, Equatable {
     public var negativePrompt: String
-    public var steps: Int
-    public var guidance: Double
-    public var width: Int
-    public var height: Int
+    public var steps: Int { didSet { stepsWereExplicitlySet = true } }
+    public var guidance: Double { didSet { guidanceWasExplicitlySet = true } }
+    public var width: Int { didSet { imageSizeWasExplicitlySet = true } }
+    public var height: Int { didSet { imageSizeWasExplicitlySet = true } }
     public var seed: String
-    public var strength: Double
+    public var strength: Double { didSet { strengthWasExplicitlySet = true } }
+    /// Missing markers in legacy JSON preserve the stored values as explicit.
+    /// New initializer omissions are false; UI/programmatic assignments are true.
+    public var stepsWereExplicitlySet: Bool?
+    public var guidanceWasExplicitlySet: Bool?
+    public var imageSizeWasExplicitlySet: Bool?
+    public var strengthWasExplicitlySet: Bool?
     public var aspectRatio: String?
     public var resolution: String?
     public var quality: String?
@@ -204,12 +219,12 @@ public struct ImageComposerSettings: Sendable, Codable, Equatable {
 
     public init(
         negativePrompt: String = "",
-        steps: Int = 20,
-        guidance: Double = 3.5,
-        width: Int = 512,
-        height: Int = 512,
+        steps: Int? = nil,
+        guidance: Double? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
         seed: String = "",
-        strength: Double = 0.75,
+        strength: Double? = nil,
         aspectRatio: String? = nil,
         resolution: String? = nil,
         quality: String? = nil,
@@ -219,12 +234,16 @@ public struct ImageComposerSettings: Sendable, Codable, Equatable {
         imageCount: Int? = 1
     ) {
         self.negativePrompt = negativePrompt
-        self.steps = steps
-        self.guidance = guidance
-        self.width = width
-        self.height = height
+        self.steps = steps ?? 20
+        self.guidance = guidance ?? 3.5
+        self.width = width ?? 512
+        self.height = height ?? 512
         self.seed = seed
-        self.strength = strength
+        self.strength = strength ?? 0.75
+        self.stepsWereExplicitlySet = steps != nil
+        self.guidanceWasExplicitlySet = guidance != nil
+        self.imageSizeWasExplicitlySet = width != nil || height != nil
+        self.strengthWasExplicitlySet = strength != nil
         self.aspectRatio = aspectRatio
         self.resolution = resolution
         self.quality = quality
@@ -273,12 +292,19 @@ public struct ImageComposerSettings: Sendable, Codable, Equatable {
         min(4, max(1, imageCount ?? 1))
     }
 
+    var hasExplicitSteps: Bool { stepsWereExplicitlySet != false }
+    var hasExplicitGuidance: Bool { guidanceWasExplicitlySet != false }
+    var hasExplicitImageSize: Bool { imageSizeWasExplicitlySet != false }
+    var hasExplicitStrength: Bool { strengthWasExplicitlySet != false }
+
     public mutating func applyModelDefaults(steps: Int?, guidance: Float?) {
-        if let steps {
+        if !hasExplicitSteps, let steps {
             self.steps = min(50, max(1, steps))
+            stepsWereExplicitlySet = false
         }
-        if let guidance {
+        if !hasExplicitGuidance, let guidance {
             self.guidance = Double(guidance)
+            guidanceWasExplicitlySet = false
         }
     }
 

@@ -50,6 +50,56 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
+    @Test func schemaNumbersRejectedBeforeDTORoundingAndSSE() async throws {
+        let server = try await startServer()
+        defer { Task { await server.shutdown() } }
+        for responses in [false, true] {
+            for number in ["9007199254740993", "1.0000000000000001", "9.007199254740993e15"] {
+                let suffix = "{\"const\":" + number + "}"
+                let body = responses
+                    ? "{\"model\":\"fake\",\"input\":\"test\",\"stream\":true,\"text\":{\"format\":{\"type\":\"json_schema\",\"name\":\"n\",\"schema\":" + suffix + "}}}"
+                    : "{\"model\":\"fake\",\"messages\":[],\"stream\":true,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"n\",\"schema\":" + suffix + "}}}"
+                let path = responses ? "/v1/responses" : "/v1/chat/completions"
+                var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = Data(body.utf8)
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let http = try #require(response as? HTTPURLResponse)
+                #expect(http.statusCode == 400)
+                #expect(http.value(forHTTPHeaderField: "Content-Type")?.contains("application/json") == true)
+                #expect(String(decoding: data, as: UTF8.self).contains("Unsupported JSON schema"))
+                #expect(!String(decoding: data, as: UTF8.self).contains("data: "))
+            }
+        }
+    }
+
+    @Test func responsesInvalidSchemaFailsBeforeStreamingHead() async throws {
+        let server = try await startServer()
+        defer { Task { await server.shutdown() } }
+        let formats: [[String: Any]] = [
+            ["type": "json_schema"],
+            ["type": "json_schema", "name": "bad", "schema": ["type": "string", "pattern": "[a-z]+"]],
+            ["type": "unknown_format"],
+        ]
+        for format in formats {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/v1/responses")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": "fake", "input": "answer", "stream": true, "text": ["format": format],
+            ])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let http = try #require(response as? HTTPURLResponse)
+            #expect(http.statusCode == 400)
+            #expect(http.value(forHTTPHeaderField: "Content-Type")?.contains("application/json") == true)
+            let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let error = try #require(body["error"] as? [String: Any])
+            #expect(error["code"] as? String == "invalid_request_error")
+            #expect(!String(decoding: data, as: UTF8.self).contains("data: "))
+        }
+    }
+
     @Test func health_endpoint_returns_healthy_json() async throws {
         let server = try await startServer()
         defer { Task { await server.shutdown() } }
@@ -184,6 +234,9 @@ struct HTTPHandlerEndpointTests {
             var previous = VMLXServerRuntimeSettings()
             previous.mtp = .init(mode: .forceOn, explicitDepth: 1)
             ServerRuntimeSettingsStore.save(previous)
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            previous = ServerRuntimeSettingsStore.snapshot()
+            #expect(previous.mtp == .init(mode: .auto))
             let server = try await startServer()
             defer { Task { await server.shutdown() } }
 
@@ -191,12 +244,14 @@ struct HTTPHandlerEndpointTests {
             // No model is resident: load effects here are policy receipts,
             // not evidence of a real container unload or head activation.
             let transitions: [(VMLXServerMTPSettings, Bool, Bool)] = [
-                (.init(mode: .forceOn, explicitDepth: 3), false, true),
-                (.init(mode: .auto), false, true),
-                (.init(mode: .auto, draftTokenLimit: 2), false, true),
+                (.init(mode: .forceOn, explicitDepth: 3), false, false),
+                (.init(mode: .auto), false, false),
+                (.init(mode: .auto, draftTokenLimit: 2), false, false),
                 (.init(mode: .auto, draftTokenLimit: 2), false, false),
                 (.init(mode: .off), true, true),
                 (.init(mode: .forceOn, explicitDepth: 1), true, true),
+                (.init(mode: .off, draftTokenLimit: 2, explicitDepth: 3), true, true),
+                (.init(mode: .off), false, false),
             ]
             for (mtp, refreshExpected, invalidateExpected) in transitions {
                 var next = previous
@@ -204,6 +259,10 @@ struct HTTPHandlerEndpointTests {
                 let (data, response) = try await putRuntimeSettings(next, server: server)
                 #expect((response as? HTTPURLResponse)?.statusCode == 200)
                 let decoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: data)
+                // The endpoint must describe the effective saved policy, not
+                // echo a legacy depth that persistence immediately migrates.
+                next.mtp = .init(mode: mtp.mode == .off ? .off : .auto)
+                ServerRuntimeSettingsStore.invalidateSnapshot()
                 #expect(decoded.effects?.loadedModelRefreshNeeded == refreshExpected)
                 #expect(decoded.effects?.runtimeConfigInvalidated == invalidateExpected)
                 #expect(decoded.settings.mtp == next.mtp)
@@ -216,7 +275,7 @@ struct HTTPHandlerEndpointTests {
                     decoded.effects?.runtimeConfigInvalidated
                         == ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next)
                 )
-                previous = next
+                previous = ServerRuntimeSettingsStore.snapshot()
             }
         }
     }

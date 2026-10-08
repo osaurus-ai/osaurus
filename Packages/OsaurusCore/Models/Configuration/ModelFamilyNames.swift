@@ -119,6 +119,23 @@ enum ModelFamilyNames {
             || normalized.contains("nex-n2-pro")
     }
 
+    /// The MTP launch exception must match the actual text architecture as well
+    /// as the legacy JANG name. A renamed Qwen bundle must still inspect its head.
+    static func isMiMoOrN2JANGRuntimeFamily(_ modelId: String, configData: Data?) -> Bool {
+        guard isMiMoOrN2JANGRuntimeFamily(modelId),
+            let configData,
+            let config = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
+            let modelType = config["model_type"] as? String,
+            ["mimo_v2", "mimo_v2_flash"].contains(modelType)
+        else { return false }
+        if let text = config["text_config"] as? [String: Any],
+            let textType = text["model_type"] as? String
+        {
+            return ["mimo_v2", "mimo_v2_flash"].contains(textType)
+        }
+        return true
+    }
+
     /// DeepSeek-V4 / DSV4 Flash bundles (`model_type=deepseek_v4`).
     /// Match both public repo forms (`DeepSeek-V4-...`) and shorthand
     /// runtime names (`DSV4-...`, `deepseekv4-...`) while avoiding

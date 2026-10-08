@@ -84,7 +84,7 @@ The Cloud shortlist contains favorites plus the current Cloud model. Use the sta
 
 In the Cloud browser, search by model name or provider and filter by Category or Context. Category tags identify each model’s task; models with available minimum pricing show From credits beneath their name. Selecting a model closes the browser, while starring a model keeps it open. Manage Credits opens your Cloud account controls.
 
-Selecting a model with options reveals a Model options column beside Provider and Model. Every option the model exposes lives there in the same row style: Thinking (Default, On, Off), the reasoning level, speculative depth, and any toggles, each with the saved choice or model default checked and a Reset to default link when you have overridden it. Selections keep the card open; click outside or press Escape to close it. There is no separate Model options page.
+Selecting a model with options reveals an options column beside Provider and Model. When the model exposes a single option the column is named after it (for example Reasoning Effort, whether that's On/Off or Low through Extra High); otherwise it is titled Model options. Every option the model exposes lives there in the same row style: thinking (Default, On, Off), the reasoning level, speculative decoding (Off or Adaptive), and any toggles, each with the saved choice or model default checked and a Reset to default link when you have overridden it. Selections keep the card open; click outside or press Escape to close it. There is no separate Model options page.
 
 ## Credits in chat
 

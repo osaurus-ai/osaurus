@@ -39,16 +39,24 @@ remain errors. Metadata checks never download or replace model weights.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
 - Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Sampling Defaults.
 
-## Speculative Depth
+## Native MTP
 
-Models with a supported native MTP head show **Speculative Depth** in the chat
-model picker's options: Off, Auto, 1, 2, and 3. Flash Next starts **Off**, across
-its quantizations; you can explicitly select Auto or a depth. Qwen3.8-27B keeps
-its existing eligible depth-3 default. An explicit choice is preserved when
-switching models or relaunching. A Flash Next default written automatically
-does not switch 27B Off. Headless bundles, including Flash Next JANG_1L, do not
-advertise MTP. Bundle safety blocks still apply. These controls do not override
-your configured sampling settings or guarantee a throughput floor.
+Speculative Decoding defaults to **Default**, resolved from the selected bundle.
+Qwen Flash-Next with a usable native MTP head starts **On (Adaptive)**, including
+supported affine and JANGH variants. Qwen 27B automatically uses a compatible
+bundled DFlash2 drafter when present. A bundle without compatible draft support
+runs ordinary autoregressive decoding.
+
+The picker shows **Off (AR)** or **On (Adaptive)**. The runtime chooses depth;
+there are no manual depth buttons. Explicit Off disables speculation, including
+bundled and selected external drafters, and survives reload. **Reset to default**
+restores bundle-aware policy, so a capable bundle can show Adaptive again.
+Legacy manual depths migrate to Adaptive and are re-evaluated by runtime admission.
+
+On is a request, not proof of active speculation. Unsupported media and
+schema-constrained requests run AR. Server → Settings → **Speculative Decoding**
+shows the loaded model's actual resolution and reason. Sampling stays bundle-driven
+unless explicitly overridden. Remote models do not expose this local control.
 
 ## Apple Foundation Models
 

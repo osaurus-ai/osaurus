@@ -569,18 +569,35 @@ public actor RemoteProviderService: ToolCapableService {
         return result
     }
 
+    /// Providers whose backend only serves streaming responses, so one-shot
+    /// requests must stream and collect the visible text:
+    /// - the native Osaurus agent (/agents/{id}/run) and the streaming-first
+    ///   Osaurus Router return a `stream:false` body that isn't a decodable
+    ///   chat-completion (the DecodingError behind distillation failing
+    ///   against `osaurus/*` core models);
+    /// - the ChatGPT/Codex sign-in backend rejects `stream:false` outright
+    ///   with HTTP 400 `{"detail":"Stream must be set to true"}`.
+    static func oneShotRequiresStreaming(
+        providerType: RemoteProviderType,
+        authType: RemoteProviderAuthType
+    ) -> Bool {
+        switch providerType {
+        case .osaurus, .osaurusRouter, .openAICodex:
+            return true
+        default:
+            return authType == .openAICodexOAuth
+        }
+    }
+
     func generateOneShot(
         messages: [ChatMessage],
         parameters: GenerationParameters,
         requestedModel: String?
     ) async throws -> String {
-        // The native Osaurus agent (/agents/{id}/run) and the streaming-first
-        // Osaurus Router both reject the non-streaming path below: a
-        // `stream:false` request returns a body that isn't a decodable
-        // chat-completion, so it throws a DecodingError — the root cause of
-        // distillation failing against `osaurus/*` core models. Stream instead
-        // and keep only the visible text.
-        if provider.providerType == .osaurus || provider.providerType == .osaurusRouter {
+        if Self.oneShotRequiresStreaming(
+            providerType: provider.providerType,
+            authType: provider.authType
+        ) {
             let stream = try await streamDeltas(
                 messages: messages,
                 parameters: parameters,

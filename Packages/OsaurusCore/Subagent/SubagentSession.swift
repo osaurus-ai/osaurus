@@ -538,6 +538,73 @@ public enum SubagentSession {
             )
         }
 
+        // A real delegated chat clears activeKindId, but still owns its
+        // launcher's admission. Yield that exact lease around a nested local
+        // handoff; the inner host keeps ordinary peer admission/revalidation.
+        if !skipAdmission, prepared.admissionClass == .localExclusive,
+            let ancestor = SubagentAdmissionContext.current,
+            await ancestor.belongs(to: admissionController)
+        {
+            let nestedPresentation = suppliedPresentation ?? SubagentRunPresentation(
+                feed: SubagentFeed(
+                    toolCallId: prepared.scope.toolCallId,
+                    kindId: prepared.kind.capability.id,
+                    title: prepared.kind.feedTitle,
+                    agentId: prepared.scope.agentId,
+                    parentSessionId: prepared.scope.sessionId,
+                    suppressActivityMirror: prepared.kind.suppressActivityMirror
+                ),
+                interrupt: InterruptToken(),
+                registerWithUI: true
+            )
+            if nestedPresentation.registerWithUI {
+                SubagentFeedRegistry.shared.register(nestedPresentation.feed)
+                SubagentInterruptCenter.shared.register(nestedPresentation.interrupt, for: prepared.scope.toolCallId)
+            }
+            defer {
+                if nestedPresentation.registerWithUI {
+                    SubagentInterruptCenter.shared.unregister(prepared.scope.toolCallId)
+                    SubagentFeedRegistry.shared.unregister(toolCallId: prepared.scope.toolCallId)
+                }
+            }
+            do {
+                return try await ancestor.suspending(
+                    cancellationRequested: { nestedPresentation.interrupt.isInterrupted },
+                    onWait: { nestedPresentation.feed.emitPhase("waiting for local GPU", detail: "another subagent") }
+                ) {
+                    await SubagentAdmissionContext.$current.withValue(nil) {
+                        await runPrepared(
+                            prepared,
+                            presentation: SubagentRunPresentation(
+                                feed: nestedPresentation.feed,
+                                interrupt: nestedPresentation.interrupt,
+                                registerWithUI: false,
+                                finishFeed: nestedPresentation.finishFeed
+                            ),
+                            handoffOverride: handoffOverride,
+                            captureProcessCacheSnapshot: captureProcessCacheSnapshot,
+                            admissionController: admissionController,
+                            postAdmissionLocalCapacityOverride: postAdmissionLocalCapacityOverride
+                        )
+                    }
+                }
+            } catch {
+                let envelope = ToolEnvelope.failure(
+                    kind: nestedPresentation.interrupt.isInterrupted ? .userDenied : .executionError,
+                    message: nestedPresentation.interrupt.isInterrupted
+                        ? "Run was stopped by the user before execution began."
+                        : "Run was cancelled before execution began.",
+                    tool: prepared.tool,
+                    retryable: false,
+                    metadata: ["cancelled": true]
+                )
+                if nestedPresentation.finishFeed {
+                    nestedPresentation.feed.finish(success: false, summary: ToolEnvelope.failureMessage(envelope))
+                }
+                return envelope
+            }
+        }
+
         let presentation =
             suppliedPresentation
             ?? SubagentRunPresentation(
@@ -1136,6 +1203,12 @@ public enum SubagentSession {
                 effectiveHandoff = prepared.kind.makeHandoff()
             }
         }
+        let ownedAdmission = admissionHeld && admissionClass != .remote
+            ? SubagentAdmissionLease(
+                gate: admissionController, admissionClass: admissionClass,
+                modelKey: admissionModelKey, slots: admissionHeldSlots,
+                requiresCleanupAdmission: effectiveHandoff.requiresAdmissionForCleanup
+            ) : nil
         let started = Date()
 
         // Run under the recursion guard, wrapped by the optional handoff. Bind
@@ -1143,9 +1216,10 @@ public enum SubagentSession {
         // tool-call ids even though one visible parent call owns the feed.
         do {
             let cacheCapture = PostRunCacheCapture()
-            let result = try await ChatExecutionContext.$currentSessionId.withValue(
-                prepared.scope.sessionId
-            ) {
+            let result = try await SubagentAdmissionContext.$current.withValue(ownedAdmission) {
+                try await ChatExecutionContext.$currentSessionId.withValue(
+                    prepared.scope.sessionId
+                ) {
                 try await ChatExecutionContext.$currentAgentId.withValue(prepared.scope.agentId) {
                     try await ChatExecutionContext.$currentReasoningEffort.withValue(prepared.scope.reasoningEffort) {
                         try await ChatExecutionContext.$currentEnableThinking.withValue(
@@ -1162,27 +1236,41 @@ public enum SubagentSession {
                                         resolved: prepared.resolved,
                                         feed: feed
                                     ) {
-                                        let result = try await prepared.kind.run(
-                                            prepared.scope,
-                                            prepared.resolved,
-                                            feed: feed,
-                                            interrupt: interrupt
-                                        )
-                                        if captureProcessCacheSnapshot,
-                                            prepared.resolved.isLocal
-                                        {
-                                            cacheCapture.value =
-                                                await ModelRuntime.batchDiagnosticsSnapshot()
+                                        do {
+                                            let result = try await prepared.kind.run(
+                                                prepared.scope,
+                                                prepared.resolved,
+                                                feed: feed,
+                                                interrupt: interrupt
+                                            )
+                                            await ownedAdmission?.prepareForCleanup {
+                                                feed.emitPhase("waiting for local GPU", detail: "another subagent")
+                                            }
+                                            if captureProcessCacheSnapshot,
+                                                prepared.resolved.isLocal
+                                            {
+                                                cacheCapture.value =
+                                                    await ModelRuntime.batchDiagnosticsSnapshot()
+                                            }
+                                            return result
+                                        } catch {
+                                            await ownedAdmission?.prepareForCleanup {
+                                                feed.emitPhase("waiting for local GPU", detail: "another subagent")
+                                            }
+                                            throw error
                                         }
-                                        return result
                                     }
                                 }
                             }
                         }
                     }
                 }
+                }
             }
-            if admissionHeld {
+            if let ownedAdmission {
+                await ownedAdmission.finish()
+                admissionHeld = false
+            } else if admissionHeld {
                 if admissionHeldSlots > 0 {
                     await admissionController.releaseLocalInPlace(
                         modelKey: admissionModelKey,
@@ -1245,7 +1333,10 @@ public enum SubagentSession {
             )
             return ToolEnvelope.success(tool: prepared.tool, result: payload)
         } catch {
-            if admissionHeld {
+            if let ownedAdmission {
+                await ownedAdmission.finish()
+                admissionHeld = false
+            } else if admissionHeld {
                 if admissionHeldSlots > 0 {
                     await admissionController.releaseLocalInPlace(
                         modelKey: admissionModelKey,

@@ -29,13 +29,13 @@ When the description is blank and the agent has a system prompt, Osaurus generat
 
 - Server: port, expose to network, generation defaults, batching/concurrency, prefix/paged-KV/disk cache, **Context Window Cap**, KV retention, memory safety, model exposure. (Port and exposure changes restart the server; cache topology changes unload loaded models; disk-size changes update resident quotas.)
 - Orchestrator: Settings → Orchestrator holds Identity, Model & Generation (with the **Model readiness** row), **Working Folder**, Subagents (**Allowed subagents**, **Create starter agents**, **Add all agents** — shown only while the list is empty but agents exist, **Permission**, **Permission for shared (workspace) agents**, **Limits**, **Advanced**, Local Models & Memory), and the **Delegations** list (Sent / Received). The working folder, model override, RAM-safety helpers and the Delegations list are UI-only; the rest is also declarative (`default_agent`, `delegation`).
-- Conversation (Settings → Conversation): **Appearance** (Smooth Streaming, Group Thinking & Tool Activity, Check Spelling While Typing), **Behavior** (Automatically Name Chats, Suggest Follow-Up Questions, Clipboard Monitoring, ⌘+N Opens New Chat), **Agent Sessions** (Keep Mac Awake), and an **Advanced** disclosure with Show Thinking, the compaction model (unset = the chat's current model summarizes; compaction runs automatically near the context limit and on demand from the **Compact conversation** button in the chat's context budget popover), Top P Override and Max Tool Attempts. **Not** the context window — that is Server → Cache.
+- Conversation (Settings → Conversation): **Appearance** (Smooth Streaming, Group Thinking & Tool Activity, Check Spelling While Typing), **Behavior** (Automatically Name Chats, Suggest Follow-Up Questions, Clipboard Monitoring, ⌘+N Opens New Chat), **Agent Sessions** (Keep Mac Awake), and an **Advanced** disclosure with Show Thinking, the compaction model (unset = the chat's current model summarizes; compaction runs automatically near the context limit and on demand from the **Compact conversation** button in the chat's context budget popover or the `/compact` command; when set, this model summarizes every chat regardless of the chat's own model), Top P Override and Max Tool Attempts. **Not** the context window — that is Server → Cache.
 - General: start at login, hide dock icon, appearance, global hotkey, Core Model, **Use models already on this Mac**, Show Notifications; **Advanced** holds the Models Directory, Model Sources, Max Concurrent Background Tasks, and **Data & Storage** (encryption, backup, file history). **Factory Reset…** sits at the very bottom.
 - Voice: **Setup** (speech model, microphone, detection sensitivity), **Chat Voice** (voice input in chat), **Transcription** (system-wide dictation hotkey, stop behavior, cleanup), **Text-to-Speech** (voice, preview; engine under Advanced), **Wake Word**, and **Models**.
 - Themes: theme gallery, custom theme editor, import/export. **Themes → Text & Fonts → Small body** sets the font size for compact controls and model lists (14 pt by default). Search for **Small body** to open the current theme in the editor and highlight its control. Built-in themes use **Save as Copy**; apply the saved copy from the gallery to use it. The chat model picker and Credits menu use Secondary Background and the default Border Color, Border Width, and Border Opacity controls under Borders & Effects; these controls are also available through Settings search.
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies and **Auto-Allow All Tool Calls** live under Tools & MCP → All Tools.
-- Tools & MCP: **Services** (connected MCP services, **Add Service**, and the **Directory** of services you can add), **All Tools** (every tool with its permission policy), **Plugins** (native plugin registry).
+- Tools & MCP: **Services** (connected MCP services, **Add Service**, and the **Directory** of services you can add, filterable by category chips such as Legal, Finance & Accounting, and Healthcare & Life Sciences), **All Tools** (every tool with its permission policy), **Plugins** (native plugin registry).
 - Images: **Defaults** (default generation and edit models, image/video job permissions, cloud video defaults; the **Image model load policy** is under Advanced) and **Image Models**.
 - Mobile: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
 - Privacy: **Filter** (the redaction filter, AI detection, per-provider overrides, background-request review, and Send Crash Reports), **Activity Log** (**Keep Activity History** retention, **Store Prompts and Responses**, **Review Activity in Insights**), **Rules**, and **Models** (the detection model).
@@ -115,22 +115,27 @@ advanced overrides remain in force. Disabling the delegation check does not sile
 rewrite those server settings. Decisions report `ram_safety_enabled`; when false,
 `ram_slots` is diagnostic and does not limit the admitted capacity.
 
-## Speculative decoding
+## Native MTP
 
-Native MTP starts **Off**. Selecting a compatible local model shows **Speculative
-Depth** in the model picker's options after its configuration and weight headers
-are inspected; sending a request or loading weights is not required. Choose
-**Auto** or a maximum depth of **1–3** to opt in. The runtime can lower that depth
-or use ordinary decoding when speculation does not help. Sampling settings remain
-independent. Models without an executable MTP head do not advertise these controls.
+Speculative Decoding defaults to **Default**, which resolves from the selected
+bundle. Qwen Flash-Next bundles with a usable native MTP head start **On
+(Adaptive)**, including supported affine and JANGH variants. Qwen 27B uses a
+compatible bundled DFlash2 drafter automatically when one is present. A bundle
+without compatible draft support runs ordinary autoregressive decoding.
 
-The same global setting lives under Server → Settings → **Speculative Decoding**
-and applies to Chat and API requests. Saved explicit choices survive model
-selection and relaunch. Old defaults are turned off only when the app recorded
-that it chose them automatically. An explicitly selected DFlash 2 drafter is a
-separate opt-in; remove its folder selection to stop using it.
+The model picker shows **Off (AR)** or **On (Adaptive)** before weights load.
+The runtime chooses depth; there are no manual D1/D2/D3 buttons. Explicit Off
+turns speculation off, including external and bundled drafters. Saved explicit
+choices survive reload. Legacy manual depths migrate to Adaptive and are
+re-evaluated by runtime admission. **Reset to default** restores the selected
+bundle's policy, so a capable bundle can show Adaptive again. Included evaluations
+and benchmarks inherit that policy unless explicitly overridden.
 
-Force On requires verified bundle tuning unless an eligible manual depth is selected in Chat. If the bundle cannot honor that selection, Chat and API requests report a policy error; they do not silently change to ordinary decoding. A selected DFlash 2 drafter remains a separate explicit setting.
+On is a request, not proof that a particular request uses speculation. Unsupported
+media and schema-constrained requests run AR. Server → Settings → **Speculative
+Decoding** shows the loaded model's actual resolution and reason. Sampling stays
+bundle-driven unless explicitly overridden. Remote models do not expose this
+local control.
 
 ## Local model memory
 

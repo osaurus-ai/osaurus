@@ -201,6 +201,40 @@ struct MobilePairingServiceTests {
         let req = MobilePairRequest(v: 1, code: "123456", deviceId: "d", deviceName: "  ", encPub: pub)
         #expect(service.redeem(req) == .badRequest("Missing device id or name"))
     }
+
+    @Test func payloadCarriesConnectIdentityUnderTheBuiltInAgent() throws {
+        let service = makeService()
+        let address = "0x00000000000000000000000000000000000000c0"
+        service.installPendingCodeForTesting(
+            PairingCode(code: "123456", issuedAt: Date()),
+            fullKey: "osk-v1.secret",
+            info: keyInfo(),
+            connectAddress: address
+        )
+        let (privateKey, pub) = PairingKeyEnvelope.generateRecipientKey()
+        guard case .paired(let response, _) = service.redeem(request(code: "123456", encPub: pub)) else {
+            Issue.record("expected pairing to succeed")
+            return
+        }
+        let plaintext = try PairingKeyEnvelope.open(
+            response.sealed,
+            privateKey: privateKey,
+            info: MobilePairingService.envelopeInfo(deviceId: "device-1")
+        )
+        let payload = try JSONDecoder().decode(MobilePairPayload.self, from: Data(plaintext.utf8))
+        let entry = payload.agents.first { $0.id == Agent.defaultId.uuidString }
+        if MobilePairingService.remoteAgents().isEmpty {
+            #expect(entry?.address == address)
+            #expect(entry?.relayURL == nil)
+        } else {
+            // Custom agents carry the channel; the connect identity stays out.
+            #expect(entry == nil)
+        }
+    }
+
+    @Test func noConnectEntryWithoutAnIdentity() {
+        #expect(MobilePairingService.connectEntry(address: nil).isEmpty)
+    }
 }
 
 @MainActor
@@ -223,5 +257,31 @@ struct MobileConnectRelayTests {
         let json = #"{"id":"a","name":"n","address":"0x1"}"#
         let entry = try JSONDecoder().decode(MobilePairPayload.AgentEntry.self, from: Data(json.utf8))
         #expect(entry.relayURL == nil)
+    }
+}
+
+struct MobileConnectIdentityTests {
+    private let master = Data(repeating: 0x42, count: 32)
+
+    @Test func derivationIsDeterministicAndDeviceScoped() {
+        let a = MobileConnectIdentity.derivePrivateKey(masterKey: master, deviceScope: "mac-1")
+        #expect(a == MobileConnectIdentity.derivePrivateKey(masterKey: master, deviceScope: "mac-1"))
+        #expect(a != MobileConnectIdentity.derivePrivateKey(masterKey: master, deviceScope: "mac-2"))
+        #expect(a.count == 32)
+    }
+
+    @Test func neverCollidesWithAnAgentKey() {
+        let connect = MobileConnectIdentity.derivePrivateKey(masterKey: master, deviceScope: "mac-1")
+        for index in UInt32(0) ..< 64 {
+            let scoped = AgentKeyPath.deviceScoped(index: index, deviceScope: "mac-1")
+            #expect(connect != AgentKey.derive(masterKey: master, path: scoped))
+            #expect(connect != AgentKey.derive(masterKey: master, path: .legacy(index: index)))
+        }
+    }
+
+    @Test func derivesAValidAddress() throws {
+        let key = MobileConnectIdentity.derivePrivateKey(masterKey: master, deviceScope: nil)
+        let address = try deriveOsaurusId(from: key)
+        #expect(address.count == 42 && address.hasPrefix("0x"))
     }
 }

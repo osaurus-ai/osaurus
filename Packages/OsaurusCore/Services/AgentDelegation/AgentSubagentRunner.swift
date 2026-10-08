@@ -139,6 +139,9 @@ enum AgentSubagentRunner {
         /// a character-based estimate when the provider never reported one.
         var completionTokens = 0
         var tokensPerSecond: Double?
+        /// Tokens the runtime actually prefilled for this step (rendered template, tool schemas, history), from the
+        /// input-token hint or the stats sentinel. `nil` when the provider reported neither.
+        var promptTokens: Int?
     }
 
     /// Run a bounded subagent loop. The caller (kind) owns model resolution,
@@ -275,7 +278,10 @@ enum AgentSubagentRunner {
                 // Usage: prompt of the last step (largest composed prompt),
                 // completions summed. Estimator fallback for providers that
                 // never emit the stats sentinel.
-                usage.promptTokens = ContextBudgetManager.estimateTokens(for: effective)
+                // Prefer the runtime's own count; the message estimator omits the rendered template and the
+                // separately attached tool schemas (a 4-tool delegation reported 92 against 1,455 prefilled).
+                usage.promptTokens =
+                    outcome.promptTokens ?? ContextBudgetManager.estimateTokens(for: effective)
                 var stepCompletion = outcome.completionTokens
                 if stepCompletion == 0 {
                     stepCompletion =
@@ -504,10 +510,15 @@ enum AgentSubagentRunner {
                 do {
                     for try await delta in stream {
                         if let cause = cancelCause() { throw RunCancelled(cause: cause) }
+                        if let inputTokens = StreamingInputTokenHint.decode(delta) {
+                            outcome.promptTokens = inputTokens
+                            continue
+                        }
                         if let stats = StreamingStatsHint.decode(delta) {
                             sawStats = true
                             outcome.completionTokens = stats.tokenCount
                             outcome.tokensPerSecond = stats.tokensPerSecond
+                            if let inputTokens = stats.inputTokenCount { outcome.promptTokens = inputTokens }
                             onProgress?(stats.tokenCount, stats.tokensPerSecond)
                             continue
                         }

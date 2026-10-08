@@ -1156,6 +1156,9 @@ final class OpenResponsesSSEWriter {
     private var model: String = ""
     private var inputTokens: Int = 0
     private var outputTokens: Int = 0
+    private var tokensPerSecond: Double?
+    private var completedOutput: [OpenResponsesOutputItem] = []
+    private var completedOutputIDs: Set<String> = []
     private var sequenceNumber: Int = 0
     private var currentItemId: String = ""
     private var currentOutputIndex: Int = 0
@@ -1203,6 +1206,9 @@ final class OpenResponsesSSEWriter {
         self.model = model
         self.inputTokens = inputTokens
         self.outputTokens = 0
+        self.tokensPerSecond = nil
+        self.completedOutput = []
+        self.completedOutputIDs = []
         self.sequenceNumber = 0
         self.currentOutputIndex = 0
         self.accumulatedText = ""
@@ -1347,6 +1353,7 @@ final class OpenResponsesSSEWriter {
             item: .reasoning(finalItem)
         )
         writeSSEEvent("response.output_item.done", payload: itemDone, context: context)
+        if completedOutputIDs.insert(reasoningItemId).inserted { completedOutput.append(.reasoning(finalItem)) }
 
         hasOpenReasoningItem = false
         currentOutputIndex += 1
@@ -1376,6 +1383,10 @@ final class OpenResponsesSSEWriter {
         outputTokens = max(0, tokenCount)
     }
 
+    func setTokensPerSecond(_ rate: Double) {
+        tokensPerSecond = rate.isFinite && rate > 0 ? rate : nil
+    }
+
     /// Write response.output_text.done event
     func writeTextDone(context: ChannelHandlerContext) {
         let event = OutputTextDoneEvent(
@@ -1401,6 +1412,7 @@ final class OpenResponsesSSEWriter {
             item: .message(messageItem)
         )
         writeSSEEvent("response.output_item.done", payload: event, context: context)
+        if completedOutputIDs.insert(currentItemId).inserted { completedOutput.append(.message(messageItem)) }
         currentOutputIndex += 1
     }
 
@@ -1484,6 +1496,7 @@ final class OpenResponsesSSEWriter {
             item: .functionCall(functionCall)
         )
         writeSSEEvent("response.output_item.done", payload: event, context: context)
+        if completedOutputIDs.insert(currentItemId).inserted { completedOutput.append(.functionCall(functionCall)) }
         currentOutputIndex += 1
     }
 
@@ -1494,8 +1507,9 @@ final class OpenResponsesSSEWriter {
             createdAt: Int(Date().timeIntervalSince1970),
             status: .completed,
             model: model,
-            output: [],
-            usage: OpenResponsesUsage(inputTokens: inputTokens, outputTokens: outputTokens)
+            output: completedOutput,
+            usage: OpenResponsesUsage(inputTokens: inputTokens, outputTokens: outputTokens,
+                                      tokensPerSecond: tokensPerSecond)
         )
         let event = ResponseCompletedEvent(sequenceNumber: nextSequenceNumber(), response: response)
         writeSSEEvent("response.completed", payload: event, context: context)

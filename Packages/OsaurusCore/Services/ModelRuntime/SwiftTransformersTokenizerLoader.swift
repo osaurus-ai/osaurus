@@ -14,7 +14,18 @@ struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
     func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
         let upstream = try await AutoTokenizer.from(modelFolder: directory)
         let modelType = Self.modelType(in: directory)
-        return TokenizerBridge(upstream: upstream, modelType: modelType)
+        let grammarVocabulary: GrammarTokenVocabulary?
+        if upstream.incrementalByteLevelDecoder != nil,
+            let tokenizerJSON = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")),
+            let tokenizerConfig = try? Data(contentsOf: directory.appendingPathComponent("tokenizer_config.json"))
+        {
+            grammarVocabulary = GrammarTokenVocabulary.fromTokenizerJSON(
+                tokenizerJSON, tokenizerConfig: tokenizerConfig)
+        } else {
+            grammarVocabulary = nil
+        }
+        return TokenizerBridge(upstream: upstream, modelType: modelType,
+            grammarTokenVocabulary: grammarVocabulary)
     }
 
     static func normalizedToolsForChatTemplate(
@@ -46,6 +57,7 @@ struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
 private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenizer, @unchecked Sendable {
     let upstream: any VMLXTokenizers.Tokenizer
     let modelType: String?
+    let grammarTokenVocabulary: GrammarTokenVocabulary?
 
     private static let dsv4Bos =
         "<" + String(UnicodeScalar(0xFF5C)!)
@@ -170,6 +182,20 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
 
     func convertIdToToken(_ id: Int) -> String? {
         upstream.convertIdToToken(id)
+    }
+
+    // Osaurus uses this bridge rather than the engine's macro bridge. Forward
+    // the upstream capability so compatible streams avoid decoding their full
+    // token history for every delta. Eligibility remains upstream-owned.
+    var incrementalByteLevelDecoder: (@Sendable (Int) -> MLXLMCommon.ByteLevelDecodingPiece)? {
+        guard let decoder = upstream.incrementalByteLevelDecoder else { return nil }
+        return { id in
+            switch decoder(id) {
+            case .bytes(let bytes): return .bytes(bytes)
+            case .literal(let text): return .literal(text)
+            case .ignored: return .ignored
+            }
+        }
     }
 
     var bosToken: String? { upstream.bosToken }

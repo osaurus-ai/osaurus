@@ -3,6 +3,70 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.19</title>
+            <pubDate>Mon, 05 Oct 2026 19:45:47 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.19</sparkle:version>
+            <sparkle:shortVersionString>0.25.19</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.19/Osaurus-0.25.19.dmg" length="81876863" type="application/octet-stream" sparkle:edSignature="Wp8HctDELEVPIlJE28zRbv7R8/3b8NQRt0D+TNyAQHXHBFglB/yow4WCjEs9uDwlXen/68PakRE43A1fzT7zBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Unify chat composer popups with the model picker style and quiet the lone chat tab (#3017) by @tpae
+- let the paired phone manage its agents and chats and give it a secure channel on a mac with no custom agents (#2980) by @RaajeevChandran
+- Pin qualified GLM required-tool cache restoration (#3002) by @jjang-ai
+
+## 🚀 Features
+
+- steer channel messages into the running turn instead of waiting for the next one (#3010) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Fix non-MLX Sentry main-thread hangs (chat table incremental apply, visibleContent) and Seatbelt NUL validation (#2922) by @tpae
+- Show adaptive native MTP controls before model loading (#3006) by @jjang-ai
+- queue channel messages that arrive while a turn is running instead of dropping them (#3008) by @RaajeevChandran
+- start a fresh chat for every scheduled run (#3007) by @RaajeevChandran
+- Pin MTP head-history and lazy-verifier PLE state fixes (#3005) by @jjang-ai
+- Pin request-scoped native MTP warmup fix (#3004) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.18...0.25.19
+]]></description>
+        </item>
+        <item>
+            <title>0.25.18</title>
+            <pubDate>Sun, 04 Oct 2026 21:31:52 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.18</sparkle:version>
+            <sparkle:shortVersionString>0.25.18</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.18/Osaurus-0.25.18.dmg" length="81811181" type="application/octet-stream" sparkle:edSignature="AKb+ixXNdj+Sj50Jdk0JIpTf17zkN23DtNDzvPD0DTZSGY9ZkKKD+umImGnYFgGPlIBbVk5FGpDCD0xS2ECOAQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Support Qwen-Image-2.1 generation and editing (#2997) by @jjang-ai
+- Restyle chat tab strip as a Safari-style track (#2995) by @tpae
+- Pin Qwen4Exp JANGH runtime and media cache fixes (#2991) by @jjang-ai
+- MCP robustness, elicitation, and regulated-industry connectors (#2990) by @tpae
+- Use exact Naive rotary application on qualified M5 Max (#2972) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Pin GLM sparse-indexer device range optimization (#3001) by @jjang-ai
+- Pin canonical Qwen stable-prefix cache reconstruction fix (#3000) by @jjang-ai
+- Stream Codex one-shot requests so context compaction works on ChatGPT models (#2999) by @tpae
+- Render agent avatars at exact pixel size so they stay crisp (#2998) by @tpae
+- Serialize image producers and honor completion boundaries (#2996) by @jjang-ai
+- Pin native MTP history and sampled verification fixes (#2994) by @jjang-ai
+- Pin runtime mixed-gather dtype correction (#2986) by @jjang-ai
+- Avoid storage-unlock scheduler waits and stale starts (#2984) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.17...0.25.18
+]]></description>
+        </item>
+        <item>
             <title>0.25.17</title>
             <pubDate>Sat, 03 Oct 2026 02:32:45 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

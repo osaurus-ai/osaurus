@@ -12,7 +12,7 @@ import Testing
 @testable import OsaurusCore
 
 struct AgentToolPatchTests {
-    private func patch(_ json: String) -> (enabled: Bool?, policy: ToolPermissionPolicy?)? {
+    private func patch(_ json: String) -> HTTPHandler.ToolPatch? {
         HTTPHandler.toolPatch(from: Data(json.utf8))
     }
 
@@ -41,5 +41,20 @@ struct AgentToolPatchTests {
         #expect(patch(#"{"policy":"AUTO"}"#) == nil)
         // Not JSON at all.
         #expect(patch("enabled=false") == nil)
+    }
+
+    @Test func readsTheAgentSwitchAlongsideTheMacWideOnes() throws {
+        let own = try #require(patch(#"{"agent_enabled":false}"#))
+        #expect(own == HTTPHandler.ToolPatch(enabled: nil, policy: nil, agentEnabled: false))
+
+        let all = try #require(patch(#"{"enabled":true,"policy":"auto","agent_enabled":true}"#))
+        #expect(all == HTTPHandler.ToolPatch(enabled: true, policy: .auto, agentEnabled: true))
+    }
+
+    @Test func oneBadFieldRejectsTheWholeBody() {
+        // A valid agent switch must not carry an invalid Mac-wide field through.
+        #expect(patch(#"{"agent_enabled":true,"policy":"bogus"}"#) == nil)
+        #expect(patch(#"{"agent_enabled":true,"enabled":"yes"}"#) == nil)
+        #expect(patch(#"{"agent_enabled":"yes"}"#) == nil)
     }
 }

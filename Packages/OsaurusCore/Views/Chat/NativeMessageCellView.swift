@@ -283,27 +283,20 @@ final class NativeHeaderView: NSView {
         // monogram) so the chat header is visually consistent regardless of
         // which avatar mode the user picked, unless the theme opts out via
         // `showInlineAvatar`. User messages hide the avatar.
-        let resolved: NSImage? = {
-            guard role == .assistant, theme.showInlineAvatar else { return nil }
-            if let path = customAvatarPath, !path.isEmpty {
-                let url = URL(fileURLWithPath: path)
-                if let img = AvatarImageCache.shared.image(for: url) { return img }
-            }
-            if let avatar, !avatar.isEmpty,
-                let mascot = Bundle.module.image(forResource: "osaurus-avatar-\(avatar)")
-            {
-                return mascot
-            }
-            return Self.monogramImage(
+        avatarSource =
+            role == .assistant && theme.showInlineAvatar
+            ? AvatarSource(
                 name: name,
+                avatar: avatar,
+                customAvatarPath: customAvatarPath,
                 tint: NSColor(theme.accentColor),
-                background: NSColor(theme.secondaryText).withAlphaComponent(0.12),
-                size: themeSize
+                background: NSColor(theme.secondaryText).withAlphaComponent(0.12)
             )
-        }()
+            : nil
+        let resolved = resolveAvatarImage()
         avatarImageView.image = resolved
-        // Custom + mascot images are scaled to fit; monograms are pre-rendered
-        // at the avatar size so any scaling mode is fine.
+        // Every avatar kind is pre-rendered at the view's exact size, so this
+        // only matters as a safety net and never scales in practice.
         avatarImageView.imageScaling = .scaleProportionallyUpOrDown
         let showAvatar = resolved != nil
         avatarImageView.isHidden = !showAvatar
@@ -322,6 +315,67 @@ final class NativeHeaderView: NSView {
         rebuildActionButtons(role: role, theme: theme, onCancelEdit: onCancelEdit)
         invalidateIntrinsicContentSize()
         setHovered(isHovered, animated: false)
+    }
+
+    private struct AvatarSource {
+        let name: String
+        let avatar: String?
+        let customAvatarPath: String?
+        let tint: NSColor
+        let background: NSColor
+    }
+
+    /// Inputs of the current avatar, kept so the bitmap can be re-rendered
+    /// when the view moves to a display with a different backing scale.
+    private var avatarSource: AvatarSource?
+    private var avatarRenderScale: CGFloat = 0
+
+    private var backingScale: CGFloat {
+        window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    }
+
+    /// Custom > mascot > monogram, rendered at `currentAvatarSize` for the
+    /// current backing scale. Nil when the row shows no avatar.
+    private func resolveAvatarImage() -> NSImage? {
+        guard let source = avatarSource else { return nil }
+        let scale = backingScale
+        avatarRenderScale = scale
+        let renderer = AvatarBitmapRenderer.shared
+        if let path = source.customAvatarPath, !path.isEmpty,
+            let img = renderer.image(
+                customURL: URL(fileURLWithPath: path),
+                pointSize: currentAvatarSize,
+                scale: scale
+            )
+        {
+            return img
+        }
+        if let mascot = source.avatar.flatMap(AgentMascot.init(rawValue:)),
+            let img = renderer.image(mascot: mascot, pointSize: currentAvatarSize, scale: scale)
+        {
+            return img
+        }
+        return Self.monogramImage(
+            name: source.name,
+            tint: source.tint,
+            background: source.background,
+            size: currentAvatarSize
+        )
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        refreshAvatarForBackingScale()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshAvatarForBackingScale()
+    }
+
+    private func refreshAvatarForBackingScale() {
+        guard avatarSource != nil, window != nil, backingScale != avatarRenderScale else { return }
+        avatarImageView.image = resolveAvatarImage()
     }
 
     /// Renders a monogram avatar (initial-on-tinted-circle) into a cached

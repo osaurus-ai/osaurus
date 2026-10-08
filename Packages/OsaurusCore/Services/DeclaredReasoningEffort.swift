@@ -50,6 +50,9 @@ enum DeclaredReasoningEffort {
         /// honest downgrade when a declared transport is one this app does
         /// not know how to deliver.
         case noEffortControl
+        /// One native effort with no UI control. Explicit values must reach
+        /// the engine contract validator, not be silently dropped or snapped.
+        case fixedNativeEffort(String)
     }
 
     /// Declared support for the `preserve_thinking` chat-template kwarg
@@ -161,9 +164,32 @@ enum DeclaredReasoningEffort {
             ?? ((root["chat"] as? [String: Any])?["reasoning"] as? [String: Any])
         guard let reasoning else { return nil }
         return Declaration(
-            control: parseControl(reasoning),
+            control: fixedNativeEffort(root: root, reasoning: reasoning) ?? parseControl(reasoning),
             preserveThinking: parsePreserveThinking(reasoning)
         )
+    }
+
+    /// A bundle can have one required native effort while exposing no user
+    /// effort list or toggle. Read that distinction from its serving contract;
+    /// do not infer it from a model name or from unsupported template branches.
+    private static func fixedNativeEffort(
+        root: [String: Any], reasoning: [String: Any]
+    ) -> Control? {
+        guard let capabilities = root["capabilities"] as? [String: Any],
+            capabilities["supports_reasoning_toggle"] as? Bool == false,
+            let efforts = capabilities["reasoning_efforts"] as? [String], efforts.isEmpty,
+            reasoning["supported"] as? Bool == true,
+            ((reasoning["supported_reasoning_efforts"] as? [String]) ?? []).isEmpty,
+            reasoning["template_flag"] as? String == "reasoning_effort",
+            let modes = reasoning["modes"] as? [String], modes.count == 1,
+            reasoning["default_mode"] as? String == modes[0],
+            let modeKwargs = reasoning["mode_kwargs"] as? [String: Any],
+            let kwargs = modeKwargs[modes[0]] as? [String: Any],
+            let effort = kwargs["reasoning_effort"] as? String,
+            !effort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            transportIsChatTemplateKwarg(reasoning, key: "reasoning_effort_transport")
+        else { return nil }
+        return .fixedNativeEffort(effort)
     }
 
     /// A declared transport we don't recognize means we cannot deliver the

@@ -2,17 +2,17 @@ import AppKit
 import SwiftUI
 
 private enum ChatPickerLayout {
-    static let rowHeight: CGFloat = 36
-    static let rowSpacing: CGFloat = 2
+    static let rowHeight = PickerCardMetrics.rowHeight
+    static let rowSpacing = PickerCardMetrics.rowSpacing
     static let columnWidth: CGFloat = 240
     static let optionsColumnWidth: CGFloat = 200
     static let columnSpacing: CGFloat = 20
-    static let padding: CGFloat = 16
+    static let padding = PickerCardMetrics.padding
     /// Vertical gap between option sections in the third column.
-    static let sectionSpacing: CGFloat = 10
+    static let sectionSpacing = PickerCardMetrics.sectionSpacing
     /// Height of a section sub-heading (e.g. "Reasoning Effort") in the
     /// options column, including its bottom gap.
-    static let sectionTitleHeight: CGFloat = 22
+    static let sectionTitleHeight = PickerCardMetrics.sectionTitleHeight
     /// Estimated height of a help footnote under a section.
     static let sectionFootnoteHeight: CGFloat = 44
     /// Height of the quiet "Reset to default" link row.
@@ -109,10 +109,13 @@ private struct ChatPickerOptionsSnapshot: Equatable {
                     action: .thinking(false)
                 )
             )
+            // On/Off is the coarsest reasoning effort; keep "Thinking" only
+            // when a real effort option sits beside it, so titles stay unique.
+            let hasEffortOption = control.options.contains { $0.id == "reasoningEffort" }
             sections.append(
                 Section(
                     id: thinkingSectionID,
-                    title: L("Thinking"),
+                    title: hasEffortOption ? L("Thinking") : L("Reasoning Effort"),
                     rows: rows,
                     footnote: nil,
                     reset: thinking.isExplicit && !thinking.supportsUnspecifiedDefault
@@ -310,13 +313,7 @@ struct ChatModelPickerCard: View {
     var body: some View {
         columns
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(theme.secondaryBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(theme.borderOpacity), lineWidth: theme.defaultBorderWidth)
-            }
-            .font(theme.font(size: CGFloat(theme.bodySize)))
-            .foregroundStyle(theme.primaryText)
+            .pickerCardSurface()
             .contentShape(Rectangle())
             .onAppear {
                 keyboardNavigation = NSApp.currentEvent?.type == .keyDown
@@ -410,12 +407,7 @@ struct ChatModelPickerCard: View {
     }
 
     private func heading(_ title: String) -> some View {
-        Text(title)
-            .font(theme.font(size: CGFloat(theme.smallBodySize) + 2))
-            .foregroundStyle(theme.secondaryText)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 4)
-            .accessibilityAddTraits(.isHeader)
+        PickerCardHeading(title)
     }
 
     private var providerColumn: some View {
@@ -532,13 +524,16 @@ struct ChatModelPickerCard: View {
     }
 
     private func optionsColumn(_ snapshot: ChatPickerOptionsSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            heading(L("Model options"))
+        // A lone titled section names the column itself instead of nesting
+        // under a generic heading.
+        let promotedTitle = snapshot.sections.count == 1 ? snapshot.sections.first?.title : nil
+        return VStack(alignment: .leading, spacing: 8) {
+            heading(promotedTitle ?? L("Model options"))
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: ChatPickerLayout.sectionSpacing) {
                         ForEach(snapshot.sections) { section in
-                            optionsSection(section, in: snapshot)
+                            optionsSection(section, in: snapshot, showsTitle: promotedTitle == nil)
                         }
                     }
                 }
@@ -552,18 +547,12 @@ struct ChatModelPickerCard: View {
 
     private func optionsSection(
         _ section: ChatPickerOptionsSnapshot.Section,
-        in snapshot: ChatPickerOptionsSnapshot
+        in snapshot: ChatPickerOptionsSnapshot,
+        showsTitle: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let title = section.title {
-                Text(title)
-                    .font(theme.font(size: CGFloat(theme.smallBodySize) - 1, weight: .medium))
-                    .foregroundStyle(theme.tertiaryText)
-                    .lineLimit(1)
-                    .padding(.horizontal, 12)
-                    .frame(height: ChatPickerLayout.sectionTitleHeight, alignment: .bottomLeading)
-                    .padding(.bottom, 2)
-                    .accessibilityAddTraits(.isHeader)
+            if showsTitle, let title = section.title {
+                PickerCardSectionTitle(title)
             }
             VStack(spacing: ChatPickerLayout.rowSpacing) {
                 ForEach(section.rows) { row in
@@ -578,11 +567,7 @@ struct ChatModelPickerCard: View {
                 }
             }
             if let footnote = section.footnote {
-                Text(footnote)
-                    .font(theme.font(size: 11))
-                    .foregroundStyle(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
+                PickerCardFootnote(text: footnote)
                     .padding(.top, 6)
             }
             if let reset = section.reset {
@@ -624,7 +609,7 @@ struct ChatModelPickerCard: View {
     }
 
     private func footerButton(_ title: String, key: String, icon: String, action: @escaping () -> Void) -> some View {
-        ChatPickerTextLink(title: title, icon: icon, focused: keyboardNavigation && focus == key, action: action)
+        PickerCardTextLink(title: title, icon: icon, focused: keyboardNavigation && focus == key, action: action)
             .focused($focus, equals: key)
     }
 
@@ -686,41 +671,6 @@ struct ChatModelPickerCard: View {
     }
 }
 
-/// Quiet inline links follow the last model, with the arrow beside the text.
-private struct ChatPickerTextLink: View {
-    let title: String
-    let icon: String
-    let focused: Bool
-    let action: () -> Void
-    @Environment(\.theme) private var theme
-    @State private var hovered = false
-
-    private var subduedTextColor: Color { theme.isDark ? theme.tertiaryText : theme.secondaryText }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Text(title).underline(hovered)
-                    .foregroundStyle(hovered ? theme.primaryText : subduedTextColor)
-                Image(systemName: icon).font(.system(size: 11)).accessibilityHidden(true)
-            }
-            .font(theme.font(size: CGFloat(theme.smallBodySize) - 1, weight: .regular))
-            .foregroundStyle(hovered ? theme.primaryText : theme.tertiaryText)
-            .padding(.leading, 12)
-            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-            .contentShape(Rectangle())
-            .overlay(alignment: .bottom) {
-                if focused { Rectangle().fill(theme.secondaryText).frame(height: 1) }
-            }
-        }
-        .buttonStyle(.plain)
-        .focusable()
-        .focusEffectDisabled()
-        .onHover { hovered = $0 }
-        .onKeyPress(.return) { action(); return .handled }
-    }
-}
-
 /// A native button supplies activation and accessibility; focus and hover use
 /// the same row shape, with a neutral keyboard underline distinct from selection.
 private struct ChatPickerRow<Icon: View>: View {
@@ -760,11 +710,7 @@ private struct ChatPickerRow<Icon: View>: View {
                 }
             }
             .foregroundStyle(muted && !hovered && !focused ? theme.tertiaryText : theme.primaryText)
-            .padding(.horizontal, 12)
-            .frame(minHeight: ChatPickerLayout.rowHeight)
-            .contentShape(Rectangle())
-            .background(selected || hovered || focused ? theme.tertiaryBackground : .clear,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .pickerCardRowChrome(highlighted: selected || hovered || focused)
             .overlay {
                 if focused {
                     VStack {

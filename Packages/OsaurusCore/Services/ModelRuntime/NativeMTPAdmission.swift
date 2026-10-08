@@ -14,8 +14,7 @@ struct NativeMTPAdmission: Sendable {
         let reason: String
 
         var errorDescription: String? {
-            "Native MTP request refused: \(reason) Choose Off or Auto in Server → Speculative Decoding, "
-                + "or select an eligible manual depth in Chat and reload the model."
+            "Native MTP request refused: \(reason) Choose Off (AR) or review the resolved On (Adaptive) status in Server → Speculative Decoding."
         }
     }
 
@@ -35,6 +34,7 @@ struct NativeMTPAdmission: Sendable {
         loaded: DraftStrategy?,
         mtp: VMLXServerMTPSettings
     ) throws -> DraftStrategy? {
+        guard mtp.mode != .off else { return nil }
         if externalDrafterSelected { return loaded }
         var settings = VMLXServerRuntimeSettings()
         settings.mtp = mtp
