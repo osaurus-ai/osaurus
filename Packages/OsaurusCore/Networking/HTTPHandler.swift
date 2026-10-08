@@ -1125,6 +1125,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path.hasPrefix("/images/jobs/"), path.hasSuffix("/events") {
+                handleImageJobEventsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path.hasPrefix("/runs/"), path.hasSuffix("/events") {
                 handleRunEventsEndpoint(
                     head: head,
@@ -8375,7 +8383,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     static let ownerChannelRoutes = [
         "/agents", "/models/picker", "/models/favorites", "/models/options", "/privacy", "/config/approvals",
         "/computer-use", "/secrets", "/approvals", "/workspaces", "/workspace-agents", "/projects", "/sessions",
-        "/runs", "/artifacts", "/pair/unpair",
+        "/runs", "/artifacts", "/pair/unpair", "/images/jobs",
     ]
 
     static func isSecureChannelPath(_ path: String) -> Bool {
@@ -11224,6 +11232,48 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     /// GET /runs/{id}/events?after=N — rejoin a phone run: the frames after
     /// the first N, then the rest live. Owner-only.
+    /// GET /images/jobs/{id}/events?after=N — rejoin a phone's image job
+    /// (docs/MOBILE_PROTOCOL.md §12.5): the events after the first N, the
+    /// newest preview, then the rest live. Owner-only; gated to the Secure
+    /// Channel with the other owner routes.
+    private func handleImageJobEventsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let components = path.split(separator: "/")
+        guard components.count == 4, components[3] == "events",
+            let job = DetachedPhoneRuns.images.run(id: String(components[2]))
+        else {
+            sendRunJSON(
+                .notFound,
+                #"{"error":"job_not_found"}"#,
+                head: head,
+                context: context,
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let after = Self.queryItems(from: head.uri)["after"].flatMap { Int($0) } ?? 0
+        streamDetachedRun(
+            job,
+            after: after,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
+    }
+
     private func handleRunEventsEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -12498,10 +12548,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             {
                 return
             }
+            // A billed job above all must not run twice for one dropped phone.
+            let phoneJob = phoneImageJob(req.osaurus_job_id, streaming: req.stream ?? false, context: context)
+            if case .follow(let job) = phoneJob {
+                streamDetachedRun(
+                    job, after: 0, head: head, context: context, path: "/images/generations",
+                    startTime: startTime, userAgent: userAgent)
+                return
+            }
             handleRemoteImageGeneration(
                 request: req,
                 target: selectedTarget,
                 sessionId: remoteSession,
+                detached: phoneJob.started,
                 head: head,
                 context: context,
                 startTime: startTime,
@@ -12518,7 +12577,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         {
             return
         }
-        let jobID = Self.shortId(prefix: "img")
+        let phoneJob = phoneImageJob(req.osaurus_job_id, streaming: req.stream ?? false, context: context)
+        if case .follow(let job) = phoneJob {
+            streamDetachedRun(
+                job, after: 0, head: head, context: context, path: "/images/generations",
+                startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let jobID = phoneJob.started?.id ?? Self.shortId(prefix: "img")
         runImageJob(
             head: head,
             context: context,
@@ -12530,8 +12596,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             responseFormat: req.response_format ?? "url",
             jobID: jobID,
             onCompleted: Self.imageSessionAppender(
-                continuedSession, prompt: req.prompt, sourceImages: [], model: modelId)
+                continuedSession, prompt: req.prompt, sourceImages: [], model: modelId),
+            detached: phoneJob.started
         ) { await ImageGenerationService.shared.generateHTTP(req, modelID: modelId, jobID: jobID) }
+    }
+
+    /// A job the owner's phone named with `osaurus_job_id` over the Secure
+    /// Channel (docs/MOBILE_PROTOCOL.md §12.5): it outlives the connection, and
+    /// the phone rejoins it at `GET /images/jobs/{id}/events`. `follow` is the
+    /// same id while that job is live: the phone sent the request again (its
+    /// other route, having heard nothing), so it follows rather than start a
+    /// second, possibly billed, job.
+    private enum PhoneImageJob {
+        case none
+        case new(DetachedPhoneRun)
+        case follow(DetachedPhoneRun)
+
+        var started: DetachedPhoneRun? {
+            if case .new(let job) = self { return job }
+            return nil
+        }
+    }
+
+    private func phoneImageJob(_ id: String?, streaming: Bool, context: ChannelHandlerContext) -> PhoneImageJob {
+        guard streaming, let id, DetachedPhoneRuns.isValidId(id), callerOwnsThisMac(context),
+            stateRef.value.isSecureChannel
+        else { return .none }
+        let (job, isNew) = DetachedPhoneRuns.images.begin(id: id)
+        return isNew ? .new(job) : .follow(job)
     }
 
     /// The Mac chat an owner's phone named with `osaurus_session_id` on an
@@ -12570,6 +12662,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         request req: ImageGenerationRequestDTO,
         target: MediaModelTarget,
         sessionId: UUID? = nil,
+        detached: DetachedPhoneRun? = nil,
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
         startTime: Date,
@@ -12620,15 +12713,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // event once the provider is done.
         if req.stream == true {
             let writer = NIOLoopBound(SSEResponseWriter(), eventLoop: loop)
-            hop { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            writer.value.recorder = detached
+            // Detached: keeps going, and recording, once the phone is gone.
+            let write: (@escaping @Sendable () -> Void) -> Void =
+                detached == nil ? hop : { block in loop.inEventLoop ? block() : loop.execute { block() } }
+            write { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
             func emit(_ event: ImageStreamEventDTO) {
                 let json =
                     (try? JSONEncoder.osaurusCanonical().encode(event))
                     .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                hop { writer.value.writeRawJSONData(json, context: ctx.value) }
+                write { writer.value.writeRawJSONData(json, context: ctx.value) }
             }
-            let jobID = Self.shortId(prefix: "img")
-            runRequestTask(priority: .userInitiated) {
+            let jobID = detached?.id ?? Self.shortId(prefix: "img")
+            let task = runRequestTask(priority: .userInitiated, outlivesConnection: detached != nil) {
                 var status = 200
                 do {
                     let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
@@ -12646,7 +12743,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     status = Int(Self.mediaErrorStatus(error).code)
                     emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: error.localizedDescription))
                 }
-                hop { writer.value.writeEnd(ctx.value) }
+                write { writer.value.writeEnd(ctx.value) }
                 self.logRequest(
                     method: "POST",
                     path: "/images/generations",
@@ -12658,6 +12755,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: target.modelID
                 )
             }
+            // Stop (`/images/cancel` with the phone's job id) ends the wait.
+            detached?.onStop { task.cancel() }
             return
         }
         runRequestTask(priority: .userInitiated) {
@@ -13175,7 +13274,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         {
             return
         }
-        let jobID = Self.shortId(prefix: "img")
+        let phoneJob = phoneImageJob(req.osaurus_job_id, streaming: req.stream ?? false, context: context)
+        if case .follow(let job) = phoneJob {
+            streamDetachedRun(
+                job, after: 0, head: head, context: context, path: "/images/edits",
+                startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let jobID = phoneJob.started?.id ?? Self.shortId(prefix: "img")
         runImageJob(
             head: head,
             context: context,
@@ -13193,7 +13299,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 aspect: nil, resolution: nil,
                 extra: ["source_images": String(rawSources.count), "job_id": jobID]),
             onCompleted: Self.imageSessionAppender(
-                continuedSession, prompt: req.prompt, sourceImages: sources, model: editModelId)
+                continuedSession, prompt: req.prompt, sourceImages: sources, model: editModelId),
+            detached: phoneJob.started
         ) {
             await ImageGenerationService.shared.editHTTP(req, modelID: editModelId,
                 decodedSources: decodedSources, jobID: jobID)
@@ -13276,6 +13383,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
             await ImageGenerationService.shared.cancel(jobID: req.job_id)
+            // A phone's detached job: a cloud one stops through its own handler.
+            DetachedPhoneRuns.images.run(id: req.job_id)?.stop()
             let json = #"{"type":"cancelled","job_id":"\#(Self.jsonEscape(req.job_id))"}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -13309,6 +13418,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String? = nil,
         activityDetails: [String: String] = [:],
         onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
+        detached: DetachedPhoneRun? = nil,
         build: @escaping @Sendable () async -> ImageHTTPPreparedJob
     ) {
         let cors = stateRef.value.corsHeaders
@@ -13322,14 +13432,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // NIOLoopBound so it can cross into the `@Sendable` hop closures
             // (same pattern as the chat SSE path).
             let writer = NIOLoopBound(SSEResponseWriter(), eventLoop: loop)
-            hop { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            writer.value.recorder = detached
+            // A detached job keeps writing once the phone is gone: its frames
+            // go to the recorder, and the writes no-op on the dead channel.
+            let write: (@escaping @Sendable () -> Void) -> Void =
+                detached == nil ? hop : { block in loop.inEventLoop ? block() : loop.execute { block() } }
+            write { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
             func emit(_ event: ImageStreamEventDTO) {
                 let json =
                     (try? JSONEncoder.osaurusCanonical().encode(event))
                     .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                hop { writer.value.writeRawJSONData(json, context: ctx.value) }
+                // Previews are whole PNGs: replay keeps only the newest.
+                let transient = event.type == "preview"
+                write { writer.value.writeRawJSONData(json, context: ctx.value, transient: transient) }
             }
-            runRequestTask(priority: .userInitiated) {
+            runRequestTask(priority: .userInitiated, outlivesConnection: detached != nil) {
                 emit(ImageStreamEventDTO(type: "queued", job_id: jobID))
                 let prepared = await build()
                 let stream = prepared.stream
@@ -13372,7 +13489,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     )
                 }
-                hop { writer.value.writeEnd(ctx.value) }
+                write { writer.value.writeEnd(ctx.value) }
                 logSelf.logRequest(
                     method: "POST",
                     path: path,

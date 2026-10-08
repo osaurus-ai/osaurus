@@ -496,12 +496,18 @@ final class SSEResponseWriter: ResponseWriter {
     /// legacy `/v1/completions` stream, whose `text_completion` chunk shape
     /// (`choices[].text`) differs from the chat `delta` chunks the typed
     /// helpers above emit.
-    func writeRawJSONData(_ json: String, context: ChannelHandlerContext) {
+    /// `transient`: the recorder keeps only the newest such frame (see
+    /// `DetachedPhoneRun.recordTransient`).
+    func writeRawJSONData(_ json: String, context: ChannelHandlerContext, transient: Bool = false) {
         var buffer = context.channel.allocator.buffer(capacity: json.utf8.count + 8)
         buffer.writeString("data: ")
         buffer.writeString(json)
         buffer.writeString("\n\n")
-        recorder?.record(String(buffer: buffer))
+        if transient {
+            recorder?.recordTransient(String(buffer: buffer))
+        } else {
+            recorder?.record(String(buffer: buffer))
+        }
         context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
         context.flush()
     }

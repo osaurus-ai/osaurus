@@ -1061,6 +1061,27 @@ set to the request: `size` (`"WxH"` from `supported_sizes`), `steps`,
 own default; Qwen-Image 2.1 relies on that, as its unset size follows the
 source image.
 
+**Rejoining.** An image can take minutes, longer than iOS keeps a
+backgrounded app's connection. Over the Secure Channel, the owner's phone
+names its job with `osaurus_job_id` (its own UUID, as `osaurus_run_id` for
+runs, §6.4) on a streaming `/images/generations` or `/images/edits`. That
+job then outlives the connection, and its id is the `job_id` its events
+carry and `/images/cancel` takes:
+
+- `GET /images/jobs/{id}/events?after=N` replays the events after the first
+  `N`, then follows the rest live, ending with `data: [DONE]`. `preview`
+  events are not counted in `N` and are not replayed, apart from the newest,
+  which a rejoin gets after the replay while the job is still running. A
+  client counts every other event it receives.
+- `404 job_not_found` means no such job; `410 run_gone` means the job is too
+  old (kept 30 minutes after it ends) or its events were too large to keep.
+  A phone in a Mac chat then reloads the chat, which holds the image.
+- The same `osaurus_job_id` sent again while the job is live (the phone's
+  other route, having heard nothing) follows that job from the start rather
+  than start a second one. For a cloud model, that is a second bill avoided.
+- Owner-only, Secure Channel only (426 otherwise), like the other owner
+  routes.
+
 **Cloud image models.** Available cloud image models (a remote provider's
 catalog, or Osaurus Cloud) are listed too, `kind: "image"` with
 `edits: false` and a `cloud` block in place of `image`:

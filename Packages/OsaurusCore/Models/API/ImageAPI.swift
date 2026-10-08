@@ -60,6 +60,10 @@ struct ImageGenerationRequestDTO: Decodable, Sendable {
     /// A Mac chat (docs/MOBILE_PROTOCOL.md §12.5) the owner's phone is
     /// generating in; the prompt and result are appended to it.
     let osaurus_session_id: String?
+    /// The owner's phone names its job so it outlives the connection: a
+    /// dropped phone comes back to `GET /images/jobs/{id}/events?after=N`
+    /// (docs/MOBILE_PROTOCOL.md §12.5). Also the id `/images/cancel` takes.
+    var osaurus_job_id: String? = nil
 }
 
 struct ImageEditRequestDTO: Decodable, Sendable {
@@ -83,6 +87,8 @@ struct ImageEditRequestDTO: Decodable, Sendable {
     let output_format: String?
     let stream: Bool?
     let osaurus_session_id: String?
+    /// As on `ImageGenerationRequestDTO`.
+    var osaurus_job_id: String? = nil
 }
 
 struct ImageUpscaleRequestDTO: Decodable {

@@ -43,6 +43,9 @@ final class DetachedPhoneRun: @unchecked Sendable {
     private var stopHandler: (@Sendable () -> Void)?
     private var stopRequested = false
     private var finished: Date?
+    /// The newest transient frame (an image job's preview), for a follower
+    /// who joins mid-way. Never in `frames`, so never counted.
+    private var latestTransient: String?
 
     init(id: String) {
         self.id = id
@@ -68,6 +71,18 @@ final class DetachedPhoneRun: @unchecked Sendable {
         }
     }
 
+    /// A frame followers get live, of which replay keeps only the newest:
+    /// an image job's previews, each a whole PNG, which would spend the
+    /// replay budget within one generation. Not counted in `frameCount`,
+    /// so a client counts only the frames it would get again on replay.
+    func recordTransient(_ frame: String) {
+        lock.withLock {
+            guard finished == nil else { return }
+            latestTransient = frame
+            for follower in followers.values { follower.frames([frame]) }
+        }
+    }
+
     /// The run is over, however it ended. Idempotent.
     func finish() {
         lock.withLock {
@@ -89,6 +104,8 @@ final class DetachedPhoneRun: @unchecked Sendable {
             if finished != nil {
                 follower.end()
             } else {
+                // Where a still-running image job has got to.
+                if let latestTransient { follower.frames([latestTransient]) }
                 followers[token] = follower
             }
             return .following(token)
@@ -125,6 +142,9 @@ final class DetachedPhoneRun: @unchecked Sendable {
 /// The phone runs this Mac is holding, live or recently finished.
 final class DetachedPhoneRuns: @unchecked Sendable {
     static let shared = DetachedPhoneRuns()
+    /// Image jobs the phone names (`osaurus_job_id`, §12.5), kept apart so
+    /// a run id and a job id can never meet.
+    static let images = DetachedPhoneRuns()
 
     /// How long a finished run can still be replayed: long enough for the
     /// user to come back to the app after the reply is done.

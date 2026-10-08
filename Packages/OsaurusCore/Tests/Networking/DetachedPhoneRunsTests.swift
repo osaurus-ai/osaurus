@@ -54,6 +54,42 @@ struct DetachedPhoneRunsTests {
         #expect(received.ended)
     }
 
+    /// An image job's previews (§12.5): live followers get each one, a
+    /// rejoin only the newest, and none of them count towards `after`.
+    @Test func previewsAreTransient() {
+        let job = DetachedPhoneRun(id: "img1")
+        let live = Received()
+        _ = job.follow(after: 0, live.follower)
+        job.record("data: queued\n\n")
+        job.recordTransient("data: preview1\n\n")
+        job.record("data: step\n\n")
+        job.recordTransient("data: preview2\n\n")
+        #expect(live.frames.count == 4)
+        #expect(job.frameCount == 2)
+
+        let rejoined = Received()
+        #expect(job.follow(after: 1, rejoined.follower) != .gone)
+        #expect(rejoined.frames == ["data: step\n\n", "data: preview2\n\n"])
+
+        job.finish()
+        let late = Received()
+        _ = job.follow(after: 2, late.follower)
+        #expect(late.frames.isEmpty, "a finished job's preview is no use")
+        #expect(late.ended)
+    }
+
+    @Test func imageJobsAndRunsAreKeptApart() {
+        _ = DetachedPhoneRuns.images.begin(id: "shared-id-test")
+        #expect(DetachedPhoneRuns.shared.run(id: "shared-id-test") == nil)
+        #expect(DetachedPhoneRuns.images.run(id: "shared-id-test") != nil)
+    }
+
+    @Test func theImageRequestCarriesItsJobId() throws {
+        let body = #"{"model":"m","prompt":"p","stream":true,"osaurus_job_id":"job-1"}"#
+        let req = try JSONDecoder().decode(ImageGenerationRequestDTO.self, from: Data(body.utf8))
+        #expect(req.osaurus_job_id == "job-1")
+    }
+
     @Test func anIndexPastTheEndIsGone() {
         let run = DetachedPhoneRun(id: "r3")
         run.record("data: a\n\n")
