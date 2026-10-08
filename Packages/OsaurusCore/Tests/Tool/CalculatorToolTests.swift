@@ -160,8 +160,8 @@ struct CalculatorEngineTests {
         ("(2 + 3", "Missing `)`"),
         ("2 + 3)", "Unmatched `)`"),
         ("foo + 1", "Unknown name `foo`"),
-        ("x^2 = -1", "No real solution"),
-        ("1/x = 0", "No real solution"),
+        ("x^2 = -1", "Unable to verify"),
+        ("1/x = 0", "Unable to verify"),
         ("x + y = 3", "2 unknowns"),
         ("2 + 2 = 4", "no unknown"),
         ("pi = 3", "cannot be assigned"),
@@ -178,6 +178,70 @@ struct CalculatorEngineTests {
         } catch {
             Issue.record("unexpected error \(error)")
         }
+    }
+
+    @Test(arguments: [
+        ("(-1)^65", "-1"),
+        ("(-1)^66", "1"),
+        ("(-1)^9223372036854775807", "-1"),
+        ("0^65", "0"),
+        ("1^9223372036854775807", "1"),
+        ("(-9223372036854775807-1) mod -1", "0"),
+    ])
+    func exactIntegerBoundaryResults(_ input: String, _ expected: String) throws {
+        #expect(try value(input) == expected)
+    }
+
+    @Test func minimumIntegerDivisionFallsBackWithoutTrapping() throws {
+        let result = try CalculatorEngine().evaluate("(-9223372036854775807-1)/-1")
+        let step = try #require(result.steps.last)
+        #expect(step.exact == nil)
+        #expect(step.value == 9_223_372_036_854_775_808.0)
+    }
+
+    @Test func minimumIntegerLargePowerDoesNotTakeOverflowingAbsoluteValue() throws {
+        let result = try CalculatorEngine().evaluate("(-9223372036854775807-1)^65")
+        let step = try #require(result.steps.last)
+        #expect(step.exact == nil)
+        #expect(step.value == -.infinity)
+    }
+
+    @Test(arguments: ["(-2)^1e-20", "(-2)^1e-320", "pow(-2, -1e-20)"])
+    func reciprocalOutsideIntegerRangeDoesNotTrap(_ input: String) throws {
+        let result = try CalculatorEngine().evaluate(input)
+        #expect(try #require(result.steps.last).value.isNaN)
+    }
+
+    @Test(arguments: [
+        "x^2 + 1e-12 = 0",
+        "x^2 + 1e-20 = 0",
+        "1e-12 * (x-3)^2 + 1e-20 = 0",
+        "1e12 * (x-3)^2 + 1e-12 = 0",
+    ])
+    func positiveMinimumIsNotReportedAsRoot(_ expression: String) {
+        do {
+            _ = try CalculatorEngine().evaluate(expression)
+            Issue.record("Positive minimum must not be returned as a real root")
+        } catch let error as CalculatorError {
+            #expect(error.message.contains("Unable to verify"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test(arguments: [
+        ("(x-3)^2 = 0", "3"),
+        ("1e-12 * (x-3)^2 = 0", "3"),
+        ("(x+0.5)^2 = 0", "-0.5"),
+    ])
+    func representableTangentRootsRemainVerified(_ expression: String, _ expected: String) throws {
+        #expect(try value(expression) == expected)
+    }
+
+    @Test func signChangeRootRetainsBisectionContract() throws {
+        let outcome = try CalculatorEngine().evaluate("x^3 = 2")
+        let root = try #require(outcome.solution?.roots.first)
+        #expect(abs(root * root * root - 2) <= 2e-9)
     }
 
     @Test func deepNestingFailsCleanly() {
@@ -211,6 +275,26 @@ struct CalculatorToolTests {
         let dict = try await run(["expression": "r = 3; pi * r^2"])
         let result = try #require(dict["result"] as? [String: Any])
         #expect(result["steps"] as? [String] == ["r = 3 → r = 3", "pi * r^2 → 28.2743338823081"])
+    }
+
+    @Test(arguments: [
+        ("2*x=4; x+1", "3"),
+        ("2*x=4; y=7", "7"),
+    ])
+    func laterStatementReplacesSolvedEquation(_ expression: String, _ expected: String) async throws {
+        let envelope = try await run(["expression": expression])
+        let result = try #require(envelope["result"] as? [String: Any])
+        #expect(result["result"] as? String == expected)
+        #expect(result["solutions"] == nil)
+        #expect(result["variable"] == nil)
+    }
+
+    @Test func lastEquationStillReportsItsSolution() async throws {
+        let envelope = try await run(["expression": "2*x=4; x+1; 3*z=9"])
+        let result = try #require(envelope["result"] as? [String: Any])
+        #expect(result["result"] as? String == "z = 3")
+        #expect(result["solutions"] as? [String] == ["3"])
+        #expect(result["variable"] as? String == "z")
     }
 
     @Test func angleUnitArgument() async throws {

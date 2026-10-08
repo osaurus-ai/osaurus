@@ -58,6 +58,8 @@ struct CalculatorEngine {
         guard !statements.isEmpty else { throw CalculatorError("Expression is empty.") }
         var outcome = Outcome()
         for statement in statements {
+            // The public result describes the final statement, not an earlier equation.
+            outcome.solution = nil
             let tokens = try Tokenizer.tokenize(statement)
             var parser = Parser(tokens: tokens)
             let parsed = try parser.parseStatement()
@@ -366,15 +368,22 @@ indirect enum CalculatorNode: Equatable {
             case "+": let (r, o) = a.addingReportingOverflow(b); return o ? nil : r
             case "-": let (r, o) = a.subtractingReportingOverflow(b); return o ? nil : r
             case "*": let (r, o) = a.multipliedReportingOverflow(by: b); return o ? nil : r
-            case "/": return b != 0 && a % b == 0 ? a / b : nil
+            case "/":
+                guard b != 0, !(a == .min && b == -1) else { return nil }
+                return a % b == 0 ? a / b : nil
             case "mod":
                 guard b != 0 else { return nil }
+                if a == .min && b == -1 { return 0 }
                 let r = a % b
                 return r != 0 && (r < 0) != (b < 0) ? r + b : r
             case "^":
-                guard b >= 0, b <= 64 || Swift.abs(a) <= 1 else { return nil }
+                guard b >= 0 else { return nil }
+                if a == -1 { return b % 2 == 0 ? 1 : -1 }
+                if a == 1 { return 1 }
+                if a == 0 { return b == 0 ? 1 : 0 }
+                guard b <= 64 else { return nil }
                 var result: Int64 = 1
-                for _ in 0..<Swift.min(b, 64) {
+                for _ in 0..<b {
                     let (r, o) = result.multipliedReportingOverflow(by: a)
                     if o { return nil }
                     result = r
@@ -810,7 +819,7 @@ enum Functions {
         // Real odd roots of negatives: (-8)^(1/3) = -2.
         if a < 0, b != b.rounded() {
             let inverse = 1 / b
-            if inverse == inverse.rounded(), Int64(inverse) % 2 != 0 {
+            if let integralInverse = Int64(exactly: inverse), integralInverse % 2 != 0 {
                 return -Foundation.pow(-a, b)
             }
         }
@@ -898,10 +907,15 @@ private enum Solver {
         let values = grid.map { f($0) }
 
         var roots: [Double] = []
-        func add(_ x: Double) {
+        func add(_ x: Double, bracketed: Bool = false) {
+            // A small local minimum is not evidence that a root exists.
+            // Without a sign-change bracket, require zero on substitution.
+            func verified(_ value: Double) -> Bool {
+                bracketed ? isRoot(value) : f(value) == 0
+            }
             let polished = CalculatorEngine.clean(x)
-            let candidate = isRoot(polished) ? polished : x
-            guard isRoot(candidate) else { return }
+            let candidate = verified(polished) ? polished : x
+            guard verified(candidate) else { return }
             if !roots.contains(where: { Swift.abs($0 - candidate) <= 1e-9 * max(1, Swift.abs(candidate)) }) {
                 roots.append(candidate)
             }
@@ -911,7 +925,7 @@ private enum Solver {
             guard let y = values[i] else { continue }
             if y == 0 { add(grid[i]); continue }
             if i + 1 < grid.count, let y2 = values[i + 1], y2 != 0, (y < 0) != (y2 < 0) {
-                add(bisect(f, grid[i], grid[i + 1], y))
+                add(bisect(f, grid[i], grid[i + 1], y), bracketed: true)
             }
             if i > 0, i + 1 < grid.count, let prev = values[i - 1], let next = values[i + 1],
                 Swift.abs(y) < Swift.abs(prev), Swift.abs(y) <= Swift.abs(next), (prev < 0) == (y < 0), (next < 0) == (y < 0)
@@ -922,7 +936,8 @@ private enum Solver {
 
         guard !roots.isEmpty else {
             throw CalculatorError(
-                "No real solution for \(variable) found (searched -1e12…1e12). The equation may have no real roots.")
+                "Unable to verify a real solution for \(variable) in the numerical search. "
+                    + "Non-representable tangent roots or roots outside the search may be missed.")
         }
         // Periodic equations have infinitely many roots; keep the ones nearest 0.
         let sorted = roots.sorted { Swift.abs($0) < Swift.abs($1) || (Swift.abs($0) == Swift.abs($1) && $0 < $1) }
