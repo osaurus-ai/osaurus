@@ -29,7 +29,7 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 ## Agent identity and settings
 
-- Each agent can have its own theme (activating the agent applies it), avatar, greeting, quick actions (General → Actions), and voice.
+- Each agent can have its own theme (activating the agent applies it), avatar, greeting, quick actions, and voice.
 - Custom agents are stored as JSON under `~/.osaurus/agents/<uuid>.json`. The Orchestrator's own settings (name, persona, temperature, max tokens, delegation helpers) live in Settings → Orchestrator, or ask the assistant to change them.
 
 ## Subagents and delegation
