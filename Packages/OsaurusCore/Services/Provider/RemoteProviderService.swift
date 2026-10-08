@@ -656,11 +656,7 @@ public actor RemoteProviderService: ToolCapableService {
             request: request
         )
         let (content, _) = try Self.parseResponse(data, providerType: responseProviderType)
-        if parameters.requireCompleteOutput, let reason = Self.oneShotFinishReason(data),
-            reason == "length" || reason == "max_tokens"
-        {
-            throw RemoteProviderServiceError.outputTruncated(finishReason: reason)
-        }
+        try Self.validateCompleteOutput(data, required: parameters.requireCompleteOutput)
         let (unscrubbedContent, _) = await PrivacyFilterPipeline.unscrubInbound(
             content: content,
             toolCalls: nil,
@@ -678,7 +674,24 @@ public actor RemoteProviderService: ToolCapableService {
         {
             return reason
         }
-        return root["stop_reason"] as? String
+        if let reason = root["stop_reason"] as? String { return reason }
+        if let candidates = root["candidates"] as? [[String: Any]],
+            let reason = candidates.first?["finishReason"] as? String
+        {
+            return reason
+        }
+        // Responses can contain visible text while still being explicitly incomplete.
+        if root["status"] as? String == "incomplete" { return "incomplete" }
+        return nil
+    }
+
+    static func validateCompleteOutput(_ data: Data, required: Bool) throws {
+        guard required, let reason = oneShotFinishReason(data), isIncompleteFinishReason(reason) else { return }
+        throw RemoteProviderServiceError.outputTruncated(finishReason: reason)
+    }
+
+    private static func isIncompleteFinishReason(_ reason: String) -> Bool {
+        ["length", "max_tokens", "incomplete"].contains(reason.lowercased())
     }
 
     func streamDeltas(
@@ -1496,6 +1509,8 @@ public actor RemoteProviderService: ToolCapableService {
         /// keeping parallel calls (with explicit indices) separate.
         var lastTouchedToolSlot: Int?
         var lastFinishReason: String?
+        /// Internal one-shot contract; independent of optional provider usage frames.
+        var requireCompleteOutput = false
 
         /// Set once a reasoning item with non-empty `encrypted_content` has
         /// been yielded from the streaming `output_item.done` path, so the
@@ -2681,6 +2696,19 @@ public actor RemoteProviderService: ToolCapableService {
         finishMarker: String,
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) {
+        // Enforce before finalizing any visible summary, even when no usage frame was sent.
+        if state.requireCompleteOutput, let reason = state.lastFinishReason,
+            isIncompleteFinishReason(reason)
+        {
+            continuation.finish(throwing: RemoteProviderServiceError.outputTruncated(finishReason: reason))
+            return
+        }
+        if state.requireCompleteOutput, finishMarker == "stream-end", state.lastFinishReason == nil {
+            continuation.finish(
+                throwing: RemoteProviderServiceError.streamingError(
+                    "The provider closed its stream before sending a completion marker."))
+            return
+        }
         // Drain any think-splitter tail (a partial tag that never completed, or
         // an unclosed `<think>` block) before the stream finishes.
         if var splitter = state.thinkSplitter {
@@ -2848,6 +2876,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         let producerTask = Task.detached {
             var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
+            state.requireCompleteOutput = parameters.requireCompleteOutput
             state.routerDiagnostics = initialRouterDiagnostics
             state.routerRequestId = request.idempotencyKey
             // True once a 2xx stream response was accepted (chunk loop
