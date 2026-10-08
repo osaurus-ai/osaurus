@@ -53,4 +53,29 @@ struct VisionUnavailableReasonTests {
         board.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
         #expect(PasteMonitorView.pasteboardHasImage(board))
     }
+
+    @MainActor
+    @Test func imagePasteBelongsOnlyToTheFocusedComposerInItsWindow() {
+        let first = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        let second = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        let activeText = NSTextView(frame: NSRect(x: 0, y: 0, width: 150, height: 100))
+        let otherText = NSTextView(frame: NSRect(x: 160, y: 0, width: 150, height: 100))
+        let monitor = PasteMonitorView()
+        first.contentView?.addSubview(activeText)
+        first.contentView?.addSubview(otherText)
+        first.contentView?.addSubview(monitor)
+        monitor.pasteTarget = { activeText }
+        defer { monitor.removeFromSuperview() }
+        #expect(first.makeFirstResponder(activeText))
+        #expect(monitor.ownsPaste(in: first))
+        #expect(!monitor.ownsPaste(in: second))
+        #expect(!monitor.ownsPaste(in: nil))
+        #expect(first.makeFirstResponder(otherText))
+        #expect(!monitor.ownsPaste(in: first))
+        monitor.pasteTarget = { nil }
+        #expect(!monitor.ownsPaste(in: first))
+    }
+
 }

@@ -5839,6 +5839,7 @@ extension FloatingInputCard {
         }
         .background(
             PasteboardImageMonitor(
+                pasteTarget: { textViewFocusController.textView },
                 supportsImages: mediaCapabilities.supportsImage,
                 onImagePaste: { imageData in
                     withAnimation(theme.springAnimation()) {
@@ -6325,12 +6326,14 @@ private struct TappableThumbnailModifier: ViewModifier {
 
 /// Monitors for Cmd+V paste events and checks if the pasteboard contains an image
 struct PasteboardImageMonitor: NSViewRepresentable {
+    let pasteTarget: () -> NSView?
     let supportsImages: Bool
     let onImagePaste: (Data) -> Void
     var onUnsupportedImagePaste: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> NSView {
         let view = PasteMonitorView()
+        view.pasteTarget = pasteTarget
         view.supportsImages = supportsImages
         view.onImagePaste = onImagePaste
         view.onUnsupportedImagePaste = onUnsupportedImagePaste
@@ -6339,6 +6342,7 @@ struct PasteboardImageMonitor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         if let view = nsView as? PasteMonitorView {
+            view.pasteTarget = pasteTarget
             view.supportsImages = supportsImages
             view.onImagePaste = onImagePaste
             view.onUnsupportedImagePaste = onUnsupportedImagePaste
@@ -6363,6 +6367,17 @@ class PasteMonitorView: NSView {
         return false
     }
 
+    var pasteTarget: (() -> NSView?)?
+
+    /// Local event monitors see every app window. Only the exact composer
+    /// text view that owns keyboard focus may attach an image or reject it.
+    func ownsPaste(in eventWindow: NSWindow?) -> Bool {
+        guard let window, eventWindow === window, let target = pasteTarget?(),
+            target.window === window, window.firstResponder === target
+        else { return false }
+        return true
+    }
+
     var supportsImages: Bool = false
     var onImagePaste: ((Data) -> Void)?
     var onUnsupportedImagePaste: (() -> Void)?
@@ -6372,7 +6387,7 @@ class PasteMonitorView: NSView {
         super.viewDidMoveToWindow()
         if window != nil && monitor == nil {
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self = self else { return event }
+                guard let self = self, self.ownsPaste(in: event.window) else { return event }
                 // Check for Cmd+V
                 if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
                     if self.handlePasteIfImage() {
