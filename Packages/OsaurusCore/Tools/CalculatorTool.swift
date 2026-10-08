@@ -98,7 +98,7 @@ public final class CalculatorTool: OsaurusTool, @unchecked Sendable {
     static func payload(expression: String, outcome: CalculatorEngine.Outcome) -> [String: Any] {
         var result: [String: Any] = ["expression": expression]
         if let solution = outcome.solution {
-            let roots = solution.roots.map { CalculatorEngine.formatRoot($0) }
+            let roots = CalculatorEngine.formatRoots(solution.roots)
             result["result"] =
                 roots.count == 1
                 ? "\(solution.variable) = \(roots[0])"

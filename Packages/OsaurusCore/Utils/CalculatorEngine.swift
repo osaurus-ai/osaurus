@@ -133,6 +133,13 @@ struct CalculatorEngine {
         return format(Double(String(format: "%.12g", value)) ?? value)
     }
 
+    /// Keep distinct roots distinct in the tool result, even when twelve-digit
+    /// display rounding would make them look like a repeated root.
+    static func formatRoots(_ roots: [Double]) -> [String] {
+        let formatted = roots.map(formatRoot)
+        return Set(formatted).count == roots.count ? formatted : roots.map { String(format: "%.17g", $0) }
+    }
+
     static func format(_ value: Double, decimals: Int? = nil) -> String {
         if value.isNaN { return "undefined" }
         if value.isInfinite { return value > 0 ? "infinity" : "-infinity" }
@@ -180,7 +187,7 @@ struct CalculatorEngine {
 // MARK: - Tokens
 
 enum CalculatorToken: Equatable {
-    case number(Double)
+    case number(Double, literal: String? = nil)
     /// Integer literal kept exact (Double loses digits past 2^53).
     case integer(Int64)
     case identifier(String)
@@ -199,9 +206,11 @@ private enum Tokenizer {
         while i < chars.count {
             let c = chars[i]
             if c.isWhitespace { i += 1; continue }
-            if c.isNumber && c.isASCII || (c == "." && i + 1 < chars.count && chars[i + 1].isASCII && chars[i + 1].isNumber) {
-                let (value, exact, next) = try number(chars, from: i, topLevel: depth == 0)
-                tokens.append(exact.map { .integer($0) } ?? .number(value))
+            if c.isNumber && c.isASCII
+                || (c == "." && i + 1 < chars.count && chars[i + 1].isASCII && chars[i + 1].isNumber)
+            {
+                let (value, exact, literal, next) = try number(chars, from: i, topLevel: depth == 0)
+                tokens.append(exact.map { .integer($0) } ?? .number(value, literal: literal))
                 i = next
                 continue
             }
@@ -265,7 +274,7 @@ private enum Tokenizer {
     /// Decimal, scientific (`6.02e23`), hex/binary/octal (`0xff`), digit
     /// separators (`1_000`), and — outside any parentheses, where a comma
     /// cannot be an argument separator — thousands groups (`1,250,000`).
-    static func number(_ chars: [Character], from start: Int, topLevel: Bool) throws -> (Double, Int64?, Int) {
+    static func number(_ chars: [Character], from start: Int, topLevel: Bool) throws -> (Double, Int64?, String?, Int) {
         var i = start
         if chars[i] == "0", i + 1 < chars.count, let radix = ["x": 16, "X": 16, "b": 2, "B": 2, "o": 8, "O": 8][chars[i + 1]] {
             var j = i + 2
@@ -275,9 +284,11 @@ private enum Tokenizer {
                 j += 1
             }
             guard !digits.isEmpty, let value = UInt64(digits, radix: radix) else {
-                throw CalculatorError("Invalid base-\(radix) number starting at `\(String(chars[start..<min(j, chars.count)]))`.")
+                throw CalculatorError(
+                    "Invalid base-\(radix) number starting at `\(String(chars[start..<min(j, chars.count)]))`."
+                )
             }
-            return (Double(value), Int64(exactly: value), j)
+            return (Double(value), Int64(exactly: value), nil, j)
         }
         var text = ""
         var sawDot = false
@@ -315,14 +326,14 @@ private enum Tokenizer {
             }
         }
         guard let value = Double(text) else { throw CalculatorError("Invalid number `\(text)`.") }
-        return (value, text.allSatisfy(\.isNumber) ? Int64(text) : nil, i)
+        return (value, text.allSatisfy(\.isNumber) ? Int64(text) : nil, text, i)
     }
 }
 
 // MARK: - AST
 
 indirect enum CalculatorNode: Equatable {
-    case number(Double)
+    case number(Double, literal: String? = nil)
     case integer(Int64)
     case variable(String)
     case negate(CalculatorNode)
@@ -350,7 +361,7 @@ indirect enum CalculatorNode: Equatable {
         switch self {
         case .integer(let v):
             return v
-        case .number(let v):
+        case .number(let v, _):
             return v == v.rounded() && Swift.abs(v) <= 9_007_199_254_740_992 ? Int64(v) : nil
         case .variable(let name):
             return variables[name]
@@ -418,7 +429,7 @@ indirect enum CalculatorNode: Equatable {
 
     func evaluate(variables: [String: Double], angle: CalculatorAngleUnit) throws -> Double {
         switch self {
-        case .number(let v):
+        case .number(let v, _):
             return v
         case .integer(let v):
             return Double(v)
@@ -503,7 +514,7 @@ private struct Parser {
 
     static func describe(_ token: CalculatorToken) -> String {
         switch token {
-        case .number(let v): return "number `\(CalculatorEngine.format(v))`"
+        case .number(let v, _): return "number `\(CalculatorEngine.format(v))`"
         case .integer(let v): return "number `\(v)`"
         case .identifier(let s): return "name `\(s)`"
         case .op(let s): return "`\(s)`"
@@ -619,9 +630,9 @@ private struct Parser {
     mutating func parsePrimary() throws -> CalculatorNode {
         guard let token = current else { throw CalculatorError("Expression ends early — an operand is missing.") }
         switch token {
-        case .number(let v):
+        case .number(let v, let literal):
             index += 1
-            return .number(v)
+            return .number(v, literal: literal)
         case .integer(let v):
             index += 1
             return .integer(v)
@@ -677,7 +688,10 @@ enum Functions {
         t["atan2"] = (2, 2)
         t["mod"] = (2, 2)
         for name in ["ncr", "choose", "comb", "binomial", "npr", "perm"] { t[name] = (2, 2) }
-        for name in ["min", "max", "sum", "mean", "avg", "average", "median", "gcd", "lcm", "hypot", "product", "stdev", "std", "variance", "var"] {
+        for name in [
+            "min", "max", "sum", "mean", "avg", "average", "median", "gcd", "lcm", "hypot", "product", "stdev", "std",
+            "variance", "var",
+        ] {
             t[name] = (1, nil)
         }
         return t
@@ -865,15 +879,176 @@ enum Functions {
 
 // MARK: - Solver
 
-/// Real roots of `lhs = rhs` in one unknown: sign changes on a dense grid
-/// (linear around 0, logarithmic out to 1e12) refined by bisection, plus
-/// tangent roots (`(x-3)^2 = 0`) found as near-zero local minima of |f|. Every
-/// root is checked by substitution, which rejects poles (`1/x = 0` changes
-/// sign at 0 but is not a root).
+/// Real roots of `lhs = rhs` in one unknown. Degree-one/two polynomials use
+/// decimal coefficients to avoid cancellation around repeated roots. Other
+/// expressions use a sampled search: sign changes refined by bisection plus
+/// tangent minima checked by substitution (which also rejects poles).
 private enum Solver {
+    /// Solve low-degree polynomials from their coefficients, not sampled values.
+    /// Expanded repeated roots lose roughly half of Double's precision when the
+    /// terms cancel. The resulting zero plateau is not a set of distinct roots.
+    /// Decimal coefficient arithmetic also preserves close *distinct* roots;
+    /// no distance tolerance is used to decide the discriminant's sign.
+    private static func polynomial(
+        _ node: CalculatorNode,
+        variable: String,
+        bound: [String: Double],
+        angle: CalculatorAngleUnit
+    ) throws -> [Decimal]? {
+        func constant(_ value: Double) -> [Decimal]? {
+            guard value.isFinite,
+                let decimal = Decimal(string: String(value), locale: Locale(identifier: "en_US_POSIX"))
+            else {
+                return nil
+            }
+            return [decimal]
+        }
+        func trim(_ values: [Decimal]) -> [Decimal] {
+            var result = values
+            while result.count > 1 && result.last == 0 { result.removeLast() }
+            return result
+        }
+        switch node {
+        case .integer(let value): return [Decimal(value)]
+        case .number(let value, let literal):
+            if let literal {
+                let mantissa = literal.lowercased().split(separator: "e")[0]
+                let significant = mantissa.filter(\.isNumber).drop(while: { $0 == "0" }).reversed().drop(while: {
+                    $0 == "0"
+                })
+                guard significant.count <= 38,
+                    let decimal = Decimal(string: literal, locale: Locale(identifier: "en_US_POSIX")),
+                    !decimal.isNaN, decimal != 0 || significant.isEmpty
+                else { throw CalculatorError("Unable to verify polynomial roots at the available literal precision.") }
+                return [decimal]
+            }
+            return constant(value)
+        case .variable(let name):
+            if name == variable { return [0, 1] }
+            return try constant(node.evaluate(variables: bound, angle: angle))
+        case .negate(let child):
+            return try polynomial(child, variable: variable, bound: bound, angle: angle)?.map { -$0 }
+        case .binary(let op, let lhs, let rhs):
+            // Calculator-style +15% is relative to the left operand.
+            if (op == "+" || op == "-"), case .percent = rhs { return nil }
+            guard let l = try polynomial(lhs, variable: variable, bound: bound, angle: angle),
+                let r = try polynomial(rhs, variable: variable, bound: bound, angle: angle)
+            else { return nil }
+            switch op {
+            case "+", "-":
+                return try trim(
+                    (0 ..< max(l.count, r.count)).map { index in
+                        try decimalOperation(index < l.count ? l[index] : 0, index < r.count ? r[index] : 0, op)
+                    }
+                )
+            case "*":
+                guard l.count + r.count <= 4 else { return nil }
+                var result = Array(repeating: Decimal(0), count: l.count + r.count - 1)
+                for i in l.indices {
+                    for j in r.indices {
+                        result[i + j] = try decimalOperation(result[i + j], decimalOperation(l[i], r[j], "*"), "+")
+                    }
+                }
+                return trim(result)
+            case "^":
+                guard r.count == 1 else { return nil }
+                if r[0] == 0 { return [1] }
+                if r[0] == 1 { return l }
+                if r[0] == 2 && l.count <= 2 {
+                    let a = l.count == 2 ? l[1] : 0
+                    return try trim([
+                        decimalOperation(l[0], l[0], "*"),
+                        decimalOperation(2, decimalOperation(l[0], a, "*"), "*"),
+                        decimalOperation(a, a, "*"),
+                    ])
+                }
+                return nil
+            case "/":
+                // Constant functions/divisions have the evaluator's Double
+                // semantics. Keep their rounded value consistent throughout
+                // the coefficient calculation, e.g. (x - 1/3)^2.
+                guard r.count == 1 else { return nil }
+                if l.count == 1 {
+                    guard r[0] != 0 else { throw CalculatorError("Division by zero.") }
+                    // These are reduced coefficients: the original subtree may
+                    // still mention the unknown (e.g. 1/(x-x+1)).
+                    return constant(NSDecimalNumber(decimal: l[0]).doubleValue / NSDecimalNumber(decimal: r[0]).doubleValue)
+                }
+                var quotient: [Decimal] = []
+                for coefficient in l {
+                    var numerator = coefficient, denominator = r[0], value = Decimal()
+                    // A recurring decimal coefficient is outside this exact
+                    // coefficient path; retain the existing numerical search.
+                    guard NSDecimalDivide(&value, &numerator, &denominator, .plain) == .noError else { return nil }
+                    quotient.append(value)
+                }
+                return trim(quotient)
+            default: return nil
+            }
+        default:
+            guard node.freeVariables.subtracting(bound.keys).isEmpty else { return nil }
+            return try constant(node.evaluate(variables: bound, angle: angle))
+        }
+    }
+
+    private static func decimalOperation(_ lhs: Decimal, _ rhs: Decimal, _ op: String) throws -> Decimal {
+        var a = lhs, b = rhs, result = Decimal()
+        let status: Decimal.CalculationError
+        switch op {
+        case "+": status = NSDecimalAdd(&result, &a, &b, .plain)
+        case "-": status = NSDecimalSubtract(&result, &a, &b, .plain)
+        case "*": status = NSDecimalMultiply(&result, &a, &b, .plain)
+        default: status = NSDecimalDivide(&result, &a, &b, .plain)
+        }
+        guard status == .noError else {
+            throw CalculatorError("Unable to verify polynomial roots at the available coefficient precision.")
+        }
+        return result
+    }
+
+    private static func polynomialRoots(_ coefficients: [Decimal]) throws -> [Double] {
+        var p = coefficients
+        while p.count > 1 && p.last == 0 { p.removeLast() }
+        func double(_ value: Decimal) -> Double { NSDecimalNumber(decimal: value).doubleValue }
+        if p.count == 1 {
+            throw CalculatorError(
+                p[0] == 0
+                    ? "The equation is an identity, not a finite set of roots."
+                    : "Unable to verify a real solution: constant nonzero equation."
+            )
+        }
+        if p.count == 2 { return [-double(p[0]) / double(p[1])] }
+        let a = p[2], b = p[1], c = p[0]
+        let discriminant = try decimalOperation(
+            decimalOperation(b, b, "*"),
+            decimalOperation(4, decimalOperation(a, c, "*"), "*"),
+            "-"
+        )
+        guard discriminant >= 0 else {
+            throw CalculatorError("Unable to verify a real solution: the quadratic discriminant is negative.")
+        }
+        if discriminant == 0 { return [-double(b) / (2 * double(a))] }
+        // The q formulation avoids subtracting nearly equal values for the
+        // small root (x^2 - 1e8*x + 1 is a representative case).
+        let rootDiscriminant = double(discriminant).squareRoot()
+        let q = -0.5 * (double(b) + (b < 0 ? -rootDiscriminant : rootDiscriminant))
+        let roots = [q / double(a), double(c) / q].sorted()
+        guard roots.allSatisfy({ $0.isFinite }), roots[0] != roots[1] else {
+            throw CalculatorError("Unable to distinguish the polynomial roots at the available output precision.")
+        }
+        return roots
+    }
+
     static func solve(
         lhs: CalculatorNode, rhs: CalculatorNode, variable: String, bound: [String: Double], angle: CalculatorAngleUnit
     ) throws -> CalculatorEngine.Solution {
+        if let coefficients = try polynomial(.binary("-", lhs, rhs), variable: variable, bound: bound, angle: angle) {
+            let roots = try polynomialRoots(coefficients)
+            guard roots.allSatisfy({ $0.isFinite }) else {
+                throw CalculatorError("Unable to represent the polynomial roots as finite numbers.")
+            }
+            return CalculatorEngine.Solution(variable: variable, roots: roots, truncated: false)
+        }
         var vars = bound
         func f(_ x: Double) -> Double? {
             vars[variable] = x

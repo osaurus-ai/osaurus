@@ -244,6 +244,64 @@ struct CalculatorEngineTests {
         #expect(abs(root * root * root - 2) <= 2e-9)
     }
 
+    @Test(arguments: [
+        ("x^2 - 0.2*x + 0.01 = 0", 0.1),
+        ("x^2 - 2*x*pi + pi^2 = 0", Double.pi),
+        ("(x-sqrt(2))^2 = 0", 2.0.squareRoot()),
+        ("(x-1/3)^2 = 0", 1.0 / 3),
+    ])
+    func repeatedQuadraticRootsDoNotBecomeCancellationPlateaus(_ expression: String, _ expected: Double) throws {
+        let roots = try #require(CalculatorEngine().evaluate(expression).solution).roots
+        #expect(roots.count == 1)
+        #expect(abs(roots[0] - expected) <= expected.ulp)
+    }
+
+    @Test(arguments: [
+        ("(x-0.1)*(x-0.10000001)=0", 0.1, 0.10000001),
+        ("(x-1)*(x-1.0000000001)=0", 1.0, 1.0000000001),
+        ("(x-1)*(x-1.0000000000001)=0", 1.0, 1.0000000000001),
+        ("x^2 - 1e-30 = 0", -1e-15, 1e-15),
+        ("x^2 - 1e8*x + 1 = 0", 1e-8, 1e8),
+    ])
+    func nearbyDistinctQuadraticRootsAreNotMerged(_ expression: String, _ first: Double, _ second: Double) throws {
+        let roots = try #require(CalculatorEngine().evaluate(expression).solution).roots
+        #expect(roots.count == 2)
+        #expect(abs(roots[0] - first) <= abs(first).ulp * 4)
+        #expect(abs(roots[1] - second) <= abs(second).ulp * 4)
+        #expect(Set(CalculatorEngine.formatRoots(roots)).count == 2)
+    }
+
+    @Test(arguments: [
+        ("x^2 - x^2 + 2*x = 4", "2"),
+        ("x^2 = 0", "0"),
+        ("x^2-x=0", "0,1"),
+        ("x/4+x/6=10", "24"),
+        ("1/(x-x+1)=x", "1"),
+        ("(x-x+2)/(x-x+1)=x", "2"),
+        ("x + 15% = 115", "100"),
+        ("(1.000000000000000001 - 1)*x=1e-18", "1"),
+        ("(x-1)^2*(x+2)=0", "-2,1"),
+        ("(x-2)^3=0", "2"),
+    ])
+    func polynomialReductionPreservesEquationSemantics(_ expression: String, _ expected: String) throws {
+        #expect(try value(expression) == expected)
+    }
+
+    @Test(arguments: [
+        "x^2-x^2=1", "x^2-x^2=0", "0*(1/x)=1", "1/x=0",
+        "(x-1)^2+1e-30=0", "x^2+1e-30=0",
+    ])
+    func polynomialPathDoesNotInventSolutions(_ expression: String) {
+        #expect(throws: CalculatorError.self) { try CalculatorEngine().evaluate(expression) }
+    }
+
+    @Test func nonPolynomialTrigonometricSearchIsUnchanged() throws {
+        let solution = try #require(CalculatorEngine().evaluate("sin(x)=0.5").solution)
+        #expect(solution.truncated)
+        #expect(solution.roots.count == 10)
+        #expect(solution.roots.allSatisfy { abs(sin($0) - 0.5) < 1e-9 })
+    }
+
     @Test func deepNestingFailsCleanly() {
         let input = String(repeating: "(", count: 500) + "1" + String(repeating: ")", count: 500)
         #expect(throws: CalculatorError.self) { try CalculatorEngine().evaluate(input) }
