@@ -177,6 +177,10 @@ struct RemoteReasoningPolicy {
     static let strictSchemaHosts = [
         "openai.com", "mistral.ai", "groq.com", "x.ai", "perplexity.ai", "googleapis.com",
         "anthropic.com", "cohere", "cerebras.ai", "venice.ai", "deepseek.com",
+        // These hosted APIs expose their own reasoning controls. Do not add
+        // self-hosted template options; mandatory-reasoning models also need
+        // capability-aware handling before an off control can be selected.
+        "fireworks.ai", "openrouter.ai",
     ]
 
     /// Whether the caller asked for reasoning off: `disableThinking`, or a
