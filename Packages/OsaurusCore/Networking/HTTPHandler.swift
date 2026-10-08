@@ -12753,6 +12753,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             let jobID = detached?.id ?? Self.shortId(prefix: "img")
             let task = runRequestTask(priority: .userInitiated, outlivesConnection: detached != nil) {
+                // However the task leaves, the stream ends and a detached job
+                // finishes; queued behind the events, as the same hop.
+                defer { write { writer.value.writeEnd(ctx.value) } }
                 var status = 200
                 do {
                     let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
@@ -12766,11 +12769,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
                     emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
+                } catch where Task.isCancelled {
+                    // Stopped (`/images/cancel`): said as the local path says it.
+                    status = 499
+                    emit(ImageStreamEventDTO(type: "cancelled", job_id: jobID))
                 } catch {
                     status = Int(Self.mediaErrorStatus(error).code)
                     emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: error.localizedDescription))
                 }
-                write { writer.value.writeEnd(ctx.value) }
                 self.logRequest(
                     method: "POST",
                     path: "/images/generations",
