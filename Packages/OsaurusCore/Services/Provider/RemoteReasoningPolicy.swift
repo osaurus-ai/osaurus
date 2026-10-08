@@ -171,6 +171,54 @@ struct RemoteReasoningPolicy {
         }
     }
 
+    /// Hosted OpenAI-compatible APIs with strict request schemas (unknown
+    /// fields are rejected) or their own reasoning switch. They never receive
+    /// `chat_template_kwargs`.
+    static let strictSchemaHosts = [
+        "openai.com", "mistral.ai", "groq.com", "x.ai", "perplexity.ai", "googleapis.com",
+        "anthropic.com", "cohere", "cerebras.ai", "venice.ai", "deepseek.com",
+        // These hosted APIs expose their own reasoning controls. Do not add
+        // self-hosted template options; mandatory-reasoning models also need
+        // capability-aware handling before an off control can be selected.
+        "fireworks.ai", "openrouter.ai",
+    ]
+
+    /// Whether the caller asked for reasoning off: `disableThinking`, or a
+    /// direct-rail effort (`none`, `off`, `instruct`, ...).
+    static func requestsReasoningOff(_ options: [String: ModelOptionValue]) -> Bool {
+        if options["disableThinking"]?.boolValue == true { return true }
+        guard let effort = options["reasoningEffort"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        else { return false }
+        return ["instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false"]
+            .contains(effort)
+    }
+
+    /// Wire form of "reasoning off" for this provider. DeepSeek V4 reads a
+    /// `thinking` object; self-hosted servers (vLLM, SGLang, llama.cpp,
+    /// LM Studio) read `chat_template_kwargs.enable_thinking`, and silently
+    /// ignore a DeepSeek-style flag (#3036). Strict hosted schemas get
+    /// nothing: they would reject the unknown field.
+    func reasoningOffControls(
+        disableThinking: Bool
+    ) -> (thinking: ThinkingConfig?, templateKwargs: [String: Bool]?) {
+        guard disableThinking else { return (nil, nil) }
+        switch providerType {
+        case .openaiLegacy:
+            let lowered = host.lowercased()
+            if lowered.contains("deepseek") {
+                return (
+                    DSV4ReasoningProfile.matches(modelId: model) ? ThinkingConfig(type: "disabled") : nil,
+                    nil
+                )
+            }
+            if Self.strictSchemaHosts.contains(where: { lowered.contains($0) }) { return (nil, nil) }
+            return (nil, ["enable_thinking": false])
+        case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
+            return (nil, nil)
+        }
+    }
+
     /// Translate a local reasoning-effort value into the on-the-wire
     /// `reasoning_effort` + `thinking` fields the target provider understands.
     func controls(effort: String?) -> (effort: String?, thinking: ThinkingConfig?) {

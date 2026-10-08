@@ -1257,7 +1257,7 @@ public final class MCPProviderManager: ObservableObject {
     private func createStdioTransport(for provider: MCPProvider) async throws -> any MCP.Transport {
         switch provider.executionHost {
         case .host:
-            let runner = try MCPStdioHostRunner(provider: provider)
+            let runner = try await MCPStdioHostRunner.make(provider: provider)
             let providerId = provider.id
             await runner.setProcessExitHandler { [weak self] exitCode in
                 Task { @MainActor in

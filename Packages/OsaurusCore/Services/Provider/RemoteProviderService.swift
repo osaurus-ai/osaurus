@@ -40,6 +40,9 @@ public enum RemoteProviderServiceError: LocalizedError {
     /// down) while this request waited, e.g. on a privacy review. Typed so
     /// the person sees what happened instead of a bare CancellationError.
     case sessionReplaced
+    /// A caller that needs the whole answer (`requireCompleteOutput`) got a
+    /// reply the provider cut at the output budget (`finish_reason: length`).
+    case outputTruncated(finishReason: String)
 
     public var errorDescription: String? {
         switch self {
@@ -78,6 +81,8 @@ public enum RemoteProviderServiceError: LocalizedError {
             return RemoteProviderMCPDetection.guidance()
         case .sessionReplaced:
             return L("The model provider reconnected while this message was waiting. Send it again.")
+        case .outputTruncated:
+            return L("The model stopped at its output limit before finishing the reply.")
         }
     }
 
@@ -104,7 +109,7 @@ public enum RemoteProviderServiceError: LocalizedError {
         case .requestFailedWithDiagnostics:
             return self
         case .invalidURL, .notConnected, .streamingError, .noModelsAvailable, .rateLimited,
-            .unsupportedParameter, .mcpEndpointDetected, .sessionReplaced:
+            .unsupportedParameter, .mcpEndpointDetected, .sessionReplaced, .outputTruncated:
             return self
         }
     }
@@ -651,12 +656,42 @@ public actor RemoteProviderService: ToolCapableService {
             request: request
         )
         let (content, _) = try Self.parseResponse(data, providerType: responseProviderType)
+        try Self.validateCompleteOutput(data, required: parameters.requireCompleteOutput)
         let (unscrubbedContent, _) = await PrivacyFilterPipeline.unscrubInbound(
             content: content,
             toolCalls: nil,
             map: redactionMap
         )
         return unscrubbedContent ?? ""
+    }
+
+    /// `finish_reason` of a non-streamed chat-completions reply (Anthropic's
+    /// `stop_reason` for completeness); nil when the body has neither.
+    static func oneShotFinishReason(_ data: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let choices = root["choices"] as? [[String: Any]],
+            let reason = choices.first?["finish_reason"] as? String
+        {
+            return reason
+        }
+        if let reason = root["stop_reason"] as? String { return reason }
+        if let candidates = root["candidates"] as? [[String: Any]],
+            let reason = candidates.first?["finishReason"] as? String
+        {
+            return reason
+        }
+        // Responses can contain visible text while still being explicitly incomplete.
+        if root["status"] as? String == "incomplete" { return "incomplete" }
+        return nil
+    }
+
+    static func validateCompleteOutput(_ data: Data, required: Bool) throws {
+        guard required, let reason = oneShotFinishReason(data), isIncompleteFinishReason(reason) else { return }
+        throw RemoteProviderServiceError.outputTruncated(finishReason: reason)
+    }
+
+    private static func isIncompleteFinishReason(_ reason: String) -> Bool {
+        ["length", "max_tokens", "incomplete"].contains(reason.lowercased())
     }
 
     func streamDeltas(
@@ -1474,6 +1509,8 @@ public actor RemoteProviderService: ToolCapableService {
         /// keeping parallel calls (with explicit indices) separate.
         var lastTouchedToolSlot: Int?
         var lastFinishReason: String?
+        /// Internal one-shot contract; independent of optional provider usage frames.
+        var requireCompleteOutput = false
 
         /// Set once a reasoning item with non-empty `encrypted_content` has
         /// been yielded from the streaming `output_item.done` path, so the
@@ -2659,6 +2696,19 @@ public actor RemoteProviderService: ToolCapableService {
         finishMarker: String,
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) {
+        // Enforce before finalizing any visible summary, even when no usage frame was sent.
+        if state.requireCompleteOutput, let reason = state.lastFinishReason,
+            isIncompleteFinishReason(reason)
+        {
+            continuation.finish(throwing: RemoteProviderServiceError.outputTruncated(finishReason: reason))
+            return
+        }
+        if state.requireCompleteOutput, finishMarker == "stream-end", state.lastFinishReason == nil {
+            continuation.finish(
+                throwing: RemoteProviderServiceError.streamingError(
+                    "The provider closed its stream before sending a completion marker."))
+            return
+        }
         // Drain any think-splitter tail (a partial tag that never completed, or
         // an unclosed `<think>` block) before the stream finishes.
         if var splitter = state.thinkSplitter {
@@ -2826,6 +2876,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         let producerTask = Task.detached {
             var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
+            state.requireCompleteOutput = parameters.requireCompleteOutput
             state.routerDiagnostics = initialRouterDiagnostics
             state.routerRequestId = request.idempotencyKey
             // True once a 2xx stream response was accepted (chunk loop
@@ -3243,9 +3294,15 @@ public actor RemoteProviderService: ToolCapableService {
             host: provider.host,
             model: model
         )
-        let (effortValue, thinking) = reasoningPolicy.controls(
+        let (effortValue, effortThinking) = reasoningPolicy.controls(
             effort: parameters.modelOptions["reasoningEffort"]?.stringValue
         )
+        // "Reasoning off" (disableThinking, or a none/off effort) must reach the
+        // wire in the form this host reads, or a reasoning model spends the
+        // whole budget thinking and answers with empty content (#3036).
+        let reasoningOff = reasoningPolicy.reasoningOffControls(
+            disableThinking: RemoteReasoningPolicy.requestsReasoningOff(parameters.modelOptions))
+        let thinking = effortThinking ?? reasoningOff.thinking
         // DeepSeek thinking mode rejects forced tool choices (HTTP 400
         // "Thinking mode does not support this tool_choice"); downgrade
         // `.required`/`.function` to `.auto` there. See
@@ -3406,6 +3463,7 @@ public actor RemoteProviderService: ToolCapableService {
             }
         }
         request.runAsRemoteAgent = parameters.runAsRemoteAgent
+        if !isAgentRun { request.chat_template_kwargs = reasoningOff.templateKwargs }
         // Mode 2 against an Osaurus peer: thread the conversation id so the
         // host groups this chat's turns into one history row (see
         // `remoteAgentSessionId`).
@@ -4778,6 +4836,12 @@ struct RemoteChatRequest: Encodable {
     let thinking: ThinkingConfig?
     let modelOptions: [String: ModelOptionValue]
     let veniceParameters: VeniceParameters?
+    /// `{"enable_thinking": false}` for self-hosted OpenAI-compatible servers
+    /// (vLLM, SGLang, llama.cpp, LM Studio) whose reasoning switch lives in
+    /// the chat template. Only set when reasoning is explicitly turned off
+    /// and the host is not a strict hosted schema (see
+    /// `RemoteReasoningPolicy.reasoningOffControls`).
+    var chat_template_kwargs: [String: Bool]? = nil
     /// Router-only billing behavior. `false` keeps insufficient-balance
     /// requests explicit (402) instead of silently shrinking the token cap.
     var clamp_to_balance: Bool? = nil
@@ -4859,6 +4923,7 @@ struct RemoteChatRequest: Encodable {
         case idempotencyKey = "idempotency_key"
         case workspaceContext = "workspace_context"
         case veniceParameters = "venice_parameters"
+        case chat_template_kwargs
         case streamOptions = "stream_options"
         case promptCacheKey = "prompt_cache_key"
         case seed
@@ -4920,6 +4985,7 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(idempotencyKey, forKey: .idempotencyKey)
         try container.encodeIfPresent(workspaceContext, forKey: .workspaceContext)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
+        try container.encodeIfPresent(chat_template_kwargs, forKey: .chat_template_kwargs)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
         try container.encodeIfPresent(promptCacheKey, forKey: .promptCacheKey)
         try container.encodeIfPresent(seed, forKey: .seed)

@@ -210,21 +210,19 @@ func parseBlocks(_ input: String) -> [MessageBlock] {
         }
 
         // Fenced code block
-        if trimmed.hasPrefix("```") {
+        if let fence = parseCodeFenceOpener(line) {
             flushParagraph()
             flushBlockquote()
             flushList()
 
-            let langPart = trimmed.dropFirst(3)
-            let lang = langPart.trimmingWhitespace()
-            let langStr = lang.isEmpty ? nil : String(lang)
+            let langStr = fence.info.isEmpty ? nil : fence.info
 
             i += 1
             var codeLines: [Substring] = []
             while i < lines.count {
                 let l = lines[i]
-                if l.trimmingWhitespace().hasPrefix("```") { break }
-                codeLines.append(l)
+                if fence.isClosedBy(l) { break }
+                codeLines.append(fence.strippingIndent(l))
                 i += 1
             }
             let codeText = codeLines.map { String($0) }.joined(separator: "\n")
@@ -560,6 +558,67 @@ private func parseTableRow(_ line: Substring) -> [String] {
     }
 
     return cells
+}
+
+// MARK: - Code Fences
+
+/// An opening code fence per CommonMark: a run of at least three backticks or
+/// tildes, then an optional info string. Unlike CommonMark, any indent is
+/// accepted, since models indent fences inside list items.
+/// Longer runs let a block contain shorter fences, so the run length matters
+/// for closing.
+struct CodeFence {
+    let marker: Character
+    let length: Int
+    let indent: Int
+    let info: String
+
+    /// A closing fence uses the same marker, is at least as long as the opener,
+    /// and carries nothing but whitespace after the run.
+    func isClosedBy(_ line: Substring) -> Bool {
+        guard let run = fenceRun(in: line), run.marker == marker, run.length >= length else { return false }
+        return run.rest.allSatisfy(\.isWhitespace)
+    }
+
+    /// Content lines lose up to the opener's indent, matching CommonMark.
+    func strippingIndent(_ line: Substring) -> Substring {
+        var start = line.startIndex
+        var removed = 0
+        while removed < indent, start < line.endIndex, line[start] == " " {
+            start = line.index(after: start)
+            removed += 1
+        }
+        return line[start...]
+    }
+}
+
+/// Returns the fence a line opens, or nil when it is not a fence opener.
+func parseCodeFenceOpener(_ line: Substring) -> CodeFence? {
+    guard let run = fenceRun(in: line) else { return nil }
+    // A backtick info string cannot contain backticks, or inline code like
+    // ```a``` would read as a fence.
+    if run.marker == "`", run.rest.contains("`") { return nil }
+    let info = run.rest.trimmingWhitespace()
+    return CodeFence(marker: run.marker, length: run.length, indent: run.indent, info: String(info))
+}
+
+private func fenceRun(in line: Substring) -> (marker: Character, length: Int, indent: Int, rest: Substring)? {
+    var idx = line.startIndex
+    var indent = 0
+    while idx < line.endIndex, line[idx] == " " {
+        indent += 1
+        idx = line.index(after: idx)
+    }
+    guard idx < line.endIndex else { return nil }
+    let marker = line[idx]
+    guard marker == "`" || marker == "~" else { return nil }
+    var length = 0
+    while idx < line.endIndex, line[idx] == marker {
+        length += 1
+        idx = line.index(after: idx)
+    }
+    guard length >= 3 else { return nil }
+    return (marker, length, indent, line[idx...])
 }
 
 // MARK: - Substring Extension for Efficient Trimming

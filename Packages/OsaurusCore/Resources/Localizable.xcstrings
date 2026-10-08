@@ -69,6 +69,9 @@
         }
       }
     },
+    "The model stopped at its output limit before finishing the reply." : {
+      "comment" : "Error when a provider reaches its output limit before completing a reply."
+    },
     "Speak now…" : {
       "localizations" : {
         "de" : {
@@ -96034,6 +96037,9 @@
           }
         }
       }
+    },
+    "%@ of this download is an n-gram table that stays on SSD and is not counted toward running memory." : {
+
     },
     "Estimated memory while running" : {
 

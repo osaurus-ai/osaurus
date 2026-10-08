@@ -150,6 +150,11 @@ struct GenerationParameters: Sendable {
     /// Internal transport policy only; never forwarded to a model or provider.
     let collectCompleteToolResponse: Bool
 
+    /// One-shot callers that must not act on a cut-off reply (compaction
+    /// replaces conversation history with it) ask services to fail with a
+    /// typed error when the output budget ended the generation.
+    let requireCompleteOutput: Bool
+
     init(
         temperature: Float?,
         maxTokens: Int,
@@ -183,8 +188,8 @@ struct GenerationParameters: Sendable {
         claudeCode: ClaudeCodeRunOptions? = nil,
         preserveExistingResidencyOwner: Bool = false,
         auxiliaryCacheIntent: Bool = false,
-        collectCompleteToolResponse: Bool = false
-
+        collectCompleteToolResponse: Bool = false,
+        requireCompleteOutput: Bool = false
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -219,6 +224,7 @@ struct GenerationParameters: Sendable {
         self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         self.auxiliaryCacheIntent = auxiliaryCacheIntent
         self.collectCompleteToolResponse = collectCompleteToolResponse
+        self.requireCompleteOutput = requireCompleteOutput
     }
 }
 

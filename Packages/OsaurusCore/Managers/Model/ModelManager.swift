@@ -600,6 +600,26 @@ public final class ModelManager: NSObject, ObservableObject {
     /// in-memory catalog. `ModelSizeCache` already persists the measurement;
     /// this keeps cards, filters, onboarding, and a reopened sheet from
     /// continuing to render the name-derived fallback until the next launch.
+    /// Publish an n-gram (SSD-resident) byte count resolved by the detail sheet, so cards and filters use the
+    /// same RAM verdict the sheet shows.
+    func applyResolvedSSDResidentBytes(_ bytes: Int64, for modelId: String) {
+        guard bytes >= 0 else { return }
+        func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
+            var changed = false
+            let updated = models.map { model in
+                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame, model.ssdResidentBytes != bytes
+                else { return model }
+                changed = true
+                return model.withSSDResidentBytes(bytes)
+            }
+            return (updated, changed)
+        }
+        let available = updating(availableModels)
+        if available.1 { availableModels = available.0 }
+        let suggested = updating(suggestedModels)
+        if suggested.1 { suggestedModels = suggested.0 }
+    }
+
     func applyResolvedDownloadSize(_ bytes: Int64, for modelId: String) {
         guard bytes > 0 else { return }
 
@@ -1870,7 +1890,32 @@ extension ModelManager {
             return collected
         }
 
-        applyOsaurusOrgFetch(autoFetched: autoFetched, statsById: statsById, sizesById: sizesById)
+        // Repos whose architecture ships an SSD-resident n-gram table (Qwen4Exp: Flash-Next, Allosaurus): size
+        // that table too so the RAM verdict excludes it. Only these repos are touched; cached per revision.
+        var ngramCandidates = raw.filter { ModelSSDResidency.mayHaveNGramTable(modelType: nil, tags: $0.tags) }
+            .map(\.id)
+        for model in Self.curatedSuggestedModels
+        where ModelSSDResidency.mayHaveNGramTable(modelType: model.modelType, tags: nil)
+            && !ngramCandidates.contains(where: { $0.caseInsensitiveCompare(model.id) == .orderedSame })
+        {
+            ngramCandidates.append(model.id)
+        }
+        let ssdById: [String: Int64] = await withTaskGroup(of: (String, Int64?).self) { group in
+            for repoId in ngramCandidates {
+                let revision = revisionById[repoId.lowercased()]
+                group.addTask {
+                    (repoId.lowercased(), await ModelSSDResidency.remoteNGramBytes(repoId: repoId, revision: revision))
+                }
+            }
+            var collected: [String: Int64] = [:]
+            for await (key, value) in group {
+                if let value { collected[key] = value }
+            }
+            return collected
+        }
+
+        applyOsaurusOrgFetch(
+            autoFetched: autoFetched, statsById: statsById, sizesById: sizesById, ssdById: ssdById)
     }
 
     /// Replace the auto-fetched portion of `suggestedModels` while preserving
@@ -1883,7 +1928,8 @@ extension ModelManager {
     func applyOsaurusOrgFetch(
         autoFetched: [MLXModel],
         statsById: [String: Int] = [:],
-        sizesById: [String: Int64] = [:]
+        sizesById: [String: Int64] = [:],
+        ssdById: [String: Int64] = [:]
     ) {
         let curatedIds = Self.curatedSuggestedIds
         let enrich: (MLXModel) -> MLXModel = { model in
@@ -1892,6 +1938,7 @@ extension ModelManager {
                 model
                 .withDownloads(statsById[key] ?? model.downloads)
                 .withDownloadSize(sizesById[key])
+                .withSSDResidentBytes(ssdById[key])
         }
         let curated = Self.curatedSuggestedModels.map(enrich)
         let enrichedAutoFetched =
@@ -2368,6 +2415,7 @@ extension ModelManager {
                         description: L("Local model (detected)"),
                         downloadURL: "https://huggingface.co/\(id)",
                         downloadSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        ssdResidentBytes: ModelSSDResidency.localSSDResidentBytes(at: resolved),
                         // The scan already runs off-main. Preserve the bundle's
                         // architecture tag here so hot UI paths can distinguish
                         // image-only from video-capable local VLMs without

@@ -9,32 +9,38 @@ import Foundation
 enum StreamingMarkdownBalancer {
 
     /// Returns text with the trailing in-progress paragraph rebalanced for streaming.
-    /// Fenced code regions (between ``` pairs) are left untouched. Earlier paragraphs
-    /// are also untouched — only the last paragraph of the last non-fenced segment is
-    /// rebalanced, because finished paragraphs already have their final form.
+    /// Fenced code regions are left untouched. Earlier paragraphs are also untouched,
+    /// only the last paragraph after the final fence is rebalanced, because finished
+    /// paragraphs already have their final form.
     static func balance(_ text: String) -> String {
-        // split on triple backticks. Even-index segments are outside fences,
-        // odd-index segments are inside fences. If the count is even, an open fence
-        // is dangling at the end — its content is code-in-progress, leave it alone
-        let parts = text.components(separatedBy: "```")
-        guard parts.count > 1 || !text.isEmpty else { return text }
+        guard let tailStart = trailingProseStart(in: text) else { return text }
+        let prefix = String(text[..<tailStart])
+        return prefix + balanceTrailingParagraph(String(text[tailStart...]))
+    }
 
-        let endsInsideOpenFence = parts.count % 2 == 0
-        let lastOutsideIdx: Int? = {
-            if endsInsideOpenFence { return nil }
-            return parts.count - 1
-        }()
-
-        var rebuilt = ""
-        for (i, part) in parts.enumerated() {
-            if i > 0 { rebuilt += "```" }
-            if i == lastOutsideIdx {
-                rebuilt += balanceTrailingParagraph(part)
-            } else {
-                rebuilt += part
+    /// Start of the prose after the last closed fence, or nil when the text ends
+    /// inside an open fence (its content is code in progress, leave it alone).
+    /// Uses the same fence rules as `parseBlocks`, so a longer fence holding
+    /// shorter fence lines stays one code region.
+    private static func trailingProseStart(in text: String) -> String.Index? {
+        var openFence: CodeFence?
+        var tailStart = text.startIndex
+        var lineStart = text.startIndex
+        while lineStart < text.endIndex {
+            let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? text.endIndex
+            let line = text[lineStart ..< lineEnd]
+            let next = lineEnd < text.endIndex ? text.index(after: lineEnd) : text.endIndex
+            if let fence = openFence {
+                if fence.isClosedBy(line) {
+                    openFence = nil
+                    tailStart = next
+                }
+            } else if let fence = parseCodeFenceOpener(line) {
+                openFence = fence
             }
+            lineStart = next
         }
-        return rebuilt
+        return openFence == nil ? tailStart : nil
     }
 
     /// Rebalance only the last paragraph (after the final blank line). Earlier paragraphs

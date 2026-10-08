@@ -453,6 +453,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // paying a synchronous SecItemCopyMatching on the main thread.
         AgentChannelCredentialAvailability.shared.seedAllInBackground()
 
+        // Resolve the user's login-shell PATH off-main now so host MCP servers and the Claude Code launcher
+        // see version-manager toolchains (mise / nvm / asdf) without waiting on the probe later (#3024).
+        LoginShellPath.prewarm()
         Task { @MainActor in
             // Await the identity-existence seed before the first
             // `RemoteProviderManager.shared` touch below: its cold init
