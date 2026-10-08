@@ -209,21 +209,20 @@ func parseBlocks(_ input: String) -> [MessageBlock] {
             continue
         }
 
-        // Fenced code block
-        if trimmed.hasPrefix("```") {
+        // Fenced code block (CommonMark: a run of >= 3 backticks or tildes; closed only by a run of the same
+        // character at least as long with nothing after it — a 4-backtick fence can hold ``` lines).
+        if let fence = MarkdownFence.opening(trimmed) {
             flushParagraph()
             flushBlockquote()
             flushList()
 
-            let langPart = trimmed.dropFirst(3)
-            let lang = langPart.trimmingWhitespace()
-            let langStr = lang.isEmpty ? nil : String(lang)
+            let langStr = fence.info.isEmpty ? nil : String(fence.info)
 
             i += 1
             var codeLines: [Substring] = []
             while i < lines.count {
                 let l = lines[i]
-                if l.trimmingWhitespace().hasPrefix("```") { break }
+                if fence.isClosedBy(l.trimmingWhitespace()) { break }
                 codeLines.append(l)
                 i += 1
             }
@@ -770,4 +769,44 @@ private func extractStandaloneImageKind(from text: String) -> MessageBlock.Kind?
     let altText = String(trimmed[altRange])
     let url = String(trimmed[urlRange])
     return .image(url: url, altText: altText)
+}
+
+// MARK: - Fences
+
+/// One fenced-code delimiter (CommonMark 0.31 "Fenced code blocks"). Shared by `parseBlocks` and
+/// `StreamingMarkdownBalancer` so the renderer and the streaming balancer always agree on where a fence
+/// opens and closes. Lines arrive with leading whitespace already trimmed (fences nested in list items are
+/// commonly indented), matching the parser's existing tolerance.
+struct MarkdownFence: Equatable {
+    let character: Character
+    let length: Int
+    let info: Substring
+
+    /// `nil` unless `trimmed` opens a fence: >= 3 backticks or tildes. A backtick fence's info string cannot
+    /// contain a backtick (that line is inline code), per the spec.
+    static func opening(_ trimmed: Substring) -> MarkdownFence? {
+        guard let first = trimmed.first, first == "`" || first == "~" else { return nil }
+        let run = trimmed.prefix(while: { $0 == first })
+        guard run.count >= 3 else { return nil }
+        let info = trimmed.dropFirst(run.count).trimmingFenceWhitespace()
+        if first == "`", info.contains("`") { return nil }
+        return MarkdownFence(character: first, length: run.count, info: info)
+    }
+
+    /// A closing fence: the same character, at least as long, and nothing but whitespace after it.
+    func isClosedBy(_ trimmed: Substring) -> Bool {
+        let run = trimmed.prefix(while: { $0 == character })
+        guard run.count >= length else { return false }
+        return trimmed.dropFirst(run.count).allSatisfy { $0 == " " || $0 == "\t" }
+    }
+}
+
+extension Substring {
+    fileprivate func trimmingFenceWhitespace() -> Substring {
+        var start = startIndex
+        var end = endIndex
+        while start < end && self[start].isWhitespace { start = index(after: start) }
+        while end > start && self[index(before: end)].isWhitespace { end = index(before: end) }
+        return self[start..<end]
+    }
 }

@@ -284,17 +284,6 @@ struct ContentSegment: Identifiable {
 
 // MARK: - Block Grouping
 
-/// True when a fenced block should render as markdown prose
-private func isProseFenceLanguage(_ lang: String?) -> Bool {
-    let n = lang?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-    if n.isEmpty { return true }
-    let prose = Set([
-        "text", "plain", "plaintext", "markdown", "md", "poem", "poetry", "verse", "prose",
-        "output", "ascii", "chat", "letter",
-    ])
-    return prose.contains(n)
-}
-
 /// Groups consecutive text blocks into segments for efficient rendering with NSTextView.
 /// Code blocks, images, and math blocks break the text group into separate segments.
 /// Horizontal rules and tables are kept inline for continuous selection.
@@ -341,23 +330,19 @@ func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
             }
 
         case .code(let code, let lang):
-            if isProseFenceLanguage(lang) {
-                let inner = parseBlocks(code)
-                for ib in inner {
-                    emitBlock(ib)
-                }
-            } else {
-                flushTextGroup()
-                let spacing: CGFloat = segments.isEmpty ? 0 : 14
-                segments.append(
-                    ContentSegment(
-                        id: "code-\(segmentIndex)",
-                        kind: .codeBlock(code: code, language: lang),
-                        spacingBefore: spacing
-                    )
+            // Every fenced block is literal code (CommonMark; GitHub/cmark/markdown-it agree), whatever its info
+            // string — `markdown`, `text`, `poem` and bare fences included (#3026). The info string only labels
+            // and highlights the block.
+            flushTextGroup()
+            let spacing: CGFloat = segments.isEmpty ? 0 : 14
+            segments.append(
+                ContentSegment(
+                    id: "code-\(segmentIndex)",
+                    kind: .codeBlock(code: code, language: lang),
+                    spacingBefore: spacing
                 )
-                segmentIndex += 1
-            }
+            )
+            segmentIndex += 1
 
         case .image(let url, let altText):
             // Images are the only blocks that break text groups (can't be attributed text)

@@ -206,7 +206,7 @@ enum AgentChannelMessageFormatter {
             case .code(let code, let lang):
                 return AgentChannelRenderedBlock(
                     prefix: "```\(lang ?? "")\n",
-                    body: code,
+                    body: neutralizingInnerFences(code),
                     suffix: "\n```"
                 )
             case .table(let headers, let rows):
@@ -508,4 +508,17 @@ enum AgentChannelMessageFormatter {
     private static func utf16Length(_ text: String) -> Int {
         text.utf16.count
     }
+}
+
+/// Slack and Discord close a code block on any ``` line and do not reliably honor longer fences. A code block
+/// parsed from a 4-backtick (or ~~~) fence can legitimately contain ``` lines (#3027), so break each inner fence
+/// run with a zero-width space: it renders identically and can no longer close the outer block.
+func neutralizingInnerFences(_ code: String) -> String {
+    guard code.contains("```") else { return code }
+    return code.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+        let indent = line.prefix(while: { $0 == " " || $0 == "\t" })
+        let rest = line.dropFirst(indent.count)
+        guard rest.hasPrefix("```") else { return String(line) }
+        return String(indent) + "`\u{200B}" + rest.dropFirst()
+    }.joined(separator: "\n")
 }

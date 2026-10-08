@@ -9,32 +9,32 @@ import Foundation
 enum StreamingMarkdownBalancer {
 
     /// Returns text with the trailing in-progress paragraph rebalanced for streaming.
-    /// Fenced code regions (between ``` pairs) are left untouched. Earlier paragraphs
-    /// are also untouched — only the last paragraph of the last non-fenced segment is
-    /// rebalanced, because finished paragraphs already have their final form.
+    /// Fenced code regions are left untouched. Earlier paragraphs are also untouched — only the last paragraph
+    /// after the last closed fence is rebalanced, because finished paragraphs already have their final form.
+    /// Fences are tracked line by line with the same `MarkdownFence` rule `parseBlocks` uses (a 4-backtick fence
+    /// may contain ``` lines; ~~~ fences count), so the balancer never edits text the renderer shows as code.
     static func balance(_ text: String) -> String {
-        // split on triple backticks. Even-index segments are outside fences,
-        // odd-index segments are inside fences. If the count is even, an open fence
-        // is dangling at the end — its content is code-in-progress, leave it alone
-        let parts = text.components(separatedBy: "```")
-        guard parts.count > 1 || !text.isEmpty else { return text }
-
-        let endsInsideOpenFence = parts.count % 2 == 0
-        let lastOutsideIdx: Int? = {
-            if endsInsideOpenFence { return nil }
-            return parts.count - 1
-        }()
-
-        var rebuilt = ""
-        for (i, part) in parts.enumerated() {
-            if i > 0 { rebuilt += "```" }
-            if i == lastOutsideIdx {
-                rebuilt += balanceTrailingParagraph(part)
-            } else {
-                rebuilt += part
+        guard !text.isEmpty else { return text }
+        var open: MarkdownFence?
+        // Offset just past the line that closed the last fence; the region after it is "outside".
+        var outsideStart = text.startIndex
+        var lineStart = text.startIndex
+        while lineStart < text.endIndex {
+            let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? text.endIndex
+            let trimmed = text[lineStart..<lineEnd].drop(while: { $0 == " " || $0 == "\t" })
+            if let fence = open {
+                if fence.isClosedBy(Substring(trimmed)) {
+                    open = nil
+                    outsideStart = lineEnd < text.endIndex ? text.index(after: lineEnd) : text.endIndex
+                }
+            } else if let fence = MarkdownFence.opening(Substring(trimmed)) {
+                open = fence
             }
+            lineStart = lineEnd < text.endIndex ? text.index(after: lineEnd) : text.endIndex
         }
-        return rebuilt
+        // An open fence at the end means the tail is code-in-progress: leave it alone.
+        if open != nil { return text }
+        return String(text[..<outsideStart]) + balanceTrailingParagraph(String(text[outsideStart...]))
     }
 
     /// Rebalance only the last paragraph (after the final blank line). Earlier paragraphs
