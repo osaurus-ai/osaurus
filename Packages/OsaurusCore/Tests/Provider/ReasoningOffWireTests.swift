@@ -82,11 +82,21 @@ struct ReasoningOffWireTests {
 
 @Suite("Compaction request contract (#3036)")
 struct CompactionRequestContractTests {
-    @Test func summaryRequestsReasoningOffAndCompleteOutput() {
-        let params = ContextCompactionService.summaryParameters(sessionId: UUID(), requestSource: .chatUI)
+    @Test func remoteSummaryRequestsReasoningOffAndCompleteOutput() {
+        let params = ContextCompactionService.summaryParameters(
+            sessionId: UUID(), requestSource: .chatUI, remote: true)
         #expect(params.modelOptions["disableThinking"]?.boolValue == true)
         #expect(params.requireCompleteOutput)
         #expect(RemoteReasoningPolicy.requestsReasoningOff(params.modelOptions))
+    }
+
+    /// Local bundles keep their own template/generation defaults: no reasoning
+    /// option is added for a local compaction model.
+    @Test func localSummaryLeavesModelOptionsUntouched() {
+        let params = ContextCompactionService.summaryParameters(
+            sessionId: UUID(), requestSource: .chatUI, remote: false)
+        #expect(params.modelOptions.isEmpty)
+        #expect(!params.requireCompleteOutput)
     }
 
     @Test func truncationIsALoudCompactionError() {

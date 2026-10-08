@@ -281,21 +281,27 @@ final class ContextCompactionService {
         return true
     }
 
-    /// The summarize request's generation parameters. Reasoning is turned
-    /// off (a summary is a direct answer; a thinking model otherwise spends
-    /// the budget reasoning and returns no content, #3036) and the output must
-    /// be complete: a cut-off summary is never applied over the conversation.
-    nonisolated static func summaryParameters(sessionId: UUID?, requestSource: RequestSource) -> GenerationParameters {
+    /// The summarize request's generation parameters.
+    ///
+    /// Remote routes turn reasoning off: a remote thinking model otherwise
+    /// spends the whole budget reasoning and returns no content (#3036), and
+    /// the output must be complete — a cut-off summary is never applied over
+    /// the conversation. Local routes are deliberately unchanged: the local
+    /// engine renders the bundle's own chat template and generation defaults,
+    /// and this fix must not alter how local Qwen/JANG bundles are prompted.
+    nonisolated static func summaryParameters(
+        sessionId: UUID?, requestSource: RequestSource, remote: Bool
+    ) -> GenerationParameters {
         GenerationParameters(
             temperature: Float(Self.summaryTemperature),
             maxTokens: Self.summaryMaxTokens,
-            modelOptions: ["disableThinking": .bool(true)],
+            modelOptions: remote ? ["disableThinking": .bool(true)] : [:],
             sessionId: sessionId?.uuidString,
             requestSource: requestSource,
             // The scoped handoff, not a general interactive eviction, owns
             // any parent swap. Unrelated residents remain protected.
             loadIntent: .background,
-            requireCompleteOutput: true
+            requireCompleteOutput: remote
         )
     }
 
@@ -364,7 +370,8 @@ final class ContextCompactionService {
             ChatMessage(role: "user", content: Self.userPrompt(transcript: transcript)),
         ]
         let params = Self.summaryParameters(
-            sessionId: sessionId, requestSource: invocation.source?.inferenceSource ?? .chatUI)
+            sessionId: sessionId, requestSource: invocation.source?.inferenceSource ?? .chatUI,
+            remote: ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false) != nil)
 
         onPhase(.summarizing)
         let startedAt = Date()
