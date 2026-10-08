@@ -39,9 +39,12 @@ enum ModelSSDResidency {
             defer { try? handle.close() }
             guard let lengthData = try? handle.read(upToCount: 8), lengthData.count == 8,
                 let length = headerLength(lengthData),
-                let header = try? handle.read(upToCount: Int(length)), header.count == Int(length)
+                let header = try? handle.read(upToCount: Int(length)), header.count == Int(length),
+                let fileSize = try? handle.seekToEnd(), fileSize >= 8 + length
             else { continue }
-            total &+= ngramBytes(inHeader: header)
+            let (sum, overflow) = total.addingReportingOverflow(
+                ngramBytes(inHeader: header, payloadLength: Int64(fileSize - 8 - length)))
+            if !overflow { total = sum }
         }
         return total
     }
@@ -80,7 +83,8 @@ enum ModelSSDResidency {
                 let header = await fetch(repoId: repoId, path: shard, range: 8...(8 + Int(length) - 1)),
                 header.count == Int(length)
             else { return nil }
-            total &+= ngramBytes(inHeader: header)
+            let (sum, overflow) = total.addingReportingOverflow(ngramBytes(inHeader: header))
+            if !overflow { total = sum }
         }
         ModelSizeCache.record(id: cacheKey, bytes: total == 0 ? Self.noTableSentinel : total, revision: revision)
         return total
@@ -97,15 +101,22 @@ enum ModelSSDResidency {
         return length > 0 && length <= 64 << 20 ? length : nil
     }
 
-    static func ngramBytes(inHeader header: Data) -> Int64 {
+    /// Sum of n-gram payload sizes in one safetensors header. Headers can come from an untrusted Hub repo, so
+    /// offsets must be non-negative, ordered and overflow-free; with `payloadLength` (local files) each range
+    /// must also lie inside the file, so a crafted header cannot shrink a load-admission estimate.
+    static func ngramBytes(inHeader header: Data, payloadLength: Int64? = nil) -> Int64 {
         guard let object = try? JSONSerialization.jsonObject(with: header) as? [String: Any] else { return 0 }
         var total: Int64 = 0
         for (name, value) in object where name.contains(ngramTensorMarker) {
-            if let offsets = (value as? [String: Any])?["data_offsets"] as? [Int], offsets.count == 2,
-                offsets[1] >= offsets[0]
-            {
-                total &+= Int64(offsets[1] - offsets[0])
-            }
+            guard let offsets = (value as? [String: Any])?["data_offsets"] as? [Int], offsets.count == 2,
+                offsets[0] >= 0, offsets[1] >= offsets[0]
+            else { continue }
+            let (size, overflow) = offsets[1].subtractingReportingOverflow(offsets[0])
+            guard !overflow else { continue }
+            if let payloadLength, Int64(offsets[1]) > payloadLength { continue }
+            let (sum, sumOverflow) = total.addingReportingOverflow(Int64(size))
+            guard !sumOverflow else { return total }
+            total = sum
         }
         return total
     }

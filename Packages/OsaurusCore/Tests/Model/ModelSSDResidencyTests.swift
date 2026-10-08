@@ -84,4 +84,18 @@ struct ModelSSDResidencyTests {
         defer { try? FileManager.default.removeItem(at: plain) }
         #expect(ModelRuntime.residentWeightBytes(rawWeightsBytes: 5200, modelDirectory: plain) == 5200)
     }
+
+    @Test func craftedHeadersCannotTrapOrInflateTheTable() throws {
+        let hostile: [String: Any] = [
+            "a.ple.ngram_embedding.x": ["data_offsets": [Int.min, Int.max]],
+            "b.ple.ngram_embedding.x": ["data_offsets": [-5, 10]],
+            "c.ple.ngram_embedding.x": ["data_offsets": [10, 5]],
+            "d.ple.ngram_embedding.x": ["data_offsets": [0, Int.max]],
+            "e.ple.ngram_embedding.x": ["data_offsets": [0, 100]],
+        ]
+        let header = try JSONSerialization.data(withJSONObject: hostile)
+        // No trap; with a known payload length, ranges past the file are ignored.
+        #expect(ModelSSDResidency.ngramBytes(inHeader: header, payloadLength: 100) == 100)
+        _ = ModelSSDResidency.ngramBytes(inHeader: header)
+    }
 }
