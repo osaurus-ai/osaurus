@@ -13401,11 +13401,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // A phone's job is the owner's: only the owner, through the Secure
+        // Channel as when it started it, may stop it.
+        let phoneJob = DetachedPhoneRuns.images.run(id: req.job_id)
+        let mayStop = phoneJob == nil || (callerOwnsThisMac(context) && stateRef.value.isSecureChannel)
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
-            await ImageGenerationService.shared.cancel(jobID: req.job_id)
-            // A phone's detached job: a cloud one stops through its own handler.
-            DetachedPhoneRuns.images.run(id: req.job_id)?.stop()
+            if mayStop {
+                await ImageGenerationService.shared.cancel(jobID: req.job_id)
+                // A cloud job stops through its own handler.
+                phoneJob?.stop()
+            }
             let json = #"{"type":"cancelled","job_id":"\#(Self.jsonEscape(req.job_id))"}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
