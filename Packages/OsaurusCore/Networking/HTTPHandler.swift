@@ -8381,14 +8381,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Routes a remote owner key may only reach through the Secure Channel,
-    /// whatever the method: what runs things (tools, dispatched tasks) or
-    /// reads what is private (chats, prompts, memory, credit). The OpenAI-style
-    /// media and model routes (`/chat/completions`, `/models`, `/images/*`,
-    /// `/videos/*`) stay plaintext for third-party SDKs.
+    /// whatever the method: what runs things (dispatched tasks) or reads what
+    /// is private (chats, prompts, memory, credit). The OpenAI-style media and
+    /// model routes (`/chat/completions`, `/models`, `/images/*`, `/videos/*`)
+    /// stay plaintext for third-party SDKs, and so does `/mcp/*`: MCP hosts
+    /// (Claude Desktop and the like) can't speak the Secure Channel, and their
+    /// tools are confined by the external deny list and key scope instead.
     static let ownerChannelRoutes = [
         "/agents", "/models/picker", "/models/favorites", "/models/options", "/privacy", "/config/approvals",
         "/computer-use", "/secrets", "/approvals", "/workspaces", "/workspace-agents", "/projects", "/sessions",
-        "/runs", "/artifacts", "/pair/unpair", "/images/jobs", "/tasks", "/mcp/call", "/memory/ingest",
+        "/runs", "/artifacts", "/pair/unpair", "/images/jobs", "/tasks", "/memory/ingest",
         "/credits/balance",
     ]
 
