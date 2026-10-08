@@ -4861,7 +4861,10 @@ extension FloatingInputCard {
             fallbackSupportsImages: supportsImages,
             localModelType: localModel?.modelType,
             localHasAudioTensors: snapshot?.supportsAudio ?? false,
-            localCapabilities: snapshot
+            localCapabilities: snapshot,
+            localImageEvidenceReason: localModel.flatMap {
+                LocalVisionEvidence.cachedOrWarm($0.localDirectory)?.reason
+            }
         )
     }
 
@@ -5841,6 +5844,14 @@ extension FloatingInputCard {
                     withAnimation(theme.springAnimation()) {
                         pendingAttachments.append(.image(imageData))
                     }
+                },
+                onUnsupportedImagePaste: {
+                    // Same message the file picker / drop path shows; the
+                    // paste used to vanish without a word.
+                    ToastManager.shared.error(
+                        L("Cannot attach image"),
+                        message: mediaCapabilityDescriptor.rejectionMessage(for: .image)
+                    )
                 }
             )
         )
@@ -6316,11 +6327,13 @@ private struct TappableThumbnailModifier: ViewModifier {
 struct PasteboardImageMonitor: NSViewRepresentable {
     let supportsImages: Bool
     let onImagePaste: (Data) -> Void
+    var onUnsupportedImagePaste: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> NSView {
         let view = PasteMonitorView()
         view.supportsImages = supportsImages
         view.onImagePaste = onImagePaste
+        view.onUnsupportedImagePaste = onUnsupportedImagePaste
         return view
     }
 
@@ -6328,13 +6341,31 @@ struct PasteboardImageMonitor: NSViewRepresentable {
         if let view = nsView as? PasteMonitorView {
             view.supportsImages = supportsImages
             view.onImagePaste = onImagePaste
+            view.onUnsupportedImagePaste = onUnsupportedImagePaste
         }
     }
 }
 
 class PasteMonitorView: NSView {
+    /// Image bytes or an image file URL on the pasteboard. Uses the same
+    /// direct accessors as the paste path (no type enumeration — Sentry
+    /// APPLE-MACOS-43).
+    static func pasteboardHasImage(_ pasteboard: NSPasteboard) -> Bool {
+        if pasteboard.data(forType: .png) != nil || pasteboard.data(forType: .tiff) != nil {
+            return true
+        }
+        for type in [NSPasteboard.PasteboardType.fileURL, NSPasteboard.PasteboardType("public.file-url")] {
+            guard let raw = pasteboard.string(forType: type), let url = URL(string: raw), url.isFileURL,
+                let uti = try? url.resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier
+            else { continue }
+            if UTType(uti)?.conforms(to: .image) == true { return true }
+        }
+        return false
+    }
+
     var supportsImages: Bool = false
     var onImagePaste: ((Data) -> Void)?
+    var onUnsupportedImagePaste: (() -> Void)?
     private var monitor: Any?
 
     override func viewDidMoveToWindow() {
@@ -6362,9 +6393,14 @@ class PasteMonitorView: NSView {
     }
 
     private func handlePasteIfImage() -> Bool {
-        guard supportsImages else { return false }
-
         let pasteboard = NSPasteboard.general
+
+        guard supportsImages else {
+            // Not consumed: any text on the pasteboard still pastes normally.
+            // An image-only payload used to disappear with no explanation.
+            if Self.pasteboardHasImage(pasteboard) { onUnsupportedImagePaste?() }
+            return false
+        }
 
         // Avoid pasteboard type enumeration and object-conversion APIs here.
         // Sentry APPLE-MACOS-43 showed AppKit pasteboard conversion can race

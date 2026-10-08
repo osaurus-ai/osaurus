@@ -164,7 +164,8 @@ public enum ModelMediaCapabilities {
         fallbackSupportsImages: Bool,
         localModelType: String? = nil,
         localHasAudioTensors: Bool = false,
-        localCapabilities: Capabilities? = nil
+        localCapabilities: Capabilities? = nil,
+        localImageEvidenceReason: String? = nil
     ) -> Descriptor {
         let normalized = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let displayId = normalized.isEmpty ? "unspecified model" : normalized
@@ -177,10 +178,24 @@ public enum ModelMediaCapabilities {
         )
         let source = localCapabilities != nil || localModelType != nil
             ? "installed bundle evidence" : "provider capability metadata"
-        return buildDescriptor(
+        let built = buildDescriptor(
             modelId: displayId,
             capabilities: capabilities,
             source: source
+        )
+        // The installed bundle's evidence says WHY images are unavailable
+        // ("no readable processor configuration", "no registered local
+        // processor", ...). The generic "not advertised" line hid that from
+        // the user, who then saw a vision-tagged model ignore images (#3021).
+        guard !capabilities.supportsImage, let reason = localImageEvidenceReason, !reason.isEmpty else {
+            return built
+        }
+        return Descriptor(
+            modelId: built.modelId,
+            capabilities: built.capabilities,
+            image: ModalityDescriptor(modality: .image, status: .unsupported, reason: reason),
+            video: built.video,
+            audio: built.audio
         )
     }
 

@@ -152,7 +152,7 @@ enum LocalVisionEvidence {
             processor = native.merging(["processor_class": "MiMoV26Processor"]) { _, new in new }
         } else {
             guard let processorURL, let selected = object(processorURL), !selected.isEmpty else {
-                return result(false, "The installed bundle has no readable processor configuration.")
+                return result(false, "The installed bundle has vision settings but no readable processor configuration (preprocessor_config.json or processor_config.json), so images cannot be prepared for it.")
             }
             processor = selected
         }
