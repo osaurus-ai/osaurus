@@ -343,6 +343,8 @@ final class MobilePairingService: ObservableObject {
     /// used the same code.
     private struct PendingExchange {
         let deviceId: String
+        /// As the phone sent it, which the sealed payload is bound to.
+        let wireDeviceId: String
         let deviceName: String
         let isSimulator: Bool?
         let keys: PairingSPAKE2.Keys
@@ -371,7 +373,9 @@ final class MobilePairingService: ObservableObject {
             return .invalidCode
         }
 
-        let identity = PairingSPAKE2.phoneIdentity(deviceId: deviceId, deviceName: deviceName)
+        // Bound exactly as the phone sent them, which is what it binds too:
+        // the trimmed, shortened forms are only for display and storage.
+        let identity = PairingSPAKE2.phoneIdentity(deviceId: request.deviceId, deviceName: request.deviceName)
         guard let mac = try? PairingSPAKE2.Party(role: .mac, code: code.code),
             let keys = try? mac.finish(peerShare: phoneShare, phoneIdentity: identity)
         else { return .badRequest("Invalid key share") }
@@ -379,6 +383,7 @@ final class MobilePairingService: ObservableObject {
         let exchange = UUID().uuidString
         exchanges[exchange] = PendingExchange(
             deviceId: deviceId,
+            wireDeviceId: request.deviceId,
             deviceName: deviceName,
             isSimulator: request.isSimulator,
             keys: keys
@@ -403,7 +408,11 @@ final class MobilePairingService: ObservableObject {
         else { return .invalidCode }
 
         guard let plaintext = try? JSONEncoder().encode(makePayload(pending)),
-            let sealed = try? PairingSPAKE2.seal(plaintext, key: exchange.keys.sessionKey, deviceId: exchange.deviceId)
+            let sealed = try? PairingSPAKE2.seal(
+                plaintext,
+                key: exchange.keys.sessionKey,
+                deviceId: exchange.wireDeviceId
+            )
         else { return .badRequest("Couldn't seal the pairing") }
 
         completePairing(

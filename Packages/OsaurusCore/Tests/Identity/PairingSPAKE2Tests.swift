@@ -101,11 +101,16 @@ struct MobilePairingV2Tests {
         return service
     }
 
-    private func start(_ service: MobilePairingService, phone: PairingSPAKE2.Party) -> MobilePairStartResponse? {
+    private func start(
+        _ service: MobilePairingService,
+        phone: PairingSPAKE2.Party,
+        deviceId: String = "device-1",
+        deviceName: String = "Test iPhone"
+    ) -> MobilePairStartResponse? {
         let request = MobilePairStartRequest(
             v: 2,
-            deviceId: "device-1",
-            deviceName: "Test iPhone",
+            deviceId: deviceId,
+            deviceName: deviceName,
             share: phone.share.base64urlEncoded
         )
         guard case .answered(let body, _) = service.startExchange(request) else { return nil }
@@ -138,6 +143,33 @@ struct MobilePairingV2Tests {
         #expect(payload.apiKey == "osk-v1.secret")
         #expect(service.pairedDevice?.deviceId == "device-1")
         #expect(service.activeCode == nil)
+    }
+
+    /// The phone binds its name as the system gives it; the Mac's tidied
+    /// copy is for display only, or a stray space would fail every pairing.
+    @Test func untidyDeviceNamesStillPair() throws {
+        let service = makeService()
+        let name = " Rajeev's iPhone " + String(repeating: "x", count: 100)
+        let phone = try PairingSPAKE2.Party(role: .phone, code: "123456")
+        let started = try #require(start(service, phone: phone, deviceId: " device-1", deviceName: name))
+        let keys = try phone.finish(
+            peerShare: try #require(Data(base64urlEncoded: started.share)),
+            phoneIdentity: PairingSPAKE2.phoneIdentity(deviceId: " device-1", deviceName: name)
+        )
+        #expect(Data(base64urlEncoded: started.confirm) == keys.macConfirmation)
+        let confirm = MobilePairConfirmRequest(
+            v: 2,
+            exchange: started.exchange,
+            confirm: keys.phoneConfirmation.base64urlEncoded
+        )
+        guard case .answered(let body, _) = service.confirmExchange(confirm) else {
+            Issue.record("expected pairing to succeed")
+            return
+        }
+        let response = try JSONDecoder().decode(MobilePairConfirmResponse.self, from: Data(body.utf8))
+        let opened = try? PairingSPAKE2.open(response.sealed, key: keys.sessionKey, deviceId: " device-1")
+        #expect(opened != nil)
+        #expect(service.pairedDevice?.name.count == 80)
     }
 
     @Test func wrongCodeNeverPairs() throws {
@@ -174,7 +206,11 @@ struct MobilePairingV2Tests {
         let service = makeService()
         let phone = try PairingSPAKE2.Party(role: .phone, code: "123456")
         let started = try #require(start(service, phone: phone))
-        let wrong = MobilePairConfirmRequest(v: 2, exchange: started.exchange, confirm: Data(count: 32).base64urlEncoded)
+        let wrong = MobilePairConfirmRequest(
+            v: 2,
+            exchange: started.exchange,
+            confirm: Data(count: 32).base64urlEncoded
+        )
         #expect(service.confirmExchange(wrong) == .invalidCode)
         let keys = try phone.finish(
             peerShare: try #require(Data(base64urlEncoded: started.share)),
