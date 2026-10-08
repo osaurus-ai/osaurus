@@ -8380,12 +8380,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
-    /// Hard-require gate for `/agents/{id}/run` and `/agents/{id}/dispatch`:
-    /// any non-loopback caller (including relay-origin traffic) must arrive
-    /// through the Secure Channel. Sends `426 Upgrade Required` and returns
-    /// `true` when the request must be rejected. Loopback callers (CLI, App
-    /// Intents) stay plaintext; there is deliberately no downgrade path for
-    /// remote peers.
     /// Routes a remote owner key may only reach through the Secure Channel,
     /// whatever the method: what runs things (tools, dispatched tasks) or
     /// reads what is private (chats, prompts, memory, credit). The OpenAI-style
@@ -8416,6 +8410,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         ownerChannelRoutes.contains { path == $0 || path.hasPrefix($0 + "/") }
     }
 
+    /// Hard-require gate for `/agents/{id}/run` and `/agents/{id}/dispatch`:
+    /// any non-loopback caller (including relay-origin traffic) must arrive
+    /// through the Secure Channel. Sends `426 Upgrade Required` and returns
+    /// `true` when the request must be rejected. Loopback callers (CLI, App
+    /// Intents) stay plaintext; there is deliberately no downgrade path for
+    /// remote peers.
     private func sendSecureChannelUpgradeRequiredIfNeeded(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
