@@ -75,11 +75,14 @@ final class SecureChannelResponseEncryptor: ChannelOutboundHandler, @unchecked S
         switch part {
         case .head(let head):
             let contentType = head.headers.first(name: "Content-Type") ?? ""
-            if contentType.lowercased().hasPrefix("text/event-stream") {
+            // A stream that is an error (a 4xx/5xx with an SSE type) is sealed
+            // as a buffered response instead, so its real status travels in
+            // the ciphertext rather than being lost behind the outer 200.
+            if contentType.lowercased().hasPrefix("text/event-stream"), head.status.code < 300 {
                 mode = .streaming
-                // A fresh head: the route's own status and headers stay
-                // inside the channel, and a Content-Length sized for the
-                // plaintext would not fit the sealed frames.
+                // A fresh head: the route's headers stay inside the channel,
+                // and a Content-Length sized for the plaintext would not fit
+                // the sealed frames. Its status is a success, so 200 says it.
                 var newHead = HTTPResponseHead(version: head.version, status: .ok)
                 newHead.headers.add(name: "Content-Type", value: "text/event-stream")
                 newHead.headers.add(name: "Cache-Control", value: "no-cache")
