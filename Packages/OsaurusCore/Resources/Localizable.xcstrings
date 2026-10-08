@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The model stopped at its output limit before finishing the reply." : {
+      "comment" : "Error when a provider reaches its output limit before completing a reply."
+    },
     "Speak now…" : {
       "localizations" : {
         "de" : {
