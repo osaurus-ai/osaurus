@@ -5574,8 +5574,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // An image model has no chat options: a name that matches a chat
             // profile (Thinking and all) mustn't lend it any. Its controls are
             // the picker's `image` block.
-            let imageModelIds = ((try? await ImageGenerationService.shared.availableModels()) ?? []).map(\.id)
-            if imageModelIds.contains(request.model) {
+            // Local and cloud image models alike, from the picker's cached list
+            // (built once if it isn't yet) rather than a model-store scan.
+            var pickerItems = await MainActor.run { ModelPickerItemCache.shared.items }
+            if pickerItems.isEmpty { pickerItems = await ModelPickerItemCache.shared.buildModelPickerItems() }
+            let isImageModel = pickerItems.contains { item in
+                item.id == request.model && (item.source.isImageGeneration || item.mediaModel?.kind == .image)
+            }
+            if isImageModel {
                 let body =
                     isWrite
                     ? #"{"error":"unknown_option"}"#
