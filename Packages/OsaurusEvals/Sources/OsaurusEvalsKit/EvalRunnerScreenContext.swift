@@ -186,25 +186,17 @@ extension EvalRunner {
                 judgeElapsed = Date().timeIntervalSince(judgeStarted) * 1000
                 let verdicts = audit.verdicts
                 judgeAudit = EvalJudgeAudit.from(audit, rubric: rubric, selfJudge: false)
-                // ScreenContext is floored at 1.0 as a deterministic, token-free lane (Config/floors.json):
-                // a judge verdict must not decide a code-regression gate (#3032 — judge polarity and judge
-                // reading of ambiguous wording reddened the floor). The rubric is ADVISORY here: verdicts are
-                // reported and audited, and `OSAURUS_EVALS_SCREEN_RUBRIC_GATES=1` makes them gate again for
-                // a maintainer tuning the distiller with a trusted judge.
-                let rubricGates =
-                    ProcessInfo.processInfo.environment["OSAURUS_EVALS_SCREEN_RUBRIC_GATES"] == "1"
-                let label = rubricGates ? "judge FAIL" : "judge advisory FAIL (not gating)"
                 for (index, verdict) in verdicts.enumerated() {
                     let condition = index < rubric.count ? rubric[index] : "(condition \(index))"
                     if verdict.pass {
                         notes.append("judge ok: \(condition)")
                     } else {
-                        if rubricGates { passed = false }
-                        notes.append("\(label): \(condition) — \(verdict.reason)")
+                        passed = false
+                        notes.append("judge FAIL: \(condition) — \(verdict.reason)")
                     }
                 }
                 if verdicts.count != rubric.count {
-                    if rubricGates { passed = false }
+                    passed = false
                     notes.append(
                         "judge produced \(verdicts.count) verdicts for \(rubric.count) conditions"
                     )

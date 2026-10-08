@@ -27,10 +27,20 @@ make evals-verbose EVALS_SUITE=Packages/OsaurusEvals/Suites/ScreenContext FILTER
 The deterministic matchers run with **no model**, so the suite is CI-safe. An
 optional per-case `rubric` is graded by an LLM judge only when a strong/explicit
 judge resolves (`JUDGE_MODEL` or a `*_API_KEY`); otherwise it's skipped and
-noted, so CI stays free.
-Rubric verdicts are advisory in this floored suite: they appear in the report and judge audit but never
-fail a case, so the 1.0 floor stays judge-independent. `OSAURUS_EVALS_SCREEN_RUBRIC_GATES=1` restores gating
-for local distiller tuning with a trusted judge (#3032).
+noted, so CI stays free. When a judge resolves, a failed rubric verdict or a
+verdict-count mismatch fails the case. Judge failures are not advisory.
+
+The #3032 correction retains reason-before-verdict output, explicit negative-
+condition polarity, and the clarified article rubric. It does not establish
+that every judge follows the polarity rule. Author-reported verdict-checked
+JudgeCalibration results for that correction were Ornith 13/13,
+Flash-Next 12/13 (the `honest-refusal` case failed), and Huihui 1/13.
+Both non-perfect calibration scores remain failures.
+Huihui reportedly also returned empty judge content in the original and corrected
+ScreenContext runs. The former advisory ScreenContext scores of 22/22 do not
+prove rubric correctness and must not be reported as passing judge gates.
+These results predate restored gating; no model evaluation was rerun for
+this restoration.
 
 ## Cases
 
