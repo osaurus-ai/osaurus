@@ -537,8 +537,20 @@ public struct SchemaValidator {
     /// and idempotent: passing already-coerced arguments is a no-op.
     /// Schemas without enough type information (no `type`, untyped
     /// `oneOf` / `anyOf`) fall through unchanged.
-    public static func coerceArguments(_ arguments: Any, against schema: JSONValue) -> Any {
+    /// `preservingEmpty` names top-level properties where an empty string is
+    /// meaningful (`new_string: ""` deletes the match), so the empty-optional
+    /// drop leaves them alone.
+    public static func coerceArguments(
+        _ arguments: Any,
+        against schema: JSONValue,
+        preservingEmpty: Set<String> = []
+    ) -> Any {
         guard case .object(let schemaObj) = schema else { return arguments }
+        if !preservingEmpty.isEmpty, case .string("object")? = schemaObj["type"],
+            let dict = arguments as? [String: Any]
+        {
+            return coerceObject(dict, schemaObject: schemaObj, preservingEmpty: preservingEmpty)
+        }
         return coerceValue(arguments, schemaObject: schemaObj)
     }
 
@@ -618,7 +630,8 @@ public struct SchemaValidator {
 
     private static func coerceObject(
         _ obj: [String: Any],
-        schemaObject: [String: JSONValue]
+        schemaObject: [String: JSONValue],
+        preservingEmpty: Set<String> = []
     ) -> [String: Any] {
         guard case .object(let propsDict)? = schemaObject["properties"] else { return obj }
         var out = unwrapSchemaBodyWrapper(in: obj, key: "properties", propsDict: propsDict)
@@ -630,7 +643,7 @@ public struct SchemaValidator {
         // and the decoded object contains at least one declared key.
         out = unwrapSchemaBodyWrapper(in: out, key: "arguments", propsDict: propsDict)
         out = normalizeKeySpelling(in: out, propsDict: propsDict)
-        out = dropEmptyOptionalStrings(in: out, propsDict: propsDict, required: requiredKeys(schemaObject))
+        out = dropEmptyOptionalStrings(in: out, propsDict: propsDict, required: requiredKeys(schemaObject) + preservingEmpty)
         for (key, value) in out {
             guard case .object(let propSchema)? = propsDict[key] else { continue }
             out[key] = coerceValue(value, schemaObject: propSchema)

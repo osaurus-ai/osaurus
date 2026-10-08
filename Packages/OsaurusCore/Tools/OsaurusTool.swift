@@ -33,6 +33,11 @@ protocol OsaurusTool: Sendable {
     /// (alphabetical). See `ToolWirePropertyOrder`.
     var parameterOrder: [String]? { get }
 
+    /// Optional string arguments where `""` is meaningful (`new_string: ""`
+    /// deletes the match). Schema coercion otherwise drops empty optional
+    /// strings as placeholders. Default empty.
+    var preservedEmptyStringArguments: Set<String> { get }
+
     /// Execute the tool with arguments provided as a JSON string.
     ///
     /// **Cancellation contract:** the registry wraps every call with a
@@ -124,6 +129,9 @@ extension OsaurusTool {
 
     /// Default: alphabetical wire order (no authored order).
     var parameterOrder: [String]? { nil }
+
+    /// Default: every empty optional string is a droppable placeholder.
+    var preservedEmptyStringArguments: Set<String> { [] }
 
     /// Default: tools do not mutate the sandbox workspace. Sandbox
     /// write/exec/install/plugin tools override to `true`.

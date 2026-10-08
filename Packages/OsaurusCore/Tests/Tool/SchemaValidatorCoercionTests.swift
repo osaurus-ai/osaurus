@@ -327,6 +327,17 @@ struct SchemaValidatorCoercionTests {
         #expect((coerced?["path"] as? String) == "report.pdf")
     }
 
+    @Test func preservedEmptyOptionalStringIsKept() throws {
+        // `file_edit` `new_string: ""` is the delete form, not filler (#3031).
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["path": "report.pdf", "description": ""],
+                against: optionalStringSchema,
+                preservingEmpty: ["description"]
+            ) as? [String: Any]
+        #expect((coerced?["description"] as? String) == "")
+    }
+
     @Test func whitespaceOnlyOptionalStringIsDropped() throws {
         let coerced =
             SchemaValidator.coerceArguments(

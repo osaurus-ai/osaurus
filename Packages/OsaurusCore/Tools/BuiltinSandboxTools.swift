@@ -2026,6 +2026,8 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let home: String
 
     var mutatesSandboxWorkspace: Bool { true }
+    /// `content: ""` truncates the file and `new_string: ""` deletes the match.
+    var preservedEmptyStringArguments: Set<String> { ["content", "new_string"] }
 
     func declaredMutationTargets(argumentsJSON: String) -> [String]? {
         FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])

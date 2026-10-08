@@ -42,6 +42,29 @@ struct FileEditBatchTests {
         return dict["message"] as? String ?? ""
     }
 
+    // MARK: - empty new_string through preflight (#3031)
+
+    @Test func emptyNewStringSurvivesPreflightAndDeletesMatch() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try write("keep-before\nREMOVE_ME\nkeep-after\n", name: "repro.txt", root: root)
+        let tool = FileEditTool(rootPath: root)
+
+        let outcome = ToolRegistry.preflight(
+            argumentsJSON: #"{"path":"repro.txt","old_string":"REMOVE_ME\n","new_string":""}"#,
+            schema: tool.parameters,
+            toolName: tool.name,
+            preservingEmpty: tool.preservedEmptyStringArguments
+        )
+        guard case .ready(let argumentsJSON) = outcome else {
+            Issue.record("preflight rejected an explicit empty new_string")
+            return
+        }
+        let output = try await tool.execute(argumentsJSON: argumentsJSON)
+        #expect(ToolEnvelope.successPayload(output) != nil, "\(output)")
+        #expect(fileContent(url) == "keep-before\nkeep-after\n")
+    }
+
     // MARK: - replace_all
 
     @Test func replaceAll_replacesEveryOccurrence() async throws {

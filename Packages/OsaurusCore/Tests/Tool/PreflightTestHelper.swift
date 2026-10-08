@@ -36,9 +36,16 @@ extension ToolRegistry {
         argumentsJSON: String,
         schema: JSONValue?,
         toolName: String,
-        hint: ((String) -> String?)? = nil
+        hint: ((String) -> String?)? = nil,
+        preservingEmpty: Set<String> = []
     ) -> PreflightOutcomeForTest {
-        switch ToolRegistry.preflight(argumentsJSON: argumentsJSON, schema: schema, toolName: toolName, hint: hint) {
+        switch ToolRegistry.preflight(
+            argumentsJSON: argumentsJSON,
+            schema: schema,
+            toolName: toolName,
+            hint: hint,
+            preservingEmpty: preservingEmpty
+        ) {
         case .ready(let args): return .ready(args)
         case .rejected(let envelope): return .rejected(envelope)
         }

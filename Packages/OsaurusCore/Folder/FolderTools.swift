@@ -2938,6 +2938,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
     var parameterOrder: [String]? {
         ["path", "old_string", "new_string", "replace_all", "edits", "operations", "dry_run"]
     }
+    var preservedEmptyStringArguments: Set<String> { ["new_string"] }
 
     func declaredMutationTargets(argumentsJSON: String) -> [String]? {
         FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
