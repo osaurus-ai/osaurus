@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Darwin
 import Testing
 
 @testable import OsaurusCore
@@ -51,6 +52,43 @@ struct LoginShellPathTests {
         let start = Date()
         #expect(LoginShellPath.probe(shell: shell.path, timeout: 0.5) == nil)
         #expect(Date().timeIntervalSince(start) < 5)
+    }
+
+    @Test func timeoutReapsShellThatIgnoresTermination() throws {
+        let dir = try tempDir("term-ignoring-shell")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shell = dir.appendingPathComponent("zsh")
+        let pidFile = dir.appendingPathComponent("owned.pid")
+        try script(shell, """
+            #!/bin/sh
+            trap '' TERM
+            echo $$ > '\(pidFile.path)'
+            while :; do :; done
+            """)
+        let start = Date()
+        let result = LoginShellPath.probe(shell: shell.path, timeout: 0.2)
+        let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)))
+        defer { if kill(pid, 0) == 0 { _ = kill(pid, SIGKILL) } }
+        #expect(result == nil)
+        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(kill(pid, 0) != 0, "A deadline must clean up the owned process, not just return early")
+    }
+
+    @Test func chattyStartupRetainsFinalPathWithinBoundedBuffer() throws {
+        let dir = try tempDir("chatty-shell")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shell = dir.appendingPathComponent("zsh")
+        try script(shell, """
+            #!/bin/sh
+            i=0
+            while [ "$i" -lt 10000 ]; do
+              printf '%s\\n' 'startup-noise-startup-noise-startup-noise-startup-noise-startup-noise'
+              i=$((i + 1))
+            done
+            printf '%s' '__OSAURUS_LOGIN_PATH__/fixture/bin:/usr/bin__OSAURUS_LOGIN_PATH__'
+            """)
+        #expect(LoginShellPath.probe(shell: shell.path, timeout: 5) == ["/fixture/bin", "/usr/bin"])
     }
 
     @Test func childPathPutsLoginShellEntriesFirstWithoutDuplicates() {

@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import Darwin
 
 public actor LoginShellPath {
     public static let shared = LoginShellPath()
@@ -52,7 +53,6 @@ public actor LoginShellPath {
 
     private static let marker = "__OSAURUS_LOGIN_PATH__"
 
-    private final class DataBox: @unchecked Sendable { var data = Data() }
 
     /// Runs `<shell> -ilc` (interactive, because nvm/mise/asdf activate in `.zshrc`/`.bashrc`) and extracts
     /// PATH between sentinels, so anything the startup files print cannot corrupt it. Bounded by `timeout`; a
@@ -73,27 +73,48 @@ public actor LoginShellPath {
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "dumb"
         process.environment = environment
-        // Drain stdout concurrently: a chatty rc file must not fill the pipe and stall the shell.
+        // Nonblocking reads keep both elapsed time and retained output bounded. A
+        // background read-to-EOF can outlive a timeout when an rc child inherits stdout.
         let reader = output.fileHandleForReading
-        let drained = DispatchSemaphore(value: 0)
-        let box = DataBox()
-        DispatchQueue.global(qos: .utility).async {
-            box.data = reader.readDataToEndOfFile()
-            drained.signal()
-        }
-        let finished = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in finished.signal() }
-        do { try process.run() } catch {
+        let fd = reader.fileDescriptor
+        guard fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) != -1 else { return nil }
+        defer {
             try? output.fileHandleForWriting.close()
-            return nil
+            try? reader.close()
         }
-        if finished.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
-            return nil
+        do { try process.run() } catch { return nil }
+        let pid = process.processIdentifier
+        // Foundation launches a dedicated process group on macOS. Only signal a
+        // group when that ownership is verified; never signal the app's group.
+        let ownsGroup = getpgid(pid) == pid
+        let deadline = Date().addingTimeInterval(timeout)
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        func drain() {
+            // A continuously writing rc must not prevent checking the deadline.
+            for _ in 0 ..< 16 {
+                let count = Darwin.read(fd, &buffer, buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+                if data.count > 256 * 1024 { data.removeFirst(data.count - 256 * 1024) }
+            }
         }
-        try? output.fileHandleForWriting.close()
-        guard drained.wait(timeout: .now() + 1) == .success else { return nil }
-        return parse(String(decoding: box.data, as: UTF8.self))
+        while process.isRunning {
+            drain()
+            if Date() >= deadline {
+                if ownsGroup { _ = kill(-pid, SIGTERM) } else { process.terminate() }
+                let grace = Date().addingTimeInterval(0.2)
+                while process.isRunning && Date() < grace { usleep(10_000) }
+                // Kill remaining owned descendants too, even if the shell exited on TERM.
+                if ownsGroup { _ = kill(-pid, SIGKILL) }
+                else if process.isRunning { _ = kill(pid, SIGKILL) }
+                process.waitUntilExit()
+                return nil
+            }
+            usleep(10_000)
+        }
+        drain()
+        return parse(String(decoding: data, as: UTF8.self))
     }
 
     /// Entries between the last pair of sentinels, empty and duplicate entries removed, order kept.
