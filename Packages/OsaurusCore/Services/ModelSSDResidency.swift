@@ -66,23 +66,34 @@ enum ModelSSDResidency {
     /// The repo's n-gram bytes from its index plus the headers of the shards that hold the table (two small
     /// HTTP range reads per shard; Allosaurus: 11 shards). Cached per repo revision. `nil` on network failure
     /// (callers then keep the conservative whole-download estimate), `0` when the repo has no table.
-    static func remoteNGramBytes(repoId: String, revision: String?) async -> Int64? {
+    static func remoteNGramBytes(
+        repoId: String, revision: String?, session: URLSession? = nil
+    ) async -> Int64? {
         let cacheKey = repoId + Self.cacheSuffix
         if let cached = ModelSizeCache.bytes(forId: cacheKey, matchingRevision: revision) {
             return cached == Self.noTableSentinel ? 0 : cached
         }
-        guard let index = await fetch(repoId: repoId, path: "model.safetensors.index.json", range: nil),
+        guard let index = await fetch(repoId: repoId, path: "model.safetensors.index.json", range: nil, session: session),
             let object = try? JSONSerialization.jsonObject(with: index) as? [String: Any],
             let weightMap = object["weight_map"] as? [String: String]
         else { return nil }
         let shards = Set(weightMap.filter { $0.key.contains(ngramTensorMarker) }.values)
         var total: Int64 = 0
         for shard in shards.sorted() {
-            guard let lengthData = await fetch(repoId: repoId, path: shard, range: 0...7),
+            guard let lengthData = await fetch(repoId: repoId, path: shard, range: 0...7, session: session),
                 lengthData.count == 8, let length = headerLength(lengthData),
-                let header = await fetch(repoId: repoId, path: shard, range: 8...(8 + Int(length) - 1)),
-                header.count == Int(length)
+                let header = await fetch(repoId: repoId, path: shard, range: 8...(8 + Int(length) - 1), session: session),
+                header.count == Int(length),
+                let tensors = (try? JSONSerialization.jsonObject(with: header)) as? [String: Any]
             else { return nil }
+            // The index advertised table tensors in this shard. A valid JSON object
+            // without those entries is inconsistent, not evidence of "no table".
+            for (name, file) in weightMap where file == shard && name.contains(ngramTensorMarker) {
+                guard let tensor = tensors[name] as? [String: Any],
+                    let offsets = tensor["data_offsets"] as? [Int], offsets.count == 2,
+                    offsets[0] >= 0, offsets[1] >= offsets[0]
+                else { return nil }
+            }
             let (sum, overflow) = total.addingReportingOverflow(ngramBytes(inHeader: header))
             if !overflow { total = sum }
         }
@@ -121,7 +132,9 @@ enum ModelSSDResidency {
         return total
     }
 
-    private static func fetch(repoId: String, path: String, range: ClosedRange<Int>?) async -> Data? {
+    private static func fetch(
+        repoId: String, path: String, range: ClosedRange<Int>?, session: URLSession?
+    ) async -> Data? {
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
         guard let url = URL(string: "https://huggingface.co/\(repoId)/resolve/main/\(encoded)") else { return nil }
         var request = URLRequest(url: url)
@@ -130,9 +143,22 @@ enum ModelSSDResidency {
         HuggingFaceAuth.authorize(&request)
         // Stream and stop at the expected size: even a server that ignores Range can never pull a whole shard.
         let limit = range?.count ?? (16 << 20)
-        guard let (stream, response) = try? await GlobalProxySettings.sharedSession().bytes(for: request),
+        guard let (stream, response) = try? await (session ?? GlobalProxySettings.sharedSession()).bytes(for: request),
             let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
         else { return nil }
+        if let range {
+            // A 200 response starts at byte zero even when Range was requested. Never
+            // parse that as the header and persist a false "no table" cache entry.
+            guard http.statusCode == 206,
+                let contentRange = http.value(forHTTPHeaderField: "Content-Range"),
+                contentRange.hasPrefix("bytes \(range.lowerBound)-\(range.upperBound)/")
+            else { return nil }
+            let total = contentRange.dropFirst("bytes \(range.lowerBound)-\(range.upperBound)/".count)
+            // HTTP permits an unknown complete length, even for an exact range.
+            if total != "*" {
+                guard let fileLength = Int(total), fileLength > range.upperBound else { return nil }
+            }
+        }
         var data = Data()
         data.reserveCapacity(min(limit, 1 << 20))
         do {
