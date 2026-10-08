@@ -40,12 +40,19 @@ public enum ExecutableLocator {
     /// first, then append safe local command directories so common launchers
     /// (`npx`, `uvx`, `python`, `claude`) are discoverable without forcing
     /// users to paste absolute paths.
-    public static func searchPath(env: [String: String]) -> String {
+    public static func searchPath(
+        env: [String: String],
+        loginShellEntries: [String]? = LoginShellPath.cachedEntries
+    ) -> String {
         var entries =
             (env["PATH"]?.isEmpty == false ? env["PATH"] : nil)?
             .split(separator: ":", omittingEmptySubsequences: true)
             .map(String.init)
             ?? []
+        // The login shell's PATH (mise / nvm / asdf / fnm / direnv add their bins only there, #3024).
+        for entry in loginShellEntries ?? [] where !entries.contains(entry) {
+            entries.append(entry)
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         for fallback in [
             "/opt/homebrew/bin",
@@ -53,6 +60,10 @@ public enum ExecutableLocator {
             "/opt/local/bin",
             "\(home)/.local/bin",
             "\(home)/bin",
+            // Version-manager shims, for when the login-shell probe is unavailable.
+            "\(home)/.local/share/mise/shims",
+            "\(home)/.asdf/shims",
+            "\(home)/.volta/bin",
             "/usr/bin",
             "/bin",
             "/usr/sbin",
@@ -61,6 +72,41 @@ public enum ExecutableLocator {
             entries.append(fallback)
         }
         return entries.joined(separator: ":")
+    }
+
+    /// PATH for a host child process the user did not give an explicit PATH: the login shell's entries first
+    /// (the user's own order), then the inherited ones, then the fallbacks.
+    public static func childPath(inherited: [String: String], loginShellEntries: [String]?) -> String {
+        var env = inherited
+        env["PATH"] = ((loginShellEntries ?? []) + (inherited["PATH"]?.split(separator: ":").map(String.init) ?? []))
+            .joined(separator: ":")
+        var seen = Set<String>()
+        return searchPath(env: env, loginShellEntries: nil)
+            .split(separator: ":").map(String.init).filter { seen.insert($0).inserted }
+            .joined(separator: ":")
+    }
+
+    /// For `#!/usr/bin/env <interpreter>` scripts: the script's own directory when the interpreter sits beside
+    /// it (mise / nvm / asdf install `npx` next to `node`), so a full-path command runs with the toolchain the
+    /// user picked. `nil` for binaries, other shebangs, or when the interpreter is not alongside.
+    public static func envShebangSiblingDirectory(executable: String) -> String? {
+        guard let handle = FileHandle(forReadingAtPath: executable) else { return nil }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 256),
+            let text = String(data: head, encoding: .utf8),
+            text.hasPrefix("#!"), let firstLine = text.split(separator: "\n").first
+        else { return nil }
+        let words = firstLine.dropFirst(2).split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        guard let launcher = words.first, (launcher as NSString).lastPathComponent == "env" else { return nil }
+        guard let interpreter = words.dropFirst().first(where: { !$0.hasPrefix("-") && !$0.contains("=") })
+        else { return nil }
+        let directory = ((executable as NSString).resolvingSymlinksInPath as NSString).deletingLastPathComponent
+        let unresolvedDirectory = (executable as NSString).deletingLastPathComponent
+        for dir in [unresolvedDirectory, directory]
+        where FileManager.default.isExecutableFile(atPath: (dir as NSString).appendingPathComponent(interpreter)) {
+            return dir
+        }
+        return nil
     }
 
     /// Expand a leading `~` against the current user's home directory.
