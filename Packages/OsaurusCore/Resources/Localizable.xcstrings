@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Cannot attach image" : {
+      "comment" : "Title of the toast shown when the selected model cannot accept an image attachment."
+    },
     "Speak now…" : {
       "localizations" : {
         "de" : {
