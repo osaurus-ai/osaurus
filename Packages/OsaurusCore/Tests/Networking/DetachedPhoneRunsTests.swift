@@ -78,6 +78,22 @@ struct DetachedPhoneRunsTests {
         #expect(late.ended)
     }
 
+    /// The same job id after its job ended replays that job: a second run
+    /// of a cloud model would bill twice for one image.
+    @Test func aFinishedImageJobIsFollowedNotRunAgain() {
+        let store = DetachedPhoneRuns()
+        let (job, isNew) = store.begin(id: "img-done", followFinished: true)
+        #expect(isNew)
+        job.record("data: completed\n\n")
+        job.finish()
+        let (again, isNewAgain) = store.begin(id: "img-done", followFinished: true)
+        #expect(!isNewAgain)
+        #expect(again === job)
+        // Runs keep starting afresh once finished.
+        _ = store.begin(id: "run-done").run.finish()
+        #expect(store.begin(id: "run-done").isNew)
+    }
+
     @Test func imageJobsAndRunsAreKeptApart() {
         _ = DetachedPhoneRuns.images.begin(id: "shared-id-test")
         #expect(DetachedPhoneRuns.shared.run(id: "shared-id-test") == nil)

@@ -12639,7 +12639,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         guard streaming, let id, DetachedPhoneRuns.isValidId(id), callerOwnsThisMac(context),
             stateRef.value.isSecureChannel
         else { return .none }
-        let (job, isNew) = DetachedPhoneRuns.images.begin(id: id)
+        let (job, isNew) = DetachedPhoneRuns.images.begin(id: id, followFinished: true)
         return isNew ? .new(job) : .follow(job)
     }
 

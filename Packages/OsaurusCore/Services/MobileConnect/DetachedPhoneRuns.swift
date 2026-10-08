@@ -164,10 +164,18 @@ final class DetachedPhoneRuns: @unchecked Sendable {
     /// Registers a run under `id`. When a live run already has that id the
     /// phone sent the same request again (on its other route, having heard
     /// nothing back), so it gets that run to follow instead of a second one.
-    func begin(id: String, now: Date = Date()) -> (run: DetachedPhoneRun, isNew: Bool) {
+    /// `followFinished`: a run that has already finished, but is still held,
+    /// is followed too (it replays and ends). Image jobs ask for it: the same
+    /// id after its job ended is the phone retrying a request whose answer
+    /// it never heard, and running a cloud job again would bill again.
+    func begin(
+        id: String,
+        followFinished: Bool = false,
+        now: Date = Date()
+    ) -> (run: DetachedPhoneRun, isNew: Bool) {
         lock.withLock {
             prune(now: now)
-            if let existing = runs[id], existing.finishedAt == nil {
+            if let existing = runs[id], existing.finishedAt == nil || followFinished {
                 return (existing, false)
             }
             let run = DetachedPhoneRun(id: id)
