@@ -4715,7 +4715,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let custom_avatar: Bool?
         /// The agent's system prompt, on `GET /agents/{id}` and for owner
         /// callers only — a workspace peer has no business reading it.
-        let system_prompt: String?
+        var system_prompt: String?
         /// What the phone can change (§13.2): `GET /agents/{id}` for owner
         /// callers and custom agents only.
         var settings: PhoneAgentEditing.Settings? = nil
@@ -9563,9 +9563,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 relay_url: relayOn ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
                 ,
                 custom_avatar: agent.customAvatarURL != nil ? true : nil,
-                system_prompt: ownerCaller ? agent.systemPrompt : nil
+                system_prompt: nil
             )
             if ownerCaller {
+                // As the Mac resolves it: the built-in Orchestrator keeps its
+                // prompt in its own store (`default-agent.json`), not on the
+                // agent record, which reads empty for it.
+                let agentId = agent.id
+                item.system_prompt = await MainActor.run { AgentManager.shared.effectiveSystemPrompt(for: agentId) }
                 item.settings = await MainActor.run { PhoneAgentEditing.settings(for: agent) }
             }
             let json =
