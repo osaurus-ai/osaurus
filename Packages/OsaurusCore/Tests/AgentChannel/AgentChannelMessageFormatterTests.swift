@@ -158,10 +158,20 @@ struct AgentChannelMessageFormatterTests {
         }
     }
 
-    @Test func codeContainingFencesGetsALongerFence() {
+    @Test func innerFencesCannotCloseAChannelCodeBlock() {
         let markdown = "````markdown\n```\ninner\n```\n````"
         let chunks = AgentChannelMessageFormatter.discordChunks(markdown)
-        #expect(chunks == ["````markdown\n```\ninner\n```\n````"])
+        #expect(chunks.count == 1)
+        let chunk = chunks[0]
+        #expect(chunk.hasPrefix("```markdown\n"))
+        #expect(chunk.hasSuffix("\n```"))
+        // Only the outer fences may hold three backticks in a row.
+        #expect(chunk.components(separatedBy: "```").count == 3)
+        #expect(chunk.replacingOccurrences(of: "\u{200B}", with: "") == "```markdown\n```\ninner\n```\n```")
+    }
+
+    @Test func codeWithoutFencesIsUntouched() {
+        #expect(AgentChannelMessageFormatter.neutralizingBacktickRuns("a ``b`` c") == "a ``b`` c")
     }
 
     @Test func packNeverSplitsEmojiGraphemes() {

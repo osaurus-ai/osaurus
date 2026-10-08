@@ -204,11 +204,10 @@ enum AgentChannelMessageFormatter {
             case .list(let items):
                 return AgentChannelRenderedBlock(body: renderMarkdownList(items))
             case .code(let code, let lang):
-                let fence = codeFence(for: code)
                 return AgentChannelRenderedBlock(
-                    prefix: "\(fence)\(lang ?? "")\n",
-                    body: code,
-                    suffix: "\n\(fence)"
+                    prefix: "```\(lang ?? "")\n",
+                    body: neutralizingBacktickRuns(code),
+                    suffix: "\n```"
                 )
             case .table(let headers, let rows):
                 let table = renderPipeTable(headers: headers, rows: rows)
@@ -231,16 +230,24 @@ enum AgentChannelMessageFormatter {
         }
     }
 
-    /// A backtick fence longer than any backtick run in the code, so fence lines
-    /// inside the code (Markdown showing Markdown) cannot close the block early.
-    private static func codeFence(for code: String) -> String {
-        var longest = 0
+    /// Slack and Discord may close a code block at the first ``` rather than
+    /// follow CommonMark's longer-fence rule, so a zero-width space goes after
+    /// every second backtick in longer runs. Markdown showing Markdown then stays in
+    /// one block and the visible text is unchanged.
+    static func neutralizingBacktickRuns(_ code: String) -> String {
+        guard code.contains("```") else { return code }
+        var out = ""
         var run = 0
         for ch in code {
-            run = ch == "`" ? run + 1 : 0
-            longest = max(longest, run)
+            if ch == "`" {
+                if run > 0, run % 2 == 0 { out.append("\u{200B}") }
+                run += 1
+            } else {
+                run = 0
+            }
+            out.append(ch)
         }
-        return String(repeating: "`", count: max(3, longest + 1))
+        return out
     }
 
     private static func renderMarkdownList(_ items: [ListItem]) -> String {
