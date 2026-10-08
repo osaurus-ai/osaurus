@@ -1,0 +1,23 @@
+{
+  "id": "agent_loop.calculator-compound-interest",
+  "domain": "agent_loop",
+  "label": "agent loop • calculator: compound interest to the cent",
+  "query": "If I invest $12,500 at 6.25% annual interest compounded monthly, how much will I have after 7 years? Give the amount to the cent.",
+  "notes": "Multi-step finance arithmetic local models routinely get wrong in their heads. Contract: the model calls `calculate` (12500*(1+0.0625/12)^(7*12) = 19338.4098) and reports $19,338.41; the rubric accepts either thousands spelling. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "mustCallTools": [
+        "calculate"
+      ],
+      "noToolErrors": true,
+      "rubric": [
+        "Reports the result as 19338.41 (or 19,338.41), matching the calculation exactly."
+      ]
+    }
+  }
+}

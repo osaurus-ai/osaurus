@@ -130,7 +130,7 @@ struct ConfigurationDomainRegistryTests {
         // The orchestrator (Default agent) baseline is a hard product
         // contract: the consolidated configure surface (2 reads + the single
         // declarative write) plus the three agent-loop tools,
-        // `get_current_time`, and the native search pair (`web_search` /
+        // `get_current_time`, `calculate`, and the native search pair (`web_search` /
         // `search_and_extract` — quick lookups run in the orchestrator's own
         // loop; heavy research still dispatches to workers), and NOTHING
         // else. The capability-search gateway is not part of it. Changing
@@ -148,6 +148,7 @@ struct ConfigurationDomainRegistryTests {
             "complete",
             "clarify",
             "get_current_time",
+            "calculate",
             "web_search",
             "search_and_extract",
         ]

@@ -3267,6 +3267,7 @@ public struct SystemPromptComposer: Sendable {
             // This unconditionally available baseline tool is part of the
             // stable schema. Query wording never adds or removes it.
             allowed.insert("get_current_time")
+            allowed.insert(CalculatorTool.toolName)
             // The folder ask is a chat-surface affordance, not an agent
             // capability: if it survived the attended/folder-less strip
             // above it stays, in auto and manual mode alike.

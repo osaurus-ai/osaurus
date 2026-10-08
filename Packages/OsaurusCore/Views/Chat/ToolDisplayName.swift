@@ -302,6 +302,7 @@ enum ToolDisplayName {
         "capabilities_load": ToolLabel(L("Loading capabilities"), L("Loaded capabilities")),
         "search_memory": ToolLabel(L("Searching memory"), L("Searched memory")),
         "render_chart": ToolLabel(L("Rendering a chart"), L("Rendered a chart")),
+        "calculate": ToolLabel(L("Calculating"), L("Calculated")),
         // `image` is handled by `imageLabel` (mode-aware: generate vs edit).
         "share_artifact": ToolLabel(L("Sharing a file"), L("Shared a file")),
         "speak": ToolLabel(L("Speaking"), L("Spoke")),

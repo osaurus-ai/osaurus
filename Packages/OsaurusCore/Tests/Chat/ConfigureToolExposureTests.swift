@@ -70,9 +70,9 @@ struct ConfigureToolExposureTests {
         #expect(names == ToolRegistry.orchestratorAllowedToolNames)
         // Structural: the allowed set is the configure surface (reads +
         // writes) plus exactly the three agent-loop tools,
-        // `get_current_time`, and the two native search tools, with no
-        // overlap.
-        #expect(names.count == ToolRegistry.configureToolNames.count + 6)
+        // `get_current_time`, `calculate`, and the two native search tools,
+        // with no overlap.
+        #expect(names.count == ToolRegistry.configureToolNames.count + 7)
     }
 
     /// Orchestrator invariant: the Default agent's schema never carries the

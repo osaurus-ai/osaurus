@@ -1,0 +1,26 @@
+{
+  "id": "agent_loop.calculator-solve-quadratic",
+  "domain": "agent_loop",
+  "label": "agent loop • calculator: solve an equation with one unknown",
+  "query": "Solve 3x^2 - 7x - 20 = 0 for x.",
+  "notes": "Equation solving through `calculate` (roots 4 and -5/3 ≈ -1.6667). The model should pass the equation itself; rubric checks both roots are reported. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "mustCallTools": [
+        "calculate"
+      ],
+      "noToolErrors": true,
+      "rubric": [
+        "Reports both solutions: x = 4 and x = -5/3 (about -1.667)."
+      ],
+      "finalTextContains": [
+        "4"
+      ]
+    }
+  }
+}

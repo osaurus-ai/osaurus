@@ -42,6 +42,7 @@ struct OrchestratorSchemaBudgetTests {
         "web_search": 160,
         "search_and_extract": 380,
         "get_current_time": 80,
+        "calculate": 100,
     ]
 
     private struct Measurement {

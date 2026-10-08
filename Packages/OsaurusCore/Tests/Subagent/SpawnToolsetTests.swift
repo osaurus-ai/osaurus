@@ -285,11 +285,11 @@ struct SpawnToolsetTests {
 
     @Test("auto surface: everything off leaves only the worker baseline")
     func autoSurfaceBaseline() {
-        // Time + `share_artifact`: the declarative spawned-worker baseline
+        // Time + `calculate` + `share_artifact`: the declarative spawned-worker baseline
         // (`ToolRegistry.spawnedWorkerBaselineToolNames`).
         #expect(
             TextSubagentKind.autoChildToolNames(capabilities: capabilities())
-                == ["get_current_time", "share_artifact"]
+                == ["calculate", "get_current_time", "share_artifact"]
         )
     }
 
@@ -298,7 +298,7 @@ struct SpawnToolsetTests {
         #expect(
             TextSubagentKind.autoChildToolNames(
                 capabilities: capabilities(webSearch: true)
-            ) == ["get_current_time", "search_and_extract", "share_artifact", "web_search"]
+            ) == ["calculate", "get_current_time", "search_and_extract", "share_artifact", "web_search"]
         )
 
         let db = Set(TextSubagentKind.autoChildToolNames(capabilities: capabilities(db: true)))

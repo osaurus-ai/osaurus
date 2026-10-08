@@ -87,7 +87,7 @@ struct SpawnToolTests {
                 manual: ["read_file"], capabilities: capabilities()
             )
         )
-        #expect(plain == ["get_current_time", "read_file", "share_artifact"])
+        #expect(plain == ["calculate", "get_current_time", "read_file", "share_artifact"])
         #expect(!plain.contains("web_search"))
 
         // Spawn-capability tools and `clarify` are always dropped for children.
@@ -97,7 +97,7 @@ struct SpawnToolTests {
                 capabilities: capabilities()
             )
         )
-        #expect(filtered == ["get_current_time", "read_file", "share_artifact"])
+        #expect(filtered == ["calculate", "get_current_time", "read_file", "share_artifact"])
     }
 
     @Test func refusesRecursion() async throws {

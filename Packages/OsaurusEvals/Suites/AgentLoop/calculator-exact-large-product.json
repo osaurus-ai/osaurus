@@ -1,0 +1,23 @@
+{
+  "id": "agent_loop.calculator-exact-large-product",
+  "domain": "agent_loop",
+  "label": "agent loop • calculator: exact large integer product",
+  "query": "What is 48,729 × 913,447 exactly? I need every digit.",
+  "notes": "Exact 11-digit product (44,511,358,863). Pins the calculator's exact-integer path and that the model reports the tool's digits instead of an approximation. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "mustCallTools": [
+        "calculate"
+      ],
+      "noToolErrors": true,
+      "rubric": [
+        "Reports the result as 44,511,358,863 (or 44511358863), matching the calculation exactly."
+      ]
+    }
+  }
+}

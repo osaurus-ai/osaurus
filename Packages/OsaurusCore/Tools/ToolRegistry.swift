@@ -324,6 +324,9 @@ public final class ToolRegistry: ObservableObject {
             // plain "what is the time?" (a common first-message smoke test)
             // otherwise makes them guess. Always loaded; no side effects.
             CurrentTimeTool(),
+            // Deterministic math (`calculate`). Models get multi-digit
+            // arithmetic wrong in their heads; always loaded, no side effects.
+            CalculatorTool(),
             // Delegation: `spawn_agent` hands a task to a configured agent
             // (its prompt + model + tools). Several calls in one message form
             // one wave (`SpawnWaveGate`). Gated per-agent (its pool) in
@@ -3353,7 +3356,7 @@ extension ToolRegistry {
     //
     //   * `.orchestrator` — the Default agent (direct chat): the
     //     consolidated configure surface + agent-loop
-    //     tools + `get_current_time` + the native search pair
+    //     tools + `get_current_time` + `calculate` + the native search pair
     //     (`web_search` / `search_and_extract` for quick lookups), plus
     //     (applied in `resolveTools`) the visible
     //     delegation tools. It NEVER carries the tools in
@@ -3406,12 +3409,12 @@ extension ToolRegistry {
     .union(AppleApp.allToolNames)
 
     /// Baseline names every agent-target spawned worker carries regardless
-    /// of the target's capability toggles: time for grounding, and
-    /// `share_artifact` so a worker can hand a file straight to the user
+    /// of the target's capability toggles: time for grounding, `calculate`
+    /// for exact math, and `share_artifact` so a worker can hand a file straight to the user
     /// (deliverables otherwise land in the working folder and the parent
     /// receives a short summary naming them).
     nonisolated static let spawnedWorkerBaselineToolNames: Set<String> = [
-        "get_current_time", "share_artifact",
+        "get_current_time", "calculate", "share_artifact",
     ]
 
     /// Turn-1 schema for the `.orchestrator` surface (the Default agent):
@@ -3419,7 +3422,7 @@ extension ToolRegistry {
     /// (`osaurus_inspect` / `osaurus_help`) plus the single declarative write tool
     /// (`osaurus_config`) — together with the agent-loop tools
     /// (`todo` / `complete` / `clarify`),
-    /// `get_current_time`, and the native search pair (`web_search` /
+    /// `get_current_time`, `calculate`, and the native search pair (`web_search` /
     /// `search_and_extract`) for quick lookups — heavy research still
     /// dispatches to workers. The Default agent loads its write tools
     /// **directly**; it does NOT use `capabilities_discover` /
@@ -3432,7 +3435,7 @@ extension ToolRegistry {
     /// a reviewed first-turn schema contract.
     static var orchestratorAllowedToolNames: Set<String> {
         configureToolNames.union([
-            "todo", "complete", "clarify", "get_current_time",
+            "todo", "complete", "clarify", "get_current_time", "calculate",
             "web_search", "search_and_extract",
         ])
     }
