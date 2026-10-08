@@ -206,7 +206,7 @@ enum AgentChannelMessageFormatter {
             case .code(let code, let lang):
                 return AgentChannelRenderedBlock(
                     prefix: "```\(lang ?? "")\n",
-                    body: code,
+                    body: neutralizingBacktickRuns(code),
                     suffix: "\n```"
                 )
             case .table(let headers, let rows):
@@ -228,6 +228,26 @@ enum AgentChannelMessageFormatter {
                 return AgentChannelRenderedBlock(body: "---")
             }
         }
+    }
+
+    /// Slack and Discord may close a code block at the first ``` rather than
+    /// follow CommonMark's longer-fence rule, so a zero-width space goes after
+    /// every second backtick in longer runs. Markdown showing Markdown then stays in
+    /// one block and the visible text is unchanged.
+    static func neutralizingBacktickRuns(_ code: String) -> String {
+        guard code.contains("```") else { return code }
+        var out = ""
+        var run = 0
+        for ch in code {
+            if ch == "`" {
+                if run > 0, run % 2 == 0 { out.append("\u{200B}") }
+                run += 1
+            } else {
+                run = 0
+            }
+            out.append(ch)
+        }
+        return out
     }
 
     private static func renderMarkdownList(_ items: [ListItem]) -> String {

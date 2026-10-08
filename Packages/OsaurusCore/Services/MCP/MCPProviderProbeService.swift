@@ -400,7 +400,7 @@ public enum MCPProviderProbeService {
         switch provider.executionHost {
         case .host:
             #if canImport(Darwin)
-                let runner = try MCPStdioHostRunner(provider: provider)
+                let runner = try await MCPStdioHostRunner.make(provider: provider)
                 try await runner.start()
                 return (runner.transport, { await runner.stop() })
             #else

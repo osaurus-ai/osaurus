@@ -791,6 +791,18 @@ struct ModelDetailView: View, Identifiable {
                 )
             }
 
+            if let ssd = model.ssdResidentBytes, ssd > 0 {
+                Text(
+                    String(
+                        format: L("%@ of this download is an n-gram table that stays on SSD and is not counted toward running memory."),
+                        formattedMemoryGB(Double(ssd) / GPUMemoryBudget.bytesPerGB)
+                    )
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
             Text(explanation)
                 .font(.system(size: 11))
                 .foregroundColor(theme.secondaryText)
@@ -1499,6 +1511,11 @@ struct ModelDetailView: View, Identifiable {
         estimateError = nil
         let target = model
         let size = await modelManager.estimateDownloadSize(for: target)
+        // Installed bundles already carry their header-scanned value; otherwise read the Hub index (cached).
+        var ssd = target.ssdResidentBytes
+        if ssd == nil, !target.isDownloaded {
+            ssd = await ModelSSDResidency.remoteNGramBytes(repoId: target.id, revision: nil)
+        }
         await MainActor.run {
             guard isCurrent(target.id) else { return }
             self.estimatedSize = size
@@ -1506,9 +1523,11 @@ struct ModelDetailView: View, Identifiable {
                 // Recompute every memory/fit surface from the measured Hub
                 // bytes immediately; do not leave the banner on its
                 // parameter/quantization fallback while Details shows the
-                // resolved download size.
-                self.selectedModel = target.withDownloadSize(size)
+                // resolved download size. The SSD-resident n-gram table is
+                // excluded from the RAM verdict, never from the download size.
+                self.selectedModel = target.withDownloadSize(size).withSSDResidentBytes(ssd)
                 self.modelManager.applyResolvedDownloadSize(size, for: target.id)
+                if let ssd { self.modelManager.applyResolvedSSDResidentBytes(ssd, for: target.id) }
             } else {
                 self.estimateError = "Could not estimate size right now."
             }

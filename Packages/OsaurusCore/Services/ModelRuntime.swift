@@ -4838,7 +4838,7 @@ public actor ModelRuntime {
             !preliminaryMemorySafetyPlan.loadConfiguration.useMmapSafetensors
         let loadFootprintBytes =
             willMaterialize
-            ? weightsBytes
+            ? Self.residentWeightBytes(rawWeightsBytes: weightsBytes, modelDirectory: localURL)
             : Self.effectiveLoadFootprintBytes(
                 rawWeightsBytes: weightsBytes,
                 modelDirectory: localURL,
@@ -7651,11 +7651,21 @@ public actor ModelRuntime {
         return nil
     }
 
+    /// Weights the load must hold resident: the on-disk total minus SSD-resident tables (the Qwen4Exp n-gram
+    /// table is read from SSD on demand, never loaded — `ModelSSDResidency`). Same rule as the catalog verdict.
+    static func residentWeightBytes(rawWeightsBytes: Int64, modelDirectory: URL?) -> Int64 {
+        guard rawWeightsBytes > 0, let modelDirectory,
+            let ssd = ModelSSDResidency.localSSDResidentBytes(at: modelDirectory), ssd > 0, ssd < rawWeightsBytes
+        else { return rawWeightsBytes }
+        return rawWeightsBytes - ssd
+    }
+
     static func effectiveLoadFootprintBytes(
         rawWeightsBytes: Int64,
         modelDirectory: URL?,
         modelName: String? = nil
     ) -> Int64 {
+        let rawWeightsBytes = residentWeightBytes(rawWeightsBytes: rawWeightsBytes, modelDirectory: modelDirectory)
         guard rawWeightsBytes > 0, let modelDirectory else { return rawWeightsBytes }
         guard isRoutedJANGCompressionLoad(at: modelDirectory, modelName: modelName) else {
             return rawWeightsBytes
