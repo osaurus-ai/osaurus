@@ -2591,7 +2591,7 @@ struct RuntimePolicySourceTests {
             loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)")
         )
         #expect(
-            loadPreflight.contains("? weightsBytes")
+            loadPreflight.contains("? Self.residentWeightBytes(rawWeightsBytes: weightsBytes, modelDirectory: localURL)")
                 && loadPreflight.contains(": Self.effectiveLoadFootprintBytes("),
             "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set; materialized near-RAM-scale loads must budget the full weight size instead."
         )

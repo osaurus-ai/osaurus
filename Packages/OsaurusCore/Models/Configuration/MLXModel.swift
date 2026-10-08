@@ -22,6 +22,11 @@ struct MLXModel: Identifiable, Codable {
     /// Approximate download size in bytes (optional, for display purposes)
     let downloadSizeBytes: Int64?
 
+    /// Bytes of the download that stay on SSD and are read on demand, never resident in RAM (the Qwen4Exp
+    /// n-gram table, `ModelSSDResidency`). `nil` = not known / none. Excluded from the RAM estimate only; the
+    /// download-size figure keeps every byte.
+    let ssdResidentBytes: Int64?
+
     /// The model_type from config.json (e.g. "gemma4", "qwen3_5_moe").
     /// Set on curated entries to enable pre-download VLM detection via VLMTypeRegistry.
     let modelType: String?
@@ -64,6 +69,7 @@ struct MLXModel: Identifiable, Codable {
         downloadURL: String,
         isTopSuggestion: Bool = false,
         downloadSizeBytes: Int64? = nil,
+        ssdResidentBytes: Int64? = nil,
         modelType: String? = nil,
         releasedAt: Date? = nil,
         downloads: Int? = nil,
@@ -78,6 +84,7 @@ struct MLXModel: Identifiable, Codable {
         self.downloadURL = downloadURL
         self.isTopSuggestion = isTopSuggestion
         self.downloadSizeBytes = downloadSizeBytes
+        self.ssdResidentBytes = ssdResidentBytes
         self.modelType = modelType
         self.releasedAt = releasedAt
         self.downloads = downloads
@@ -100,6 +107,7 @@ struct MLXModel: Identifiable, Codable {
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: bytes,
+            ssdResidentBytes: ssdResidentBytes,
             modelType: modelType,
             releasedAt: releasedAt,
             downloads: downloads,
@@ -130,6 +138,7 @@ struct MLXModel: Identifiable, Codable {
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: localBytes,
+            ssdResidentBytes: local.ssdResidentBytes ?? ssdResidentBytes,
             modelType: local.modelType ?? modelType,
             releasedAt: releasedAt,
             downloads: downloads,
@@ -261,6 +270,27 @@ struct MLXModel: Identifiable, Codable {
         return total > 0 ? total : nil
     }
 
+    /// Returns a copy carrying the bundle's SSD-resident (n-gram) byte count.
+    func withSSDResidentBytes(_ bytes: Int64?) -> MLXModel {
+        guard let bytes, bytes >= 0 else { return self }
+        return MLXModel(
+            id: id,
+            name: name,
+            description: description,
+            downloadURL: downloadURL,
+            isTopSuggestion: isTopSuggestion,
+            downloadSizeBytes: downloadSizeBytes,
+            ssdResidentBytes: bytes,
+            modelType: modelType,
+            releasedAt: releasedAt,
+            downloads: downloads,
+            useCase: useCase,
+            rootDirectory: rootDirectory,
+            bundleDirectory: bundleDirectory,
+            externalSource: externalSource
+        )
+    }
+
     /// Returns a copy with the HF Hub `downloads` count populated. Used to
     /// fold in stats from the OsaurusAI org listing onto curated entries
     /// without rewriting their hand-tuned descriptions / Top Pick flags
@@ -272,6 +302,7 @@ struct MLXModel: Identifiable, Codable {
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: downloadSizeBytes,
+            ssdResidentBytes: ssdResidentBytes,
             modelType: modelType,
             releasedAt: releasedAt,
             downloads: count,
@@ -735,7 +766,7 @@ struct MLXModel: Identifiable, Codable {
     /// the `params × bytesPerParameter` constant heuristic. The heuristic is
     /// only the fallback for entries we haven't sized yet.
     var estimatedMemoryGB: Double? {
-        guard let bytes = totalSizeEstimateBytes else { return nil }
+        guard let bytes = residentWeightEstimateBytes else { return nil }
         return GPUMemoryBudget.estimatedChatWorkingSetBytes(onDiskBytes: bytes)
             .map { Double($0) / Self.bytesPerGB }
     }
@@ -751,9 +782,16 @@ struct MLXModel: Identifiable, Codable {
     }
 
     /// Complete fit calculation used by every model-selection surface.
+    /// Weights that must be resident to run: the download minus SSD-resident tables.
+    var residentWeightEstimateBytes: Int64? {
+        guard let total = totalSizeEstimateBytes else { return nil }
+        guard let ssd = ssdResidentBytes, ssd > 0, ssd < total else { return total }
+        return total - ssd
+    }
+
     func memoryAssessment(totalMemoryGB: Double) -> ModelMemoryAssessment {
         GPUMemoryBudget.assessment(
-            modelSizeBytes: totalSizeEstimateBytes,
+            modelSizeBytes: residentWeightEstimateBytes,
             sizeSource: sizeEstimateSource,
             physicalMemoryGB: totalMemoryGB
         )
