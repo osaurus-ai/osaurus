@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Combine
 import Foundation
 import OsaurusCore
 import SwiftUI
@@ -36,11 +37,15 @@ enum OsaurusMain {
 
 struct osaurusApp: SwiftUI.App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @ObservedObject private var themeManager = ThemeManager.shared
+    // NOTE: Do not add `@ObservedObject` singletons here. Every `@Published`
+    // change on an object observed by the App struct re-evaluates the whole
+    // `Commands` tree and rebuilds the main menu on the main thread. High-churn
+    // publishers (e.g. `VADService.audioLevel`, `SpeechModelManager`
+    // download progress) did exactly that and hung the UI. Observe state from
+    // small, dedicated menu-item views instead (see `VADToggleMenuItem`,
+    // `ThemeMenuItems`).
     private var scheduleManager = ScheduleManager.shared
     private var watcherManager = WatcherManager.shared
-    @ObservedObject private var vadService = VADService.shared
-    @ObservedObject private var speechModelManager = SpeechModelManager.shared
     /// Chat settings toggle: ⌘N starts a new chat in the frontmost chat
     /// window instead of opening a new window (see `NewChatShortcutSetting`).
     @AppStorage(NewChatShortcutSetting.defaultsKey)
@@ -121,11 +126,7 @@ private extension osaurusApp {
         CommandGroup(after: .newItem) {
             Divider()
 
-            Button(vadToggleLabel) {
-                toggleVAD()
-            }
-            .keyboardShortcut("v", modifiers: [.command, .shift])
-            .disabled(!canToggleVAD)
+            VADToggleMenuItem()
 
             Divider()
 
@@ -189,113 +190,8 @@ private extension osaurusApp {
 
             Divider()
 
-            Menu {
-                Button {
-                    themeManager.setAppearanceMode(.system, clearActiveTheme: true)
-                } label: {
-                    HStack {
-                        Text(verbatim: L("System"))
-                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .system {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-
-                Button {
-                    themeManager.setAppearanceMode(.light, clearActiveTheme: true)
-                } label: {
-                    HStack {
-                        Text(verbatim: L("Light"))
-                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .light {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-
-                Button {
-                    themeManager.setAppearanceMode(.dark, clearActiveTheme: true)
-                } label: {
-                    HStack {
-                        Text(verbatim: L("Dark"))
-                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .dark {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-
-                Divider()
-
-                ForEach(themeMenuThemeItems, id: \.metadata.id) { theme in
-                    Button {
-                        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
-                            themeManager.setAppearanceMode(mode, clearActiveTheme: true)
-                        } else {
-                            themeManager.applyCustomTheme(theme)
-                        }
-                    } label: {
-                        HStack {
-                            Text(theme.metadata.name)
-                            if isThemeMenuItemActive(theme) {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-
-                Button {
-                    openManagementTab(.themes)
-                } label: {
-                    Text(verbatim: L("Manage Themes…"))
-                }
-            } label: {
-                Text(verbatim: L("Theme"))
-            }
-
-            Divider()
-
-            Button {
-                themeManager.zoomFontIn()
-            } label: {
-                Text(verbatim: L("Zoom In"))
-            }
-            // "=" is the unshifted key under "+", matching how ⌘+ zoom is
-            // reached without holding Shift in browsers.
-            .keyboardShortcut("=", modifiers: .command)
-            .disabled(!themeManager.canZoomFontIn)
-
-            Button {
-                themeManager.zoomFontOut()
-            } label: {
-                Text(verbatim: L("Zoom Out"))
-            }
-            .keyboardShortcut("-", modifiers: .command)
-            .disabled(!themeManager.canZoomFontOut)
-
-            Button {
-                themeManager.resetFontScale()
-            } label: {
-                Text(verbatim: L("Actual Size"))
-            }
-            .keyboardShortcut("0", modifiers: .command)
-            .disabled(themeManager.isDefaultFontScale)
+            ThemeMenuItems()
         }
-    }
-
-    private func isThemeMenuItemActive(_ theme: CustomTheme) -> Bool {
-        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
-            return themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode
-        }
-        return themeManager.activeCustomTheme?.metadata.id == theme.metadata.id
-    }
-
-    private var themeMenuThemeItems: [CustomTheme] {
-        themeManager.installedThemes.filter { ThemeManager.appearanceMode(forBuiltInTheme: $0) == nil }
     }
 
     // MARK: Window Menu
@@ -468,27 +364,56 @@ private extension osaurusApp {
     }
 }
 
-// MARK: - VAD Helpers
+// MARK: - VAD Menu Item
 
-private extension osaurusApp {
+/// File-menu Voice Detection toggle.
+///
+/// Owns its own (narrow) state so VAD / speech-model changes only invalidate
+/// this menu item instead of the whole App `Commands` tree. It intentionally
+/// does NOT observe `VADService` (whose `audioLevel` publishes per audio
+/// buffer while listening) or the full `SpeechModelManager` (whose
+/// `downloadStates` publish on every download-progress tick).
+private struct VADToggleMenuItem: View {
+    @State private var isVADEnabled: Bool = VADConfigurationStore.load().vadModeEnabled
+    @State private var hasSelectedModel: Bool = SpeechModelManager.shared.selectedModel != nil
 
-    var canToggleVAD: Bool {
-        speechModelManager.selectedModel != nil
+    var body: some View {
+        Button(label) {
+            toggleVAD()
+        }
+        .keyboardShortcut("v", modifiers: [.command, .shift])
+        .disabled(!hasSelectedModel)
+        .onReceive(
+            NotificationCenter.default.publisher(for: .voiceConfigurationChanged)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            let enabled = VADConfigurationStore.load().vadModeEnabled
+            if enabled != isVADEnabled { isVADEnabled = enabled }
+        }
+        .onReceive(
+            SpeechModelManager.shared.$selectedModelId
+                .removeDuplicates()
+                .receive(on: RunLoop.main)
+        ) { _ in
+            let hasModel = SpeechModelManager.shared.selectedModel != nil
+            if hasModel != hasSelectedModel { hasSelectedModel = hasModel }
+        }
     }
 
-    var vadToggleLabel: String {
-        let config = VADConfigurationStore.load()
-        guard canToggleVAD else { return L("Toggle Voice Detection") }
-        return config.vadModeEnabled
+    private var label: String {
+        guard hasSelectedModel else { return L("Toggle Voice Detection") }
+        return isVADEnabled
             ? L("Disable Voice Detection") : L("Enable Voice Detection")
     }
 
-    func toggleVAD() {
+    private func toggleVAD() {
         Task { @MainActor in
+            let vadService = VADService.shared
             var config = VADConfigurationStore.load()
             let newState = !config.vadModeEnabled
             config.vadModeEnabled = newState
             VADConfigurationStore.save(config)
+            isVADEnabled = newState
             vadService.loadConfiguration()
 
             do {
@@ -501,10 +426,114 @@ private extension osaurusApp {
                 if newState {
                     config.vadModeEnabled = false
                     VADConfigurationStore.save(config)
+                    isVADEnabled = false
                     vadService.loadConfiguration()
                 }
             }
         }
+    }
+}
+
+// MARK: - Theme Menu Items
+
+/// View-menu Theme submenu + font zoom items.
+///
+/// Observes `ThemeManager` locally so theme changes only invalidate these
+/// items rather than re-evaluating every App-level `Commands` builder.
+private struct ThemeMenuItems: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    var body: some View {
+        Menu {
+            appearanceButton(L("System"), mode: .system)
+            appearanceButton(L("Light"), mode: .light)
+            appearanceButton(L("Dark"), mode: .dark)
+
+            Divider()
+
+            ForEach(themeMenuThemeItems, id: \.metadata.id) { theme in
+                Button {
+                    if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
+                        themeManager.setAppearanceMode(mode, clearActiveTheme: true)
+                    } else {
+                        themeManager.applyCustomTheme(theme)
+                    }
+                } label: {
+                    HStack {
+                        Text(theme.metadata.name)
+                        if isThemeMenuItemActive(theme) {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                Task { @MainActor in
+                    AppDelegate.shared?.showManagementWindow(initialTab: .themes)
+                }
+            } label: {
+                Text(verbatim: L("Manage Themes…"))
+            }
+        } label: {
+            Text(verbatim: L("Theme"))
+        }
+
+        Divider()
+
+        Button {
+            themeManager.zoomFontIn()
+        } label: {
+            Text(verbatim: L("Zoom In"))
+        }
+        // "=" is the unshifted key under "+", matching how ⌘+ zoom is
+        // reached without holding Shift in browsers.
+        .keyboardShortcut("=", modifiers: .command)
+        .disabled(!themeManager.canZoomFontIn)
+
+        Button {
+            themeManager.zoomFontOut()
+        } label: {
+            Text(verbatim: L("Zoom Out"))
+        }
+        .keyboardShortcut("-", modifiers: .command)
+        .disabled(!themeManager.canZoomFontOut)
+
+        Button {
+            themeManager.resetFontScale()
+        } label: {
+            Text(verbatim: L("Actual Size"))
+        }
+        .keyboardShortcut("0", modifiers: .command)
+        .disabled(themeManager.isDefaultFontScale)
+    }
+
+    private func appearanceButton(_ title: String, mode: AppearanceMode) -> some View {
+        Button {
+            themeManager.setAppearanceMode(mode, clearActiveTheme: true)
+        } label: {
+            HStack {
+                Text(verbatim: title)
+                if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode {
+                    Spacer()
+                    Image(systemName: "checkmark")
+                }
+            }
+        }
+    }
+
+    private func isThemeMenuItemActive(_ theme: CustomTheme) -> Bool {
+        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
+            return themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode
+        }
+        return themeManager.activeCustomTheme?.metadata.id == theme.metadata.id
+    }
+
+    private var themeMenuThemeItems: [CustomTheme] {
+        themeManager.installedThemes.filter { ThemeManager.appearanceMode(forBuiltInTheme: $0) == nil }
     }
 }
 
