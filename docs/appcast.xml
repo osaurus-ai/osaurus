@@ -35,7 +35,6 @@
 
 ## 🐛 Bug Fixes
 
-- fix file\_edit dropping an explicit empty new\_string (#3048) by @RaajeevChandran
 - fix longer code fences and render labeled prose fences as code (#3034) by @RaajeevChandran
 - Pin Flash native MTP verification corrections (#3022) by @jjang-ai
 - Pin PromptSection token estimation main thread hang fix (#3011) by @[sentry[bot]](https://github.com/apps/sentry)
