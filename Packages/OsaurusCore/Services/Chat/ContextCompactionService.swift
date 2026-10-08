@@ -41,6 +41,9 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
     case nothingToCompact
     /// The model returned an empty/blank summary.
     case emptySummary
+    /// The summary hit the output limit before it finished; a partial summary
+    /// is never applied over the conversation (#3036).
+    case truncatedSummary(model: String)
     case timedOut
     /// The summarize request itself failed. Carries the model that ran so
     /// the dialog names it — the configured compaction model routes every
@@ -57,6 +60,8 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
             return "Nothing to compact yet — the recent conversation is already as small as it can get"
         case .emptySummary:
             return "The compaction model returned an empty summary"
+        case .truncatedSummary(let model):
+            return "'\(model)' hit its output limit before finishing the summary, so nothing was replaced. If it is a reasoning model served remotely, its server may be ignoring the request to turn reasoning off"
         case .timedOut:
             return "Context compaction timed out"
         case .requestFailed(let model, let message):
@@ -136,8 +141,8 @@ final class ContextCompactionService {
     /// span at all.
     static let minimumCoveredTokens = 4_000
 
-    private static let summaryMaxTokens = 1024
-    private static let summaryTemperature: Double = 0.2
+    private nonisolated static let summaryMaxTokens = 1024
+    private nonisolated static let summaryTemperature: Double = 0.2
     private static let timeoutSeconds: TimeInterval = 180
 
     private init() {}
@@ -276,6 +281,24 @@ final class ContextCompactionService {
         return true
     }
 
+    /// The summarize request's generation parameters. Reasoning is turned
+    /// off (a summary is a direct answer; a thinking model otherwise spends
+    /// the budget reasoning and returns no content, #3036) and the output must
+    /// be complete: a cut-off summary is never applied over the conversation.
+    nonisolated static func summaryParameters(sessionId: UUID?, requestSource: RequestSource) -> GenerationParameters {
+        GenerationParameters(
+            temperature: Float(Self.summaryTemperature),
+            maxTokens: Self.summaryMaxTokens,
+            modelOptions: ["disableThinking": .bool(true)],
+            sessionId: sessionId?.uuidString,
+            requestSource: requestSource,
+            // The scoped handoff, not a general interactive eviction, owns
+            // any parent swap. Unrelated residents remain protected.
+            loadIntent: .background,
+            requireCompleteOutput: true
+        )
+    }
+
     // MARK: Run
 
     struct RunResult {
@@ -340,15 +363,8 @@ final class ContextCompactionService {
             ChatMessage(role: "system", content: Self.systemPrompt),
             ChatMessage(role: "user", content: Self.userPrompt(transcript: transcript)),
         ]
-        let params = GenerationParameters(
-            temperature: Float(Self.summaryTemperature),
-            maxTokens: Self.summaryMaxTokens,
-            sessionId: sessionId?.uuidString,
-            requestSource: invocation.source?.inferenceSource ?? .chatUI,
-            // The scoped handoff, not a general interactive eviction, owns
-            // any parent swap. Unrelated residents remain protected.
-            loadIntent: .background
-        )
+        let params = Self.summaryParameters(
+            sessionId: sessionId, requestSource: invocation.source?.inferenceSource ?? .chatUI)
 
         onPhase(.summarizing)
         let startedAt = Date()
@@ -400,6 +416,11 @@ final class ContextCompactionService {
             throw ContextCompactionError.timedOut
         } catch is CancellationError {
             throw CancellationError()
+        } catch RemoteProviderServiceError.outputTruncated {
+            Self.logToInsights(
+                model: modelId, messages: messages, response: nil,
+                startedAt: startedAt, error: "truncated at output limit", context: logContext)
+            throw ContextCompactionError.truncatedSummary(model: modelId)
         } catch {
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
