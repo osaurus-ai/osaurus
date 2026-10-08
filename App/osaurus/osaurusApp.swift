@@ -406,10 +406,10 @@ private extension osaurusApp {
             Button {
                 openManagementTab(.schedules)
             } label: {
-                Text(verbatim: L("Manage Schedules…"))
+                Text(verbatim: LCached("Manage Schedules…"))
             }
         } label: {
-            Text(verbatim: L("Schedules"))
+            Text(verbatim: LCached("Schedules"))
         }
     }
 
@@ -430,16 +430,16 @@ private extension osaurusApp {
             Button {
                 openManagementTab(.watchers)
             } label: {
-                Text(verbatim: L("New Watcher…"))
+                Text(verbatim: LCached("New Watcher…"))
             }
 
             Button {
                 openManagementTab(.watchers)
             } label: {
-                Text(verbatim: L("Manage Watchers…"))
+                Text(verbatim: LCached("Manage Watchers…"))
             }
         } label: {
-            Text(verbatim: L("Watchers"))
+            Text(verbatim: LCached("Watchers"))
         }
     }
 
