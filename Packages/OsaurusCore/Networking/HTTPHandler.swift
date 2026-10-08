@@ -439,7 +439,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // key-less loopback-trusted ones without threading a flag through
         // every request struct.
         let callerContext = HTTPCallerContext(
-            hasVerifiedAccessKey: stateRef.value.callerHasVerifiedAccessKey
+            hasVerifiedAccessKey: stateRef.value.callerHasVerifiedAccessKey,
+            isSecureChannel: stateRef.value.isSecureChannel
         )
         // Activity-log double-write guard: these handlers write their own
         // Insights row with the HTTP request/response, so the in-process
@@ -18831,7 +18832,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         // What travelled sealed end to end stays out of the log: a Secure
         // Channel call keeps only the size of its bodies.
-        let sealed = _isSecureChannel.value
+        // Off the event loop (a request's task), its own snapshot: the
+        // connection's flag may belong to a later request by now.
+        let sealed = HTTPCallerContext.current?.isSecureChannel ?? _isSecureChannel.value
         func redacted(_ body: String?) -> String? {
             guard sealed, let body else { return body }
             return "[sealed, \(body.utf8.count) bytes]"
