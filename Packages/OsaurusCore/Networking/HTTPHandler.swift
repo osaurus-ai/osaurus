@@ -8380,12 +8380,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// Intents) stay plaintext; there is deliberately no downgrade path for
     /// remote peers.
     /// Routes a remote owner key may only reach through the Secure Channel,
-    /// whatever the method. OpenAI-style routes (`/chat/completions`,
-    /// `/models`, `/images/*`, …) stay plaintext for third-party SDKs.
+    /// whatever the method: what runs things (tools, dispatched tasks) or
+    /// reads what is private (chats, prompts, memory, credit). The OpenAI-style
+    /// media and model routes (`/chat/completions`, `/models`, `/images/*`,
+    /// `/videos/*`) stay plaintext for third-party SDKs.
     static let ownerChannelRoutes = [
         "/agents", "/models/picker", "/models/favorites", "/models/options", "/privacy", "/config/approvals",
         "/computer-use", "/secrets", "/approvals", "/workspaces", "/workspace-agents", "/projects", "/sessions",
-        "/runs", "/artifacts", "/pair/unpair", "/images/jobs",
+        "/runs", "/artifacts", "/pair/unpair", "/images/jobs", "/tasks", "/mcp/call", "/memory/ingest",
+        "/credits/balance",
     ]
 
     static func isSecureChannelPath(_ path: String) -> Bool {

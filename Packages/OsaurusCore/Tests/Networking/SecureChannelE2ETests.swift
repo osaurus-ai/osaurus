@@ -336,6 +336,9 @@ struct SecureChannelE2ETests {
         #expect(HTTPHandler.isOwnerChannelRoute("/agents/abc/run"))
         #expect(!HTTPHandler.isOwnerChannelRoute("/agentsx"))
         #expect(!HTTPHandler.isOwnerChannelRoute("/models"))
+        #expect(HTTPHandler.isOwnerChannelRoute("/tasks/abc"))
+        #expect(HTTPHandler.isOwnerChannelRoute("/mcp/call"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/mcp/tools"))
         #expect(!HTTPHandler.isOwnerChannelRoute("/chat/completions"))
     }
 
