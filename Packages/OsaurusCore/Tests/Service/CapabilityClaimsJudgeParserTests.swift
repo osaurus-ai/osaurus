@@ -146,3 +146,15 @@ struct CapabilityClaimsJudgeParserTests {
         #expect(verdicts(#"{"verdicts":[]}"#, expected: 0)?.isEmpty == true)
     }
 }
+
+/// #3032: negative conditions judged as written, and self-contradicting verdicts made loud.
+struct CapabilityClaimsJudgePolarityTests {
+    @Test func judgePromptPutsReasonBeforeVerdictAndStatesPolarity() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .deletingLastPathComponent().appendingPathComponent("Services/Context/CapabilityClaimsEvaluator.swift"),
+            encoding: .utf8)
+        #expect(source.contains(#"{"verdicts": [{"reason": "<short>", "pass": true}, ...]}"#))
+        #expect(source.contains("HOLDS \\\n"))
+    }
+}

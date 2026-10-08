@@ -28,6 +28,9 @@ The deterministic matchers run with **no model**, so the suite is CI-safe. An
 optional per-case `rubric` is graded by an LLM judge only when a strong/explicit
 judge resolves (`JUDGE_MODEL` or a `*_API_KEY`); otherwise it's skipped and
 noted, so CI stays free.
+Rubric verdicts are advisory in this floored suite: they appear in the report and judge audit but never
+fail a case, so the 1.0 floor stays judge-independent. `OSAURUS_EVALS_SCREEN_RUBRIC_GATES=1` restores gating
+for local distiller tuning with a trusted judge (#3032).
 
 ## Cases
 

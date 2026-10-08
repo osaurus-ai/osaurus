@@ -1,0 +1,18 @@
+{
+  "id": "judge_calibration.negated-list-absent-labels",
+  "domain": "judge_calibration",
+  "label": "Judge • 'Does not list labels A, B, C' passes when none appear",
+  "query": "(calibration) The judge grades a negated list condition whose labels are absent from the reply.",
+  "notes": "#3032 polarity probe, mirrored from screen_context.slack-scrolled-messages: reason 'The reply does not include the sidebar labels' came back with pass=false. Paired with a positive control so a judge that simply fails everything is caught too.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "The Slack channel shows a scrolled conversation: Priya asked whether the release branch is frozen, and Marco replied that QA signs off tomorrow morning.",
+      "conditions": [
+        "Summarizes the visible conversation between Priya and Marco",
+        "Does not list the sidebar navigation labels 'Threads', 'Drafts', or 'New message' among the on-screen content"
+      ],
+      "expectedVerdicts": [true, true]
+    }
+  }
+}

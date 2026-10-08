@@ -650,7 +650,7 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
 
-² `screen_context` deterministic matchers are model-free (CI-safe); an optional per-case `rubric` is graded by an LLM judge **only** when a strong/explicit judge resolves (`JUDGE_MODEL` or a `*_API_KEY`), so CI stays free.
+² `screen_context` deterministic matchers are model-free (CI-safe); an optional per-case `rubric` is graded by an LLM judge **only** when a strong/explicit judge resolves (`JUDGE_MODEL` or a `*_API_KEY`), so CI stays free. Because the suite is floored at 1.0 as a deterministic lane, rubric verdicts are **advisory** (reported, never gating); set `OSAURUS_EVALS_SCREEN_RUBRIC_GATES=1` to make them gate while tuning with a trusted judge (#3032).
 
 ³ `subagent` is mixed: the `scripted` lane (and the deterministic `computer_use` scripted-driver cases) drive the `SubagentSession` host with **no model call** (CI-safe), while the live lanes — `spawn`, `image`, and model-driven `computer_use` — exercise the real kinds on the run model and **skip** when their host (model / delegation / image model) isn't configured.
 

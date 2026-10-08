@@ -767,14 +767,25 @@ public enum CapabilityClaimsEvaluator {
         let numbered = conditions.enumerated()
             .map { "\($0.offset + 1). \($0.element)" }
             .joined(separator: "\n")
+        // Reason BEFORE the verdict, and state the polarity rule: with `pass` first a judge commits to yes/no
+        // before reading its own reasoning, and negatively phrased conditions ("Does not surface X") came back
+        // pass=false with a reason affirming that X is absent (#3032).
         let judgeSystem = """
             You are a strict evaluator. You are given an assistant's final \
             reply and a numbered list of conditions. For each condition, \
-            decide whether the reply satisfies it. Judge ONLY the reply text \
-            against each condition; do not invent requirements.
+            decide whether the reply satisfies the condition AS WRITTEN. Judge \
+            ONLY the reply text against each condition; do not invent requirements.
+
+            Polarity: "pass" is true when the condition holds. A negative \
+            condition such as "Does not mention X" or "Never shows Y" HOLDS \
+            (pass = true) when X or Y is absent from the reply, and fails only \
+            when the reply actually contains X or Y.
+
+            For each condition, first write a short reason, then the verdict \
+            that follows from that reason.
 
             Respond with ONLY a JSON object of this exact shape, no prose:
-            {"verdicts": [{"pass": true, "reason": "<short>"}, ...]}
+            {"verdicts": [{"reason": "<short>", "pass": true}, ...]}
             One verdict per condition, in order.
             """
         let judgeUser = """

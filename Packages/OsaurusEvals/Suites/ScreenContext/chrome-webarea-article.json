@@ -21,7 +21,7 @@
       "rubric": [
         "Indicates the user is reading an article about local-first software",
         "Surfaces the page heading and body text, not just the address bar",
-        "Does not surface nav chrome, the 'true' state token, or the browser version number as on-screen content"
+        "Does not surface the site's navigation links ('Home', 'Archive'), the 'true' state token, or the browser version number as on-screen content (the address-bar line is allowed)"
       ]
     }
   }
