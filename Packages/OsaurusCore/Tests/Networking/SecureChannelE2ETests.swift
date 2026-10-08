@@ -303,13 +303,23 @@ struct SecureChannelE2ETests {
         let id = UUID().uuidString
         let reads = [
             "/sessions", "/sessions/\(id)", "/runs/\(id)/events", "/privacy/reviews", "/secrets/prompts",
-            "/approvals", "/agents", "/models/picker",
+            "/approvals", "/agents/\(id)", "/models/picker",
         ]
         for path in reads {
             let request = plaintextOwnerRequest(server: server, method: "GET", path: path)
             let (_, resp) = try await URLSession.shared.data(for: request)
             #expect((resp as? HTTPURLResponse)?.statusCode == 426, "GET \(path)")
         }
+    }
+
+    /// For one release the plain agent list stays readable, for phones up to
+    /// 1.0(5) that learn their pin from it.
+    @Test func plaintextAgentList_relayOrigin_isNot426ForNow() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let request = plaintextOwnerRequest(server: server, method: "GET", path: "/agents")
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode != 426)
     }
 
     /// OpenAI-style routes stay plaintext for third-party SDKs.

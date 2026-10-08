@@ -768,8 +768,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // An owner key from a remote caller only ever travels inside
                 // the Secure Channel, reads included: chat history, live run
                 // streams, review queues and secret prompts are as private as
-                // the writes `requiresOwnerChannel` already guards.
+                // the writes `requiresOwnerChannel` already guards. Except, for one
+                // release, the plain agent list (`legacyPlaintextRead`).
                 if stateRef.value.authedScopeIsMaster, Self.isOwnerChannelRoute(path),
+                    !Self.legacyPlaintextRead(method: head.method, path: path),
                     sendSecureChannelUpgradeRequiredIfNeeded(
                         head: head,
                         context: context,
@@ -8388,6 +8390,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     static func isSecureChannelPath(_ path: String) -> Bool {
         path == "/secure" || path.hasPrefix("/secure/")
+    }
+
+    /// `GET /agents` stays readable in plaintext for one release: phones up
+    /// to 1.0(5) with nothing pinned fetch it that way to learn the address
+    /// they then open the channel with, and would otherwise be stuck until
+    /// they pair again. It carries no prompts or secrets; current phones
+    /// fetch it inside the channel and never pin from a plaintext copy.
+    /// Goes with v1 pairing (MOBILE_PROTOCOL.md §11.3).
+    static func legacyPlaintextRead(method: HTTPMethod, path: String) -> Bool {
+        method == .GET && path == "/agents"
     }
 
     static func isOwnerChannelRoute(_ path: String) -> Bool {
