@@ -95967,6 +95967,9 @@
         }
       }
     },
+    "%@ of this download is an n-gram table that stays on SSD and is not counted toward running memory." : {
+
+    },
     "Estimated memory while running" : {
 
     },
