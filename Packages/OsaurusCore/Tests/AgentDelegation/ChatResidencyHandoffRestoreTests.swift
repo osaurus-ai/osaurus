@@ -120,6 +120,21 @@ struct ChatResidencyHandoffRestoreTests {
         }
     }
 
+    @Test("deferred image invocation retains outer ownership even if the helper is idle-unloaded")
+    func deferredInvocationKeepsOuterOwner() async {
+        let outer = ModelResidencyOwnershipToken()
+        let invocation = ModelResidencyOwnershipContext.$childOwnershipToken.withValue(outer) {
+            ModelJobInvocation.current()
+        }
+        let observed = await Task.detached {
+            await invocation.withContext {
+                ModelResidencyOwnershipContext.childOwnershipToken
+            }
+        }.value
+        #expect(observed == outer)
+        #expect(ModelResidencyOwnershipContext.childOwnershipToken == nil)
+    }
+
     @Test("empty lease restore is a no-op and touches nothing")
     func emptyLeaseIsNoOp() async throws {
         let restored = try await ChatResidencyHandoff.restore(.empty)

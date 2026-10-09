@@ -336,6 +336,7 @@ enum ChatResidencyHandoff {
                 restoreModelNames: [installed.name],
                 unloadedParentIdentity: nil,
                 parentSource: currentInferenceSource,
+                parentOwnershipToken: ModelResidencyOwnershipContext.childOwnershipToken,
                 childOwnershipToken: ModelResidencyOwnershipToken()
             )
         }
