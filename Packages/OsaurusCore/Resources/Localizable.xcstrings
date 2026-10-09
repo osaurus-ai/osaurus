@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Fixed schedule" : {
+      "comment" : "Image composer label for a bundle-owned sampling schedule with no adjustable step count."
+    },
     "Cannot attach image" : {
       "comment" : "Title of the toast shown when the selected model cannot accept an image attachment."
     },

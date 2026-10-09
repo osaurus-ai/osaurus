@@ -5575,7 +5575,22 @@ extension FloatingInputCard {
         .pointingHandCursor()
     }
 
+    @ViewBuilder
     private var stepsChip: some View {
+        if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1-turbo" {
+            Text("Fixed schedule", bundle: .module)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(chipBackground)
+                .localizedHelp("Turbo uses the fixed sampling schedule from its bundle.")
+        } else {
+            adjustableStepsChip
+        }
+    }
+
+    private var adjustableStepsChip: some View {
         HStack(spacing: 6) {
             stepperButton("minus") {
                 imageComposerSettings.steps = max(1, imageComposerSettings.steps - 1)
