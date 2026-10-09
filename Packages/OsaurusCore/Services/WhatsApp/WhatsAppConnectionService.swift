@@ -207,6 +207,13 @@ final class WhatsAppConnectionService: @unchecked Sendable {
     private let watchStatsLock = NSLock()
     private var watchDroppedNonAllowlistedRows = 0
 
+    /// In-memory cache for the on-disk WhatsApp configuration. Populated on
+    /// first access and invalidated whenever saveConfiguration(_:) succeeds,
+    /// so that repeated synchronous reads (e.g. during message send on the
+    /// main actor) never hit the file system after the first load.
+    private let configurationLock = NSLock()
+    private var cachedConfiguration: WhatsAppConnectionConfiguration?
+
     init(
         transport: any WhatsAppRPCTransport,
         messageStore: AgentChannelMessageStore? = nil,
@@ -228,12 +235,23 @@ final class WhatsAppConnectionService: @unchecked Sendable {
     // MARK: - Configuration
 
     func configuration() -> WhatsAppConnectionConfiguration {
-        WhatsAppConnectionConfigurationStore.load()
+        configurationLock.lock()
+        if let cached = cachedConfiguration {
+            configurationLock.unlock()
+            return cached
+        }
+        let loaded = WhatsAppConnectionConfigurationStore.load()
+        cachedConfiguration = loaded
+        configurationLock.unlock()
+        return loaded
     }
 
     func saveConfiguration(_ configuration: WhatsAppConnectionConfiguration) throws {
         do {
             try WhatsAppConnectionConfigurationStore.save(configuration)
+            configurationLock.lock()
+            cachedConfiguration = nil
+            configurationLock.unlock()
         } catch {
             throw WhatsAppConnectionServiceError.configurationSaveFailed(error.localizedDescription)
         }
