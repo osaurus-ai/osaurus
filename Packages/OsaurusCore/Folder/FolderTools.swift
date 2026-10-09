@@ -4948,6 +4948,18 @@ struct FileSearchTool: OsaurusTool {
 // MARK: Shell Run Tool
 
 struct ShellRunTool: OsaurusTool, PermissionedTool {
+    /// The app's environment with the login shell's PATH, so version-manager toolchains (mise, nvm, asdf, …)
+    /// resolve the way they do in the user's terminal (#3050). Reads the cached probe without waiting; before
+    /// it lands `childPath` still adds the shim fallbacks. Relative entries are dropped so a file the agent
+    /// writes into the working folder cannot shadow a real command.
+    static func childEnvironment(inherited: [String: String], loginShellEntries: [String]?) -> [String: String] {
+        var env = inherited
+        env["PATH"] = ExecutableLocator.childPath(inherited: inherited, loginShellEntries: loginShellEntries)
+            .split(separator: ":").filter { $0.hasPrefix("/") }
+            .joined(separator: ":")
+        return env
+    }
+
     let name = "shell_run"
     let description =
         "Run a shell command in the working directory. **Reserve this for builds, tests, "
@@ -5086,6 +5098,10 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         process.executableURL = invocation.executableURL
         process.arguments = invocation.arguments
         process.currentDirectoryURL = rootPath
+        process.environment = Self.childEnvironment(
+            inherited: ProcessInfo.processInfo.environment,
+            loginShellEntries: LoginShellPath.cachedEntries
+        )
 
         // Reject invalid strings before allocating streaming pipes or registering
         // a live execution. The shared launch helper also validates other callers.
