@@ -175,7 +175,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
     static func paramsForResolvedLocalModel(_ legacy: ImageJobParams, argumentsJSON: String,
         canonical: String?, defaultGuidance: Float?) throws -> ImageJobParams
     {
-        guard canonical == "qwen-image-2.1" else { return legacy }
+        guard ImageModelRequestPolicy.isQwen21Family(canonical) else { return legacy }
         let raw: Qwen21Arguments
         do { raw = try JSONDecoder().decode(Qwen21Arguments.self, from: Data(argumentsJSON.utf8)) }
         catch { throw ImageGenerationError.invalidRequest("invalid explicit image tool parameter: \(error)") }

@@ -71,4 +71,28 @@ struct QwenImage21BridgeTests {
         #expect(ImageModelRequestPolicy.licenseLabel(canonical: "qwen-image-2.1") != nil)
         #expect(ImageModelRequestPolicy.licenseLabel(canonical: "ideogram") != nil)
     }
+
+    // Qwen-Image-2.1-Turbo: same engine class and dual bundle, own canonical id (8-step grid).
+    @Test func turboSharesTheQwen21ContractAndDualCapability() throws {
+        #expect(ImageModelRequestPolicy.isQwen21Family("qwen-image-2.1-turbo"))
+        #expect(ImageModelRequestPolicy.isQwen21Family("qwen-image-2.1"))
+        #expect(!ImageModelRequestPolicy.isQwen21Family("qwen-image") && !ImageModelRequestPolicy.isQwen21Family(nil))
+        let caps = ImageModelRequestPolicy.capabilities(kind: "imageGen", canonical: "qwen-image-2.1-turbo")
+        #expect(caps.textToImage && caps.imageEdit && caps.multipleSourceImages)
+        #expect(!caps.mask && !caps.editNegativePrompt && !caps.editStrength && caps.dimensionMultiple == 32)
+        let policy = ImageModelRequestPolicy(canonical: "qwen-image-2.1-turbo")
+        #expect(policy.isQwen21 && policy.editStrength(nil) == 1)
+        try policy.validate(width: nil, height: nil, isEdit: true, guidance: 1, negativePrompt: nil, sourceCount: 2)
+        #expect(throws: ImageGenerationError.self) {
+            try policy.validate(width: 1008, height: 1024, isEdit: false, guidance: 1, negativePrompt: nil)
+        }
+    }
+    @Test func turboCatalogIdentityAndLicense() {
+        for alias in ["Qwen-Image-2.1-Turbo-mflux-8bit", "OsaurusAI/Qwen-Image-2.1-Turbo-mflux-4bit", "qwen_image_21_turbo"] {
+            #expect(ImageModelRequestPolicy.catalogCanonical(alias) == "qwen-image-2.1-turbo")
+        }
+        #expect(ImageModelRequestPolicy.catalogCanonical("Qwen-Image-2.1-mflux-6bit") == "qwen-image-2.1")
+        #expect(ImageModelRequestPolicy.catalogCanonical("Z-Image-Turbo-mflux-4bit") == nil)
+        #expect(ImageModelRequestPolicy.licenseLabel(canonical: "qwen-image-2.1-turbo") != nil)
+    }
 }

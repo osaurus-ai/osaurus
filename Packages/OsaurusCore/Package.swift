@@ -325,9 +325,11 @@ let package = Package(
         // quantization_config, and SDK-gated JACCL fixes merged after #518.
         // GLM native history retains reasoning, tool metadata and argument order;
         // text-only cache checkpoints use exact active-template prefix proofs.
+        // vmlx-swift#569 adds Qwen-Image-2.1-Turbo: bundle-pinned 8-step sampling
+        // grid (model_index.json sample_sigmas), its registry entry and routing.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a428d30f64cf38ac9ee19a65c5c7cace8752b053"
+            revision: "8ad7e4b57e4f9163c2d590983bfa1999dda51472"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

@@ -35,7 +35,7 @@ enum ImageHTTPParameterBuilder {
 
     /// The same limits from a picker item's fields, for `/models/picker`.
     static func limits(canonicalName: String?, capabilities: ImageModelCapabilities) -> ImageLimitsDTO {
-        let q21 = canonicalName == "qwen-image-2.1"
+        let q21 = ImageModelRequestPolicy.isQwen21Family(canonicalName)
         return ImageLimitsDTO(min_steps: q21 ? 2 : 1, max_steps: 50,
             size_multiple: capabilities.dimensionMultiple,
             max_pixels: q21 ? 2048 * 2048 : 1024 * 1024,
@@ -47,7 +47,7 @@ enum ImageHTTPParameterBuilder {
     static func generation(_ request: ImageGenerationRequestDTO, info: ImageModelInfo) throws
         -> ImageGenerationParameters
     {
-        let q21 = info.canonicalName == "qwen-image-2.1"
+        let q21 = ImageModelRequestPolicy.isQwen21Family(info.canonicalName)
         let (width, height) = try dimensions(size: request.size, width: request.width,
             height: request.height, isQwen21: q21)
         if q21 { try ImageModelRequestPolicy.validateQwen21Steps(request.steps) }
@@ -63,7 +63,7 @@ enum ImageHTTPParameterBuilder {
     static func edit(_ request: ImageEditRequestDTO, info: ImageModelInfo, decodedSources: [Data?]) throws
         -> ImageEditParameters
     {
-        let q21 = info.canonicalName == "qwen-image-2.1"
+        let q21 = ImageModelRequestPolicy.isQwen21Family(info.canonicalName)
         let rawCount = (request.images ?? [request.image].compactMap { $0 }).count
         let sources: [Data]
         if q21 {

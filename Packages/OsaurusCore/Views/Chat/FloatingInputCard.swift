@@ -5462,7 +5462,7 @@ extension FloatingInputCard {
     }
 
     private var selectedSizeLabel: String {
-        if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1",
+        if ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName),
             !imageComposerSettings.hasExplicitImageSize
         {
             return pendingAttachments.hasImages ? L("Use source aspect ratio") : "1024px"
@@ -5506,7 +5506,7 @@ extension FloatingInputCard {
                 .padding(.top, 12)
                 .padding(.bottom, 4)
 
-            if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1" {
+            if ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName) {
                 Button {
                     imageComposerSettings.imageSizeWasExplicitlySet = false
                     showImageSizePicker = false
@@ -5516,7 +5516,7 @@ extension FloatingInputCard {
             }
             ForEach(imageSizeOptions) { option in
                 let isSelected =
-                    (selectedImagePickerItem?.imageCanonicalName != "qwen-image-2.1"
+                    (!ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName)
                         || imageComposerSettings.hasExplicitImageSize)
                     && imageComposerSettings.width == option.width
                     && imageComposerSettings.height == option.height
