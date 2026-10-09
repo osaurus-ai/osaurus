@@ -4964,9 +4964,15 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     /// have no static shim directory. A failed probe still gets the inherited PATH plus fallbacks.
     static func resolvedChildEnvironment(
         inherited: [String: String],
-        loginShellEntries: () async -> [String]? = { await LoginShellPath.shared.entries() }
+        loginShellEntries: (() async -> [String]?)? = nil
     ) async -> [String: String] {
-        childEnvironment(inherited: inherited, loginShellEntries: await loginShellEntries())
+        let entries: [String]?
+        if let loginShellEntries {
+            entries = await loginShellEntries()
+        } else {
+            entries = await LoginShellPath.shared.entries()
+        }
+        return childEnvironment(inherited: inherited, loginShellEntries: entries)
     }
 
     let name = "shell_run"
