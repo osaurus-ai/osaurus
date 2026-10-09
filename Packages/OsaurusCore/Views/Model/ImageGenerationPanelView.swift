@@ -378,6 +378,7 @@ struct ImageGenerationPanelView: View {
             HStack {
                 Text(localized: "Steps").font(.system(size: 11))
                 TextField(String(modelInfo.defaultSteps ?? 20), text: $stepsText).frame(width: 70)
+                    .disabled(modelInfo.canonicalName == "qwen-image-2.1-turbo")
                 Text(localized: "Guidance").font(.system(size: 11))
                 TextField(String(modelInfo.defaultGuidance ?? 3.5), text: $guidanceText).frame(width: 70)
             }
@@ -386,7 +387,10 @@ struct ImageGenerationPanelView: View {
                     Text(localized: "Use source aspect ratio")
                 }.font(.system(size: 11))
             }
-            if requestPolicy.isQwen21 {
+            if modelInfo.canonicalName == "qwen-image-2.1-turbo" {
+                Text(localized: "Turbo uses the fixed sampling schedule from its bundle.")
+                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+            } else if requestPolicy.isQwen21 {
                 Text(localized: "Qwen-Image-2.1 uses at least 2 steps.")
                     .font(.system(size: 11)).foregroundColor(theme.secondaryText)
             }

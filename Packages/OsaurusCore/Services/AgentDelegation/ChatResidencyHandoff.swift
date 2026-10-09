@@ -33,6 +33,9 @@ struct ChatResidencyLease: Sendable, Equatable {
     /// Detached cleanup must not turn a schedule/API/plugin parent into a
     /// legacy chat-owned preload before its next generation resumes.
     var parentSource: RequestSource?
+    /// The parent may itself belong to an outer delegation. Restore that owner,
+    /// never the inner image job's token, after the temporary unload.
+    var parentOwnershipToken: ModelResidencyOwnershipToken?
     let childOwnershipToken: ModelResidencyOwnershipToken
 
     init(
@@ -40,13 +43,26 @@ struct ChatResidencyLease: Sendable, Equatable {
         restoreModelNames: [String]? = nil,
         unloadedParentIdentity: ModelResidencyIdentity? = nil,
         parentSource: RequestSource? = nil,
+        parentOwnershipToken: ModelResidencyOwnershipToken? = nil,
         childOwnershipToken: ModelResidencyOwnershipToken = ModelResidencyOwnershipToken()
     ) {
         self.unloadedModelNames = unloadedModelNames
         self.restoreModelNames = restoreModelNames ?? unloadedModelNames
         self.unloadedParentIdentity = unloadedParentIdentity
         self.parentSource = parentSource
+        self.parentOwnershipToken = parentOwnershipToken
         self.childOwnershipToken = childOwnershipToken
+    }
+
+    /// Detached cleanup must restore the saved ownership, not inherit the
+    /// current task's owner or erase the surrounding delegation's claim.
+    func withParentOwnership<Value: Sendable>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> Value
+    ) async rethrows -> Value {
+        try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(parentOwnershipToken) {
+            try await body()
+        }
     }
 
     static var empty: ChatResidencyLease {
@@ -333,13 +349,14 @@ enum ChatResidencyHandoff {
             identity,
             leaseDrainTimeoutSeconds: Double(max(15, min(maxElapsedSeconds, 300)))
         )
-        guard result == .unloaded else {
+        guard result.result == .unloaded else {
             throw HandoffError.parentNotReclaimable(requestedParent)
         }
         return ChatResidencyLease(
             unloadedModelNames: [identity.modelName],
             unloadedParentIdentity: identity,
             parentSource: currentInferenceSource,
+            parentOwnershipToken: result.ownershipToken,
             childOwnershipToken: token
         )
     }
@@ -420,7 +437,7 @@ enum ChatResidencyHandoff {
         var failures: [String] = []
         for name in lease.restoreModelNames {
             do {
-                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken, source: lease.parentSource)
+                try await reloadAndVerify(name, lease: lease)
                 restored.append(name)
                 continue
             } catch let error as ModelRuntime.HandoffRestoreBlockedError {
@@ -439,7 +456,7 @@ enum ChatResidencyHandoff {
             // resident model and only a log to show for it.
             onPhase("restoring_chat_models_retry", name)
             do {
-                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken, source: lease.parentSource)
+                try await reloadAndVerify(name, lease: lease)
                 restored.append(name)
             } catch let error as ModelRuntime.HandoffRestoreBlockedError {
                 throw HandoffError.restoreBlocked(
@@ -465,10 +482,9 @@ enum ChatResidencyHandoff {
     /// after the load. Never throws: callers branch on the Bool and retry.
     private static func reloadAndVerify(
         _ name: String,
-        ownershipToken: ModelResidencyOwnershipToken,
-        source: RequestSource?
+        lease: ChatResidencyLease
     ) async throws {
-        try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(nil) {
+        try await lease.withParentOwnership {
             // This decision must be made atomically inside ModelRuntime.
             // `hasLoadInFlight() + preload()` is explicitly diagnostics-only:
             // the observation is stale after the actor hop. The restore intent
@@ -477,8 +493,8 @@ enum ChatResidencyHandoff {
             try await ModelRuntime.shared.preload(
                 name: name,
                 intent: .handoffRestore,
-                restoreOwnershipToken: ownershipToken,
-                restoreSource: source
+                restoreOwnershipToken: lease.childOwnershipToken,
+                restoreSource: lease.parentSource
             )
         }
         let resident = await ModelRuntime.shared.cachedModelSummaries().map(\.name)

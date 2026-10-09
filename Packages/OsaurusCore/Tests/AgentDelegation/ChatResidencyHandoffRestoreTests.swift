@@ -72,6 +72,54 @@ struct ChatResidencyHandoffRestoreTests {
     private static let unresolvable =
         "__osaurus_nonexistent_restore_test_model_4f9a__"
 
+    @Test("nested image restore keeps the outer delegate owner across detached cleanup")
+    func nestedRestorePreservesOuterOwner() async throws {
+        let outer = ModelResidencyOwnershipToken()
+        let inner = ModelResidencyOwnershipToken()
+        let lease = ChatResidencyLease(
+            unloadedModelNames: ["helper"],
+            parentOwnershipToken: outer,
+            childOwnershipToken: inner
+        )
+        let restoredOwner = await Task.detached {
+            await lease.withParentOwnership {
+                ModelResidencyOwnershipContext.childOwnershipToken
+            }
+        }.value
+        #expect(restoredOwner == outer)
+        #expect(restoredOwner != inner)
+        #expect(ModelResidencyOwnershipContext.childOwnershipToken == nil)
+    }
+
+    @Test("top-level restore never claims the parent for the child")
+    func topLevelRestoreClearsChildOwner() async {
+        let inner = ModelResidencyOwnershipToken()
+        let lease = ChatResidencyLease(unloadedModelNames: ["parent"], childOwnershipToken: inner)
+        await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(inner) {
+            await lease.withParentOwnership {
+                #expect(ModelResidencyOwnershipContext.childOwnershipToken == nil)
+            }
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == inner)
+        }
+    }
+
+    @Test("throwing nested restore unwinds the ownership context")
+    func failedNestedRestoreUnwindsOwner() async {
+        struct ExpectedFailure: Error {}
+        let outer = ModelResidencyOwnershipToken()
+        let inner = ModelResidencyOwnershipToken()
+        let lease = ChatResidencyLease(unloadedModelNames: ["helper"], parentOwnershipToken: outer)
+        await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(inner) {
+            do {
+                try await lease.withParentOwnership {
+                    #expect(ModelResidencyOwnershipContext.childOwnershipToken == outer)
+                    throw ExpectedFailure()
+                }
+            } catch {}
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == inner)
+        }
+    }
+
     @Test("empty lease restore is a no-op and touches nothing")
     func emptyLeaseIsNoOp() async throws {
         let restored = try await ChatResidencyHandoff.restore(.empty)

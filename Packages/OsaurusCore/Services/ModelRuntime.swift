@@ -1154,20 +1154,23 @@ public actor ModelRuntime {
     func unloadExact(
         _ identity: ModelResidencyIdentity,
         leaseDrainTimeoutSeconds: Double? = nil
-    ) async -> ExactUnloadResult {
+    ) async -> (result: ExactUnloadResult, ownershipToken: ModelResidencyOwnershipToken?) {
         guard let key = residentKey(matching: identity.modelName) else {
-            return .notResident
+            return (.notResident, nil)
         }
         guard residentMetadata[key]?.identity == identity else {
-            return .identityChanged
+            return (.identityChanged, nil)
         }
+        // A delegate can itself yield to an image model. Preserve the owner of
+        // this exact residency so restoring it remains part of the outer lease.
+        let owner = residentMetadata[key]?.childOwnershipToken
         let unloaded = await unloadClaimed(
             name: key,
             leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
             expectedIdentity: identity,
-            expectedOwnershipToken: nil
+            expectedOwnershipToken: owner
         )
-        return unloaded ? .unloaded : .drainTimedOut
+        return (unloaded ? .unloaded : .drainTimedOut, unloaded ? owner : nil)
     }
 
     /// Unload a child model only when the currently published residency still
@@ -1245,12 +1248,12 @@ public actor ModelRuntime {
             intent: intent,
             restoreOwnershipToken: restoreOwnershipToken
         )
-        // A restore normally publishes an unowned cold preload. Retain the
+        // A restore preserves its prior owner (including an outer delegation). Retain the
         // exact invoking surface from its lease, but never steal a resident
         // that another request has already used while this load suspended.
         if intent == .handoffRestore, let restoreSource,
             modelCache[found.name] === loadedHolder,
-            residentMetadata[found.name]?.childOwnershipToken == nil,
+            residentMetadata[found.name]?.childOwnershipToken == ModelResidencyOwnershipContext.childOwnershipToken,
             lastUseSource[found.name] == nil
         {
             lastUseSource[found.name] = restoreSource

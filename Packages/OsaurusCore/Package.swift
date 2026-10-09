@@ -329,7 +329,7 @@ let package = Package(
         // grid (model_index.json sample_sigmas), its registry entry and routing.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "8ad7e4b57e4f9163c2d590983bfa1999dda51472"
+            revision: "5ba9090134b2712fcf5f17cf53d71f6f0a678571"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

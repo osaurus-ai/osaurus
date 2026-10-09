@@ -565,6 +565,16 @@
         }
       }
     },
+    "Turbo uses the fixed sampling schedule from its bundle." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turbo uses the fixed sampling schedule from its bundle."
+          }
+        }
+      }
+    },
     "Qwen-Image-2.1 uses at least 2 steps." : {
       "localizations" : {
         "en" : {
