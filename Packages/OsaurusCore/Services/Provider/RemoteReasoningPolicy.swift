@@ -274,6 +274,16 @@ struct RemoteReasoningPolicy {
         thinking: ThinkingConfig?
     ) -> ToolChoiceOption? {
         guard let choice else { return nil }
+        // Newer Claude generations reject forced tool use outright, on every
+        // host that serves them (#3051).
+        if Self.rejectsForcedToolChoice(model: model) {
+            switch choice {
+            case .required, .function:
+                return .auto
+            case .auto, .none:
+                return choice
+            }
+        }
         switch providerType {
         case .openaiLegacy, .azureOpenAI:
             break
@@ -292,6 +302,19 @@ struct RemoteReasoningPolicy {
         case .auto, .none:
             return choice
         }
+    }
+
+    /// Claude models that return HTTP 400 "tool_choice: type \"tool\" and
+    /// \"any\" are not supported for this model." Matched on the bare model id
+    /// so OpenRouter (`anthropic/claude-sonnet-5.5`) and native
+    /// (`claude-sonnet-5-5`) ids both hit. OpenRouter still advertises
+    /// `tool_choice` for these models, so the limit cannot be discovered.
+    static func rejectsForcedToolChoice(model: String) -> Bool {
+        let bare =
+            (model.lowercased().split(separator: "/").last.map(String.init) ?? model.lowercased())
+            .replacingOccurrences(of: ".", with: "-")
+        let prefixes = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-mythos-5"]
+        return prefixes.contains(where: { bare.hasPrefix($0) })
     }
 
     /// Translate the local DSV4 `reasoningEffort` value into the wire fields.

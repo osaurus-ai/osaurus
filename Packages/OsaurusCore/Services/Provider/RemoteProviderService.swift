@@ -3311,7 +3311,7 @@ public actor RemoteProviderService: ToolCapableService {
         if let toolChoice, wireToolChoice != toolChoice {
             debugLog(
                 "[RemoteProviderService] tool_choice \(toolChoice) downgraded to "
-                    + "\(String(describing: wireToolChoice)) for thinking-mode provider "
+                    + "\(String(describing: wireToolChoice)) for provider "
                     + "host=\(provider.host) model=\(model)"
             )
         }
@@ -7158,12 +7158,20 @@ extension RemoteProviderService {
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             // OpenAI/xAI format: {"error": {"message": "...", "type": "...", "code": "..."}}
             if let error = json["error"] as? [String: Any] {
-                if let message = error["message"] as? String {
+                if var message = error["message"] as? String {
+                    // OpenRouter wraps the upstream reason in `metadata.raw`
+                    // behind a generic "Provider returned error" (#3051).
+                    if let upstream = openRouterUpstreamMessage(error) {
+                        message = "\(message): \(upstream)"
+                    }
                     if let friendly = friendlyUpstreamRejection(message) {
                         return friendly
                     }
                     // Include error code if available for more context
                     if let code = error["code"] as? String {
+                        return "\(message) (code: \(code))"
+                    }
+                    if let code = error["code"] as? Int {
                         return "\(message) (code: \(code))"
                     }
                     return message
@@ -7187,6 +7195,25 @@ extension RemoteProviderService {
         }
 
         return "HTTP \(statusCode): Unknown error"
+    }
+
+    /// The upstream provider's message from an OpenRouter error's
+    /// `metadata.raw`, which is usually a JSON string with its own `message`
+    /// (or `error.message`) but can be plain text.
+    static func openRouterUpstreamMessage(_ error: [String: Any]) -> String? {
+        guard let metadata = error["metadata"] as? [String: Any],
+            let raw = metadata["raw"] as? String,
+            !raw.isEmpty
+        else { return nil }
+        if let inner = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] {
+            if let message = inner["message"] as? String { return message }
+            if let nested = inner["error"] as? [String: Any],
+                let message = nested["message"] as? String
+            {
+                return message
+            }
+        }
+        return raw.count > 300 ? String(raw.prefix(300)) + "..." : raw
     }
 
     static func isUserMediaContentShapeRejection(_ data: Data) -> Bool {
