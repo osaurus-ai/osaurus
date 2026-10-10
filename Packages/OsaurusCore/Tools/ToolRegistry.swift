@@ -2182,10 +2182,12 @@ public final class ToolRegistry: ObservableObject {
 
     /// Whether the registered tool is a remote MCP tool whose `auto` only
     /// counts when the user chose it in person (see
-    /// `MCPToolHints.requiresUserTrust`). The Tools catalog menu still offers
+    /// `MCPToolHints.requiresUserTrust`), and whose provider the user has
+    /// not auto-allowed. The Tools catalog menu still offers
     /// Auto; the declarative planner says its own `auto` is inert.
     func requiresUserTrustForAuto(_ name: String) -> Bool {
         (toolsByName[name] as? MCPProviderTool)?.hints.requiresUserTrust == true
+            && !mcpProviderAutoAllowsTools(for: toolsByName[name])
     }
 
     /// Whether the user switched on auto-allow for this MCP provider's tools.
@@ -2314,8 +2316,7 @@ public final class ToolRegistry: ObservableObject {
         // the pill must not show "Auto" for a stored value that is inert.
         if effective == .auto,
             requiresPerCallApproval(name)
-                || (requiresUserTrustForAuto(name) && !providerTrusted
-                    && !configuration.isUserAutoApproved(name))
+                || (requiresUserTrustForAuto(name) && !configuration.isUserAutoApproved(name))
         {
             effective = .ask
         }
