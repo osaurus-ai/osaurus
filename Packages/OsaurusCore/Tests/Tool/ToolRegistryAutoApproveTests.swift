@@ -19,6 +19,7 @@
 //
 
 import Foundation
+import MCP
 import Testing
 
 @testable import OsaurusCore
@@ -327,6 +328,75 @@ struct ToolRegistryAutoApproveTests {
                 #expect(!ToolRegistry.shared.requiresPerCallApproval(name), "\(name)")
                 #expect(ToolRegistry.shared.mayRequirePerCallApproval(name), "\(name)")
             }
+        }
+    }
+
+    // MARK: Remote MCP tools and user trust
+
+    /// A remote MCP tool the server marks destructive keeps asking on an
+    /// `auto` nobody picked in person (declarative apply), and stops asking
+    /// once the user chooses Auto for it by name.
+    @Test func mcpToolHonoursOnlyUserChosenAuto() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let tool = MCPProviderTool(
+                mcpTool: MCP.Tool(
+                    name: "user_trust_probe",
+                    description: nil,
+                    inputSchema: .object([:]),
+                    annotations: .init(destructiveHint: true)
+                ),
+                providerId: UUID(),
+                providerName: "TrustProbe"
+            )
+            try fixture.register(tool)
+            let registry = ToolRegistry.shared
+            #expect(registry.requiresUserTrustForAuto(tool.name))
+            // The catalog menu keeps offering Auto.
+            #expect(!registry.requiresPerCallApproval(tool.name))
+
+            registry.setPolicy(.auto, for: tool.name)
+            #expect(registry.configuredPolicy(for: tool.name) == .auto)
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .ask)
+            // Headless surface: the forced `.ask` has nobody to answer it.
+            do {
+                _ = try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                    try await registry.execute(name: tool.name, argumentsJSON: "{}")
+                }
+                Issue.record("expected the approval gate to deny")
+            } catch {
+                #expect((error as NSError).domain == "ToolRegistry")
+                #expect((error as NSError).code == 4)
+            }
+
+            registry.setPolicy(.auto, for: tool.name, byUser: true)
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .auto)
+
+            // Leaving Auto drops the trust, so a later non-user `auto` is inert again.
+            registry.setPolicy(.ask, for: tool.name, byUser: true)
+            registry.setPolicy(.auto, for: tool.name)
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .ask)
+        }
+    }
+
+    /// Hints the server marks read-only or non-destructive never needed the
+    /// user's trust mark: a stored `auto` applies as before.
+    @Test func nonDestructiveMcpToolNeedsNoUserTrust() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let tool = MCPProviderTool(
+                mcpTool: MCP.Tool(
+                    name: "no_trust_probe",
+                    description: nil,
+                    inputSchema: .object([:]),
+                    annotations: .init(readOnlyHint: false, destructiveHint: false)
+                ),
+                providerId: UUID(),
+                providerName: "TrustProbe"
+            )
+            try fixture.register(tool)
+            let registry = ToolRegistry.shared
+            #expect(!registry.requiresUserTrustForAuto(tool.name))
+            registry.setPolicy(.auto, for: tool.name)
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .auto)
         }
     }
 
