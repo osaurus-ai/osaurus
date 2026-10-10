@@ -13,6 +13,7 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
         case enabled
         case policy
         case grants
+        case userAutoApproved
     }
 
     /// Mapping of tool name -> enabled flag. Missing entries default to false (disabled).
@@ -21,15 +22,22 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
     var policy: [String: ToolPermissionPolicy]
     /// Mapping of tool name -> requirement grants (requirement string -> granted)
     var grants: [String: [String: Bool]]
+    /// Tool names whose `.auto` policy the user chose in person (Tools catalog
+    /// menu, "Always Allow" on an approval card). A remote MCP tool that
+    /// needs user trust only runs unprompted when it is listed here, so an
+    /// `auto` written by a declarative apply cannot stand in for the user.
+    var userAutoApproved: Set<String>
 
     init(
         enabled: [String: Bool] = [:],
         policy: [String: ToolPermissionPolicy] = [:],
-        grants: [String: [String: Bool]] = [:]
+        grants: [String: [String: Bool]] = [:],
+        userAutoApproved: Set<String> = []
     ) {
         self.enabled = enabled
         self.policy = policy
         self.grants = grants
+        self.userAutoApproved = userAutoApproved
     }
 
     init(from decoder: Decoder) throws {
@@ -37,6 +45,7 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
         self.enabled = (try? container.decode([String: Bool].self, forKey: .enabled)) ?? [:]
         self.policy = (try? container.decode([String: ToolPermissionPolicy].self, forKey: .policy)) ?? [:]
         self.grants = (try? container.decode([String: [String: Bool]].self, forKey: .grants)) ?? [:]
+        self.userAutoApproved = (try? container.decode(Set<String>.self, forKey: .userAutoApproved)) ?? []
     }
 
     /// Returns whether a tool is enabled. Defaults to false if not explicitly set.
@@ -55,14 +64,26 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
         return policy[name] ?? .ask
     }
 
-    /// Set permission policy for a tool
-    mutating func setPolicy(_ value: ToolPermissionPolicy, for name: String) {
+    /// Set permission policy for a tool. `byUser` marks an `.auto` the user
+    /// picked in person; any other policy drops the mark.
+    mutating func setPolicy(_ value: ToolPermissionPolicy, for name: String, byUser: Bool = false) {
         policy[name] = value
+        if value != .auto {
+            userAutoApproved.remove(name)
+        } else if byUser {
+            userAutoApproved.insert(name)
+        }
+    }
+
+    /// Whether the tool is on `.auto` because the user chose it in person.
+    func isUserAutoApproved(_ name: String) -> Bool {
+        policy[name] == .auto && userAutoApproved.contains(name)
     }
 
     /// Clear the configured permission policy override for a tool
     mutating func clearPolicy(for name: String) {
         policy.removeValue(forKey: name)
+        userAutoApproved.remove(name)
     }
 
     // MARK: - Requirement grants

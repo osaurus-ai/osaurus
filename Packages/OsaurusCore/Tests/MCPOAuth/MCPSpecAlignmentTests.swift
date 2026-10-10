@@ -238,37 +238,37 @@ struct MCPSpecAlignmentTests {
     @Test func readOnlyClosedWorldToolRunsWithoutPrompt() {
         let t = tool(.init(readOnlyHint: true, openWorldHint: false))
         #expect(t.defaultPermissionPolicy == .auto)
-        #expect(!t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.hints.requiresUserTrust)
     }
 
     @Test func readOnlyToolWithoutOpenWorldHintRunsWithoutPrompt() {
         let t = tool(.init(readOnlyHint: true))
         #expect(t.defaultPermissionPolicy == .auto)
-        #expect(!t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.hints.requiresUserTrust)
     }
 
     @Test func readOnlyOpenWorldToolStillAsks() {
         let t = tool(.init(readOnlyHint: true, openWorldHint: true))
         #expect(t.defaultPermissionPolicy == .ask)
-        #expect(!t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.hints.requiresUserTrust)
     }
 
-    @Test func unannotatedToolIsConfirmedEveryCall() {
+    @Test func unannotatedToolNeedsUserTrust() {
         let t = tool(.init())
         #expect(t.defaultPermissionPolicy == .ask)
-        #expect(t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(t.hints.requiresUserTrust)
     }
 
     @Test func explicitlyNonDestructiveWriteToolAllowsALease() {
         let t = tool(.init(readOnlyHint: false, destructiveHint: false))
         #expect(t.defaultPermissionPolicy == .ask)
-        #expect(!t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.hints.requiresUserTrust)
     }
 
-    @Test func destructiveToolIsConfirmedEveryCall() {
+    @Test func destructiveToolNeedsUserTrust() {
         let t = tool(.init(destructiveHint: true, openWorldHint: false))
         #expect(t.defaultPermissionPolicy == .ask)
-        #expect(t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(t.hints.requiresUserTrust)
     }
 
     @Test func resourceLinkIsKept() throws {

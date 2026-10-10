@@ -12,8 +12,8 @@ import UniformTypeIdentifiers
 
 /// Server-declared behavior hints from an MCP tool's `annotations`. The spec
 /// treats these as untrusted: they only pick the *default* policy (see
-/// `defaultPolicy` / `requiresApprovalEveryCall`) and never override a policy
-/// the user configured.
+/// `defaultPolicy` / `requiresUserTrust`) and never override a policy the
+/// user configured in person.
 public struct MCPToolHints: Sendable, Equatable, Codable {
     public var readOnly: Bool?
     public var destructive: Bool?
@@ -49,10 +49,12 @@ public struct MCPToolHints: Sendable, Equatable, Codable {
         isReadOnly && openWorld != true ? .auto : .ask
     }
 
-    /// Every call is confirmed (no task lease, no Always Allow) unless the
-    /// tool is read-only or explicitly non-destructive. Absent hints fall
-    /// back to the spec defaults: not read-only, destructive.
-    var requiresApprovalEveryCall: Bool {
+    /// The tool only runs unprompted once the user trusts it in person
+    /// (Tools catalog menu, or a grant on its approval card), unless it is
+    /// read-only or explicitly non-destructive. The global auto-allow setting
+    /// and an `auto` from a declarative apply do not count. Absent hints
+    /// fall back to the spec defaults: not read-only, destructive.
+    var requiresUserTrust: Bool {
         !isReadOnly && destructive != false
     }
 }
@@ -69,7 +71,7 @@ public struct MCPDiscoveredToolSummary: Sendable, Equatable, Identifiable {
 }
 
 /// A tool provided by a remote MCP server
-final class MCPProviderTool: OsaurusTool, PermissionedTool, ArgumentAwarePerCallApprovalTool, @unchecked Sendable {
+final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     let name: String
     let description: String
     let parameters: JSONValue?
@@ -95,10 +97,6 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, ArgumentAwarePerCall
     /// Declared `outputSchema`, when the server publishes one for
     /// `structuredContent` results.
     let outputSchema: JSONValue?
-
-    func requiresApprovalEveryCall(argumentsJSON: String) -> Bool {
-        hints.requiresApprovalEveryCall
-    }
 
     var summary: MCPDiscoveredToolSummary {
         MCPDiscoveredToolSummary(name: mcpToolName, title: title, hints: hints, hasOutputSchema: outputSchema != nil)

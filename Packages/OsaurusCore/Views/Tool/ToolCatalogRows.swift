@@ -128,7 +128,7 @@ struct ToolPolicyMenu: View {
         MenuPill(fill: color.opacity(0.14), stroke: color.opacity(0.22)) {
             ForEach(offeredPolicies, id: \.self) { policy in
                 Button {
-                    ToolRegistry.shared.setPolicy(policy, for: toolName)
+                    ToolRegistry.shared.setPolicy(policy, for: toolName, byUser: true)
                     onChange()
                 } label: {
                     HStack {

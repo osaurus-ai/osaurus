@@ -298,7 +298,7 @@ enum ToolPermissionPromptService {
         case .allowForRun:
             return .allowForRun
         case .alwaysAllow:
-            ToolRegistry.shared.setPolicy(.auto, for: toolName)
+            ToolRegistry.shared.setPolicy(.auto, for: toolName, byUser: true)
             return .alwaysAllow
         }
     }

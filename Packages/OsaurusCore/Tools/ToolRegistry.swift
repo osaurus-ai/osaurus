@@ -947,7 +947,13 @@ public final class ToolRegistry: ObservableObject {
                 (tool as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
                 || (tool as? ArgumentAwarePerCallApprovalTool)?
                     .requiresApprovalEveryCall(argumentsJSON: argumentsJSON) == true
-            if perCallApproval {
+            // A remote MCP tool that is not read-only stays on the card until
+            // the user trusts it in person: the hints are server claims and
+            // the stored policy can come from a declarative apply. The card
+            // offers its usual grants, so "Always Allow" and the Tools catalog
+            // menu are how that trust is given.
+            let needsUserTrust = (tool as? MCPProviderTool)?.hints.requiresUserTrust == true
+            if perCallApproval || (needsUserTrust && !configuration.isUserAutoApproved(name)) {
                 effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, .ask)
             }
             switch effectivePolicy {
@@ -1002,12 +1008,13 @@ public final class ToolRegistry: ObservableObject {
                     // moves into the outbox rather than blocking the run on a
                     // card nobody can answer.
                     approved = true
-                } else if ToolApprovalSettings.autoAllowAll, !perCallApproval {
+                } else if ToolApprovalSettings.autoAllowAll, !perCallApproval, !needsUserTrust {
                     // User opted into the global auto-allow chat setting: skip
                     // the interactive card. Only reachable where a card would
                     // have been shown, so external/headless denials above win.
                     // A per-call tool opts out: "auto-allow tools" is not
-                    // consent to destroy a knowledge collection unseen.
+                    // consent to destroy a knowledge collection unseen. So
+                    // does an MCP tool the user has not trusted by name.
                     approved = true
                 } else {
                     // A knowledge write renders paths + diffs instead of the
@@ -2164,7 +2171,14 @@ public final class ToolRegistry: ObservableObject {
     /// planner says the setting is inert.
     func requiresPerCallApproval(_ name: String) -> Bool {
         (toolsByName[name] as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
-            || (toolsByName[name] as? MCPProviderTool)?.hints.requiresApprovalEveryCall == true
+    }
+
+    /// Whether the registered tool is a remote MCP tool whose `auto` only
+    /// counts when the user chose it in person (see
+    /// `MCPToolHints.requiresUserTrust`). The Tools catalog menu still offers
+    /// Auto; the declarative planner says its own `auto` is inert.
+    func requiresUserTrustForAuto(_ name: String) -> Bool {
+        (toolsByName[name] as? MCPProviderTool)?.hints.requiresUserTrust == true
     }
 
     /// Whether the registered tool asks on every call for SOME arguments
@@ -2172,8 +2186,7 @@ public final class ToolRegistry: ObservableObject {
     /// `send: true`). `auto` still applies to the other calls (drafts), so the
     /// menu keeps offering it; the planner adds the caveat.
     func mayRequirePerCallApproval(_ name: String) -> Bool {
-        if toolsByName[name] is MCPProviderTool { return false }
-        return toolsByName[name] is ArgumentAwarePerCallApprovalTool
+        toolsByName[name] is ArgumentAwarePerCallApprovalTool
     }
 
     /// Explicit per-tool enablement and policy overrides, for the
@@ -2229,8 +2242,10 @@ public final class ToolRegistry: ObservableObject {
         configuration.policy[name]
     }
 
-    func setPolicy(_ policy: ToolPermissionPolicy, for name: String) {
-        configuration.setPolicy(policy, for: name)
+    /// `byUser` is true only where a person picked the policy for this tool
+    /// by name (Tools catalog menu, "Always Allow" on its approval card).
+    func setPolicy(_ policy: ToolPermissionPolicy, for name: String, byUser: Bool = false) {
+        configuration.setPolicy(policy, for: name, byUser: byUser)
 
         // When setting to .auto, automatically grant all non-system requirements
         // This ensures tools can execute without requiring separate manual grants
@@ -2266,7 +2281,10 @@ public final class ToolRegistry: ObservableObject {
         var effective = configured ?? defaultPolicy
         // Mirror `execute`: a per-call approval tool never runs on `auto`, so
         // the pill must not show "Auto" for a stored value that is inert.
-        if effective == .auto, requiresPerCallApproval(name) {
+        if effective == .auto,
+            requiresPerCallApproval(name)
+                || (requiresUserTrustForAuto(name) && !configuration.isUserAutoApproved(name))
+        {
             effective = .ask
         }
         var grants: [String: Bool] = [:]
