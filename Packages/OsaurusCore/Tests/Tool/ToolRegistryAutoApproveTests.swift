@@ -400,6 +400,42 @@ struct ToolRegistryAutoApproveTests {
         }
     }
 
+    /// Auto-allowing a provider from its settings card covers every tool it
+    /// exposes, and a per-tool Ask or Deny still wins.
+    @Test func autoAllowedMcpProviderRunsItsToolsUnlessOverridden() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let providerId = UUID()
+            let tool = MCPProviderTool(
+                mcpTool: MCP.Tool(
+                    name: "provider_trust_probe",
+                    description: nil,
+                    inputSchema: .object([:]),
+                    annotations: .init(destructiveHint: true)
+                ),
+                providerId: providerId,
+                providerName: "TrustProbe"
+            )
+            try fixture.register(tool)
+            let registry = ToolRegistry.shared
+            defer { registry.setMCPProviderAutoAllowsTools(false, for: providerId) }
+
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .ask)
+
+            registry.setMCPProviderAutoAllowsTools(true, for: providerId)
+            #expect(registry.mcpProviderAutoAllowsTools(providerId))
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .auto)
+
+            registry.setPolicy(.ask, for: tool.name, byUser: true)
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .ask)
+            registry.setPolicy(.deny, for: tool.name, byUser: true)
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .deny)
+
+            registry.clearPolicy(for: tool.name)
+            registry.setMCPProviderAutoAllowsTools(false, for: providerId)
+            #expect(registry.policyInfo(for: tool.name)?.effectivePolicy == .ask)
+        }
+    }
+
     // MARK: Two-phase batch (serial approvals → parallel execution)
 
     /// The canonical headless batch (`runBatchInParallel(sessionId:agentId:)`)
