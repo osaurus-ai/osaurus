@@ -604,6 +604,8 @@ private struct ProviderCard: View {
     @State private var showDeleteConfirm = false
     /// Inline secure-field text for the bearer-token 401 banner. Cleared on submit.
     @State private var inlineBearerToken: String = ""
+    /// Mirrors the registry's auto-allow flag for this provider's tools.
+    @State private var autoAllowTools = false
 
     private var provider: MCPProvider { report.provider }
     private var state: MCPProviderState? { report.state }
@@ -1106,6 +1108,8 @@ private struct ProviderCard: View {
                 }
             }
 
+            autoAllowToolsRow
+
             // Discovered tools list
             if isConnected, let tools = state?.discoveredToolSummaries, !tools.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1134,6 +1138,44 @@ private struct ProviderCard: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Trusting the whole provider is the user's call: its tools stop asking,
+    /// and a tool set to Ask or Deny in the Tools catalog keeps that setting.
+    private var autoAllowToolsRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("Auto-allow this provider's tools"))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    L(
+                        "Tools from this provider run without asking. A tool you set to Ask or Deny still follows that setting."
+                    )
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { autoAllowTools },
+                    set: { newValue in
+                        autoAllowTools = newValue
+                        ToolRegistry.shared.setMCPProviderAutoAllowsTools(newValue, for: provider.id)
+                    }
+                )
+            )
+            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+            .labelsHidden()
+        }
+        .onAppear {
+            autoAllowTools = ToolRegistry.shared.mcpProviderAutoAllowsTools(provider.id)
         }
     }
 

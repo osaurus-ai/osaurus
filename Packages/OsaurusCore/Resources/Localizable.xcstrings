@@ -232657,6 +232657,74 @@
         }
       }
     },
+    "Auto-allow this provider's tools" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools dieses Anbieters automatisch erlauben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 제공자의 도구 자동 허용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматически разрешать инструменты этого провайдера"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动允许此提供方的工具"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動允許此提供者的工具"
+          }
+        }
+      }
+    },
+    "Tools from this provider run without asking. A tool you set to Ask or Deny still follows that setting." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools dieses Anbieters werden ohne Nachfrage ausgeführt. Ein Tool, das du auf „Fragen“ oder „Ablehnen“ gesetzt hast, folgt weiterhin dieser Einstellung."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 제공자의 도구는 묻지 않고 실행됩니다. 묻기 또는 거부로 설정한 도구는 해당 설정을 그대로 따릅니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты этого провайдера запускаются без запроса. Инструмент, для которого вы выбрали «Спрашивать» или «Запретить», по-прежнему следует этой настройке."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此提供方的工具无需询问即可运行。你设为“询问”或“拒绝”的工具仍遵循该设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此提供者的工具無需詢問即可執行。你設為「詢問」或「拒絕」的工具仍遵循該設定。"
+          }
+        }
+      }
+    },
     "Server says this tool only reads data." : {
       "localizations" : {
         "de" : {
