@@ -34,6 +34,12 @@ enum ConfigRisk {
     static func autoPolicyIgnoredPerCall(_ tool: String) -> String {
         "Sets tool `\(tool)` to auto, but it always asks for approval on every call (it sends or deletes as the user) — the setting is stored and has no effect."
     }
+    /// A remote MCP tool that is not read-only only runs unprompted when the
+    /// user picked `auto` in person, so an `auto` applied from a document
+    /// is stored without taking effect.
+    static func autoPolicyNeedsUserTrust(_ tool: String) -> String {
+        "Sets tool `\(tool)` to auto, but it is a remote MCP tool that can change things — it keeps asking until you choose Auto for it in the Tools catalog or Always Allow on its approval card."
+    }
     /// Argument-aware per-call tools (`mail_compose` / `mail_reply`): `auto`
     /// covers drafts, never the `send: true` calls.
     static func autoPolicySendsStillAsk(_ tool: String) -> String {
@@ -1332,6 +1338,8 @@ enum ConfigPlanner {
                 if policy == .auto {
                     if registry.requiresPerCallApproval(tool) {
                         risks.append(ConfigRisk.autoPolicyIgnoredPerCall(tool))
+                    } else if registry.requiresUserTrustForAuto(tool) {
+                        risks.append(ConfigRisk.autoPolicyNeedsUserTrust(tool))
                     } else if registry.mayRequirePerCallApproval(tool) {
                         risks.append(ConfigRisk.autoPolicySendsStillAsk(tool))
                     } else {
