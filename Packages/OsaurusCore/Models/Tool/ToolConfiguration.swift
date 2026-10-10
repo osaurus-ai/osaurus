@@ -14,6 +14,7 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
         case policy
         case grants
         case userAutoApproved
+        case autoAllowedMCPProviders
     }
 
     /// Mapping of tool name -> enabled flag. Missing entries default to false (disabled).
@@ -27,17 +28,24 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
     /// needs user trust only runs unprompted when it is listed here, so an
     /// `auto` written by a declarative apply cannot stand in for the user.
     var userAutoApproved: Set<String>
+    /// MCP provider ids (UUID strings) whose tools the user chose to run
+    /// without asking, from the provider's card in settings. Kept here rather
+    /// than on the provider record so a declarative apply or a plugin import
+    /// cannot set it. A per-tool Ask or Deny still wins.
+    var autoAllowedMCPProviders: Set<String>
 
     init(
         enabled: [String: Bool] = [:],
         policy: [String: ToolPermissionPolicy] = [:],
         grants: [String: [String: Bool]] = [:],
-        userAutoApproved: Set<String> = []
+        userAutoApproved: Set<String> = [],
+        autoAllowedMCPProviders: Set<String> = []
     ) {
         self.enabled = enabled
         self.policy = policy
         self.grants = grants
         self.userAutoApproved = userAutoApproved
+        self.autoAllowedMCPProviders = autoAllowedMCPProviders
     }
 
     init(from decoder: Decoder) throws {
@@ -46,6 +54,8 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
         self.policy = (try? container.decode([String: ToolPermissionPolicy].self, forKey: .policy)) ?? [:]
         self.grants = (try? container.decode([String: [String: Bool]].self, forKey: .grants)) ?? [:]
         self.userAutoApproved = (try? container.decode(Set<String>.self, forKey: .userAutoApproved)) ?? []
+        self.autoAllowedMCPProviders =
+            (try? container.decode(Set<String>.self, forKey: .autoAllowedMCPProviders)) ?? []
     }
 
     /// Returns whether a tool is enabled. Defaults to false if not explicitly set.

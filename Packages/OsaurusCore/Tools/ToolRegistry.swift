@@ -923,7 +923,11 @@ public final class ToolRegistry: ObservableObject {
             }
 
             let defaultPolicy = permissioned.defaultPermissionPolicy
-            var effectivePolicy = configuration.policy[name] ?? defaultPolicy
+            // The user can auto-allow a whole MCP provider from its settings
+            // card: its tools then default to `.auto`, and a per-tool Ask or
+            // Deny still wins.
+            let providerTrusted = mcpProviderAutoAllowsTools(for: tool)
+            var effectivePolicy = configuration.policy[name] ?? (providerTrusted ? .auto : defaultPolicy)
             // Argument-aware narrowing (strictest wins): a contextual tool
             // resolves this specific invocation's policy from its arguments
             // (e.g. the destination binding's outbound mode for
@@ -950,10 +954,13 @@ public final class ToolRegistry: ObservableObject {
             // A remote MCP tool that is not read-only stays on the card until
             // the user trusts it in person: the hints are server claims and
             // the stored policy can come from a declarative apply. The card
-            // offers its usual grants, so "Always Allow" and the Tools catalog
-            // menu are how that trust is given.
+            // offers its usual grants, so "Always Allow", the Tools catalog
+            // menu and the provider's auto-allow switch are how that trust is
+            // given.
             let needsUserTrust = (tool as? MCPProviderTool)?.hints.requiresUserTrust == true
-            if perCallApproval || (needsUserTrust && !configuration.isUserAutoApproved(name)) {
+            if perCallApproval
+                || (needsUserTrust && !providerTrusted && !configuration.isUserAutoApproved(name))
+            {
                 effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, .ask)
             }
             switch effectivePolicy {
@@ -2181,6 +2188,29 @@ public final class ToolRegistry: ObservableObject {
         (toolsByName[name] as? MCPProviderTool)?.hints.requiresUserTrust == true
     }
 
+    /// Whether the user switched on auto-allow for this MCP provider's tools.
+    func mcpProviderAutoAllowsTools(_ providerId: UUID) -> Bool {
+        configuration.autoAllowedMCPProviders.contains(providerId.uuidString)
+    }
+
+    private func mcpProviderAutoAllowsTools(for tool: OsaurusTool?) -> Bool {
+        guard let mcpTool = tool as? MCPProviderTool else { return false }
+        return mcpProviderAutoAllowsTools(mcpTool.providerId)
+    }
+
+    /// Called only from the provider's settings card (a choice made in
+    /// person), and with `false` when the provider is removed.
+    func setMCPProviderAutoAllowsTools(_ value: Bool, for providerId: UUID) {
+        let key = providerId.uuidString
+        guard configuration.autoAllowedMCPProviders.contains(key) != value else { return }
+        if value {
+            configuration.autoAllowedMCPProviders.insert(key)
+        } else {
+            configuration.autoAllowedMCPProviders.remove(key)
+        }
+        ToolConfigurationStore.save(configuration)
+    }
+
     /// Whether the registered tool asks on every call for SOME arguments
     /// (`ArgumentAwarePerCallApprovalTool`, e.g. `mail_compose` with
     /// `send: true`). `auto` still applies to the other calls (drafts), so the
@@ -2278,12 +2308,14 @@ public final class ToolRegistry: ObservableObject {
             requirements = []
         }
         let configured = configuration.policy[name]
-        var effective = configured ?? defaultPolicy
+        let providerTrusted = mcpProviderAutoAllowsTools(for: tool)
+        var effective = configured ?? (providerTrusted ? .auto : defaultPolicy)
         // Mirror `execute`: a per-call approval tool never runs on `auto`, so
         // the pill must not show "Auto" for a stored value that is inert.
         if effective == .auto,
             requiresPerCallApproval(name)
-                || (requiresUserTrustForAuto(name) && !configuration.isUserAutoApproved(name))
+                || (requiresUserTrustForAuto(name) && !providerTrusted
+                    && !configuration.isUserAutoApproved(name))
         {
             effective = .ask
         }

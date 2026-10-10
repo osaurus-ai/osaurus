@@ -176,6 +176,7 @@ public final class MCPProviderManager: ObservableObject {
         // Remove from configuration (also cleans up Keychain)
         configuration.remove(id: id)
         MCPProviderConfigurationStore.save(configuration)
+        ToolRegistry.shared.setMCPProviderAutoAllowsTools(false, for: id)
 
         // Clean up state
         providerStates.removeValue(forKey: id)
