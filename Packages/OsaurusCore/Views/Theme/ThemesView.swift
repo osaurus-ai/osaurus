@@ -1163,6 +1163,11 @@ struct ThemesView: View {
     /// `ThemeManager` republishes its installed list. Everything is computed
     /// into locals first, then assigned to `@State` in one pass so the active
     /// filter + visible list never read stale derived state.
+    ///
+    /// The two CPU-bound steps — validation and duplicate fingerprinting — run
+    /// concurrently on background threads via detached tasks so they never
+    /// block the main run loop. State is written back on the main actor once
+    /// both complete.
     private func refreshPartitions(from themes: [CustomTheme]) {
         let sorted = themes.sorted {
             $0.metadata.name.localizedCaseInsensitiveCompare($1.metadata.name) == .orderedAscending
@@ -1170,47 +1175,61 @@ struct ThemesView: View {
         let built = sorted.filter { $0.isBuiltIn }
         let custom = sorted.filter { !$0.isBuiltIn }
 
-        let reports = ThemeLibraryManagementService.validationReports(for: sorted)
-        // Two installed theme files can share an ID (e.g. a manually copied
-        // built-in), so tolerate duplicate keys — uniqueKeysWithValues traps.
-        let reportMap = Dictionary(
-            reports.map { ($0.themeID, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let reviewIDs = Set(reports.filter { $0.needsReview }.map { $0.themeID })
+        Task {
+            // Run the two CPU-intensive operations concurrently on background threads.
+            // validationReports performs hex-color parsing and range checks for every
+            // theme; duplicateGroups JSON-encodes each theme and computes a SHA256
+            // digest. Both are O(n) in the installed theme count and too slow to run
+            // on the main thread when the library is large.
+            async let reports = Task.detached(priority: .userInitiated) {
+                ThemeLibraryManagementService.validationReports(for: sorted)
+            }.value
+            async let groups = Task.detached(priority: .userInitiated) {
+                ThemeLibraryManagementService.duplicateGroups(in: sorted)
+            }.value
+            let (resolvedReports, resolvedGroups) = await (reports, groups)
 
-        let groups = ThemeLibraryManagementService.duplicateGroups(in: sorted)
-        let dupIDs = Set(groups.flatMap { $0.members.map(\.id) })
+            // Remaining lightweight derivations and all @State writes happen on
+            // the main actor, matching the pattern used in refreshPreviewCacheHealth.
+            // Two installed theme files can share an ID (e.g. a manually copied
+            // built-in), so tolerate duplicate keys — uniqueKeysWithValues traps.
+            let reportMap = Dictionary(
+                resolvedReports.map { ($0.themeID, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let reviewIDs = Set(resolvedReports.filter { $0.needsReview }.map { $0.themeID })
+            let dupIDs = Set(resolvedGroups.flatMap { $0.members.map(\.id) })
+            let summary = ThemeLibraryManagementService.summary(
+                for: sorted,
+                reports: resolvedReports,
+                duplicateGroups: resolvedGroups
+            )
 
-        let summary = ThemeLibraryManagementService.summary(
-            for: sorted,
-            reports: reports,
-            duplicateGroups: groups
-        )
-        let counts = computeFilterCounts(sorted, reviewIDs: reviewIDs, duplicateIDs: dupIDs)
+            await MainActor.run {
+                let counts = computeFilterCounts(sorted, reviewIDs: reviewIDs, duplicateIDs: dupIDs)
+                var nextFilter = selectedFilter
+                if !availableFilters(from: counts).contains(nextFilter) {
+                    nextFilter = .all
+                }
+                let context = ThemeFilterContext(needsReviewIDs: reviewIDs, duplicateIDs: dupIDs)
+                let visible = sorted.filter {
+                    themeMatches($0, filter: nextFilter, search: searchText, context: context)
+                }
 
-        var nextFilter = selectedFilter
-        if !availableFilters(from: counts).contains(nextFilter) {
-            nextFilter = .all
+                installedThemes = sorted
+                builtInThemes = built
+                customThemes = custom
+                validationByID = reportMap
+                needsReviewIDs = reviewIDs
+                duplicateIDs = dupIDs
+                librarySummary = summary
+                filterCounts = counts
+                selectedFilter = nextFilter
+                visibleThemes = visible
+            }
+
+            refreshPreviewCacheHealth()
         }
-
-        let context = ThemeFilterContext(needsReviewIDs: reviewIDs, duplicateIDs: dupIDs)
-        let visible = sorted.filter {
-            themeMatches($0, filter: nextFilter, search: searchText, context: context)
-        }
-
-        installedThemes = sorted
-        builtInThemes = built
-        customThemes = custom
-        validationByID = reportMap
-        needsReviewIDs = reviewIDs
-        duplicateIDs = dupIDs
-        librarySummary = summary
-        filterCounts = counts
-        selectedFilter = nextFilter
-        visibleThemes = visible
-
-        refreshPreviewCacheHealth()
     }
 
     private func computeFilterCounts(
