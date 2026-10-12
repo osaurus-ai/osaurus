@@ -494,6 +494,55 @@ struct ExternalModelLocatorTests {
         #expect(info?.capabilities.contains("thinking") == true)
     }
 
+    @Test func modelInfo_resolvesExternalBundleByTagsName() async {
+        await OsaurusTestGlobals.withPathsLock {
+            modelInfo_resolvesExternalBundleByTagsName_body()
+        }
+    }
+
+    private func modelInfo_resolvesExternalBundleByTagsName_body() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let previousOverride = ExternalModelLocator.testRootsOverride
+        let manifestRoot = makeTempDir()
+        let hfRoot = makeTempDir()
+        OsaurusPaths.overrideRoot = manifestRoot
+        ExternalModelLocator.invalidateInMemory()
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            ExternalModelLocator.testRootsOverride = previousOverride
+            ExternalModelLocator.invalidateInMemory()
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            try? FileManager.default.removeItem(at: manifestRoot)
+            try? FileManager.default.removeItem(at: hfRoot)
+        }
+
+        let fm = FileManager.default
+        let rev = "abc123"
+        let repo = "Show-Alias-\(UUID().uuidString.prefix(8).lowercased())"
+        let modelDir = hfRoot.appendingPathComponent("models--org--\(repo)", isDirectory: true)
+        let refsDir = modelDir.appendingPathComponent("refs", isDirectory: true)
+        try? fm.createDirectory(at: refsDir, withIntermediateDirectories: true)
+        try? Data(rev.utf8).write(to: refsDir.appendingPathComponent("main"))
+        let snapshot = modelDir.appendingPathComponent("snapshots/\(rev)", isDirectory: true)
+        writeBundle(at: snapshot)
+        try? Data(#"{"model_type":"qwen3","max_position_embeddings":4096}"#.utf8)
+            .write(to: snapshot.appendingPathComponent("config.json"))
+
+        ExternalModelLocator.testRootsOverride = [(root: hfRoot, source: .huggingFaceCache)]
+        ExternalModelLocator.rescan()
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+
+        // /api/tags lists the model by its lowercased bare repo name
+        // (`ModelManager.installedModelNames()`), and Ollama clients pass that
+        // name straight back to /api/show. Before the installed-model
+        // fallback, ModelInfo only matched the full `org/repo` id and
+        // /api/show returned 404 (issue #2629).
+        let info = ModelInfo.load(modelId: repo.lowercased())
+        #expect(info != nil)
+        #expect(info?.model.architecture == "qwen3")
+        #expect(info?.model.contextLength == 4096)
+    }
+
     @Test func rescan_reportsHFCacheSnapshotSkipReason() async {
         await OsaurusTestGlobals.withPathsLock {
             rescan_reportsHFCacheSnapshotSkipReason_body()
