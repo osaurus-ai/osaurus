@@ -186,6 +186,45 @@ struct FileWriteDocumentFormatsTests {
         #expect(cell.value == .string("=1+1"))
     }
 
+    /// Replacing an existing workbook that has layout/formatting is refused (bytes untouched) and points at
+    /// file_edit, which keeps it; a plain generated workbook can still be regenerated.
+    @Test func overwritingAFormattedWorkbookIsRefusedAndFileEditKeepsIt() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try await write(root, ["path": "plain.xlsx", "content": "Item,Amount\nRent,1200\n"])
+        #expect(ToolEnvelope.isSuccess(first))
+        let again = try await write(root, ["path": "plain.xlsx", "content": "Item,Amount\nRent,1300\n"])
+        #expect(ToolEnvelope.isSuccess(again), "a plain generated workbook regenerates: \(again)")
+
+        // Give a copy column widths and a frozen header row (what spreadsheet apps add).
+        let plain = try Data(contentsOf: root.appendingPathComponent("plain.xlsx"))
+        let package = try OOXMLPackage(data: plain)
+        let sheet = String(decoding: try package.data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+        let styled = sheet.replacingOccurrences(
+            of: "<sheetData",
+            with: #"<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData"#)
+        #expect(styled != sheet)
+        package.setData("xl/worksheets/sheet1.xml", Data(styled.utf8))
+        let formatted = try package.serialize()
+        try formatted.write(to: root.appendingPathComponent("ops.xlsx"))
+        #expect(XLSXPreservation.featuresLostByRegeneration(formatted) == ["column widths", "freeze panes"])
+        #expect(XLSXPreservation.featuresLostByRegeneration(plain).isEmpty)
+
+        let refused = try await write(root, ["path": "ops.xlsx", "content": "Item,Amount\nRent,1500\n"])
+        #expect(!ToolEnvelope.isSuccess(refused))
+        let message = EnvelopeAssertions.failureMessage(refused) ?? ""
+        #expect(message.contains("column widths") && message.contains("file_edit"), Comment(rawValue: message))
+        #expect(try Data(contentsOf: root.appendingPathComponent("ops.xlsx")) == formatted, "file untouched")
+
+        let edited = try await FileEditTool(rootPath: root).execute(argumentsJSON:
+            #"{"path":"ops.xlsx","operations":[{"op":"set_cells","cells":{"B2":1500,"C2":"=B2*2"}}]}"#)
+        #expect(ToolEnvelope.isSuccess(edited), "file_edit failed: \(edited)")
+        let after = try Data(contentsOf: root.appendingPathComponent("ops.xlsx"))
+        #expect(XLSXPreservation.featuresLostByRegeneration(after) == ["column widths", "freeze panes"], "file_edit kept the layout")
+        let afterSheet = try packagePart(root.appendingPathComponent("ops.xlsx"), "xl/worksheets/sheet1.xml")
+        #expect(afterSheet.contains("<f>B2*2</f>"), Comment(rawValue: afterSheet))
+    }
+
     @Test func docxBulletGlyphLinesBecomeListParagraphs() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
         let root = tmpRoot()

@@ -2328,10 +2328,11 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         "Create, overwrite, or append to a text file, or generate a document by extension — always pass `path` (that exact key) as the FIRST argument, before `content`. "
         + "Parent directories are created automatically. You MUST provide the file contents in the "
         + "`content` parameter. Text/code of any extension is written as UTF-8. Documents are generated from text: "
-        + "`.xlsx` from CSV/TSV rows or JSON `{\"sheets\":[{\"name\":..,\"rows\":[[..]]}]}`; `.docx` and `.pdf` from Markdown or HTML; "
+        + "`.xlsx` from CSV/TSV rows or JSON `{\"sheets\":[{\"name\":..,\"rows\":[[..]]}]}` (a cell starting with `=` is a formula, e.g. `=SUM(B2:B9)`; start with `'=` for literal text); `.docx` and `.pdf` from Markdown or HTML; "
         + "`.pptx` from Markdown (each `#`/`##` heading starts a slide, the lines below become its bullets). "
         + "Legacy formats (.doc/.xls/.ppt/.key/…) are not supported. To change part of an existing .docx/.xlsx/.pptx/.pdf, "
-        + "use `file_edit` `operations` instead of regenerating it (that keeps its formatting). "
+        + "use `file_edit` `operations` instead of regenerating it (that keeps its formatting); replacing an existing .xlsx that has "
+        + "formatting, layout, validation or other workbook features is refused for that reason. "
         + "Use `mode: \"append\"` for any additive change to a text file so existing content remains intact "
         + "(documents are regenerated whole; append is refused). For a large text file, keep calls bounded: write the first chunk normally, "
         + "then pass `mode: \"append\"` for later chunks. Pass `dry_run: true` to preview the diff (text) or the document summary without writing. "
@@ -2714,6 +2715,38 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                     "retry_with": ["path": relativePath, "operations": operations],
                 ]
             )
+        }
+
+        // Replacing an existing workbook regenerates it from rows (values and formulas only). If the
+        // workbook carries anything else, that would silently drop it, so refuse (file untouched) and name
+        // the in-place edit that keeps it. A workbook with plain values only (every one file_write itself
+        // generates) can still be regenerated.
+        if target == .xlsx, FileManager.default.fileExists(atPath: fileURL.path),
+            let existing = try? Data(contentsOf: fileURL)
+        {
+            let lost = XLSXPreservation.featuresLostByRegeneration(existing)
+            if !lost.isEmpty {
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message:
+                        "'\(relativePath)' already exists and has \(lost.joined(separator: ", ")). file_write rebuilds a "
+                        + "workbook from rows (values and formulas only), so replacing it would drop all of that. Edit it in "
+                        + "place with `file_edit` instead, which keeps everything else: {\"path\": \"\(relativePath)\", "
+                        + "\"operations\": [{\"op\": \"set_cells\", \"sheet\": \"Sheet1\", \"cells\": {\"B2\": 42, \"C2\": \"=SUM(B2:B9)\"}}]} "
+                        + "(also insert_rows, delete_rows, add_sheet, rename_sheet, delete_sheet; `file_read` with "
+                        + "`mode: \"structure\"` lists sheets and cells). To create a separate workbook, write to a new path. "
+                        + "The file was not changed.",
+                    field: "path",
+                    expected: "file_edit operations for an existing workbook, or a new .xlsx path",
+                    tool: name,
+                    retryable: false,
+                    metadata: [
+                        "extension": ext,
+                        "retry_with_tool": "file_edit",
+                        "features_preserved_by_file_edit": lost,
+                    ]
+                )
+            }
         }
 
         let plan: FileWriteDocumentRouting.Plan
