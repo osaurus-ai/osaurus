@@ -913,24 +913,28 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func sandboxPreservesEnabledCapabilitiesWithoutQueryHints() {
-        withRegisteredSandboxBuiltins {
-            let tools = SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(
-                    renderChartEnabled: true,
-                    webSearchEnabled: true,
-                    browserUseEnabled: true
-                ),
-                executionMode: .sandbox(hostRead: nil),
-                query: "Update the project documentation"
-            )
-            let names = Set(tools.map(\.function.name))
-            #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
-            #expect(names.contains("capabilities"))
-            #expect(names.contains("render_chart"))
-            #expect(names.contains("web_search"))
-            #expect(names.contains("search_and_extract"))
-            #expect(names.contains(BrowserUseTool.toolName))
+    func sandboxPreservesEnabledCapabilitiesWithoutQueryHints() async {
+        // Registers and unregisters the shared sandbox tools, so it must hold SandboxTestLock like every
+        // other sandbox-registry test (unlocked, it wiped BuiltinSandboxToolsTests' tools mid-call).
+        await SandboxTestLock.shared.run { @MainActor in
+            withRegisteredSandboxBuiltins {
+                let tools = SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(
+                        renderChartEnabled: true,
+                        webSearchEnabled: true,
+                        browserUseEnabled: true
+                    ),
+                    executionMode: .sandbox(hostRead: nil),
+                    query: "Update the project documentation"
+                )
+                let names = Set(tools.map(\.function.name))
+                #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                #expect(names.contains("capabilities"))
+                #expect(names.contains("render_chart"))
+                #expect(names.contains("web_search"))
+                #expect(names.contains("search_and_extract"))
+                #expect(names.contains(BrowserUseTool.toolName))
+            }
         }
     }
 
@@ -1493,110 +1497,116 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test("sandbox control-plane schema follows agent feature gates")
-    func sandboxControlPlaneVisibilityMatrix() {
-        FolderToolManager.shared.ensureFolderToolsRegistered()
-        defer { FolderToolManager.shared._unregisterAllForTesting() }
+    func sandboxControlPlaneVisibilityMatrix() async {
+        // Rewrites the shared sandbox tool registration: hold SandboxTestLock (see sandboxPreservesEnabled…).
+        await SandboxTestLock.shared.run { @MainActor in
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            defer { FolderToolManager.shared._unregisterAllForTesting() }
 
-        for autonomousEnabled in [false, true] {
-            for pluginCreate in [false, true] {
-                for backgroundEnabled in [false, true] {
-                    let config = AutonomousExecConfig(
-                        enabled: autonomousEnabled,
-                        pluginCreate: pluginCreate,
-                        backgroundProcessEnabled: backgroundEnabled
-                    )
-                    BuiltinSandboxTools.register(
-                        agentId: "control-plane-matrix",
-                        agentName: "control-plane-matrix",
-                        config: config
-                    )
+            for autonomousEnabled in [false, true] {
+                for pluginCreate in [false, true] {
+                    for backgroundEnabled in [false, true] {
+                        let config = AutonomousExecConfig(
+                            enabled: autonomousEnabled,
+                            pluginCreate: pluginCreate,
+                            backgroundProcessEnabled: backgroundEnabled
+                        )
+                        BuiltinSandboxTools.register(
+                            agentId: "control-plane-matrix",
+                            agentName: "control-plane-matrix",
+                            config: config
+                        )
 
-                    let snapshot = makeSnapshot(autonomousConfig: config)
-                    let sandboxNames = Set(
-                        SystemPromptComposer.resolveTools(
-                            snapshot: snapshot,
-                            executionMode: .sandbox
-                        ).map(\.function.name)
-                    )
+                        let snapshot = makeSnapshot(autonomousConfig: config)
+                        let sandboxNames = Set(
+                            SystemPromptComposer.resolveTools(
+                                snapshot: snapshot,
+                                executionMode: .sandbox
+                            ).map(\.function.name)
+                        )
 
-                    #expect(
-                        sandboxNames.isDisjoint(
-                            with: ToolRegistry.sandboxBackendAdapterToolNames
-                        )
-                    )
-                    #expect(sandboxNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
-                    #expect(sandboxNames.contains("capabilities"))
-                    #expect(sandboxNames.contains("share_artifact"))
-                    if autonomousEnabled {
-                        #expect(sandboxNames.contains("sandbox_install"))
-                        #expect(sandboxNames.contains("sandbox_secret_check"))
-                        #expect(sandboxNames.contains("sandbox_secret_set"))
-                        #expect(
-                            sandboxNames.contains("sandbox_plugin_register")
-                                == pluginCreate
-                        )
-                        #expect(
-                            sandboxNames.contains("sandbox_process")
-                                == backgroundEnabled
-                        )
-                    } else {
                         #expect(
                             sandboxNames.isDisjoint(
+                                with: ToolRegistry.sandboxBackendAdapterToolNames
+                            )
+                        )
+                        #expect(sandboxNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                        #expect(sandboxNames.contains("capabilities"))
+                        #expect(sandboxNames.contains("share_artifact"))
+                        if autonomousEnabled {
+                            #expect(sandboxNames.contains("sandbox_install"))
+                            #expect(sandboxNames.contains("sandbox_secret_check"))
+                            #expect(sandboxNames.contains("sandbox_secret_set"))
+                            #expect(
+                                sandboxNames.contains("sandbox_plugin_register")
+                                    == pluginCreate
+                            )
+                            #expect(
+                                sandboxNames.contains("sandbox_process")
+                                    == backgroundEnabled
+                            )
+                        } else {
+                            #expect(
+                                sandboxNames.isDisjoint(
+                                    with: ToolRegistry.sandboxControlPlaneToolNames
+                                )
+                            )
+                        }
+
+                        let nonSandboxNames = Set(
+                            SystemPromptComposer.resolveTools(
+                                snapshot: snapshot,
+                                executionMode: .none
+                            ).map(\.function.name)
+                        )
+                        #expect(
+                            nonSandboxNames.isDisjoint(
                                 with: ToolRegistry.sandboxControlPlaneToolNames
                             )
                         )
+
+                        ToolRegistry.shared.unregisterAllSandboxTools()
                     }
-
-                    let nonSandboxNames = Set(
-                        SystemPromptComposer.resolveTools(
-                            snapshot: snapshot,
-                            executionMode: .none
-                        ).map(\.function.name)
-                    )
-                    #expect(
-                        nonSandboxNames.isDisjoint(
-                            with: ToolRegistry.sandboxControlPlaneToolNames
-                        )
-                    )
-
-                    ToolRegistry.shared.unregisterAllSandboxTools()
                 }
             }
         }
     }
 
     @Test("disabled sandbox controls cannot be restored by a loaded-tool name")
-    func sandboxControlPlaneLoadedNameBypassFailsClosed() {
-        let config = AutonomousExecConfig(
-            enabled: true,
-            pluginCreate: false,
-            backgroundProcessEnabled: false
-        )
-        BuiltinSandboxTools.register(
-            agentId: "control-plane-bypass",
-            agentName: "control-plane-bypass",
-            config: AutonomousExecConfig(
+    func sandboxControlPlaneLoadedNameBypassFailsClosed() async {
+        // Rewrites the shared sandbox tool registration: hold SandboxTestLock (see sandboxPreservesEnabled…).
+        await SandboxTestLock.shared.run { @MainActor in
+            let config = AutonomousExecConfig(
                 enabled: true,
-                pluginCreate: true,
-                backgroundProcessEnabled: true
+                pluginCreate: false,
+                backgroundProcessEnabled: false
             )
-        )
-        defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+            BuiltinSandboxTools.register(
+                agentId: "control-plane-bypass",
+                agentName: "control-plane-bypass",
+                config: AutonomousExecConfig(
+                    enabled: true,
+                    pluginCreate: true,
+                    backgroundProcessEnabled: true
+                )
+            )
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
 
-        let names = Set(
-            SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(autonomousConfig: config),
-                executionMode: .sandbox,
-                additionalToolNames: [
-                    "sandbox_exec",
-                    "sandbox_plugin_register",
-                    "sandbox_process",
-                ]
-            ).map(\.function.name)
-        )
-        #expect(!names.contains("sandbox_exec"))
-        #expect(!names.contains("sandbox_plugin_register"))
-        #expect(!names.contains("sandbox_process"))
+            let names = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(autonomousConfig: config),
+                    executionMode: .sandbox,
+                    additionalToolNames: [
+                        "sandbox_exec",
+                        "sandbox_plugin_register",
+                        "sandbox_process",
+                    ]
+                ).map(\.function.name)
+            )
+            #expect(!names.contains("sandbox_exec"))
+            #expect(!names.contains("sandbox_plugin_register"))
+            #expect(!names.contains("sandbox_process"))
+        }
     }
 
     @Test
@@ -1755,8 +1765,13 @@ struct SystemPromptComposerToolResolutionTests {
                 }
                 #expect(editProps["edits"] != nil)
                 #expect(editProps["replace_all"] != nil)
-                // The VM route can't edit documents in place, so it must not advertise it.
-                #expect(editProps["operations"] == nil)
+                // `/workspace` documents are edited in place through the share, so the VM route
+                // advertises `operations` and must not steer models into regenerating them.
+                #expect(editProps["operations"] != nil)
+                let editDescription = tools.first { $0.function.name == "file_edit" }?.function.description ?? ""
+                #expect(editDescription.contains("`operations`"))
+                #expect(!editDescription.contains("regenerate with file_write"))
+                #expect(writeDescription.contains("formula"))
             }
         }
     }

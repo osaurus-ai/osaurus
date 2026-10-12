@@ -3362,14 +3362,15 @@ public struct SystemPromptComposer: Sendable {
         var properties: [String: JSONValue]
         let required: [String]
         // Document-edit arguments are copied from the tool's own schema so
-        // the compact contract can't drift from what the tool accepts. VM
-        // paths aren't edited in place, so the sandbox route never gets them.
+        // the compact contract can't drift from what the tool accepts.
+        // `operations` comes through on every route: `/workspace` documents
+        // are edited in place through the share (`editDocumentInWorkspaceShare`).
+        // Other full-schema arguments (`file_read` `mode`) stay host-only.
         var fullProperties: [String: JSONValue] = [:]
-        if !executionMode.usesSandboxTools,
-            case .object(let schema)? = tool.function.parameters,
+        if case .object(let schema)? = tool.function.parameters,
             case .object(let props)? = schema["properties"]
         {
-            fullProperties = props
+            fullProperties = executionMode.usesSandboxTools ? props.filter { $0.key == "operations" } : props
         }
         let editsDocuments = fullProperties["operations"] != nil
         switch tool.function.name {
@@ -3430,7 +3431,9 @@ public struct SystemPromptComposer: Sendable {
                 "Create/overwrite text or code, or generate a document by extension: `.xlsx` from "
                 + "CSV/TSV text or JSON rows, `.docx`/`.pdf` from Markdown or HTML, `.pptx` from Markdown (one "
                 + "slide per heading) — built in, so pass the content directly instead of writing a script or "
-                + "looking for pandoc/reportlab. Append adds text without replacing the file (text only); dry_run previews."
+                + "looking for pandoc/reportlab. In .xlsx a cell starting with `=` is a formula (`'=` keeps it as text). "
+                + "To change an existing .docx/.xlsx/.pptx/.pdf use file_edit `operations` (keeps formatting); replacing an "
+                + "existing formatted .xlsx here is refused. Append adds text without replacing the file (text only); dry_run previews."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3468,8 +3471,8 @@ public struct SystemPromptComposer: Sendable {
                 + (editsDocuments
                     ? "Existing .docx/.xlsx/.pptx/.pdf are edited in place with `operations` (keeps formatting; "
                         + "`file_read` with mode \"structure\" lists the numbered parts) — don't regenerate them."
-                    : "Documents (.docx/.pdf/.xlsx/.pptx) are not edited in place: read with file_read, then "
-                        + "regenerate with file_write.")
+                    : "This route has no in-place document editing; to change an existing document, write the result "
+                        + "to a new path with file_write rather than replacing the original.")
             properties = [
                 "path": .object([
                     "type": .string("string"),
