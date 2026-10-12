@@ -215,6 +215,12 @@ struct FileWriteDocumentFormatsTests {
         let message = EnvelopeAssertions.failureMessage(refused) ?? ""
         #expect(message.contains("column widths") && message.contains("file_edit"), Comment(rawValue: message))
         #expect(try Data(contentsOf: root.appendingPathComponent("ops.xlsx")) == formatted, "file untouched")
+        // The model must get to act on the refusal in the same turn: the chat loop stops on `rejected`.
+        #expect(EnvelopeAssertions.failureKind(refused) == "invalid_args")
+        let outcome = AgentLoopToolOutcome(
+            invocation: ServiceToolInvocation(toolName: "file_write", jsonArguments: "{}", toolCallId: "w1"),
+            callId: "w1", result: refused, wasDeduped: false, wasError: true)
+        #expect(!AgentToolLoop.shouldStopAfterToolOutcome(outcome), "refusal must not end the turn")
 
         let edited = try await FileEditTool(rootPath: root).execute(argumentsJSON:
             #"{"path":"ops.xlsx","operations":[{"op":"set_cells","cells":{"B2":1500,"C2":"=B2*2"}}]}"#)

@@ -2729,8 +2729,11 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 // Host file_write points at file_edit; the VM-only sandbox_write_file takes `operations` itself.
                 let editTool = name == "file_write" ? "file_edit" : name
                 let operations = DocumentEditService.operationNames(for: "xlsx").joined(separator: ", ")
+                // `invalid_args`, not `rejected`: this is a wrong-tool correction the model must get to act on in
+                // the same turn. The chat loop ends the turn on `rejected` (policy/security refusals), which left
+                // the user's change undone (live: the model never got to call file_edit).
                 return ToolEnvelope.failure(
-                    kind: .rejected,
+                    kind: .invalidArgs,
                     message:
                         "'\(relativePath)' already exists and has \(lost.joined(separator: ", ")). \(name) rebuilds a "
                         + "workbook from rows (values and formulas only), so replacing it would drop all of that. Edit it in "

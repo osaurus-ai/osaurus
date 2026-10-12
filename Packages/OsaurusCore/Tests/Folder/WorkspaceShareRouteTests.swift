@@ -149,6 +149,7 @@ struct WorkspaceShareRouteTests {
             let tool = SandboxWriteFileTool(agentName: Self.agentName, home: Self.home)
             let refused = try await tool.execute(argumentsJSON: try json(["path": "ops.xlsx", "content": "Item,Amount\nRent,1500\n"]))
             #expect(ToolEnvelope.isError(refused))
+            #expect(EnvelopeAssertions.failureKind(refused) == "invalid_args", "a correction, not a turn-ending refusal")
             let message = ToolEnvelope.failureMessage(refused)
             #expect(message.contains("column widths") && message.contains("`sandbox_write_file` `operations`"), Comment(rawValue: message))
             #expect(try Data(contentsOf: url) == formatted, "file untouched")
