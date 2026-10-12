@@ -51,4 +51,49 @@ enum XLSXPreservation {
         note("macros", parts.contains { $0.hasSuffix("vbaProject.bin") })
         return found
     }
+
+    /// The first-party osaurus.xlsx plugin's `save_xlsx` writes a minimal package (sheets, values, formulas,
+    /// merges). With `overwrite: true` over an existing workbook it drops everything else, the same loss
+    /// `file_write` refuses. Returns the refusal envelope when that would happen, nil otherwise (including
+    /// whenever the target cannot be resolved: the plugin then runs exactly as before).
+    static func pluginOverwriteRefusal(
+        pluginId: String, toolName: String, argumentsJSON: String, folderRoot: URL?
+    ) -> String? {
+        guard pluginId == "osaurus.xlsx", toolName == "save_xlsx",
+            let data = argumentsJSON.data(using: .utf8),
+            let args = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            args["overwrite"] as? Bool == true, args["dry_run"] as? Bool != true,
+            var path = (args["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty
+        else { return nil }
+        // save_xlsx adds the extension when it is missing.
+        if URL(fileURLWithPath: path).pathExtension.lowercased() != "xlsx" { path += ".xlsx" }
+        let expanded = (path as NSString).expandingTildeInPath
+        let target: URL
+        if expanded.hasPrefix("/") {
+            target = URL(fileURLWithPath: expanded)
+        } else if let folderRoot {
+            target = folderRoot.appendingPathComponent(expanded)
+        } else {
+            return nil
+        }
+        guard let existing = try? Data(contentsOf: target) else { return nil }
+        let lost = featuresLostByRegeneration(existing)
+        guard !lost.isEmpty else { return nil }
+        let operations = DocumentEditService.operationNames(for: "xlsx").joined(separator: ", ")
+        // `invalid_args`, not `rejected`: the model has to be able to switch tools in the same turn.
+        return ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message:
+                "'\(path)' already exists and has \(lost.joined(separator: ", ")). save_xlsx writes a minimal workbook "
+                + "(values and formulas only), so overwriting it would drop all of that. Edit it in place with `file_edit` "
+                + "`operations` instead, which keeps everything else, e.g. {\"path\": \"\(path)\", \"operations\": [{\"op\": "
+                + "\"set_cells\", \"cells\": {\"B2\": 42, \"C2\": \"=SUM(B2:B9)\"}}]} (first sheet unless `sheet` is given; "
+                + "operations: \(operations)). To keep the plugin's result, save it to a new path. The file was not changed.",
+            field: "overwrite",
+            expected: "file_edit operations for an existing formatted workbook, or a new path",
+            tool: toolName,
+            retryable: false,
+            metadata: ["retry_with_tool": "file_edit", "features_preserved_by_edit": lost]
+        )
+    }
 }

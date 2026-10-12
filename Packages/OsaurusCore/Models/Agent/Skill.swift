@@ -289,7 +289,10 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     ## Spreadsheets (osaurus.xlsx plugin)
                     - `create_xlsx` to start a workbook, `write_cells` to fill in data
                     - `csv_to_xlsx` when the data already exists as CSV
-                    - `read_xlsx` to inspect an existing workbook before modifying it
+                    - To change an EXISTING workbook, use `file_edit` with `operations` (`set_cells`, `insert_rows`, …;
+                      `file_read` with `mode: "structure"` lists sheets and cells). It edits the file in place and keeps
+                      its formatting, column widths, filters, validation and formulas. The plugin's `save_xlsx` writes a
+                      minimal workbook, so never save over an existing workbook with it; `read_xlsx` is for reading only.
                     - Put headers in the first row; keep one dataset per sheet
 
                     ## Presentations (osaurus.pptx plugin)

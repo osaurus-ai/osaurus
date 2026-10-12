@@ -231,6 +231,41 @@ struct FileWriteDocumentFormatsTests {
         #expect(afterSheet.contains("<f>B2*2</f>"), Comment(rawValue: afterSheet))
     }
 
+    /// The osaurus.xlsx plugin's save_xlsx with overwrite over an existing formatted workbook is refused
+    /// before the plugin runs (it writes a minimal package); everything else passes through untouched.
+    @Test func pluginSaveOverAFormattedWorkbookIsRefused() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(ToolEnvelope.isSuccess(try await write(root, ["path": "plain.xlsx", "content": "Item,Amount\nRent,1200\n"])))
+        let plain = try Data(contentsOf: root.appendingPathComponent("plain.xlsx"))
+        let package = try OOXMLPackage(data: plain)
+        let sheet = String(decoding: try package.data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+        package.setData("xl/worksheets/sheet1.xml", Data(sheet.replacingOccurrences(
+            of: "<sheetData", with: #"<cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData"#).utf8))
+        try package.serialize().write(to: root.appendingPathComponent("ops.xlsx"))
+
+        func refusal(_ args: String, plugin: String = "osaurus.xlsx", tool: String = "save_xlsx", folder: URL? = nil) -> String? {
+            XLSXPreservation.pluginOverwriteRefusal(pluginId: plugin, toolName: tool, argumentsJSON: args, folderRoot: folder ?? root)
+        }
+        let refused = try #require(refusal(#"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true}"#))
+        #expect(EnvelopeAssertions.failureKind(refused) == "invalid_args")
+        #expect((EnvelopeAssertions.failureMessage(refused) ?? "").contains("file_edit"))
+        // The extension is optional (save_xlsx adds it) and absolute paths resolve as-is.
+        #expect(refusal(#"{"workbook_id":"w1","path":"ops","overwrite":true}"#) != nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"\#(root.appendingPathComponent("ops.xlsx").path)","overwrite":true}"#, folder: URL(fileURLWithPath: "/nonexistent")) != nil)
+        // Passes through: no overwrite, dry run, a plain workbook, a new path, another tool or plugin.
+        #expect(refusal(#"{"workbook_id":"w1","path":"ops.xlsx"}"#) == nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true,"dry_run":true}"#) == nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"plain.xlsx","overwrite":true}"#) == nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"new.xlsx","overwrite":true}"#) == nil)
+        #expect(refusal(#"{"path":"ops.xlsx","overwrite":true}"#, tool: "read_xlsx") == nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true}"#, plugin: "someone.else") == nil)
+        // A relative path with no folder cannot be resolved: the plugin runs exactly as before.
+        #expect(XLSXPreservation.pluginOverwriteRefusal(
+            pluginId: "osaurus.xlsx", toolName: "save_xlsx",
+            argumentsJSON: #"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true}"#, folderRoot: nil) == nil)
+    }
+
     @Test func docxBulletGlyphLinesBecomeListParagraphs() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
         let root = tmpRoot()

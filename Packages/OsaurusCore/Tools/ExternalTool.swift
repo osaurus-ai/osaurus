@@ -44,6 +44,12 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        if let refusal = XLSXPreservation.pluginOverwriteRefusal(
+            pluginId: pluginId, toolName: name, argumentsJSON: argumentsJSON,
+            folderRoot: ChatExecutionContext.currentFolderRoot)
+        {
+            return refusal
+        }
         let agentId = ChatExecutionContext.currentAgentId
         let payloadWithSecrets = injectSecrets(into: argumentsJSON, agentId: agentId)
         let payloadWithContext = injectFolderContext(into: payloadWithSecrets)
