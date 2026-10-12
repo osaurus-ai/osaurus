@@ -115,6 +115,23 @@ struct RemoteSessionContinuationTests {
         )
     }
 
+    /// What the model was sent ahead of a user message stays out of the
+    /// stored turn's text, and goes back in front when the chat is continued.
+    @Test func injectedBlocksStayOutOfTheStoredTurn() throws {
+        let prefix = "[Memory]\nfact\n[/Memory]\n\n"
+        let turns = ChatHistoryWriter.turns(from: [
+            ChatMessage(role: "user", content: prefix + "hi"),
+            ChatMessage(role: "assistant", content: prefix + "quoted back"),
+        ])
+        #expect(turns[0].content == "hi")
+        #expect(turns[0].injectedContextPrefix == prefix)
+        #expect(turns[1].content == prefix + "quoted back")
+        #expect(turns[1].injectedContextPrefix == nil)
+
+        let message = try #require(RemoteSessionContinuation.message(from: turns[0]))
+        #expect(message.content == prefix + "hi")
+    }
+
     @Test func runRequestCarriesTheChatToContinue() throws {
         let json = #"{"messages":[{"role":"user","content":"hi"}],"model":"","osaurus_session_id":"abc"}"#
         let request = try JSONDecoder().decode(ChatCompletionRequest.self, from: Data(json.utf8))

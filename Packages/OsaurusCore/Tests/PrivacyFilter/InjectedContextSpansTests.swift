@@ -79,4 +79,18 @@ struct InjectedContextSpansTests {
         let text = "My name is Alice Smith"
         #expect(InjectedContextSpans.modelPieces(in: text).map { String(text[$0]) } == [text])
     }
+
+    @Test func leadingBlocksSplitFromTheUsersWords() throws {
+        let prefix = "[Memory]\nfact\n[/Memory]\n\n" + timeBlock + "\n\n"
+        let split = try #require(InjectedContextSpans.splittingLeadingBlocks(prefix + "hello\n\nthere"))
+        #expect(split.prefix == prefix)
+        #expect(split.rest == "hello\n\nthere")
+    }
+
+    @Test func textWithoutALeadingBlockIsNotSplit() {
+        #expect(InjectedContextSpans.splittingLeadingBlocks("hello") == nil)
+        // A tag the user typed mid-message, or a block that never closes.
+        #expect(InjectedContextSpans.splittingLeadingBlocks("see [Memory]\nx\n[/Memory]\n\nhi") == nil)
+        #expect(InjectedContextSpans.splittingLeadingBlocks("[Memory]\nunfinished") == nil)
+    }
 }

@@ -29,9 +29,11 @@ enum RemoteSessionContinuation {
         let hasContent = !turn.content.isEmpty
         let hasCalls = !(turn.toolCalls?.isEmpty ?? true)
         guard hasContent || hasCalls else { return nil }
+        // The blocks the turn was sent with go back in front, so the model
+        // reads the same bytes again and a local model's cache still matches.
         return ChatMessage(
             role: turn.role.rawValue,
-            content: turn.content,
+            content: (turn.injectedContextPrefix ?? "") + turn.content,
             tool_calls: turn.toolCalls,
             tool_call_id: turn.toolCallId
         )

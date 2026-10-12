@@ -199,10 +199,16 @@ enum ChatHistoryWriter {
         messages
             .filter { $0.role != "system" }
             .map { msg in
-                ChatTurnData(
+                // A user message that went to the model carries the memory
+                // and time blocks ahead of the user's words. They are kept
+                // beside the turn, as a Mac chat keeps them, so the bubble
+                // shows only what was typed.
+                let injected =
+                    msg.role == "user" ? InjectedContextSpans.splittingLeadingBlocks(msg.content ?? "") : nil
+                return ChatTurnData(
                     id: UUID(),
                     role: MessageRole(rawValue: msg.role) ?? .assistant,
-                    content: msg.content ?? "",
+                    content: injected?.rest ?? msg.content ?? "",
                     // Images the client sent inline (data URLs) are kept, as a
                     // Mac chat keeps its own; otherwise the saved chat loses
                     // the photo the model was shown. Large ones spill to the
@@ -211,7 +217,8 @@ enum ChatHistoryWriter {
                     toolCalls: msg.tool_calls,
                     toolCallId: msg.tool_call_id,
                     toolResults: [:],
-                    thinking: ""
+                    thinking: "",
+                    injectedContextPrefix: injected?.prefix
                 )
             }
     }

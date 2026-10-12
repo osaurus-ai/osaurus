@@ -91,6 +91,26 @@ enum InjectedContextSpans {
         }
     }
 
+    /// `text` split into the app-built blocks it opens with and the user's
+    /// own words after them, or nil when it opens with none. The prefix keeps
+    /// each block's trailing blank line, the shape
+    /// `SystemPromptComposer.composeInjectedUserPrefix` builds, so
+    /// `prefix + rest` is `text` again. Used where a message that went to the
+    /// model is stored as a chat turn: the blocks belong in
+    /// `ChatTurnData.injectedContextPrefix`, not in the bubble.
+    static func splittingLeadingBlocks(_ text: String) -> (prefix: String, rest: String)? {
+        let separator = "\n\n"
+        var cursor = text.startIndex
+        while let block = separatedBlocks.first(where: { text[cursor...].hasPrefix($0.open + "\n") }),
+            let close = text.range(of: block.close, range: cursor ..< text.endIndex),
+            text[close.upperBound...].hasPrefix(separator)
+        {
+            cursor = text.index(close.upperBound, offsetBy: separator.count)
+        }
+        guard cursor > text.startIndex else { return nil }
+        return (String(text[..<cursor]), String(text[cursor...]))
+    }
+
     /// True when `range` touches any injected block in `ranges`.
     static func overlaps(_ range: Range<String.Index>, _ ranges: [Range<String.Index>]) -> Bool {
         ranges.contains { $0.overlaps(range) }

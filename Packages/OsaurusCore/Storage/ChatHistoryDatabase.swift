@@ -2176,7 +2176,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         let idStr = String(cString: sqlite3_column_text(stmt, 0))
         let roleStr = String(cString: sqlite3_column_text(stmt, 1))
         guard let role = MessageRole(rawValue: roleStr) else { return nil }
-        let content = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
+        var content = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
         let attachments: [Attachment] =
             sqlite3_column_text(stmt, 3)
             .map { String(cString: $0) }
@@ -2212,7 +2212,15 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             sqlite3_column_text(stmt, 18)
             .map { String(cString: $0) }
             .flatMap(decodeJSON) ?? [:]
-        let injectedContextPrefix = sqlite3_column_text(stmt, 19).map { String(cString: $0) }
+        var injectedContextPrefix = sqlite3_column_text(stmt, 19).map { String(cString: $0) }
+        // Turns a paired phone added before the writer split them were stored
+        // with the memory and time blocks inside the text.
+        if role == .user, injectedContextPrefix == nil,
+            let injected = InjectedContextSpans.splittingLeadingBlocks(content)
+        {
+            content = injected.rest
+            injectedContextPrefix = injected.prefix
+        }
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
