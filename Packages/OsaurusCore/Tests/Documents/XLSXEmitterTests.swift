@@ -50,15 +50,24 @@ struct XLSXEmitterTests {
         #expect(parsed.textFallback.contains("5 < 7 & \"ok\""))
     }
 
-    @Test func emit_rejectsFormulaCellsWithoutFlatteningThem() async throws {
+    /// A formula cell is written as a formula (never flattened to its text) and reads back as one; whether a
+    /// formula may be exported at all stays the export policy's decision (the default still refuses).
+    @Test func emit_writesFormulaCellsWithoutFlatteningThem() async throws {
         let url = Self.temporaryURL()
         defer { try? FileManager.default.removeItem(at: url) }
+        let document = Self.document(workbook: Self.makeWorkbook(includeFormula: true))
 
-        await #expect(throws: DocumentAdapterError.self) {
-            try await XLSXEmitter().emit(
-                Self.document(workbook: Self.makeWorkbook(includeFormula: true)),
-                to: url
-            )
+        try await XLSXEmitter().emit(document, to: url)
+        let parsed = try await XLSXAdapter().parse(url: url, sizeLimit: 0)
+        let workbook = try #require(parsed.representation.underlying as? Workbook)
+        let formulaCells = workbook.sheets.flatMap { $0.rows.flatMap(\.cells) }.filter { $0.formula != nil }
+        #expect(!formulaCells.isEmpty, "the formula cell must read back as a formula")
+        #expect(formulaCells.allSatisfy { $0.value != .string("=" + ($0.formula ?? "")) })
+
+        let refused = Self.temporaryURL()
+        defer { try? FileManager.default.removeItem(at: refused) }
+        await #expect(throws: WorkbookWorkflowError.self) {
+            _ = try await WorkbookWorkflowService.export(document, to: refused)
         }
     }
 

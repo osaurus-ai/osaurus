@@ -106,7 +106,7 @@ enum FileWriteDocumentRouting {
                 security: .notInspected(formatId: "xlsx", fileExtension: "xlsx", sourceTrust: .generatedArtifact),
                 textFallback: ""
             )
-            let issues = WorkbookWorkflowService.validationIssues(for: workbook)
+            let issues = WorkbookWorkflowService.validationIssues(for: workbook, policy: .xlsxExportWithFormulas)
             let blocking = issues.filter { $0.severity == .error }
             if !blocking.isEmpty { throw RoutingError.validation(blocking) }
             return Plan(
@@ -185,7 +185,8 @@ enum FileWriteDocumentRouting {
         )
         switch plan.target {
         case .xlsx:
-            let result = try await WorkbookWorkflowService.export(plan.document, to: url, registry: registry)
+            let result = try await WorkbookWorkflowService.export(
+                plan.document, to: url, registry: registry, policy: .xlsxExportWithFormulas)
             return Written(bytesWritten: result.bytesWritten)
         case .docx, .pdf, .pptx:
             guard let emitter = registry.emitter(for: plan.document) else {
@@ -251,7 +252,7 @@ enum FileWriteDocumentRouting {
         // Drop a trailing empty row produced by a final newline.
         let trimmedRows = trimTrailingEmptyRows(rows)
         guard !trimmedRows.isEmpty else { throw RoutingError.noRows }
-        return try workbook(sheets: [("Sheet1", trimmedRows)])
+        return try workbook(sheets: [("Sheet1", trimmedRows)], formulas: true)
     }
 
     private static func workbook(fromJSON text: String) throws -> Workbook {
@@ -285,7 +286,7 @@ enum FileWriteDocumentRouting {
                 "expected an object with `sheets`/`rows`, an array of rows, or an array of objects"
             )
         }
-        return try workbook(sheets: sheets)
+        return try workbook(sheets: sheets, formulas: true)
     }
 
     /// Rows from a JSON value at any level (`sheets[].rows`, top-level
@@ -315,7 +316,11 @@ enum FileWriteDocumentRouting {
 
     /// Build a typed `Workbook` from raw rows (`String` / numeric / `Bool` /
     /// `nil` cells) — shared by the `.xlsx` write route and `db_export`.
-    static func workbook(sheets: [(String, [[Any]])]) throws -> Workbook {
+    ///
+    /// `formulas`: a string cell starting with `=` becomes a formula cell (the text after `=`), and a leading
+    /// apostrophe (`'=…`) keeps the rest as literal text, as spreadsheet apps do. Only `file_write` turns this
+    /// on; `db_export` writes stored text verbatim (formula injection from database values).
+    static func workbook(sheets: [(String, [[Any]])], formulas: Bool = false) throws -> Workbook {
         guard !sheets.isEmpty else { throw RoutingError.noRows }
         if sheets.count > maxSheets { throw RoutingError.tooManySheets(sheets.count, max: maxSheets) }
         var built: [Workbook.Sheet] = []
@@ -332,8 +337,17 @@ enum FileWriteDocumentRouting {
                 let rowNumber = rowOffset + 1
                 var cells: [Workbook.Cell] = []
                 for (columnOffset, rawValue) in rawRow.enumerated() {
-                    let value = cellValue(rawValue)
-                    if case .empty = value { continue }
+                    var value = cellValue(rawValue)
+                    var formula: String?
+                    if formulas, case .string(let text) = value {
+                        if text.count > 1, text.hasPrefix("=") {
+                            formula = String(text.dropFirst())
+                            value = .empty
+                        } else if text.hasPrefix("'=") {
+                            value = .string(String(text.dropFirst()))
+                        }
+                    }
+                    if case .empty = value, formula == nil { continue }
                     let columnNumber = columnOffset + 1
                     let reference = "\(columnLetters(columnNumber))\(rowNumber)"
                     cells.append(
@@ -342,7 +356,7 @@ enum FileWriteDocumentRouting {
                             rowNumber: rowNumber,
                             columnNumber: columnNumber,
                             value: value,
-                            formula: nil,
+                            formula: formula,
                             anchor: DocumentAnchor(
                                 kind: .cell,
                                 path: [

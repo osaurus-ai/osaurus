@@ -128,6 +128,64 @@ struct FileWriteDocumentFormatsTests {
     /// A draft written with typographic bullets (what `file_read` renders
     /// for list paragraphs) must produce list paragraphs, not one soft-wrapped
     /// paragraph per section.
+    /// One package part as text (`unzip -p`).
+    private func packagePart(_ url: URL, _ part: String) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        process.arguments = ["-p", url.path, part]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Cells written as `=…` are formulas, not text: `<f>` elements, no shared string, and the workbook asks the
+    /// spreadsheet app to calculate on open. `'=…` stays literal text. (Before: every cell was a string, so a
+    /// model's `=SUM(B2:B3)` opened as the text "=SUM(B2:B3)".)
+    @Test func xlsxFormulaCellsAreWrittenAsFormulas() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let content = #"""
+            {"sheets": [{"name": "Budget", "rows": [
+              ["Item", "Amount", "Note"],
+              ["Rent", 1200, "'=not a formula"],
+              ["Food", 450, ""],
+              ["Total", "=SUM(B2:B3)", "=B4*1.1"]
+            ]}]}
+            """#
+        let result = try await write(root, ["path": "budget.xlsx", "content": content])
+        #expect(ToolEnvelope.isSuccess(result), "formula xlsx write failed: \(result)")
+        let url = root.appendingPathComponent("budget.xlsx")
+        let sheet = try packagePart(url, "xl/worksheets/sheet1.xml")
+        #expect(sheet.contains("<c r=\"B4\"><f>SUM(B2:B3)</f></c>"), Comment(rawValue: sheet))
+        #expect(sheet.contains("<c r=\"C4\"><f>B4*1.1</f></c>"), Comment(rawValue: sheet))
+        let workbook = try packagePart(url, "xl/workbook.xml")
+        #expect(workbook.contains("fullCalcOnLoad=\"1\""), Comment(rawValue: workbook))
+        let strings = try packagePart(url, "xl/sharedStrings.xml")
+        #expect(strings.contains("<t>=not a formula</t>") || strings.contains(">=not a formula<"), Comment(rawValue: strings))
+        #expect(!strings.contains("SUM(B2:B3)"), "the formula must not also be stored as text")
+
+        let readBack = try await read(root, "budget.xlsx")
+        #expect(ToolEnvelope.isSuccess(readBack))
+        #expect(readBack.contains("SUM(B2:B3)"), Comment(rawValue: readBack))
+
+        // CSV rows take formulas too (quoted when they contain the delimiter).
+        let csv = try await write(root, ["path": "t.xlsx", "content": "a,b,sum\n1,2,\"=SUM(A2,B2)\"\n"])
+        #expect(ToolEnvelope.isSuccess(csv), "csv formula write failed: \(csv)")
+        let csvSheet = try packagePart(root.appendingPathComponent("t.xlsx"), "xl/worksheets/sheet1.xml")
+        #expect(csvSheet.contains("<f>SUM(A2,B2)</f>"), Comment(rawValue: csvSheet))
+    }
+
+    /// `db_export` builds through the same row builder but must never turn stored text into a formula.
+    @Test func databaseRowsKeepFormulaLikeTextLiteral() throws {
+        let workbook = try FileWriteDocumentRouting.workbook(sheets: [("S", [["=1+1", "x"]])])
+        let cell = try #require(workbook.sheets.first?.rows.first?.cells.first)
+        #expect(cell.formula == nil)
+        #expect(cell.value == .string("=1+1"))
+    }
+
     @Test func docxBulletGlyphLinesBecomeListParagraphs() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
         let root = tmpRoot()

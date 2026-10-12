@@ -4,9 +4,10 @@
 //
 //  Writes the same conservative workbook subset the dependency-free XLSX
 //  reader can parse: sheets, sparse rows, scalar cell values, shared strings,
-//  and merged ranges. Formulas and styling are rejected instead of being
-//  silently flattened so callers do not mistake a lossy export for a faithful
-//  workbook round trip.
+//  merged ranges and formula cells (`<f>`, no cached value; the workbook asks
+//  the spreadsheet app to calculate on open). Whether a formula may be written
+//  at all is the export policy's decision (`WorkbookExportPolicy`); styling is
+//  rejected instead of being silently flattened.
 //
 
 import Foundation
@@ -106,7 +107,9 @@ public struct XLSXEmitter: DocumentFormatEmitter {
     }
 
     private static func validateForExport(_ workbook: Workbook) throws {
-        let issues = WorkbookWorkflowService.validationIssues(for: workbook, policy: .xlsxExport)
+        // Formula cells are policy-gated upstream (`WorkbookWorkflowService.export`); the package writer
+        // writes whatever reached it.
+        let issues = WorkbookWorkflowService.validationIssues(for: workbook, policy: .xlsxExportWithFormulas)
         guard let firstIssue = issues.first(where: { $0.severity == .error }) else { return }
         switch firstIssue.code {
         case .noRenderableCells, .noSheets:
@@ -157,6 +160,9 @@ public struct XLSXEmitter: DocumentFormatEmitter {
     }
 
     private static func workbookXML(for sheets: [Workbook.Sheet]) throws -> String {
+        let hasFormulas = sheets.contains { sheet in
+            sheet.rows.contains { row in row.cells.contains { $0.formula?.isEmpty == false } }
+        }
         let sheetXML = try sheets.map { sheet in
             let escapedName = try escapeXMLAttribute(sheet.name)
             return """
@@ -169,7 +175,7 @@ public struct XLSXEmitter: DocumentFormatEmitter {
             <workbook xmlns="\(spreadsheetNamespace)" xmlns:r="\(officeRelationshipNamespace)">
               <sheets>
             \(sheetXML)
-              </sheets>
+              </sheets>\(hasFormulas ? "\n  <calcPr calcId=\"191029\" fullCalcOnLoad=\"1\"/>" : "")
             </workbook>
             """
     }
@@ -244,6 +250,9 @@ public struct XLSXEmitter: DocumentFormatEmitter {
         }
         let reference = try validatedCellReference(for: cell, sheetName: sheet.name)
 
+        if let formula = cell.formula, !formula.isEmpty {
+            return #"<c r="\#(reference)"><f>\#(try escapeXMLText(formula))</f></c>"#
+        }
         switch cell.value {
         case .empty:
             return #"<c r="\#(reference)"/>"#
