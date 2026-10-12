@@ -1404,11 +1404,14 @@ private struct PluginCard: View {
             hasMissingSecrets = false
             return
         }
-        hasMissingSecrets = AgentManager.shared.agents.contains { agent in
-            !ToolSecretsKeychain.hasAllRequiredSecrets(
-                specs: cachedSecrets,
-                for: plugin.pluginId,
-                agentId: agent.id
+        let specs = cachedSecrets
+        let pluginId = plugin.pluginId
+        let agentIds = AgentManager.shared.agents.map(\.id)
+        Task {
+            hasMissingSecrets = await PluginSecretsStatus.anyAgentMissing(
+                specs: specs,
+                pluginId: pluginId,
+                agentIds: agentIds
             )
         }
     }
@@ -2236,13 +2239,35 @@ private struct PluginDetailView: View {
             hasMissingSecrets = false
             return
         }
-        hasMissingSecrets = agentManager.agents.contains { agent in
-            !ToolSecretsKeychain.hasAllRequiredSecrets(
-                specs: cachedSecrets,
-                for: plugin.pluginId,
-                agentId: agent.id
+        let specs = cachedSecrets
+        let pluginId = plugin.pluginId
+        let agentIds = agentManager.agents.map(\.id)
+        Task {
+            hasMissingSecrets = await PluginSecretsStatus.anyAgentMissing(
+                specs: specs,
+                pluginId: pluginId,
+                agentIds: agentIds
             )
         }
+    }
+}
+
+// MARK: - Plugin Secrets Status
+
+/// Off-main required-secret check for plugin cards and the detail view.
+/// Cards run this on every appear while the grid scrolls, so the keychain
+/// lookups must never land on the main thread.
+enum PluginSecretsStatus {
+    static func anyAgentMissing(
+        specs: [PluginManifest.SecretSpec],
+        pluginId: String,
+        agentIds: [UUID]
+    ) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            agentIds.contains { agentId in
+                !ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: pluginId, agentId: agentId)
+            }
+        }.value
     }
 }
 

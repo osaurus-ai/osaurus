@@ -3,7 +3,12 @@ import Foundation
 /// App admission/parameter contract. Engine numerics remain bundle-owned.
 struct ImageModelRequestPolicy: Sendable {
     let canonical: String?
-    var isQwen21: Bool { canonical == "qwen-image-2.1" }
+    /// Qwen-Image-2.1 family: the base model and its 8-step Turbo distill share the engine class,
+    /// the dual text-to-image + reference-edit bundle and this request contract.
+    var isQwen21: Bool { Self.isQwen21Family(canonical) }
+    static func isQwen21Family(_ canonical: String?) -> Bool {
+        canonical == "qwen-image-2.1" || canonical == "qwen-image-2.1-turbo"
+    }
     var supportsEditNegativePrompt: Bool { !isQwen21 }
     var supportsEditStrength: Bool { !isQwen21 }
     var dimensionMultiple: Int { isQwen21 ? 32 : 16 }
@@ -14,7 +19,7 @@ struct ImageModelRequestPolicy: Sendable {
     static func capabilities(kind: String, canonical: String?, supportsLoRA: Bool = false)
         -> ImageModelCapabilities
     {
-        let dual = canonical == "qwen-image-2.1"
+        let dual = isQwen21Family(canonical)
         return ImageModelCapabilities(
             textToImage: kind == "imageGen" || dual,
             imageEdit: kind == "imageEdit" || dual,
@@ -89,7 +94,7 @@ struct ImageModelRequestPolicy: Sendable {
 
     static func licenseLabel(canonical: String?) -> String? {
         switch canonical {
-        case "qwen-image-2.1": return L("Research / non-commercial license")
+        case "qwen-image-2.1", "qwen-image-2.1-turbo": return L("Research / non-commercial license")
         case "ideogram": return L("Non-commercial license")
         default: return nil
         }
@@ -100,7 +105,7 @@ struct ImageModelRequestPolicy: Sendable {
         let name = name.lowercased().replacingOccurrences(of: ".", with: "-")
             .replacingOccurrences(of: "_", with: "-")
         if name.contains("qwen-image-2-1") || name.contains("qwen-image-21") || name.contains("qwenimage21") {
-            return "qwen-image-2.1"
+            return name.contains("turbo") ? "qwen-image-2.1-turbo" : "qwen-image-2.1"
         }
         if name.contains("ideogram") { return "ideogram" }
         return nil

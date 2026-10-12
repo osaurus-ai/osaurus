@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Fixed schedule" : {
+      "comment" : "Image composer label for a bundle-owned sampling schedule with no adjustable step count."
+    },
     "Cannot attach image" : {
       "comment" : "Title of the toast shown when the selected model cannot accept an image attachment."
     },
@@ -561,6 +564,16 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Использовать пропорции исходного изображения"
+          }
+        }
+      }
+    },
+    "Turbo uses the fixed sampling schedule from its bundle." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turbo uses the fixed sampling schedule from its bundle."
           }
         }
       }

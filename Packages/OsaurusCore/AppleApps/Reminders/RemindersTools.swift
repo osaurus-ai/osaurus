@@ -318,7 +318,7 @@ final class RemindersOpenTool: AppleToolBase, @unchecked Sendable {
         guard let url = URL(string: reminder.openURL) else {
             throw AppleToolError.execution("Could not build a Reminders link for `\(id)`.")
         }
-        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
+        let opened = await AppleURLOpener.open(url)
         guard opened else {
             throw AppleToolError.unavailable("Reminders could not be opened for `\(reminder.title)`.", retryable: true)
         }

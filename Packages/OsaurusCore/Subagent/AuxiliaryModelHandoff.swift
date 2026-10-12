@@ -5,11 +5,13 @@ import Foundation
 struct ModelJobInvocation: Sendable, Equatable {
     let parentModelName: String?
     let source: SessionSource?
+    var ownershipToken: ModelResidencyOwnershipToken? = nil
 
     static func current() -> Self {
         Self(
             parentModelName: ChatExecutionContext.currentModelName,
-            source: ChatExecutionContext.currentSessionSource
+            source: ChatExecutionContext.currentSessionSource,
+            ownershipToken: ModelResidencyOwnershipContext.childOwnershipToken
         )
     }
 
@@ -19,7 +21,9 @@ struct ModelJobInvocation: Sendable, Equatable {
     ) async rethrows -> Value {
         try await ChatExecutionContext.$currentModelName.withValue(parentModelName) {
             try await ChatExecutionContext.$currentSessionSource.withValue(source) {
-                try await body()
+                try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(ownershipToken) {
+                    try await body()
+                }
             }
         }
     }

@@ -66,7 +66,7 @@ enum ImageComposerRequestBuilder {
         let seedText = settings.seed.trimmingCharacters(in: .whitespacesAndNewlines)
         let seed = UInt64(seedText)
         if !seedText.isEmpty, seed == nil { throw RequestError.invalidSeed }
-        let q21 = item.imageCanonicalName == "qwen-image-2.1"
+        let q21 = ImageModelRequestPolicy.isQwen21Family(item.imageCanonicalName)
         let width: Int? = q21 && !settings.hasExplicitImageSize ? nil
             : q21 ? settings.width : settings.clampedWidth
         let height: Int? = q21 && !settings.hasExplicitImageSize ? nil

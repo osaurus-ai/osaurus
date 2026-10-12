@@ -361,8 +361,8 @@ public actor ImageGenerationService {
                     negativePrompt: params.negativePrompt,
                     width: params.width ?? 1024,
                     height: params.height ?? 1024,
-                    steps: info.canonicalName == "qwen-image-2.1"
-                        ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: "qwen-image-2.1"))
+                    steps: ImageModelRequestPolicy.isQwen21Family(info.canonicalName)
+                        ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: info.canonicalName ?? "qwen-image-2.1"))
                         : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
                     guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
                     seed: seed,
@@ -409,8 +409,8 @@ public actor ImageGenerationService {
                     .editStrength(params.strength),
                 width: params.width,
                 height: params.height,
-                steps: info.canonicalName == "qwen-image-2.1"
-                        ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: "qwen-image-2.1"))
+                steps: ImageModelRequestPolicy.isQwen21Family(info.canonicalName)
+                        ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: info.canonicalName ?? "qwen-image-2.1"))
                         : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
                 guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
                 seed: params.seed,

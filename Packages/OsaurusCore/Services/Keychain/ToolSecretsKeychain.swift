@@ -251,9 +251,14 @@ public enum ToolSecretsKeychain {
     }
 
     /// `resolvedSecret` presence check (exact agent, then default-agent
-    /// fallback).
+    /// fallback). Goes through the memoized `hasSecret` rather than reading
+    /// the value: plugin cards call this on appear for every agent, and
+    /// uncached misses (the common case) cost up to three securityd
+    /// round-trips each, which froze scrolling the plugin grid.
     public static func hasResolvedSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
-        resolvedSecret(id: id, for: pluginId, agentId: agentId) != nil
+        if hasSecret(id: id, for: pluginId, agentId: agentId) { return true }
+        guard agentId != Agent.defaultId else { return false }
+        return hasSecret(id: id, for: pluginId, agentId: Agent.defaultId)
     }
 
     /// Two-id merge primitive: `primary` agent's secrets overlaid on `defaults`.

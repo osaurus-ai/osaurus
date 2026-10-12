@@ -2011,6 +2011,24 @@ struct RemoteChatRequestEncodingTests {
         #expect(!extracted.contains("must be a string"))
     }
 
+    @Test func extractErrorMessage_surfacesOpenRouterUpstreamRaw() {
+        let body = Data(
+            #"{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"{\"message\":\"tool_choice: type \\\"tool\\\" and \\\"any\\\" are not supported for this model.\"}","provider_name":"Amazon Bedrock"}}}"#.utf8
+        )
+        let extracted = RemoteProviderService.extractErrorMessage(from: body, statusCode: 400)
+        #expect(extracted.contains("Provider returned error"))
+        #expect(extracted.contains("are not supported for this model"))
+        #expect(extracted.contains("(code: 400)"))
+    }
+
+    @Test func extractErrorMessage_plainTextOpenRouterRaw() {
+        let body = Data(
+            #"{"error":{"message":"Provider returned error","metadata":{"raw":"upstream exploded"}}}"#.utf8
+        )
+        let extracted = RemoteProviderService.extractErrorMessage(from: body, statusCode: 502)
+        #expect(extracted == "Provider returned error: upstream exploded")
+    }
+
     @Test func routerWireCompatibleMessages_includesEmptyStringForAssistantToolHistory() throws {
         let assistant = ChatMessage(
             role: "assistant",

@@ -4948,6 +4948,33 @@ struct FileSearchTool: OsaurusTool {
 // MARK: Shell Run Tool
 
 struct ShellRunTool: OsaurusTool, PermissionedTool {
+    /// The app's environment with the login shell's PATH, so version-manager toolchains (mise, nvm, asdf, …)
+    /// resolve the way they do in the user's terminal (#3050). Relative entries are dropped so a file the agent
+    /// writes into the working folder cannot shadow a real command.
+    static func childEnvironment(inherited: [String: String], loginShellEntries: [String]?) -> [String: String] {
+        var env = inherited
+        env["PATH"] = ExecutableLocator.childPath(inherited: inherited, loginShellEntries: loginShellEntries)
+            .split(separator: ":").filter { $0.hasPrefix("/") }
+            .joined(separator: ":")
+        return env
+    }
+
+    /// Waits for the bounded login-shell probe (5 s, run once and cached) like the MCP transport does: an
+    /// early call that read the cache while the launch prewarm was still running would miss nvm/fnm, which
+    /// have no static shim directory. A failed probe still gets the inherited PATH plus fallbacks.
+    static func resolvedChildEnvironment(
+        inherited: [String: String],
+        loginShellEntries: (() async -> [String]?)? = nil
+    ) async -> [String: String] {
+        let entries: [String]?
+        if let loginShellEntries {
+            entries = await loginShellEntries()
+        } else {
+            entries = await LoginShellPath.shared.entries()
+        }
+        return childEnvironment(inherited: inherited, loginShellEntries: entries)
+    }
+
     let name = "shell_run"
     let description =
         "Run a shell command in the working directory. **Reserve this for builds, tests, "
@@ -5086,6 +5113,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         process.executableURL = invocation.executableURL
         process.arguments = invocation.arguments
         process.currentDirectoryURL = rootPath
+        process.environment = await Self.resolvedChildEnvironment(inherited: ProcessInfo.processInfo.environment)
 
         // Reject invalid strings before allocating streaming pipes or registering
         // a live execution. The shared launch helper also validates other callers.

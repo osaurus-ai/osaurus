@@ -5462,7 +5462,7 @@ extension FloatingInputCard {
     }
 
     private var selectedSizeLabel: String {
-        if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1",
+        if ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName),
             !imageComposerSettings.hasExplicitImageSize
         {
             return pendingAttachments.hasImages ? L("Use source aspect ratio") : "1024px"
@@ -5506,7 +5506,7 @@ extension FloatingInputCard {
                 .padding(.top, 12)
                 .padding(.bottom, 4)
 
-            if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1" {
+            if ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName) {
                 Button {
                     imageComposerSettings.imageSizeWasExplicitlySet = false
                     showImageSizePicker = false
@@ -5516,7 +5516,7 @@ extension FloatingInputCard {
             }
             ForEach(imageSizeOptions) { option in
                 let isSelected =
-                    (selectedImagePickerItem?.imageCanonicalName != "qwen-image-2.1"
+                    (!ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName)
                         || imageComposerSettings.hasExplicitImageSize)
                     && imageComposerSettings.width == option.width
                     && imageComposerSettings.height == option.height
@@ -5575,7 +5575,22 @@ extension FloatingInputCard {
         .pointingHandCursor()
     }
 
+    @ViewBuilder
     private var stepsChip: some View {
+        if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1-turbo" {
+            Text("Fixed schedule", bundle: .module)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(chipBackground)
+                .localizedHelp("Turbo uses the fixed sampling schedule from its bundle.")
+        } else {
+            adjustableStepsChip
+        }
+    }
+
+    private var adjustableStepsChip: some View {
         HStack(spacing: 6) {
             stepperButton("minus") {
                 imageComposerSettings.steps = max(1, imageComposerSettings.steps - 1)

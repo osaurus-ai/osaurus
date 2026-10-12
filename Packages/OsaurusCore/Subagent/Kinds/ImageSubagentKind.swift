@@ -171,7 +171,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     func prepareLocalParameters(canonical: String?, defaultGuidance: Float?) throws {
         params = try ImageTool.paramsForResolvedLocalModel(params, argumentsJSON: argumentsJSON,
             canonical: canonical, defaultGuidance: defaultGuidance)
-        usesQwen21Parameters = canonical == "qwen-image-2.1"
+        usesQwen21Parameters = ImageModelRequestPolicy.isQwen21Family(canonical)
     }
 
     func localGenerateRequest(_ resolved: ResolvedModel,
