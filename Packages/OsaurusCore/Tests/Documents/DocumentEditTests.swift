@@ -456,6 +456,44 @@ struct DocumentEditTests {
         #expect(!result.contains("weren't shifted"), "\(result)")
     }
 
+    /// After an edit, no formula keeps a cached result from before it: readers that don't recalculate
+    /// (file_read, Quick Look) would otherwise show the old value (live: `=SUM(C2:C5)` kept 2080 after C3
+    /// changed). Shared-formula children and array-result cells count; plain values stay.
+    @Test func xlsxEditDropsEveryCachedFormulaResult() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("sales.xlsx")
+        try makeStructuredXLSX(url)
+
+        let result = try await edit(root, ["path": "sales.xlsx", "operations": [["op": "set_cells", "cells": ["B2": 12]]]])
+        #expect(ToolEnvelope.isSuccess(result), "\(result)")
+        let sheet = try part("xl/worksheets/sheet1.xml", in: url)
+        for cached in ["<v>10</v></c><c r=\"A3\"", "<v>20</v>", "<v>30</v>", "<v>40</v>", "<v>2</v></c></row>", "<c r=\"E7\"><v>4</v>"] {
+            #expect(!sheet.contains(cached), "stale cached result \(cached) kept: \(sheet)")
+        }
+        #expect(sheet.contains("<c r=\"B2\"><v>12</v></c>"), "\(sheet)")
+        #expect(sheet.contains("<c r=\"A5\"><v>4</v></c>") && sheet.contains("<c r=\"B5\"><v>10</v></c>"), "values stay: \(sheet)")
+        #expect(sheet.contains("<f t=\"array\" ref=\"E6:E7\">A2:A3*2</f>"), "\(sheet)")
+        #expect(try part("xl/workbook.xml", in: url).contains("fullCalcOnLoad=\"1\""))
+
+        // Formulas on another sheet can depend on the edited one, so their cached results go too.
+        try await write(root, "two.xlsx", #"{"sheets":[{"name":"Budget","rows":[["Amount"],[450],["=SUM(A2:A2)"]]},{"name":"Summary","rows":[["=Budget!A3"]]}]}"#)
+        let two = root.appendingPathComponent("two.xlsx")
+        let package = try OOXMLPackage(data: try Data(contentsOf: two))
+        for name in ["xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml"] {
+            let xml = String(decoding: try package.data(name), as: UTF8.self)
+                .replacingOccurrences(of: "</f></c>", with: "</f><v>450</v></c>")
+            package.setData(name, Data(xml.utf8))
+        }
+        try package.serialize().write(to: two)
+        let edited = try await edit(root, ["path": "two.xlsx", "operations": [["op": "set_cells", "sheet": "Budget", "cells": ["A2": 475]]]])
+        #expect(ToolEnvelope.isSuccess(edited), "\(edited)")
+        for name in ["xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml"] {
+            let xml = try part(name, in: two)
+            #expect(xml.contains("</f>") && !xml.contains("<v>450</v>"), "\(name): \(xml)")
+        }
+    }
+
     @Test func xlsxStructuralRefusalsLeaveTheFileUntouched() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }

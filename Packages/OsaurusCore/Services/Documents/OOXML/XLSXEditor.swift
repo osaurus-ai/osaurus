@@ -5,9 +5,9 @@
 //  In-place spreadsheet edits on the worksheet XML: set cell values or
 //  formulas (keeping each cell's style), insert/delete rows (shifting
 //  references in formulas, merges, validations and defined names), and
-//  add/rename/delete sheets. Any edit drops the calculation chain and
-//  asks Excel/Numbers to recalculate on open, so no stale cached result
-//  is presented as current.
+//  add/rename/delete sheets. Any edit drops the calculation chain and every
+//  formula's cached result and asks Excel/Numbers to recalculate on open,
+//  so no stale cached result is presented as current.
 //
 
 import Foundation
@@ -78,6 +78,51 @@ struct XLSXEditor {
         }
         calcPr.setAttr("fullCalcOnLoad", "1")
         package.markDirty(workbookPart)
+        try dropCachedFormulaResults()
+    }
+
+    /// Remove every formula cell's cached result (`<v>`) in the workbook. After an edit, a cached result can be
+    /// stale (C7 `=SUM(C2:C5)` kept 2080 after C3 changed), and readers that don't recalculate (file_read,
+    /// Quick Look, previews) would show it as current. Formulas on other sheets can depend on the edited one,
+    /// so every sheet is checked. `fullCalcOnLoad` makes Excel/Numbers compute the values on open.
+    private func dropCachedFormulaResults() throws {
+        for info in try sheets() where package.has(info.part) {
+            guard let bytes = try? package.data(info.part),
+                bytes.range(of: Data("<f".utf8)) != nil || bytes.range(of: Data(":f".utf8)) != nil
+            else { continue }
+            guard let sheetData = try package.root(info.part).firstChild("sheetData") else { continue }
+            let rows = sheetData.childElements("row")
+            // An array formula's result range: only its first cell holds `<f>`, the rest hold results only.
+            var arrayRanges: [(XLSXFormula.CellRef, XLSXFormula.CellRef)] = []
+            for row in rows {
+                for f in row.childElements("c").compactMap({ $0.firstChild("f") }) where f.attr("t") == "array" {
+                    let ends = (f.attr("ref") ?? "").split(separator: ":").map(String.init)
+                    if let first = ends.first.flatMap(XLSXFormula.CellRef.init),
+                        let last = (ends.count == 2 ? ends[1] : ends.first).flatMap(XLSXFormula.CellRef.init),
+                        first.row <= last.row, first.column <= last.column
+                    {
+                        arrayRanges.append((first, last))
+                    }
+                }
+            }
+            func inArrayResult(_ cell: XMLElement) -> Bool {
+                guard !arrayRanges.isEmpty, let ref = cell.attr("r").flatMap(XLSXFormula.CellRef.init) else { return false }
+                return arrayRanges.contains {
+                    ($0.0.row...$0.1.row).contains(ref.row) && ($0.0.column...$0.1.column).contains(ref.column)
+                }
+            }
+            var changed = false
+            for row in rows {
+                for cell in row.childElements("c") where cell.firstChild("f") != nil || inArrayResult(cell) {
+                    guard let cached = cell.firstChild("v") else { continue }
+                    cached.detach()
+                    // `t` types the cached value (str/b/e/n); with no value it describes nothing.
+                    cell.removeAttr("t")
+                    changed = true
+                }
+            }
+            if changed { package.markDirty(info.part) }
+        }
     }
 
     // MARK: - Sheets
