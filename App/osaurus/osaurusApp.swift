@@ -89,7 +89,7 @@ private extension osaurusApp {
                         }
                     }
                 } label: {
-                    Text(verbatim: L("New Chat"))
+                    Text(verbatim: LCached("New Chat"))
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
@@ -99,7 +99,7 @@ private extension osaurusApp {
                     ChatWindowManager.shared.createWindow()
                 }
             } label: {
-                Text(verbatim: L("New Window"))
+                Text(verbatim: LCached("New Window"))
             }
             .keyboardShortcut(
                 "n",
@@ -117,7 +117,7 @@ private extension osaurusApp {
                     }
                 }
             } label: {
-                Text(verbatim: L("New Window with Agent"))
+                Text(verbatim: LCached("New Window with Agent"))
             }
         }
     }
@@ -143,7 +143,7 @@ private extension osaurusApp {
             Button {
                 openManagementTab(nil)
             } label: {
-                Text(verbatim: L("Settings…"))
+                Text(verbatim: LCached("Settings…"))
             }
             .keyboardShortcut(",", modifiers: .command)
         }
@@ -161,7 +161,7 @@ private extension osaurusApp {
                     .version: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1",
                 ])
             } label: {
-                Text(verbatim: L("About Osaurus"))
+                Text(verbatim: LCached("About Osaurus"))
             }
         }
     }
@@ -175,7 +175,7 @@ private extension osaurusApp {
                     ChatWindowManager.shared.toggleSidebarInFocusedWindow()
                 }
             } label: {
-                Text(verbatim: L("Toggle Sidebar"))
+                Text(verbatim: LCached("Toggle Sidebar"))
             }
             .keyboardShortcut("b", modifiers: .command)
 
@@ -184,7 +184,7 @@ private extension osaurusApp {
                     ChatWindowManager.shared.cycleAgentInFocusedWindow()
                 }
             } label: {
-                Text(verbatim: L("Next Agent"))
+                Text(verbatim: LCached("Next Agent"))
             }
             .keyboardShortcut(".", modifiers: [.command, .shift])
 
@@ -202,17 +202,17 @@ private extension osaurusApp {
             Button {
                 openManagementTab(.models)
             } label: {
-                Text(verbatim: L("Models"))
+                Text(verbatim: LCached("Models"))
             }
             Button {
                 openManagementTab(.tools)
             } label: {
-                Text(verbatim: L("Tools"))
+                Text(verbatim: LCached("Tools"))
             }
             Button {
                 openManagementTab(.server)
             } label: {
-                Text(verbatim: L("Server"))
+                Text(verbatim: LCached("Server"))
             }
         }
     }
@@ -224,7 +224,7 @@ private extension osaurusApp {
             Button {
                 openURL("https://docs.osaurus.ai/")
             } label: {
-                Text(verbatim: L("Osaurus Help"))
+                Text(verbatim: LCached("Osaurus Help"))
             }
             .keyboardShortcut("?", modifiers: .command)
 
@@ -233,19 +233,19 @@ private extension osaurusApp {
             Button {
                 openURL("https://docs.osaurus.ai/")
             } label: {
-                Text(verbatim: L("Documentation"))
+                Text(verbatim: LCached("Documentation"))
             }
 
             Button {
                 openURL("https://discord.gg/osaurus")
             } label: {
-                Text(verbatim: L("Discord Community"))
+                Text(verbatim: LCached("Discord Community"))
             }
 
             Button {
                 openURL("https://github.com/osaurus-ai/osaurus/issues/new")
             } label: {
-                Text(verbatim: L("Report an Issue…"))
+                Text(verbatim: LCached("Report an Issue…"))
             }
 
             Divider()
@@ -253,13 +253,13 @@ private extension osaurusApp {
             Button {
                 openURL("https://docs.osaurus.ai/keyboard-shortcuts")
             } label: {
-                Text(verbatim: L("Keyboard Shortcuts"))
+                Text(verbatim: LCached("Keyboard Shortcuts"))
             }
 
             Button {
                 Task { @MainActor in ChatLayoutTour.shared.start() }
             } label: {
-                Text(verbatim: L("Chat Layout Tour"))
+                Text(verbatim: LCached("Chat Layout Tour"))
             }
 
             Divider()
@@ -269,7 +269,7 @@ private extension osaurusApp {
                     appDelegate.showAcknowledgements()
                 }
             } label: {
-                Text(verbatim: L("Acknowledgements…"))
+                Text(verbatim: LCached("Acknowledgements…"))
             }
         }
     }
@@ -296,7 +296,7 @@ private extension osaurusApp {
             Button {
                 openManagementTab(.schedules)
             } label: {
-                Text(verbatim: L("New Schedule…"))
+                Text(verbatim: LCached("New Schedule…"))
             }
 
             Button {
@@ -356,10 +356,10 @@ private extension osaurusApp {
             Button {
                 openManagementTab(.agents)
             } label: {
-                Text(verbatim: L("Manage Agents…"))
+                Text(verbatim: LCached("Manage Agents…"))
             }
         } label: {
-            Text(verbatim: L("Agents"))
+            Text(verbatim: LCached("Agents"))
         }
     }
 }
@@ -401,9 +401,9 @@ private struct VADToggleMenuItem: View {
     }
 
     private var label: String {
-        guard hasSelectedModel else { return L("Toggle Voice Detection") }
+        guard hasSelectedModel else { return LCached("Toggle Voice Detection") }
         return isVADEnabled
-            ? L("Disable Voice Detection") : L("Enable Voice Detection")
+            ? LCached("Disable Voice Detection") : LCached("Enable Voice Detection")
     }
 
     private func toggleVAD() {
@@ -445,9 +445,9 @@ private struct ThemeMenuItems: View {
 
     var body: some View {
         Menu {
-            appearanceButton(L("System"), mode: .system)
-            appearanceButton(L("Light"), mode: .light)
-            appearanceButton(L("Dark"), mode: .dark)
+            appearanceButton(LCached("System"), mode: .system)
+            appearanceButton(LCached("Light"), mode: .light)
+            appearanceButton(LCached("Dark"), mode: .dark)
 
             Divider()
 
@@ -476,10 +476,10 @@ private struct ThemeMenuItems: View {
                     AppDelegate.shared?.showManagementWindow(initialTab: .themes)
                 }
             } label: {
-                Text(verbatim: L("Manage Themes…"))
+                Text(verbatim: LCached("Manage Themes…"))
             }
         } label: {
-            Text(verbatim: L("Theme"))
+            Text(verbatim: LCached("Theme"))
         }
 
         Divider()
@@ -487,7 +487,7 @@ private struct ThemeMenuItems: View {
         Button {
             themeManager.zoomFontIn()
         } label: {
-            Text(verbatim: L("Zoom In"))
+            Text(verbatim: LCached("Zoom In"))
         }
         // "=" is the unshifted key under "+", matching how ⌘+ zoom is
         // reached without holding Shift in browsers.
@@ -497,7 +497,7 @@ private struct ThemeMenuItems: View {
         Button {
             themeManager.zoomFontOut()
         } label: {
-            Text(verbatim: L("Zoom Out"))
+            Text(verbatim: LCached("Zoom Out"))
         }
         .keyboardShortcut("-", modifiers: .command)
         .disabled(!themeManager.canZoomFontOut)
@@ -505,7 +505,7 @@ private struct ThemeMenuItems: View {
         Button {
             themeManager.resetFontScale()
         } label: {
-            Text(verbatim: L("Actual Size"))
+            Text(verbatim: LCached("Actual Size"))
         }
         .keyboardShortcut("0", modifiers: .command)
         .disabled(themeManager.isDefaultFontScale)
