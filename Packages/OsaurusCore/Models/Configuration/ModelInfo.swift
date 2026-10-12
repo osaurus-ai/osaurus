@@ -388,6 +388,17 @@ extension ModelInfo {
             return external
         }
 
+        // /api/tags lists external models by bare repo name, and inference
+        // resolves that alias through the installed-model matcher. Use the
+        // same matcher so /api/show finds every name /api/tags advertises
+        // (issue #2629).
+        if let installed = ModelManager.findInstalledMLXModelFromCache(named: trimmed) {
+            let directory = installed.localDirectory
+            if fm.fileExists(atPath: directory.appendingPathComponent("config.json").path) {
+                return directory
+            }
+        }
+
         return nil
     }
 
