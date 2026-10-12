@@ -2020,7 +2020,9 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         + "reports `match_strategy`. `dry_run: true` previews the diff without writing. "
         + "Text of any extension is written as UTF-8; `.xlsx` is generated from CSV/TSV or JSON rows and "
         + "`.docx`/`.pdf` from Markdown or HTML, `.pptx` from Markdown (one slide per heading) — `content` only; "
-        + "documents are regenerated whole here (in-place document edits are a working-folder `file_edit` feature). "
+        + "to change part of an existing .docx/.xlsx/.pptx/.pdf, pass `operations` instead of `content` (edited in place, "
+        + "keeping formatting, styles and layout; e.g. .xlsx {\"op\": \"set_cells\", \"sheet\": \"Sheet1\", \"cells\": {\"B2\": 42}}; "
+        + "`sandbox_read_file` previews the cells). Replacing an existing formatted .xlsx with `content` is refused. "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial mutation."
     let agentName: String
     let home: String
@@ -2086,6 +2088,14 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                         "required": .array([.string("old_string"), .string("new_string")]),
                     ]),
                 ]),
+                "operations": .object([
+                    "type": .string("array"),
+                    "description": .string(
+                        "Documents only (.docx/.xlsx/.pptx/.pdf): in-place edit operations, the same as `file_edit` `operations` "
+                            + "(e.g. .xlsx set_cells, insert_rows, delete_rows, add_sheet). Omit `content`."
+                    ),
+                    "items": .object(["type": .string("object")]),
+                ]),
                 "replace_all": .object([
                     "type": .string("boolean"),
                     "description": .string("Edit only: replace every occurrence instead of requiring a unique match (default false)."),
@@ -2130,6 +2140,19 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         // read-then-regenerate pivot, like host `file_edit`.
         let isEdit = args["old_string"] != nil || args["edits"] != nil
         if WorkspaceShareRoute.servesWrite(extension: ext) {
+            // Same in-place editor as host `file_edit` (`old_string` maps to run-aware text replacement on
+            // .docx/.pptx), run on the share copy so formatting and layout survive.
+            if args["operations"] != nil || isEdit, DocumentEditService.isEditable(ext) {
+                return try await FileEditTool.editDocumentInWorkspaceShare(
+                    path: resolved,
+                    home: home,
+                    args: args,
+                    ext: ext,
+                    dryRun: (args["dry_run"] as? Bool) ?? false,
+                    replaceAll: (args["replace_all"] as? Bool) ?? false,
+                    tool: name
+                )
+            }
             if isEdit,
                 let rejection = WorkspaceWriteSafety.documentEditRejection(
                     path: path,

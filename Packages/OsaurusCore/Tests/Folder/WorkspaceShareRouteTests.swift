@@ -129,6 +129,55 @@ struct WorkspaceShareRouteTests {
         }
     }
 
+    /// A formatted workbook under `/workspace` is edited in place (the share is a host directory), and
+    /// replacing it with `content` is refused, so the sandbox route has no dead end between the two.
+    @Test func formattedWorkbookUnderTheShareIsEditedInPlaceNotRegenerated() async throws {
+        try await withHome { host in
+            let written = try await FileWriteTool.writeDocumentToWorkspaceShare(
+                path: "ops.xlsx", home: Self.home, content: "Item,Amount\nRent,1200\n", mode: "overwrite", dryRun: false)
+            #expect(ToolEnvelope.isSuccess(try #require(written)))
+            let url = host.appendingPathComponent("ops.xlsx")
+            let package = try OOXMLPackage(data: try Data(contentsOf: url))
+            let sheet = String(decoding: try package.data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+            package.setData(
+                "xl/worksheets/sheet1.xml",
+                Data(sheet.replacingOccurrences(
+                    of: "<sheetData", with: #"<cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData"#).utf8))
+            let formatted = try package.serialize()
+            try formatted.write(to: url)
+
+            let tool = SandboxWriteFileTool(agentName: Self.agentName, home: Self.home)
+            let refused = try await tool.execute(argumentsJSON: try json(["path": "ops.xlsx", "content": "Item,Amount\nRent,1500\n"]))
+            #expect(ToolEnvelope.isError(refused))
+            let message = ToolEnvelope.failureMessage(refused)
+            #expect(message.contains("column widths") && message.contains("`sandbox_write_file` `operations`"), Comment(rawValue: message))
+            #expect(try Data(contentsOf: url) == formatted, "file untouched")
+
+            let edited = try await tool.execute(argumentsJSON: try json([
+                "path": "ops.xlsx", "operations": [["op": "set_cells", "cells": ["B2": 1500, "C2": "=B2*2"]]],
+            ]))
+            #expect(ToolEnvelope.isSuccess(edited), "sandbox edit failed: \(edited)")
+            let after = try Data(contentsOf: url)
+            #expect(XLSXPreservation.featuresLostByRegeneration(after) == ["column widths"], "layout kept")
+            let afterSheet = String(decoding: try OOXMLPackage(data: after).data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+            #expect(afterSheet.contains("<f>B2*2</f>") && afterSheet.contains("1500"), Comment(rawValue: afterSheet))
+
+            // file_edit's share route (combined mode) uses the same editor.
+            let viaFileEdit = try await FileEditTool.editDocumentInWorkspaceShare(
+                path: "\(Self.home)/ops.xlsx", home: Self.home,
+                args: ["operations": [["op": "set_cells", "cells": ["B2": 1600]]]],
+                ext: "xlsx", dryRun: false, replaceAll: false, tool: "file_edit")
+            #expect(ToolEnvelope.isSuccess(viaFileEdit), "file_edit share edit failed: \(viaFileEdit)")
+            #expect(XLSXPreservation.featuresLostByRegeneration(try Data(contentsOf: url)) == ["column widths"])
+
+            let escape = try await FileEditTool.editDocumentInWorkspaceShare(
+                path: "../../outside/ops.xlsx", home: Self.home,
+                args: ["operations": [["op": "set_cells", "cells": ["B2": 1]]]],
+                ext: "xlsx", dryRun: false, replaceAll: false, tool: "file_edit")
+            #expect(EnvelopeAssertions.failureKind(escape) == "rejected")
+        }
+    }
+
     @Test func documentUnderTheShareIsReadHostSide() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
         try await withHome { host in

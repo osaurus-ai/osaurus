@@ -2726,24 +2726,26 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         {
             let lost = XLSXPreservation.featuresLostByRegeneration(existing)
             if !lost.isEmpty {
+                // Host file_write points at file_edit; the VM-only sandbox_write_file takes `operations` itself.
+                let editTool = name == "file_write" ? "file_edit" : name
+                let operations = DocumentEditService.operationNames(for: "xlsx").joined(separator: ", ")
                 return ToolEnvelope.failure(
                     kind: .rejected,
                     message:
-                        "'\(relativePath)' already exists and has \(lost.joined(separator: ", ")). file_write rebuilds a "
+                        "'\(relativePath)' already exists and has \(lost.joined(separator: ", ")). \(name) rebuilds a "
                         + "workbook from rows (values and formulas only), so replacing it would drop all of that. Edit it in "
-                        + "place with `file_edit` instead, which keeps everything else: {\"path\": \"\(relativePath)\", "
-                        + "\"operations\": [{\"op\": \"set_cells\", \"sheet\": \"Sheet1\", \"cells\": {\"B2\": 42, \"C2\": \"=SUM(B2:B9)\"}}]} "
-                        + "(also insert_rows, delete_rows, add_sheet, rename_sheet, delete_sheet; `file_read` with "
-                        + "`mode: \"structure\"` lists sheets and cells). To create a separate workbook, write to a new path. "
-                        + "The file was not changed.",
+                        + "place with `\(editTool)` `operations` instead, which keeps everything else, e.g. {\"path\": \"\(relativePath)\", "
+                        + "\"operations\": [{\"op\": \"set_cells\", \"cells\": {\"B2\": 42, \"C2\": \"=SUM(B2:B9)\"}}]} "
+                        + "(first sheet unless `sheet` is given; operations: \(operations)). "
+                        + "To create a separate workbook, write to a new path. The file was not changed.",
                     field: "path",
-                    expected: "file_edit operations for an existing workbook, or a new .xlsx path",
+                    expected: "\(editTool) operations for an existing workbook, or a new .xlsx path",
                     tool: name,
                     retryable: false,
                     metadata: [
                         "extension": ext,
-                        "retry_with_tool": "file_edit",
-                        "features_preserved_by_file_edit": lost,
+                        "retry_with_tool": editTool,
+                        "features_preserved_by_edit": lost,
                     ]
                 )
             }
@@ -3335,27 +3337,73 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         dryRun: Bool,
         replaceAll: Bool
     ) async throws -> String {
-        if combinedFileRoute(path: relativePath) == .sandbox, ChatExecutionContext.sandboxReadBridge != nil {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    (FolderToolHelpers.resolveRoot(fixed: fixedRootPath) == nil
-                        ? "In-place document edits work on host files, and this chat has no working folder — `/workspace/...` sandbox paths can't be edited in place. "
-                            + "Regenerate the document with `file_write`, or select a working folder and edit it there."
-                        : "In-place document edits work on files in the working folder, not `/workspace/...` sandbox paths. "
-                            + "Regenerate the document with `file_write`, or edit a copy in the working folder."),
-                field: "path",
-                expected: "a working-folder document path",
-                tool: name,
-                retryable: false
-            )
+        if combinedFileRoute(path: relativePath) == .sandbox, let bridge = ChatExecutionContext.sandboxReadBridge {
+            return try await Self.editDocumentInWorkspaceShare(
+                path: relativePath, home: bridge.home, args: args, ext: ext,
+                dryRun: dryRun, replaceAll: replaceAll, tool: name)
         }
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
             return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
         }
-        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        return try await Self.editDocument(
+            at: try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath),
+            relativePath: relativePath,
+            resolveOperand: { try FolderToolHelpers.resolvePath($0, rootPath: rootPath) },
+            args: args, ext: ext, dryRun: dryRun, replaceAll: replaceAll, tool: name)
+    }
+
+    /// In-place document edit of a `/workspace/...` path. The share is a host
+    /// directory (file_write generates sandbox documents into it the same
+    /// way), so the document is edited there rather than regenerated, which
+    /// would drop a workbook's formatting and layout. Used by `file_edit`
+    /// and by the VM-only `sandbox_write_file` (`operations`).
+    static func editDocumentInWorkspaceShare(
+        path: String,
+        home: String,
+        args: [String: Any],
+        ext: String,
+        dryRun: Bool,
+        replaceAll: Bool,
+        tool: String
+    ) async throws -> String {
+        guard let resolved = WorkspaceShareRoute.resolveForWrite(path: path, home: home) else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "'\(path)' isn't a document under the `/workspace` share, so it can't be edited in place. "
+                    + "Pass a path under your sandbox home (e.g. `/workspace/agents/<you>/file.\(ext)`).",
+                field: "path",
+                expected: "a `/workspace/...` document path",
+                tool: tool,
+                retryable: false
+            )
+        }
+        return try await editDocument(
+            at: resolved.hostURL,
+            relativePath: resolved.sandboxPath,
+            resolveOperand: { operand in
+                if let absolute = WorkspaceShareRoute.absoluteSandboxPath(operand, home: home),
+                    WorkspaceShareRoute.shareRelativePath(forSandboxPath: absolute) != nil
+                {
+                    return try WorkspaceShareRoute.hostURL(forSandboxPath: absolute)
+                }
+                return try FolderToolHelpers.resolvePath(operand, rootPath: WorkspaceShareRoute.shareRoot)
+            },
+            args: args, ext: ext, dryRun: dryRun, replaceAll: replaceAll, tool: tool)
+    }
+
+    private static func editDocument(
+        at fileURL: URL,
+        relativePath: String,
+        resolveOperand: @escaping (String) throws -> URL,
+        args: [String: Any],
+        ext: String,
+        dryRun: Bool,
+        replaceAll: Bool,
+        tool: String
+    ) async throws -> String {
         if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
-            return FolderToolHelpers.secretWriteRefusalEnvelope(relativePath: relativePath, tool: name)
+            return FolderToolHelpers.secretWriteRefusalEnvelope(relativePath: relativePath, tool: tool)
         }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw FolderToolError.fileNotFound(relativePath)
@@ -3369,7 +3417,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     message: "`operations` must be a non-empty array of {\"op\": …} objects.",
                     field: "operations",
                     expected: "array of operation objects",
-                    tool: name
+                    tool: tool
                 )
             }
             operations = list
@@ -3384,7 +3432,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     message: "old_string/new_string text edits aren't supported for .\(ext). \(hint)",
                     field: "old_string",
                     expected: "`operations` for .\(ext)",
-                    tool: name
+                    tool: tool
                 )
             }
             // An empty `old_string` with text in `new_string` is an insert,
@@ -3403,7 +3451,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                             message: "`edits[\(index)]` needs a non-empty `old_string` and a `new_string`." + (isInsert ? insertHint : ""),
                             field: "edits",
                             expected: "{old_string, new_string}",
-                            tool: name
+                            tool: tool
                         )
                     }
                     pairs.append((old, new))
@@ -3417,7 +3465,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     message: "Pass a non-empty `old_string` and a `new_string`." + (isInsert ? insertHint : ""),
                     field: "old_string",
                     expected: "document text to replace",
-                    tool: name
+                    tool: tool
                 )
             }
             operations = pairs.map { ["op": "replace_text", "old_string": $0.0, "new_string": $0.1, "all": replaceAll] }
@@ -3432,7 +3480,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     + "Call `file_read` with `mode: \"structure\"` to see what can be addressed.",
                 field: "operations",
                 expected: "`operations` array",
-                tool: name
+                tool: tool
             )
         }
 
@@ -3442,7 +3490,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 fileURL: fileURL,
                 displayPath: relativePath,
                 operations: operations,
-                resolvePath: { try FolderToolHelpers.resolvePath($0, rootPath: rootPath) }
+                resolvePath: resolveOperand
             )
         } catch let error as DocumentEditError {
             return ToolEnvelope.failure(
@@ -3450,7 +3498,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 message: error.message + (error.message.contains("unchanged") ? "" : " Nothing was changed."),
                 field: "operations",
                 expected: "operations valid for this document",
-                tool: name
+                tool: tool
             )
         }
 
@@ -3470,12 +3518,12 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             prepared.discard()
             warnings.append(
                 "PREVIEW ONLY - nothing was written. The document is unchanged. Repeat the same call WITHOUT dry_run to apply it.")
-            return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
+            return ToolEnvelope.success(tool: tool, result: payload, warnings: warnings)
         }
         do {
             try prepared.commit()
         } catch let error as DocumentEditError {
-            return ToolEnvelope.failure(kind: .executionError, message: error.message, field: "path", tool: name)
+            return ToolEnvelope.failure(kind: .executionError, message: error.message, field: "path", tool: tool)
         }
         if let setId = ChatExecutionContext.currentChangeSetId {
             payload["operation_id"] = setId.uuidString
@@ -3485,7 +3533,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             "path": relativePath,
             "exportable": true,
         ]
-        return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
+        return ToolEnvelope.success(tool: tool, result: payload, warnings: warnings)
     }
 
     // MARK: - Shared text-edit application
