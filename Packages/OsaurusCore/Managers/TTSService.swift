@@ -338,7 +338,9 @@ public final class TTSService: ObservableObject {
 
         modelState = .downloading(fraction: nil)
         let voice = TTSConfigurationStore.load().voice
+        CoreMLLoadSentinel.begin(.tts, modelId: "pocket-tts")
         initTask = Task { [weak self] in
+            defer { CoreMLLoadSentinel.end(.tts) }
             do {
                 // Route through the downloader explicitly so we get progress callbacks.
                 // When models are already cached this returns nearly instantly.
@@ -394,7 +396,19 @@ public final class TTSService: ObservableObject {
                 let service = TTSService.shared
                 if case .ready = service.modelState { return }
                 if service.initTask != nil { return }
-                if exists {
+                if exists, let crashed = CoreMLLoadSentinel.crashedLoad(.tts) {
+                    // The previous process died while loading PocketTTS (see
+                    // `CoreMLLoadSentinel`); don't repeat it automatically.
+                    // The speaker button and settings still load it.
+                    NSLog(
+                        "[TTSService] Skipping automatic load: the previous launch died while loading %@ on %@",
+                        crashed.modelId,
+                        crashed.osBuild
+                    )
+                    service.modelState = .failed(
+                        L("The voice model stopped Osaurus while it was loading last time. Load it again from here.")
+                    )
+                } else if exists {
                     service.ensureModelLoaded()
                 } else {
                     service.modelState = .notReady

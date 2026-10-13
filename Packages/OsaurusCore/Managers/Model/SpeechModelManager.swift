@@ -183,6 +183,8 @@ public final class SpeechModelManager: ObservableObject {
 
             do {
                 let faVersion: AsrModelVersion = model.version == .v2 ? .v2 : .v3
+                CoreMLLoadSentinel.begin(.speech, modelId: model.id)
+                defer { CoreMLLoadSentinel.end(.speech) }
                 _ = try await AsrModels.downloadAndLoad(version: faVersion)
                 self.downloadStates[model.id] = .completed
             } catch is CancellationError {

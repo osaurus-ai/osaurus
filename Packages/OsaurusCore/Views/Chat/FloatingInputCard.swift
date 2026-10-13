@@ -1016,7 +1016,7 @@ struct FloatingInputCard: View {
                     if let model = SpeechModelManager.shared.selectedModel {
                         print("[VoiceDebug] Kicking off model load for: \(model.id)")
                         Task {
-                            try? await speechService.loadModel(model.id)
+                            try? await speechService.loadModelAutomatically(model.id)
                         }
                     } else {
                         print("[VoiceDebug] No selected model — cannot load")
@@ -1071,7 +1071,7 @@ struct FloatingInputCard: View {
                     && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
                 {
                     if let model = SpeechModelManager.shared.selectedModel {
-                        Task { try? await speechService.loadModel(model.id) }
+                        Task { try? await speechService.loadModelAutomatically(model.id) }
                     }
                 }
             }

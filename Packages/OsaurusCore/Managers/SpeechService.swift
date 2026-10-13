@@ -740,6 +740,9 @@ public final class SpeechService: ObservableObject {
         isModelLoaded = false
         loadedModelId = nil
 
+        CoreMLLoadSentinel.begin(.speech, modelId: modelId)
+        defer { CoreMLLoadSentinel.end(.speech) }
+
         do {
             let version: AsrModelVersion = modelId == "v2" ? .v2 : .v3
             let models = try await Task.detached(priority: .userInitiated) {
@@ -789,11 +792,34 @@ public final class SpeechService: ObservableObject {
         }
 
         do {
-            try await loadModel(selectedModel.id)
+            guard try await loadModelAutomatically(selectedModel.id) else { return }
             print("[SpeechService] Auto-loaded model: \(selectedModel.id)")
         } catch {
             print("[SpeechService] Failed to auto-load model: \(error)")
         }
+    }
+
+    /// A load the app starts on its own (launch, chat input appearing, voice
+    /// settings changing). Skipped when the previous process died while
+    /// loading the speech model, so a Core ML crash can't repeat on every
+    /// launch (see `CoreMLLoadSentinel`). Loads the user starts call
+    /// `loadModel` directly and always run. Returns false when skipped.
+    @discardableResult
+    public func loadModelAutomatically(_ modelId: String) async throws -> Bool {
+        if !isLoadingModel, let crashed = CoreMLLoadSentinel.crashedLoad(.speech) {
+            lastError = L(
+                "The speech model stopped Osaurus while it was loading last time, so it is no longer loaded automatically. Use the microphone button to load it again."
+            )
+            NSLog(
+                "[SpeechService] Skipping automatic load of %@: the previous launch died while loading speech model %@ on %@",
+                modelId,
+                crashed.modelId,
+                crashed.osBuild
+            )
+            return false
+        }
+        try await loadModel(modelId)
+        return true
     }
 
     /// Ensure a model is loaded, using the default if needed
