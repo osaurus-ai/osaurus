@@ -1712,6 +1712,10 @@ public actor ModelRuntime {
                         // A refused purge touched nothing; a failed one may
                         // still have removed payloads before it stopped.
                         if result.error == nil || result.removedFiles > 0 {
+                            // Queued writes are absent from the index the purge just scanned.
+                            // Cancel their publication before releasing the writer's IO lock,
+                            // including writers retained after model unload.
+                            DiskCache.invalidatePendingWrites(in: root)
                             changedRootPaths.insert(root.path)
                             if result.error == nil { DiskCachePressureHistory.clear(directory: root) }
                         }
