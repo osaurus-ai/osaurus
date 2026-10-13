@@ -330,9 +330,14 @@ let package = Package(
         // vmlx-swift#572 (stacked on #570 and #571): write-behind SSD prompt-cache stores so the
         // end of a turn or tool call no longer waits for the files to reach disk, and Uno
         // self-speculation for K2 Horizon bundles that ship a uno/ adapter.
+        // vmlx-swift#575 stops MLX host reads (asArray/asData/item) from
+        // dereferencing arrays whose eval failed after a swallowed MLX C++
+        // error (Sentry APPLE-MACOS-1ZE/2PW/319/2EX/1X5), finishes the owning
+        // generation with a GenerationFailure instead, and adds the throwing
+        // asArrayChecked used by PrivacyFilterKit below.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "03ea07de046fb56a42c6c40cdef34644d2cdbe08"
+            revision: "86ca1714fb283a2a247ec5d7ee3b73c1ea7d8611"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

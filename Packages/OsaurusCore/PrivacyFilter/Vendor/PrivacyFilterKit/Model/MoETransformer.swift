@@ -226,8 +226,11 @@ struct MoETransformer {
         // returned values are stable regardless of whether the model
         // ran in BF16 or FP16.
         let finalLogits = logits.asType(DType.float32)
-        finalLogits.eval()
-        let flat: [Float] = finalLogits.asArray(Float.self)
+        // Throwing read: if the forward above failed to evaluate (Metal
+        // allocation or command-buffer failure under memory pressure, Sentry
+        // APPLE-MACOS-2EX crashed on this read with no backing buffer), fail
+        // detection instead of classifying from zero-filled logits.
+        let flat: [Float] = try finalLogits.asArrayChecked(Float.self)
         precondition(flat.count == seqLen * numLabels)
         var rows: [[Float]] = []
         rows.reserveCapacity(seqLen)
