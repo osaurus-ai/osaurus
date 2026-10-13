@@ -1230,26 +1230,6 @@ public enum AgentLoopEvaluator {
                                 }
                                 sawToolCallProgress = true
                                 streamedToolArgumentCharacters += fragment.utf8.count
-                                if streamedToolArgumentCharacters
-                                    > AgentToolLoop.maxStreamingToolArgumentCharacters
-                                {
-                                    recordStepDiagnostic(
-                                        step: modelStepCount,
-                                        stopReason: "oversized_tool_call",
-                                        content: content,
-                                        reasoning: reasoning,
-                                        sawToolCallProgress: true,
-                                        pendingToolName: streamedToolName,
-                                        toolArgumentCharacters: streamedToolArgumentCharacters,
-                                        decodeThroughputAttribution:
-                                            "unavailable_oversized_tool_call_before_vmlx_info"
-                                    )
-                                    finalText = ""
-                                    return .oversizedToolCall(
-                                        toolName: streamedToolName,
-                                        argumentCharacters: streamedToolArgumentCharacters
-                                    )
-                                }
                                 continue
                             }
                             if let fragment = StreamingToolCallProgressHint.decode(delta) {
@@ -1262,26 +1242,6 @@ public enum AgentLoopEvaluator {
                                 }
                                 sawToolCallProgress = true
                                 streamedToolArgumentCharacters += fragment.utf8.count
-                                if streamedToolArgumentCharacters
-                                    > AgentToolLoop.maxStreamingToolArgumentCharacters
-                                {
-                                    recordStepDiagnostic(
-                                        step: modelStepCount,
-                                        stopReason: "oversized_tool_call",
-                                        content: content,
-                                        reasoning: reasoning,
-                                        sawToolCallProgress: true,
-                                        pendingToolName: streamedToolName,
-                                        toolArgumentCharacters: streamedToolArgumentCharacters,
-                                        decodeThroughputAttribution:
-                                            "unavailable_oversized_tool_call_before_vmlx_info"
-                                    )
-                                    finalText = ""
-                                    return .oversizedToolCall(
-                                        toolName: streamedToolName,
-                                        argumentCharacters: streamedToolArgumentCharacters
-                                    )
-                                }
                                 continue
                             }
                             if let fragment = StreamingReasoningHint.decode(delta) {
@@ -1735,7 +1695,6 @@ public enum AgentLoopEvaluator {
         case .overBudget: return "overBudget"
         case .emptyResponseExhausted: return "emptyResponseExhausted"
         case .lengthExhausted: return "lengthExhausted"
-        case .oversizedToolCallExhausted: return "oversizedToolCallExhausted"
         case .truncatedToolCallExhausted: return "truncatedToolCallExhausted"
         case .repetitionLoopExhausted: return "repetitionLoopExhausted"
         case .incompleteReasoningExhausted: return "incompleteReasoningExhausted"

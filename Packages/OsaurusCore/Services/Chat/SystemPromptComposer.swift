@@ -1034,9 +1034,8 @@ public struct SystemPromptComposer: Sendable {
                             + "file mutation proves only that bytes were saved. "
                             + "To append while preserving a file, call file_write with mode "
                             + "append and put only the new bytes in content. "
-                            + "Keep each file_write content under "
-                            + "\(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; "
-                            + "for larger files use repeated calls with mode append. "
+                            + "file_write content has no length limit; if your own output would be cut short "
+                            + "on a very large text file, write it in parts with mode append. "
                             + SystemPromptTemplates.folderDocumentFormatsLine
                     )
                 )
@@ -3433,7 +3432,8 @@ public struct SystemPromptComposer: Sendable {
                 + "slide per heading) — built in, so pass the content directly instead of writing a script or "
                 + "looking for pandoc/reportlab. In .xlsx a cell starting with `=` is a formula (`'=` keeps it as text). "
                 + "To change an existing .docx/.xlsx/.pptx/.pdf use file_edit `operations` (keeps formatting); replacing an "
-                + "existing formatted .xlsx here is refused. Append adds text without replacing the file (text only); dry_run previews."
+                + "existing formatted .xlsx here is refused. Append adds text without replacing the file (text only); dry_run previews. "
+                + "`content` has no length limit; `source_path` renders a document from a text file already in the workspace."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3443,10 +3443,16 @@ public struct SystemPromptComposer: Sendable {
                 ]),
                 "content": .object([
                     "type": .string("string"),
-                    "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
                     "description": .string(
-                        "File text (at most \(WorkspaceToolContract.maxWriteContentCharacters) characters). "
-                            + "For .xlsx: CSV/TSV rows or {\"sheets\":[{\"name\",\"rows\"}]}; for .docx/.pdf: Markdown or HTML; for .pptx: Markdown"
+                        "File text (any length). "
+                            + "For .xlsx: CSV/TSV rows or {\"sheets\":[{\"name\",\"rows\"}]}; for .docx/.pdf: Markdown or HTML; for .pptx: Markdown. "
+                            + "Omit only when source_path is given"
+                    ),
+                ]),
+                "source_path": .object([
+                    "type": .string("string"),
+                    "description": .string(
+                        "Existing text file to take the content from instead of `content` (e.g. render report.docx from report.md)"
                     ),
                 ]),
                 "mode": .object([
@@ -3461,7 +3467,7 @@ public struct SystemPromptComposer: Sendable {
                     "description": .string("Preview the diff or document summary without writing"),
                 ]),
             ]
-            required = ["path", "content"]
+            required = ["path"]
         case "file_edit":
             description =
                 "Replace text in a UTF-8 file: one unique `old_string`, every occurrence with "

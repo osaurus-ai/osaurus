@@ -556,26 +556,39 @@ struct AgentTaskStateTests {
         #expect(state.nextStepBias() == nil)
     }
 
-    @Test func bias_oversizedFileWriteRequiresChunkedAppendRecovery() {
+    /// `file_write` no longer declares a `content` length, so a single
+    /// `must contain at most` rejection (which can now only come from a
+    /// foreign MCP/plugin schema) gets no special "split into chunks"
+    /// coaching — and a second consecutive rejection of the same tool
+    /// reaches the ordinary argument-rejection notice that tells the model
+    /// to stop guessing and either fix the arguments or report to the user.
+    @Test func bias_repeatedInvalidArgsSurfacesStopRetryingNotice() {
         let state = AgentTaskState()
+        let rejection = ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "Property 'content' must contain at most 30000 characters (got 34172).",
+            field: "content",
+            expected: "at most 30000 characters",
+            tool: "file_write",
+            retryable: false
+        )
         state.record(
             name: "file_write",
-            argsJSON: #"{"path":"index.html","content":"oversized"}"#,
-            result: ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Property 'content' must contain at most 30000 characters (got 32000).",
-                field: "content",
-                expected: "at most 30000 characters",
-                tool: "file_write",
-                retryable: true
-            )
+            argsJSON: #"{"path":"report.docx","content":"oversized"}"#,
+            result: rejection
         )
+        #expect(state.nextStepBias() == nil)
 
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"report.docx","content":"oversized"}"#,
+            result: rejection
+        )
         let bias = state.nextStepBias() ?? ""
-        #expect(bias.contains("did not execute"))
-        #expect(bias.contains("Do not regenerate another complete oversized payload"))
-        #expect(bias.contains("\(WorkspaceToolContract.recommendedWriteChunkCharacters)"))
-        #expect(bias.contains(#"mode: "append""#))
+        #expect(bias.contains("rejected your arguments 2 times in a row"))
+        #expect(bias.contains("must contain at most 30000 characters"))
+        #expect(bias.contains("tell the user plainly what is missing"))
+        #expect(!bias.contains("Do not regenerate another complete oversized payload"))
     }
 
     @Test func bias_runnableWriteRequiresVerificationAndExplainsTruncatedDiff() {

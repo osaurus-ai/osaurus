@@ -134,10 +134,6 @@ enum AgentLoopModelStep {
     /// mid-tool-args) and wants the same iteration replayed without
     /// charging the iteration budget.
     case retryWithoutCharge
-    /// A streamed tool call exceeded the bounded argument buffer before it
-    /// became executable. The driver gives the model one typed retry with
-    /// chunking guidance instead of decoding an unbounded file payload.
-    case oversizedToolCall(toolName: String?, argumentCharacters: Int)
     /// The runtime hit its output-token ceiling after beginning a streamed
     /// tool envelope but before committing an executable invocation. Unlike
     /// ordinary length exhaustion, this is a typed protocol failure and gets
@@ -414,11 +410,6 @@ enum AgentLoopModelStep {
         }
         return String(content[...lastVisible]) + "\n\n" + fallback
     }
-}
-
-struct OversizedStreamingToolCall: Error, Sendable {
-    let toolName: String?
-    let argumentCharacters: Int
 }
 
 /// Whether a surface owes the user a normal visible answer after a
@@ -1152,9 +1143,6 @@ enum AgentToolLoop {
         /// The model exhausted the configured output-token budget without an
         /// executable tool call. Any visible partial text is preserved.
         case lengthExhausted
-        /// A tool call repeatedly exceeded the bounded streaming-argument
-        /// contract and never became executable.
-        case oversizedToolCallExhausted
         /// A streamed tool envelope repeatedly hit the model output ceiling
         /// before becoming executable.
         case truncatedToolCallExhausted
@@ -1382,26 +1370,11 @@ enum AgentToolLoop {
         + "The agent task is incomplete; increase Max Tokens, disable Thinking for this task, "
         + "or continue from the latest tool result."
 
-    // This bounds the serialized JSON envelope, not just `content`. A valid
-    // 30,000-character write made entirely of quotes or backslashes expands
-    // to roughly 60K after JSON escaping, plus path/mode framing.
-    static let maxStreamingToolArgumentCharacters = 65_536
-    static let maxOversizedToolCallRetries = 1
+    // There is deliberately no cap on streamed tool-call argument size. A
+    // 64 KiB "streaming envelope" bound used to abort any larger tool call
+    // mid-stream; the model's own output-token ceiling is the only limit,
+    // and when that cuts a call short `truncatedToolCallNotice` below says so.
     static let maxTruncatedToolCallRetries = 1
-
-    static func oversizedToolCallNotice(toolName: String?, argumentCharacters: Int) -> String {
-        let tool = toolName?.isEmpty == false ? "`\(toolName!)`" : "tool"
-        return
-            "[System Notice] The previous \(tool) call exceeded the \(argumentCharacters)-character "
-            + "streaming argument limit before it became executable. Retry with smaller calls. "
-            + "Keep each content chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters. "
-            + "For a large file, write the first chunk with `file_write`, then use "
-            + "`file_write` with `mode: \"append\"` for later chunks."
-    }
-
-    static let oversizedToolCallFallback =
-        "The model repeatedly produced an oversized tool call that could not execute. "
-        + "The task is incomplete; retry with a smaller output or split large file writes into chunks."
 
     static func truncatedToolCallNotice(toolName: String?, argumentCharacters: Int) -> String {
         let tool = toolName?.isEmpty == false ? "`\(toolName!)`" : "tool"
@@ -2484,10 +2457,6 @@ enum AgentToolLoop {
             return Self.repeatedRetrievalWrapUpNotice(
                 tool: outcome.invocation.toolName, failures: replays + 1)
         }
-        // Total oversized streamed-call recoveries. One typed retry gives a
-        // model a chance to switch to bounded/chunked writes without allowing
-        // another unbounded decode loop.
-        var oversizedToolCallRetries = 0
         // Separate from ordinary length exhaustion: only a stream that began
         // a real tool envelope receives this bounded protocol retry.
         var truncatedToolCallRetries = 0
@@ -2682,19 +2651,6 @@ enum AgentToolLoop {
                 // slots were cleared before the stream error surfaced.
                 iteration -= 1
                 continue
-
-            case .oversizedToolCall(let toolName, let argumentCharacters):
-                oversizedToolCallRetries += 1
-                if oversizedToolCallRetries <= Self.maxOversizedToolCallRetries {
-                    replaceStateNotice(Self.oversizedToolCallNotice(
-                        toolName: toolName,
-                        argumentCharacters: argumentCharacters
-                    ))
-                    iteration -= 1
-                    continue
-                }
-                await hooks.emitFallbackText?(Self.oversizedToolCallFallback)
-                return RunResult(exit: .oversizedToolCallExhausted, iterations: iteration)
 
             case .truncatedToolCall(let toolName, let argumentCharacters):
                 truncatedToolCallRetries += 1

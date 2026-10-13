@@ -1809,7 +1809,7 @@ public enum SystemPromptTemplates {
             Use the workspace tools to complete requested work now; do not only describe or promise it.
             After creating or changing runnable code, run an available syntax/build/test/behavior check before saying it works; a successful file mutation proves only that bytes were saved.
             To append while preserving a file, call file_write with mode append and put only the new bytes in content.
-            Keep each file_write content under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; for larger files use repeated calls with mode append.
+            file_write content has no length limit; if your own output would be cut short on a very large text file, write it in parts with mode append.
             \(folderDocumentFormatsLine)
             """
         if let contextFiles = folder.contextFiles, !contextFiles.isEmpty {
@@ -1832,7 +1832,8 @@ public enum SystemPromptTemplates {
     static let folderDocumentFormatsLine =
         "The file tools handle documents natively: `file_read` opens PDF, Word, PowerPoint, Excel, and images "
         + "(and lists directories); `file_write` renders `.xlsx` from CSV/JSON rows and `.docx`/`.pdf` from "
-        + "Markdown or HTML — no converter, library check, or generator script is needed."
+        + "Markdown or HTML (passed as `content`, or read from a workspace text file via `source_path`) — "
+        + "no converter, library check, or generator script is needed."
 
     /// One-line restatement of the path-arg rule. Each `file_*` tool's
     /// description carries the per-arg detail; this lives in the prompt

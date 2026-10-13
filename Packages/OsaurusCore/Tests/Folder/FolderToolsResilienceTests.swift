@@ -520,8 +520,35 @@ struct FolderToolsResilienceTests {
         }
     }
 
-    @Test @MainActor func fileWrite_schemaBoundsEachChunk() throws {
+    /// A schema rejection is a pure function of the arguments: the identical
+    /// call fails identically, so the envelope must say `retryable: false`
+    /// (a model that trusted `retryable: true` re-sent one rejected
+    /// `file_write` for an hour and a half).
+    @Test @MainActor func fileWrite_schemaRejectionIsNotRetryableAsIssued() throws {
         let tool = FileWriteTool(rootPath: tmpRoot())
+        let outcome = ToolRegistry.shared.preflightForTest(
+            argumentsJSON: #"{"path": "x.txt", "content": "hi", "extra": "nope"}"#,
+            schema: tool.parameters,
+            toolName: tool.name
+        )
+        guard case .rejected(let envelope) = outcome else {
+            Issue.record("preflight should have rejected the extra key")
+            return
+        }
+        let data = try #require(envelope.data(using: .utf8))
+        let dict = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(dict["kind"] as? String == "invalid_args")
+        #expect(dict["retryable"] as? Bool == false)
+    }
+
+    /// `content` has no maximum length — neither in the schema the model
+    /// sees nor in the description. The 30,000-character cap that used to
+    /// live here made every generated document above 30K impossible
+    /// (documents are rendered whole, so they cannot be appended).
+    @Test @MainActor func fileWrite_contentHasNoLengthCap() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tool = FileWriteTool(rootPath: root)
         guard case .some(.object(let schema)) = tool.parameters,
             case .some(.object(let properties)) = schema["properties"],
             case .some(.object(let content)) = properties["content"]
@@ -529,47 +556,89 @@ struct FolderToolsResilienceTests {
             Issue.record("file_write should expose an object content schema")
             return
         }
-        #expect(
-            content["maxLength"]
-                == .number(Double(WorkspaceToolContract.maxWriteContentCharacters))
-        )
-        #expect(WorkspaceToolContract.maxWriteContentCharacters >= 30_000)
+        #expect(content["maxLength"] == nil)
         guard case .some(.string(let description)) = content["description"] else {
             Issue.record("file_write content description should be a string")
             return
         }
-        #expect(
-            description.hasPrefix(
-                "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
-            )
-        )
+        #expect(!description.lowercased().contains("maximum"))
+        #expect(!description.contains("at most"))
+        #expect(!tool.description.lowercased().contains("maximum"))
         #expect(description.contains(".xlsx"))
         #expect(description.contains(".docx"))
         #expect(description.contains(".pdf"))
-        #expect(
-            WorkspaceToolContract.recommendedWriteChunkCharacters
-                < WorkspaceToolContract.maxWriteContentCharacters
-        )
+        #expect(properties["source_path"] != nil)
 
-        let oversized = String(
-            repeating: "x",
-            count: WorkspaceToolContract.maxWriteContentCharacters + 1
-        )
+        // The exact size the user report failed on ("got 34172").
+        let large = String(repeating: "x", count: 34_172)
         let data = try JSONSerialization.data(withJSONObject: [
             "path": "large.txt",
-            "content": oversized,
+            "content": large,
         ])
-        let outcome = ToolRegistry.shared.preflightForTest(
-            argumentsJSON: String(decoding: data, as: UTF8.self),
+        let argumentsJSON = String(decoding: data, as: UTF8.self)
+        guard case .ready = ToolRegistry.shared.preflightForTest(
+            argumentsJSON: argumentsJSON,
             schema: tool.parameters,
             toolName: tool.name
-        )
-        guard case .rejected(let envelope) = outcome else {
-            Issue.record("preflight should reject a write chunk beyond the schema limit")
+        ) else {
+            Issue.record("preflight must not reject a 34,172-character write")
             return
         }
-        #expect(failureKind(envelope) == "invalid_args")
-        #expect(failureField(envelope) == "content")
+        let result = try await tool.execute(argumentsJSON: argumentsJSON)
+        #expect(ToolEnvelope.isSuccess(result), "34,172-character write failed: \(result)")
+        let written = try String(contentsOf: root.appendingPathComponent("large.txt"), encoding: .utf8)
+        #expect(written.count == 34_172)
+    }
+
+    /// Text-file semantics are unchanged by the cap removal: overwrite
+    /// replaces, append extends, and overwrite after append replaces again.
+    @Test @MainActor func fileWrite_textAppendAndOverwriteSemanticsUnchanged() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tool = FileWriteTool(rootPath: root)
+        let url = root.appendingPathComponent("notes.md")
+
+        let first = try await tool.execute(argumentsJSON: ##"{"path": "notes.md", "content": "# One\n"}"##)
+        #expect(ToolEnvelope.isSuccess(first), "\(first)")
+        #expect((try String(contentsOf: url, encoding: .utf8)) == "# One\n")
+
+        let appended = try await tool.execute(
+            argumentsJSON: ##"{"path": "notes.md", "content": "# Two\n", "mode": "append"}"##
+        )
+        #expect(ToolEnvelope.isSuccess(appended), "\(appended)")
+        #expect((try String(contentsOf: url, encoding: .utf8)) == "# One\n# Two\n")
+
+        let overwritten = try await tool.execute(
+            argumentsJSON: ##"{"path": "notes.md", "content": "# Three\n", "mode": "overwrite"}"##
+        )
+        #expect(ToolEnvelope.isSuccess(overwritten), "\(overwritten)")
+        #expect((try String(contentsOf: url, encoding: .utf8)) == "# Three\n")
+    }
+
+    /// Neither `content` nor `source_path` is nothing to write; both at once
+    /// is ambiguous. Each is a structured, non-retryable argument error.
+    @Test @MainActor func fileWrite_contentOrSourcePathIsRequired() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tool = FileWriteTool(rootPath: root)
+
+        let neither = try await tool.execute(argumentsJSON: #"{"path": "a.txt"}"#)
+        #expect(failureKind(neither) == "invalid_args")
+        #expect(failureField(neither) == "content")
+
+        try "x".write(to: root.appendingPathComponent("src.md"), atomically: true, encoding: .utf8)
+        let both = try await tool.execute(
+            argumentsJSON: #"{"path": "a.txt", "content": "y", "source_path": "src.md"}"#
+        )
+        #expect(failureKind(both) == "invalid_args")
+        #expect(failureField(both) == "source_path")
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("a.txt").path))
+
+        let missing = try await tool.execute(
+            argumentsJSON: #"{"path": "a.txt", "source_path": "nope.md"}"#
+        )
+        #expect(failureKind(missing) == "not_found")
+        #expect(failureField(missing) == "source_path")
     }
 
     // MARK: - file_edit

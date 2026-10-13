@@ -1714,7 +1714,7 @@ struct SystemPromptComposerToolResolutionTests {
                     ]
                 )
                 #expect(
-                    propertyNames("file_write") == ["path", "content", "mode", "dry_run"]
+                    propertyNames("file_write") == ["path", "content", "source_path", "mode", "dry_run"]
                 )
                 // Batch (`edits`) and `replace_all` forms must stay reachable
                 // from the compact schema.

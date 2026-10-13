@@ -5351,14 +5351,6 @@ final class ChatSession: ObservableObject {
                     if currentTurn.pendingToolName == nil {
                         currentTurn.pendingToolName = ToolDisplayName.pendingToolSentinel
                     }
-                    if currentTurn.pendingToolArgSize
-                        > AgentToolLoop.maxStreamingToolArgumentCharacters
-                    {
-                        throw OversizedStreamingToolCall(
-                            toolName: currentTurn.pendingToolName,
-                            argumentCharacters: currentTurn.pendingToolArgSize
-                        )
-                    }
                     let count = currentTurn.pendingToolArgFragmentCount
                     let now = Date()
                     if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
@@ -5395,14 +5387,6 @@ final class ChatSession: ObservableObject {
                         let name = FileDiff.partialToolName(inArgs: full)
                     {
                         currentTurn.pendingToolName = name
-                    }
-                    if currentTurn.pendingToolArgSize
-                        > AgentToolLoop.maxStreamingToolArgumentCharacters
-                    {
-                        throw OversizedStreamingToolCall(
-                            toolName: currentTurn.pendingToolName,
-                            argumentCharacters: currentTurn.pendingToolArgSize
-                        )
                     }
                     // Always rebuild for the first few fragments so the chip
                     // appears immediately; afterwards cap at ~12 rebuilds/sec
@@ -8123,19 +8107,6 @@ final class ChatSession: ObservableObject {
                                 }
                                 hasStructuredToolWorkThisRun = true
                                 return .toolCalls(invocations)
-                            } catch let oversized as OversizedStreamingToolCall {
-                                print(
-                                    "[Osaurus] Oversized streamed tool call "
-                                        + "tool=\(oversized.toolName ?? "unknown") "
-                                        + "chars=\(oversized.argumentCharacters); retrying with chunking notice"
-                                )
-                                assistantTurn.pendingToolName = nil
-                                assistantTurn.clearPendingToolArgs()
-                                self.rebuildVisibleBlocks()
-                                return .oversizedToolCall(
-                                    toolName: oversized.toolName,
-                                    argumentCharacters: oversized.argumentCharacters
-                                )
                             } catch let error as RemoteProviderServiceError {
                                 // Transient provider-side stream errors — most commonly
                                 // mid-tool-args truncation flagged by

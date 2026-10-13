@@ -984,13 +984,6 @@ public final class AgentTaskState {
     public func nextStepBias() -> String? {
         guard biasEnabled, let last = lastResultClass else { return nil }
 
-        if lastToolName == "file_write",
-            let envelope = lastResultEnvelope,
-            Self.isFileWriteContentTooLarge(envelope) {
-            return
-                "The previous `file_write` did not execute because `content` exceeded the per-call limit. Do not regenerate another complete oversized payload. Split the content now: send a first chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters with overwrite mode, then send only each remaining chunk with `mode: \"append\"`."
-        }
-
         // Consecutive argument rejections of one tool with varying
         // arguments: the model is retrying without reading the validator.
         // Outranks the identical-args nudge below (which needs three exact
@@ -1209,17 +1202,6 @@ public final class AgentTaskState {
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return dict["retryable"] as? Bool
-    }
-
-    private static func isFileWriteContentTooLarge(_ envelope: String) -> Bool {
-        guard ToolEnvelope.isError(envelope),
-            let data = envelope.data(using: .utf8),
-            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            dict["kind"] as? String == ToolEnvelope.Kind.invalidArgs.rawValue,
-            dict["field"] as? String == "content",
-            let message = dict["message"] as? String
-        else { return false }
-        return message.contains("must contain at most")
     }
 
     /// Longest slice of the validator message the notice quotes. Validator

@@ -307,11 +307,6 @@ final class BrowserUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning
                 message: "Browser Use reached its output-token limit before producing a result.",
                 retryable: false
             )
-        case .oversizedToolCallExhausted:
-            throw SubagentError.executionFailed(
-                message: "Browser Use repeatedly produced an oversized tool call.",
-                retryable: false
-            )
         case .truncatedToolCallExhausted:
             throw SubagentError.executionFailed(
                 message: "Browser Use repeatedly reached its output limit inside a tool call.",

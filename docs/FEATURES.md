@@ -825,7 +825,7 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 |------|----------|-------------|
 | `file_read` | Read-only | Read files or list directories; supports line ranges and log tails. VM paths are raw-text reads. |
 | `file_search` | Read-only | Search file contents (`target="content"`) or find files by name (`target="files"`). |
-| `file_write` | Write | Create, overwrite, or append UTF-8 files; creates parent directories. |
+| `file_write` | Write | Create, overwrite, or append UTF-8 files (no content length limit); creates parent directories; renders `.docx`/`.pdf`/`.xlsx`/`.pptx` from `content` or from an existing text file via `source_path`. |
 | `file_edit` | Write | Replace one exact, unique text occurrence without rewriting the whole file. |
 | `shell_run` | Exec | Run a shell command. Foreground by default; `background:true` is available when Background Processes is enabled. |
 | `sandbox_process` | Exec | Inspect, wait for, or kill jobs started by `shell_run(background:true)`. |

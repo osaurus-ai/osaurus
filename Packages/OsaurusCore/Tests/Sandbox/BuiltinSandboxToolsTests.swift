@@ -1055,6 +1055,141 @@ struct BuiltinSandboxToolsTests {
         #expect(!commands.contains { $0.contains("python3 -c") })
     }
 
+    /// The text bridge is one `sh -c` string per command and the VM kernel
+    /// caps a single argv string at 128 KiB, so a large `content` must be
+    /// delivered as consecutive `printf` appends — never refused or
+    /// truncated because of its size. Overwrite starts with `>`; every later
+    /// part (and every part of an append) uses `>>`.
+    @Test @MainActor
+    func sandboxWriteFile_largeContentIsWrittenInShellSizedParts() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let content = String(repeating: "line of text with a quote ' in it\n", count: 7_000)  // ~235 KB
+        #expect(content.utf8.count > 2 * SandboxWriteFileTool.shellWritePartBytes)
+        let args = try JSONSerialization.data(withJSONObject: ["path": "big/report.md", "content": content])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: String(decoding: args, as: UTF8.self)
+            )
+        }
+        let payload = try successPayload(output)
+        #expect(payload["size"] as? Int == content.utf8.count)
+
+        let calls = await runner.calls
+        let printfs = calls.compactMap { call -> String? in
+            guard case .agent(_, let c) = call, c.hasPrefix("printf") else { return nil }
+            return c
+        }
+        #expect(printfs.count == SandboxWriteFileTool.shellWriteParts(content).count)
+        #expect(printfs.count >= 3, "expected several parts, got \(printfs.count)")
+        #expect(printfs[0].contains(" > '"), "first part must create/truncate: \(printfs[0].suffix(60))")
+        for later in printfs.dropFirst() {
+            #expect(later.contains(" >> '"), "later parts must append: \(later.suffix(60))")
+        }
+        for command in printfs {
+            #expect(command.utf8.count < 128 * 1024, "one shell command must stay under MAX_ARG_STRLEN")
+        }
+
+        // Append mode: every part appends.
+        let appendRunner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let appendArgs = try JSONSerialization.data(withJSONObject: [
+            "path": "big/report.md", "content": content, "mode": "append",
+        ])
+        _ = try await withRegisteredSandboxTools(runner: appendRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: String(decoding: appendArgs, as: UTF8.self)
+            )
+        }
+        let appendPrintfs = (await appendRunner.calls).compactMap { call -> String? in
+            guard case .agent(_, let c) = call, c.hasPrefix("printf") else { return nil }
+            return c
+        }
+        #expect(appendPrintfs.count == printfs.count)
+        #expect(appendPrintfs.allSatisfy { $0.contains(" >> '") })
+    }
+
+    /// WRITABLE combined mode: a `/workspace/...` `file_write` with
+    /// `source_path` reads the source through the sandbox's own reader
+    /// (`SandboxReadFileTool`, whole-file `cat`) — the same route `file_read`
+    /// takes for text under `/workspace` — so the VM sanitizer and the agent
+    /// user's permissions apply. Nothing is read from the VirtioFS share
+    /// host-side, and the text then lands through the ordinary shell write.
+    @Test @MainActor
+    func combinedMode_fileWrite_sourcePathReadsThroughSandboxReader() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "# Hello\n\nFrom the VM.\n", stderr: "", exitCode: 0),  // cat source
+                .init(stdout: "0\n", stderr: "", exitCode: 0),  // readForDiff: no prior file
+                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir -p
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf write
+            ]
+        )
+        let bridge = SandboxReadBridge(agentName: "test-agent", home: "/workspace/agents/test-agent")
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-source-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileWriteTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/out.md","source_path":"/workspace/agents/test-agent/in.md"}"#
+                )
+            }
+        }
+        let payload = try successPayload(output)
+        #expect(payload["path"] as? String == "/workspace/agents/test-agent/out.md")
+
+        let commands = (await runner.calls).compactMap { call -> String? in
+            guard case .agent(_, let c) = call else { return nil }
+            return c
+        }
+        #expect(commands.first == "cat '/workspace/agents/test-agent/in.md'", "\(commands)")
+        #expect(commands.contains { $0.hasPrefix("printf '%s' '# Hello\n\nFrom the VM.\n'") }, "\(commands)")
+    }
+
+    /// A `source_path` the sandbox sanitizer rejects (outside the agent home
+    /// and `/workspace/shared`) is refused before any command runs, with the
+    /// reader's own verdict re-attributed to `file_write` / `source_path`.
+    @Test @MainActor
+    func combinedMode_fileWrite_sourcePathOutsideAgentHomeIsRefused() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let bridge = SandboxReadBridge(agentName: "test-agent", home: "/workspace/agents/test-agent")
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-source-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileWriteTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/out.md","source_path":"/etc/passwd"}"#
+                )
+            }
+        }
+        let payload = try failurePayload(output)
+        #expect(payload["tool"] as? String == "file_write")
+        #expect(payload["field"] as? String == "source_path")
+        #expect(payload["retryable"] as? Bool == false)
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "a rejected source_path must not run any sandbox command")
+    }
+
+    @Test func shellWriteParts_preserveContentAndCharacterBoundaries() {
+        #expect(SandboxWriteFileTool.shellWriteParts("") == [""])
+        #expect(SandboxWriteFileTool.shellWriteParts("small") == ["small"])
+
+        // Multi-byte characters and quotes (which quadruple under escaping)
+        // never straddle a part, and the parts concatenate to the original.
+        let content = String(repeating: "é'日本語 ", count: 40_000)
+        let parts = SandboxWriteFileTool.shellWriteParts(content)
+        #expect(parts.count > 1)
+        #expect(parts.joined() == content)
+        for part in parts {
+            let escaped = part.replacingOccurrences(of: "'", with: "'\\''")
+            #expect(escaped.utf8.count <= SandboxWriteFileTool.shellWritePartBytes)
+        }
+    }
+
     /// `.docx`/`.xlsx`/`.pdf` are generated host-side into the VirtioFS
     /// share: a real package lands under the agent's host home and the
     /// text bridge (shell `printf`) is never used for the bytes.

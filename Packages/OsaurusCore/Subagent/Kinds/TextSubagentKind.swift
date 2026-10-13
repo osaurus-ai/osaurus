@@ -1194,12 +1194,6 @@ final class TextSubagentKind:
                 message: "Subagent '\(targetLabel)' reached its output-token limit before producing a result.",
                 retryable: false
             )
-        case .oversizedToolCallExhausted:
-            throw SubagentError.executionFailed(
-                message:
-                    "Subagent '\(targetLabel)' repeatedly produced an oversized tool call.",
-                retryable: false
-            )
         case .truncatedToolCallExhausted:
             throw SubagentError.executionFailed(
                 message:

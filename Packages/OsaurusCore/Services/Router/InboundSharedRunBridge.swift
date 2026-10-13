@@ -520,7 +520,7 @@ struct InboundSharedRun: Sendable {
             case .overBudget:
                 _success = false
                 _summary = "Context window exceeded"
-            case .emptyResponseExhausted, .lengthExhausted, .oversizedToolCallExhausted,
+            case .emptyResponseExhausted, .lengthExhausted,
                 .truncatedToolCallExhausted, .repetitionLoopExhausted,
                 .incompleteReasoningExhausted:
                 _success = false

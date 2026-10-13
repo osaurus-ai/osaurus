@@ -1311,24 +1311,6 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.isEmpty)
     }
 
-    @Test func oversizedToolCallGetsOneUnchargedChunkingRetry() async throws {
-        let surface = ScriptedLoopSurface(steps: [
-            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_500),
-            .toolCalls([inv("file_write", #"{"path":"index.html","content":"part"}"#)]),
-            .finalResponse,
-        ])
-        let result = try await AgentToolLoop.run(
-            policy: chatPolicy(maxIterations: 2),
-            state: AgentTaskState(),
-            hooks: surface.makeHooks()
-        )
-
-        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
-        #expect(surface.executedCalls.map(\.name) == ["file_write"])
-        #expect(surface.builtNotices.count == 3)
-        #expect(surface.builtNotices[1].joined().contains("mode: \"append\""))
-    }
-
     @Test func truncatedToolCallGetsOneUnchargedChunkingRetry() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .truncatedToolCall(toolName: "file_write", argumentCharacters: 9_100),
@@ -1345,38 +1327,6 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.map(\.name) == ["file_write"])
         #expect(surface.builtNotices[1].joined().contains("reached the model output limit"))
         #expect(surface.builtNotices[1].joined().contains("mode: \"append\""))
-    }
-
-    @Test func streamingArgumentLimitFitsWorstCaseEscapedWriteChunk() throws {
-        let content = String(
-            repeating: #"\"#,
-            count: WorkspaceToolContract.maxWriteContentCharacters
-        )
-        let data = try JSONSerialization.data(withJSONObject: [
-            "path": "escaped.txt",
-            "content": content,
-        ])
-        #expect(data.count < AgentToolLoop.maxStreamingToolArgumentCharacters)
-    }
-
-    @Test func repeatedOversizedToolCallStopsWithoutAnotherDecodeLoop() async throws {
-        let surface = ScriptedLoopSurface(steps: [
-            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_500),
-            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_600),
-            .finalResponse,
-        ])
-        let result = try await AgentToolLoop.run(
-            policy: chatPolicy(),
-            state: AgentTaskState(),
-            hooks: surface.makeHooks()
-        )
-
-        #expect(
-            result
-                == AgentToolLoop.RunResult(exit: .oversizedToolCallExhausted, iterations: 1)
-        )
-        #expect(surface.emittedFinalTexts == [AgentToolLoop.oversizedToolCallFallback])
-        #expect(surface.steps.count == 1)
     }
 
     @Test func repeatedTruncatedToolCallStopsWithoutAnotherDecodeLoop() async throws {
