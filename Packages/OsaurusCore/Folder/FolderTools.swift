@@ -3651,7 +3651,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             guard ext == "docx" || ext == "pptx" else {
                 let hint =
                     ext == "pdf"
-                    ? "PDF body text can't be rewritten in place. Edit the source document and export again, or regenerate with `file_write`; `operations` can still delete/reorder/rotate pages, fill forms, and add text boxes or highlights."
+                    ? "PDF body text can't be rewritten in place, and overwriting the PDF with `file_write` would drop its layout, images, form fields and signatures. Use `operations` to add a text box (`add_text`), a note or a highlight, fill forms, or delete/reorder/rotate pages; or edit the source document and export it to a new file name."
                     : "Use `operations` with `set_cells` (e.g. {\"op\": \"set_cells\", \"cells\": {\"B3\": 42}}); `file_read` with `mode: \"structure\"` lists the cells."
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,

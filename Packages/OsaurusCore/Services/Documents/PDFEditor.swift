@@ -51,7 +51,7 @@ final class PDFEditor {
         case "highlight": try highlight(op)
         case "replace_text", "set_text", "edit_text":
             throw op.fail(
-                "PDF body text can't be rewritten in place — a PDF stores positioned glyphs, not editable paragraphs. Edit the source document (e.g. the .docx) and export again, or regenerate the PDF with `file_write`. You can still add text boxes (`add_text`), notes, highlights, and fill form fields."
+                "PDF body text can't be rewritten in place — a PDF stores positioned glyphs, not editable paragraphs. Don't overwrite this PDF with `file_write`: that rebuilds it from text and drops its layout, images, form fields and signatures. Mark the change on the page instead (`add_text` text box, `add_note`, `highlight`), fill form fields with `fill_form`, or edit the source document (e.g. the .docx) and export it to a new file name."
             )
         default:
             throw op.fail("unknown op for .pdf; use one of \(Self.operations.joined(separator: ", ")).")

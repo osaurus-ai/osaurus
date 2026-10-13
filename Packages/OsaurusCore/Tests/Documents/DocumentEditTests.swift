@@ -1309,6 +1309,27 @@ struct DocumentEditTests {
         return (0..<document.pageCount).map { Int(document.page(at: $0)!.bounds(for: .mediaBox).width) }
     }
 
+    /// Body text in a PDF cannot be rewritten; the advice for that must not send the model to
+    /// `file_write`, which would replace the PDF and drop its forms, signatures and layout.
+    @Test func pdfBodyTextEditAdvisesAnnotationsNotRegeneration() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("lease.pdf")
+        try makePDF(url, pages: 1)
+        let before = try Data(contentsOf: url)
+        for args: [String: Any] in [
+            ["path": "lease.pdf", "operations": [["op": "replace_text", "old_string": "a", "new_string": "b"]]],
+            ["path": "lease.pdf", "old_string": "a", "new_string": "b"],
+        ] {
+            let result = try await edit(root, args)
+            #expect(!ToolEnvelope.isSuccess(result), "\(result)")
+            #expect(!result.contains("regenerate"), "\(result)")
+            #expect(result.contains("add_text"), "\(result)")
+            #expect(result.contains("new file name"), "\(result)")
+        }
+        #expect(try Data(contentsOf: url) == before)
+    }
+
     // MARK: PDF forms
 
     /// Minimal classic-xref PDF writer: objects by number, offsets computed.
