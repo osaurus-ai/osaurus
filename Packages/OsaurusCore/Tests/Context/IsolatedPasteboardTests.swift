@@ -116,4 +116,11 @@ struct IsolatedPasteboardTests {
         #expect(source.contains("IsolatedPasteboard"))
         #expect(source.contains("Sentry APPLE-MACOS-1QM"))
     }
+    @Test @MainActor func firstServicePollCompletesWithoutQueueReentrancy() async {
+        // Await the production poll, rather than merely scheduling work that
+        // could deadlock after the test has already passed.
+        await ClipboardService.shared.refreshFromPasteboardIfChanged()
+        await ClipboardService.shared.refreshFromPasteboardIfChanged()
+    }
+
 }

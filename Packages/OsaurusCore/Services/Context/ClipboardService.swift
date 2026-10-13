@@ -75,9 +75,9 @@ public final class ClipboardService: ObservableObject {
     /// `detectContent`) and, earlier, as a double free of the same cache.
     /// `IsolatedPasteboard` shares no state with AppKit's object; the
     /// pasteboard server keeps the two coherent.
-    nonisolated private static let isolatedPasteboard: IsolatedPasteboard? = pasteboardQueue.sync {
-        IsolatedPasteboard()
-    }
+    // Lazy initialization happens on the first access inside onPasteboardQueue.
+    // Dispatching synchronously to that same queue here would deadlock on first poll.
+    nonisolated private static let isolatedPasteboard = IsolatedPasteboard()
 
     /// Runs `work` against the poller's private pasteboard connection on the
     /// serial pasteboard queue, after pulling the latest generation from the
@@ -132,7 +132,7 @@ public final class ClipboardService: ObservableObject {
     }
 
     /// Timer entry point: skip if a previous read is still in flight, otherwise refresh.
-    private func refreshFromPasteboardIfChanged() async {
+    func refreshFromPasteboardIfChanged() async {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
