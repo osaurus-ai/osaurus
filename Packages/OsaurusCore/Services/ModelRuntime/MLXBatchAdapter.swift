@@ -955,6 +955,12 @@ struct MLXBatchAdapter {
                 maxBatchSize: maxBatchSize)
             return
         }
+        if draftStrategy?.usesDFlash2 == true {
+            await warmupDFlash2AtLoad(
+                modelName: modelName, container: container, modelDefaults: modelDefaults,
+                draftStrategy: draftStrategy, runtime: runtime, maxBatchSize: maxBatchSize)
+            return
+        }
         guard draftStrategy?.usesNativeMTP == true else { return }
         guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
         guard await !Registry.shared.isNativeMTPWarm(modelName: modelName) else { return }
@@ -997,6 +1003,51 @@ struct MLXBatchAdapter {
             await Registry.shared.resetNativeMTPWarmup(modelName: modelName)
             batchAdapterLog.notice(
                 "native MTP load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — falling back to first-request AR warmup"
+            )
+        }
+    }
+
+    /// DFlash 2 / DSpark: one short drafted generation right after load. The engine loads the
+    /// drafter lazily on the first drafted request and builds each verify width's graph on first use,
+    /// so without this the first chat paid it: MiniCPM-V 4.7 35B-A3B JANGH2, first image turn TTFT
+    /// 4.8 s and 16 tok/s against 0.7 s and 81 tok/s for AR; later turns are unaffected.
+    static let dflash2LoadWarmupTokens = 48
+
+    private static func warmupDFlash2AtLoad(
+        modelName: String,
+        container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
+        draftStrategy: MLXLMCommon.DraftStrategy?,
+        runtime: RuntimeConfig,
+        maxBatchSize: Int
+    ) async {
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        do {
+            let prepared = try await generate(
+                modelName: modelName,
+                container: container,
+                modelDefaults: modelDefaults,
+                buildChat: {
+                    [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
+                },
+                buildToolsSpec: { nil },
+                generation: GenerationParameters(temperature: 0, maxTokens: dflash2LoadWarmupTokens),
+                toolChoice: nil,
+                stopSequences: [],
+                draftStrategy: draftStrategy,
+                runtime: runtime,
+                maxBatchSize: maxBatchSize
+            )
+            for await _ in prepared.stream {}
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            batchAdapterLog.info(
+                "DFlash 2 load warmup: drafter loaded and verify graphs built for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms"
+            )
+            PrefillDebugLog.shared.log("==DFLASH2 WARMUP-DONE model=\(modelName) wallMs=\(elapsedMs)")
+        } catch {
+            batchAdapterLog.notice(
+                "DFlash 2 load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — the first request loads the drafter instead"
             )
         }
     }
@@ -1511,7 +1562,12 @@ struct MLXBatchAdapter {
             "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
         )
         let soloLease: SoloGenerationGate.Lease?
-        if maxBatchSize == 1 {
+        // A DFlash 2 / DSpark request drafts on the engine's exclusive solo path. Under continuous batching
+        // (maxBatchSize > 1) two of them on one model (a spawned subagent, parallel delegations) used to
+        // collide: the engine cancelled the second. Taking the solo lease queues it behind the first, so each
+        // runs with its drafter; ordinary batched requests still share the engine (the engine decodes a
+        // drafter request autoregressively if it arrives while batched slots are active).
+        if maxBatchSize == 1 || draftStrategy?.usesDFlash2 == true {
             soloLease = await Registry.shared.acquireSoloLease(for: modelName)
         } else {
             soloLease = nil
