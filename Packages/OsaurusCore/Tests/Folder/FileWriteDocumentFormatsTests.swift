@@ -266,6 +266,27 @@ struct FileWriteDocumentFormatsTests {
             argumentsJSON: #"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true}"#, folderRoot: nil) == nil)
     }
 
+    @Test func namespacedWorkbookFormattingIsPreservedOnOverwrite() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(ToolEnvelope.isSuccess(try await write(root, ["path": "prefixed.xlsx", "content": "Item,Amount\nRent,1200\n"])))
+        let url = root.appendingPathComponent("prefixed.xlsx")
+        let package = try OOXMLPackage(data: Data(contentsOf: url))
+        let sheet = String(decoding: try package.data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+        let formatted = sheet.replacingOccurrences(
+            of: "<sheetData", with: #"<cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData"#)
+        let prefixed = formatted.replacingOccurrences(
+            of: #"<(\/?)([A-Za-z][\w.-]*)"#, with: "<$1s:$2", options: .regularExpression
+        ).replacingOccurrences(of: "xmlns=", with: "xmlns:s=")
+        package.setData("xl/worksheets/sheet1.xml", Data(prefixed.utf8))
+        let before = try package.serialize()
+        try before.write(to: url)
+        #expect(XLSXPreservation.featuresLostByRegeneration(before).contains("column widths"))
+        let result = try await write(root, ["path": "prefixed.xlsx", "content": "Item,Amount\nRent,1500\n"])
+        #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
+        #expect(try Data(contentsOf: url) == before)
+    }
+
     @Test func docxBulletGlyphLinesBecomeListParagraphs() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
         let root = tmpRoot()

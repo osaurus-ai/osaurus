@@ -21,28 +21,27 @@ enum XLSXPreservation {
     static func featuresLostByRegeneration(_ data: Data) -> [String] {
         guard let package = try? OOXMLPackage(data: data) else { return [] }
         let parts = package.partNames
-        func text(_ part: String) -> String {
-            guard let bytes = try? package.data(part) else { return "" }
-            return String(decoding: bytes, as: UTF8.self)
-        }
         let sheets = parts.filter { $0.hasPrefix("xl/worksheets/") && $0.hasSuffix(".xml") }
-        let sheetXML = sheets.map(text).joined(separator: "\n")
+        let roots = sheets.compactMap { try? package.root($0) }
+        func elements(_ localName: String) -> [XMLElement] {
+            roots.flatMap { $0.descendants(localName) }
+        }
         var found: [String] = []
         func note(_ label: String, _ present: Bool) { if present && !found.contains(label) { found.append(label) } }
 
-        // A cell style index other than 0 carries fonts, fills, borders or a
-        // number format (currency, percent, dates).
-        note("cell formatting and number formats", sheetXML.range(of: #"<c [^>]*\bs="[1-9]"#, options: .regularExpression) != nil)
-        note("column widths", sheetXML.contains("<cols"))
-        note("row heights", sheetXML.contains("customHeight=\"1\""))
-        note("freeze panes", sheetXML.contains("<pane"))
-        note("filters", sheetXML.contains("<autoFilter"))
-        note("data validation", sheetXML.contains("<dataValidations"))
-        note("conditional formatting", sheetXML.contains("<conditionalFormatting"))
-        note("merged cells", sheetXML.contains("<mergeCells"))
-        note("hyperlinks", sheetXML.contains("<hyperlinks"))
-        note("sheet protection", sheetXML.contains("<sheetProtection"))
-        note("defined names", text("xl/workbook.xml").contains("<definedNames"))
+        // OOXML namespace prefixes and XML whitespace/attribute quoting are arbitrary. Inspect
+        // parsed local names, as the editor does, rather than serialized spellings like `<c `.
+        note("cell formatting and number formats", elements("c").contains { (Int($0.attr("s") ?? "0") ?? 0) > 0 })
+        note("column widths", !elements("cols").isEmpty)
+        note("row heights", elements("row").contains { ["1", "true"].contains($0.attr("customHeight") ?? "") })
+        note("freeze panes", !elements("pane").isEmpty)
+        note("filters", !elements("autoFilter").isEmpty)
+        note("data validation", !elements("dataValidations").isEmpty)
+        note("conditional formatting", !elements("conditionalFormatting").isEmpty)
+        note("merged cells", !elements("mergeCells").isEmpty)
+        note("hyperlinks", !elements("hyperlinks").isEmpty)
+        note("sheet protection", !elements("sheetProtection").isEmpty)
+        note("defined names", (try? package.root("xl/workbook.xml").descendants("definedNames").isEmpty) == false)
         note("comments", parts.contains { $0.hasPrefix("xl/comments") || $0.hasPrefix("xl/threadedComments") })
         note("charts", parts.contains { $0.hasPrefix("xl/charts/") })
         note("pivot tables", parts.contains { $0.hasPrefix("xl/pivotTables/") || $0.hasPrefix("xl/pivotCache/") })
