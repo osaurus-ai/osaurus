@@ -48,45 +48,51 @@ public final class ClipboardService: ObservableObject {
     /// Whether the clipboard content has been "seen" or used
     @Published public var hasNewContent: Bool = false
 
-    private var lastChangeCount: Int = NSPasteboard.general.changeCount
+    /// The generation of the poller's own pasteboard connection at the last
+    /// publish (see `IsolatedPasteboard.changeCount`). Starts at that
+    /// connection's baseline, 0.
+    private var lastChangeCount: Int = 0
     private var timer: AnyCancellable?
     /// Guards against overlapping pasteboard reads if one outlives the poll interval.
     private var isChecking = false
     private let keyboardService = KeyboardSimulationService.shared
 
-    /// Serializes every `NSPasteboard` access. `NSPasteboard` is not thread-safe:
-    /// its internal type cache (`_updateTypeCacheIfNeeded`) is shared mutable state,
-    /// so concurrent reads — from independent `Task.detached` jobs on the cooperative
-    /// pool and from the main actor — can double-free it (Sentry: malloc "pointer
-    /// being freed was not allocated"). Routing all reads through a single serial queue
-    /// keeps them off the main thread (preserving the hang fix) while guaranteeing no
-    /// two pasteboard touches ever overlap.
+    /// Serializes every poller pasteboard access and confines
+    /// `isolatedPasteboard` to one thread. Reads stay off the main thread
+    /// because each one is a synchronous XPC round-trip to the pasteboard
+    /// server that can block for seconds (the hang fix).
     nonisolated private static let pasteboardQueue = DispatchQueue(
         label: "com.dinoki.osaurus.clipboard.pasteboard"
     )
 
-    /// Runs `work` against the shared pasteboard on the serial pasteboard queue,
-    /// returning `nil` when the read raises. The serial queue only orders *our*
-    /// pasteboard access; `NSPasteboard.general` is a process-wide singleton that
-    /// other subsystems (e.g. the Cmd+V paste handler on the main thread) touch
-    /// concurrently, and AppKit's non-thread-safe type cache can throw an
-    /// `NSRangeException` mid-read. Catching it here degrades a poll to a no-op
-    /// instead of terminating the app on an exception Swift can't `catch`.
+    /// The poller's private connection to the clipboard, used ONLY on
+    /// `pasteboardQueue`. It is deliberately not `NSPasteboard.general`:
+    /// that object is shared with AppKit's own main-thread reads (menu
+    /// validation, text-view key handling), its type cache is not
+    /// thread-safe, and a serial queue on our side cannot order AppKit's
+    /// accesses — the race crashed in production as Sentry APPLE-MACOS-1QM
+    /// (SIGSEGV in `-[NSPasteboard _typesAtIndex:combinesItems:]` under
+    /// `detectContent`) and, earlier, as a double free of the same cache.
+    /// `IsolatedPasteboard` shares no state with AppKit's object; the
+    /// pasteboard server keeps the two coherent.
+    nonisolated private static let isolatedPasteboard: IsolatedPasteboard? = pasteboardQueue.sync {
+        IsolatedPasteboard()
+    }
+
+    /// Runs `work` against the poller's private pasteboard connection on the
+    /// serial pasteboard queue, after pulling the latest generation from the
+    /// server. Returns `nil` when no connection could be made.
     nonisolated private static func onPasteboardQueue<T: Sendable>(
-        _ work: @escaping @Sendable (NSPasteboard) -> T
+        _ work: @escaping @Sendable (IsolatedPasteboard) -> T
     ) async -> T? {
         await withCheckedContinuation { continuation in
             pasteboardQueue.async {
-                var result: T?
-                let raised = osr_catch_exception {
-                    result = work(NSPasteboard.general)
-                }
-                if let raised {
-                    print("[ClipboardService] Pasteboard read raised \(raised.name.rawValue); skipping")
+                guard let pasteboard = isolatedPasteboard else {
                     continuation.resume(returning: nil)
-                } else {
-                    continuation.resume(returning: result)
+                    return
                 }
+                pasteboard.synchronize()
+                continuation.resume(returning: work(pasteboard))
             }
         }
     }
@@ -137,13 +143,12 @@ public final class ClipboardService: ObservableObject {
     private func performPasteboardRefresh() async {
         let knownChangeCount = lastChangeCount
 
-        // Both the `changeCount` poll and the content read run off-main: every
-        // `NSPasteboard` accessor makes a synchronous XPC round-trip to the pasteboard
+        // Both the generation poll and the content read run off-main: every
+        // pasteboard accessor makes a synchronous XPC round-trip to the pasteboard
         // server that can block for seconds when that server is slow, hanging the UI.
-        // The reads only use the typed `string(forType:)`/`data(forType:)` accessors
-        // (never `readObjects(forClasses:)`), which are safe to call off the main actor.
-        // They run on the shared serial pasteboard queue so they never overlap another
-        // pasteboard access and corrupt its internal type cache.
+        // They go through the poller's own `IsolatedPasteboard` connection on the
+        // serial pasteboard queue, never through `NSPasteboard.general`, so they
+        // cannot race AppKit's main-thread use of that object (APPLE-MACOS-1QM).
         guard let changeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { return }
         guard changeCount != knownChangeCount else { return }
 
@@ -181,11 +186,13 @@ public final class ClipboardService: ObservableObject {
         }
     }
 
-    nonisolated private static func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
+    nonisolated static func detectContent(in pb: some PasteboardReading) -> ClipboardContent? {
         // 1. try file URLs (copied files in Finder). Avoid
         // `readObjects(forClasses:)`: Sentry APPLE-MACOS-2N showed AppKit
         // mutating its internal type-conversion array while enumerating there.
         // Reading explicit pasteboard types avoids that conversion path.
+        // (`pb` is the poller's private connection, so even the typed reads
+        // below cannot collide with AppKit's `NSPasteboard.general` cache.)
         let fileURLTypes: [NSPasteboard.PasteboardType] = [
             .fileURL,
             NSPasteboard.PasteboardType("public.file-url"),

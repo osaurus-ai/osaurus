@@ -83,10 +83,48 @@ public final class WindowManager: NSObject, ObservableObject {
 
     private var windows: [WindowIdentifier: NSWindow] = [:]
     private var windowDelegates: [WindowIdentifier: WindowManagerDelegate] = [:]
+    /// Keeps each window's hosting controller fed with the clamped floor its
+    /// SwiftUI root enforces (see `makeHostingController`).
+    private var floorSubscriptions: [WindowIdentifier: AnyCancellable] = [:]
 
     private override init() {
         super.init()
         loadPinnedState()
+    }
+
+    // MARK: - Hosting
+
+    /// The hosting controller for a window whose size AppKit owns. SwiftUI
+    /// never drives the frame (no `NSHostingSizingOptions`); the floor the
+    /// user cannot drag below is mirrored into `contentMinSize` from the
+    /// same clamped value the root applies as `.frame(minWidth:minHeight:)`,
+    /// so the two can never disagree. Used both when a window is created and
+    /// when its content is swapped for a deeplink (`AppDelegate`).
+    public func makeHostingController<Content: View>(
+        for identifier: WindowIdentifier,
+        rootView: Content
+    ) -> NSViewController {
+        switch identifier {
+        case .management:
+            let controller = AppKitOwnedWindowHostingController(
+                rootView: rootView,
+                minimumContentSize: ManagementStateManager.shared.minimumContentSize
+            )
+            // `WindowManager` re-clamps the floor to the window's screen on
+            // creation, show and screen change; forward every value so the
+            // AppKit floor follows the SwiftUI one.
+            floorSubscriptions[identifier] = ManagementStateManager.shared.$minimumContentSize
+                .receive(on: RunLoop.main)
+                .sink { [weak controller] size in
+                    controller?.minimumContentSize = size
+                }
+            return controller
+        case .chat, .permission:
+            // These windows size their floors elsewhere (`ChatWindowManager`
+            // for chat). No SwiftUI sizing option here either: the frame is
+            // AppKit's.
+            return AppKitOwnedWindowHostingController(rootView: rootView, minimumContentSize: .zero)
+        }
     }
 
     // MARK: - Window Registration
@@ -110,6 +148,7 @@ public final class WindowManager: NSObject, ObservableObject {
     public func unregister(_ identifier: WindowIdentifier) {
         windows.removeValue(forKey: identifier)
         windowDelegates.removeValue(forKey: identifier)
+        floorSubscriptions.removeValue(forKey: identifier)
     }
 
     /// Get the window for an identifier (if registered)
@@ -301,21 +340,18 @@ public final class WindowManager: NSObject, ObservableObject {
         config: WindowConfiguration,
         content: () -> Content
     ) -> NSWindow {
-        let hostingController = NSHostingController(rootView: content())
-
         // AppKit owns these windows' size via `defaultSize` + frame autosave,
-        // so the SwiftUI content should fill the window rather than drive it.
-        // Leaving `.intrinsicContentSize` on lets the hosting controller push
-        // the content's measured size back onto the window every layout pass;
-        // with fill-style (`maxWidth/maxHeight: .infinity`) roots that negotiation
-        // has no fixed point and can oscillate after a resize or state change,
-        // pinning the main thread in a non-converging layout loop. `.minSize`
-        // stays on: the window mirrors the controller's `preferredMinimumSize`
-        // into `contentMinSize`, and without it that floor is zero and the
-        // window can be dragged down to nothing (see ChatWindowManager.attach).
-        if #available(macOS 13.0, *) {
-            hostingController.sizingOptions = [.minSize]
-        }
+        // so the SwiftUI content fills the window and never drives it. The
+        // controller keeps every `NSHostingSizingOptions` off — `.minSize`
+        // included — because any option lets `NSHostingView.windowDidLayout`
+        // resize the window itself, and when the size it wants is one the
+        // window cannot hold that resize/invalidate cycle exhausts AppKit's
+        // update-constraints budget and raises (Sentry APPLE-MACOS-1ZM; see
+        // `AppKitOwnedWindowHostingController`). The floor the user cannot
+        // drag below still comes from the root's `.frame(minWidth:minHeight:)`
+        // value, mirrored into `contentMinSize` through the controller's
+        // `preferredMinimumSize` instead of through SwiftUI.
+        let hostingController = makeHostingController(for: config.identifier, rootView: content())
 
         // Calculate centered position on active screen. The default size is
         // shrunk to the screen's visible frame so a small display ("Larger

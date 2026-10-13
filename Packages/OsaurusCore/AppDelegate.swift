@@ -2714,15 +2714,16 @@ extension AppDelegate {
                     while let sheet = existingWindow.attachedSheet {
                         existingWindow.endSheet(sheet)
                     }
-                    let replacement = NSHostingController(rootView: root)
                     // Match `WindowManager.createWindow`: AppKit owns this
-                    // window's size (defaultSize + frame autosave). Leaving the
-                    // default sizingOptions on lets the swapped-in hosting view
-                    // push its measured size back onto the window every layout
-                    // pass — the frame change seen in the EF crash stack.
-                    if #available(macOS 13.0, *) {
-                        replacement.sizingOptions = []
-                    }
+                    // window's size (defaultSize + frame autosave). A hosting
+                    // controller with sizing options on lets the swapped-in
+                    // hosting view push its measured size back onto the window
+                    // every layout pass — the frame change seen in the EF
+                    // crash stack (and the 1ZM constraint-pass exception). The
+                    // shared controller keeps them off while still mirroring
+                    // the clamped floor into `contentMinSize`.
+                    let replacement = windowManager.makeHostingController(
+                        for: .management, rootView: root)
                     existingWindow.contentViewController = replacement
                 } else if let initialTab {
                     // No deeplink: drive navigation through the shared state the

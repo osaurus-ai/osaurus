@@ -1118,8 +1118,23 @@ final class PluginManager {
     // MARK: - Load-time validation (pure helpers)
 
     /// Returns a message when the plugin's ABI table is missing any of the
-    /// five required function pointers. Every plugin — v1 or v2+ — must
+    /// five required function pointers, or when any populated slot does not
+    /// point at code in a loaded image. Every plugin — v1 or v2+ — must
     /// provide the full required prefix; optional v2 callbacks stay optional.
+    ///
+    /// The second check is what stops a struct-layout mismatch from
+    /// crashing the host. Sentry APPLE-MACOS-337: a plugin's table passed
+    /// the nil checks, `init` and `get_manifest` ran, and the host then
+    /// called `free_string` on the 997-byte manifest it had just copied —
+    /// with `free_string == 0x1` (next launch `0x2`). The register dump has
+    /// `pc == x28 == 0x1`, i.e. a `blr` through a slot that held a small
+    /// integer, not a function. A field that is really an int or a bool in
+    /// the plugin's own struct lands in a function-pointer slot of ours when
+    /// the two layouts disagree; it is non-nil, so the nil checks cannot see
+    /// it. `dladdr` can: a C function pointer handed to us by a dylib we
+    /// just `dlopen`ed must live inside *some* loaded image (the plugin, a
+    /// system library such as `free`, or a dependency it links). Anything
+    /// else is not callable and is rejected here, before the first call.
     nonisolated static func abiTableValidationFailure(_ api: osr_plugin_api) -> String? {
         var missing: [String] = []
         if api.free_string == nil { missing.append("free_string") }
@@ -1127,8 +1142,41 @@ final class PluginManager {
         if api.destroy == nil { missing.append("destroy") }
         if api.get_manifest == nil { missing.append("get_manifest") }
         if api.invoke == nil { missing.append("invoke") }
-        guard !missing.isEmpty else { return nil }
-        return "Plugin ABI table is missing required function(s): \(missing.joined(separator: ", "))"
+        if !missing.isEmpty {
+            return "Plugin ABI table is missing required function(s): \(missing.joined(separator: ", "))"
+        }
+
+        var invalid: [String] = []
+        func check<F>(_ fn: F?, _ name: String) {
+            guard let fn else { return }
+            let raw = unsafeBitCast(fn, to: UnsafeRawPointer.self)
+            if !isCodePointerInLoadedImage(raw) {
+                invalid.append("\(name)=0x\(String(UInt(bitPattern: raw), radix: 16))")
+            }
+        }
+        check(api.free_string, "free_string")
+        check(api.`init`, "init")
+        check(api.destroy, "destroy")
+        check(api.get_manifest, "get_manifest")
+        check(api.invoke, "invoke")
+        check(api.handle_route, "handle_route")
+        check(api.on_config_changed, "on_config_changed")
+        check(api.on_task_event, "on_task_event")
+        guard !invalid.isEmpty else { return nil }
+        return
+            "Plugin ABI table slot(s) do not point at code in any loaded image: "
+            + invalid.joined(separator: ", ")
+            + ". The plugin's osr_plugin_api layout does not match osaurus_plugin.h; rebuild it against the current header."
+    }
+
+    /// True when `pointer` falls inside a Mach-O image currently mapped in
+    /// this process. `dladdr` returns non-zero exactly in that case; it does
+    /// not require a symbol to cover the address, so stripped plugin code
+    /// still passes while `0x1`, stack garbage, or a freed heap address do
+    /// not.
+    nonisolated static func isCodePointerInLoadedImage(_ pointer: UnsafeRawPointer) -> Bool {
+        var info = Dl_info()
+        return dladdr(pointer, &info) != 0
     }
 
     /// Returns a message when the manifest's `plugin_id` does not match the

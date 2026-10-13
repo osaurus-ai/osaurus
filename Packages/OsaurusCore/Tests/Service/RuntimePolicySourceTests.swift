@@ -3233,8 +3233,10 @@ struct RuntimePolicySourceTests {
     /// new hosting view resizes the window, the orphaned sheet re-enters its
     /// torn-down graph and traps inside SwiftUI (Sentry APPLE-MACOS-EF).
     /// Pin the two mitigations: end attached sheets before the swap, and
-    /// clear `sizingOptions` on the replacement controller so it can't push
-    /// content-size extrema frame changes onto the reused window.
+    /// build the replacement through `WindowManager.makeHostingController`,
+    /// the AppKit-owned controller with no `sizingOptions`, so it can't push
+    /// content-size extrema frame changes onto the reused window
+    /// (APPLE-MACOS-EF, APPLE-MACOS-1ZM).
     @Test("Management window deeplink reuse detaches sheets before swapping the hosting controller")
     func managementDeeplinkReuseDetachesSheetsBeforeControllerSwap() throws {
         let appDelegate = try Self.source("AppDelegate.swift")
@@ -3264,7 +3266,8 @@ struct RuntimePolicySourceTests {
             "attached sheets must be ended before the hosting controller swap"
         )
         #expect(reuseWindow.contains("existingWindow.endSheet(sheet)"))
-        #expect(reuseWindow.contains("replacement.sizingOptions = []"))
+        #expect(reuseWindow.contains("windowManager.makeHostingController("))
+        #expect(!reuseWindow.contains("NSHostingController(rootView: root)"))
     }
 
     @Test("Settings sidebar keeps bounded navigation rows accessibility-stable")
