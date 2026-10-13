@@ -1505,6 +1505,22 @@ struct AgentTaskStateTests {
         )
     }
 
+    @Test func fileUndoInvalidatesRestoredReadsButKeepsUnrelatedReads() {
+        let state = AgentTaskState()
+        let restoredArgs = #"{"path":"./ops.xlsx","mode":"structure"}"#
+        let otherArgs = #"{"path":"other.xlsx","mode":"structure"}"#
+        let stale = ToolEnvelope.success(tool: "file_read", result: ["cells": ["C9: old total"]])
+        state.record(name: "file_read", argsJSON: restoredArgs, result: stale)
+        state.record(name: "file_read", argsJSON: otherArgs, result: stale)
+        state.record(
+            name: "file_undo", argsJSON: #"{"operation_id":"saved-operation"}"#,
+            result: ToolEnvelope.success(tool: "file_undo", result: [
+                "undone_count": 1, "undone": [["path": "ops.xlsx"]],
+            ] as [String: Any]))
+        #expect(state.heldResult(name: "file_read", argsJSON: restoredArgs) == nil)
+        #expect(state.heldResult(name: "file_read", argsJSON: otherArgs) == stale)
+    }
+
     @Test func fileUndoClearsOnlyAffectedEditSnapshot() {
         let state = AgentTaskState()
         state.record(

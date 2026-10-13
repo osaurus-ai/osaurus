@@ -757,7 +757,7 @@ public final class AgentTaskState {
         }
 
         if name == "file_undo", let payload = successPayload {
-            clearEditSnapshotsUndone(by: payload)
+            invalidateResultsUndone(by: payload)
         }
 
         // Capture (or clear) a held deterministic error for this signature.
@@ -1466,16 +1466,24 @@ public final class AgentTaskState {
         return dict[key] as? String
     }
 
-    private func clearEditSnapshotsUndone(by payload: [String: Any]) {
+    /// Undo can restore several files without a path argument. Invalidate from the
+    /// receipt's actual restored paths, not the requested scope (which may conflict).
+    private func invalidateResultsUndone(by payload: [String: Any]) {
         guard let undone = payload["undone"] as? [[String: Any]] else { return }
-        for entry in undone {
-            if let path = entry["path"] as? String {
-                successfulEditSnapshots[Self.canonicalPath(path)] = nil
-            }
-            if let destination = entry["destination_path"] as? String {
-                successfulEditSnapshots[Self.canonicalPath(destination)] = nil
-            }
+        let targets = Set(undone.flatMap { entry in
+            [entry["path"] as? String, entry["destination_path"] as? String]
+                .compactMap { $0 }.map(Self.canonicalPath)
+        })
+        guard !targets.isEmpty else { return }
+        freshReads = freshReads.filter {
+            !Self.searchLikeTools.contains($0.key.name) && !targets.contains($0.value.canonicalPath)
         }
+        heldErrors = heldErrors.filter {
+            !Self.searchLikeTools.contains($0.key.name)
+                && !($0.value.canonicalPath.map(targets.contains) ?? false)
+        }
+        heldAppends = heldAppends.filter { !targets.contains($0.value.canonicalPath) }
+        for path in targets { successfulEditSnapshots[path] = nil }
     }
 
     private func parseListing(_ envelope: String) -> ListingSnapshot? {
