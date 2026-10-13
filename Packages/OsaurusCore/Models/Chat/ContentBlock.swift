@@ -145,16 +145,10 @@ enum ContentBlockKind: Equatable {
             return lRole == rRole && lName == rName && lFirst == rFirst
 
         case let (.paragraph(lIdx, lText, lStream, lRole), .paragraph(rIdx, rText, rStream, rRole)):
-            // Compare byte length first: `utf8.count` is O(1) for native
-            // strings, whereas `String.count` walks every grapheme of both
-            // texts — this equality runs for every block on every streamed
-            // token, and that walk was the `String.distance` hot frame under
-            // `Coordinator.hasContentChanges` in the APPLE-MACOS-4M hangs.
-            // Only do the full comparison when the lengths match (rare
-            // during streaming). Unchanged blocks share storage, so that
-            // comparison is an identity check.
+            // String equality already fast-paths shared storage. Avoid String.count's
+            // grapheme walk without rejecting canonically equivalent Unicode strings
+            // whose UTF-8 byte lengths differ.
             guard lIdx == rIdx && lStream == rStream && lRole == rRole else { return false }
-            guard lText.utf8.count == rText.utf8.count else { return false }
             return lText == rText
 
         case let (.toolCallGroup(lCalls), .toolCallGroup(rCalls)):
@@ -166,7 +160,6 @@ enum ContentBlockKind: Equatable {
         case let (.thinking(lIdx, lText, lStream, lDur), .thinking(rIdx, rText, rStream, rDur)):
             // Same optimization as paragraph
             guard lIdx == rIdx && lStream == rStream && lDur == rDur else { return false }
-            guard lText.utf8.count == rText.utf8.count else { return false }
             return lText == rText
 
         case let (
@@ -174,7 +167,6 @@ enum ContentBlockKind: Equatable {
             .userMessage(rText, rAttach, rTime, rResp, rEnv)
         ):
             guard lTime == rTime && lResp == rResp else { return false }
-            guard lText.utf8.count == rText.utf8.count else { return false }
             guard lAttach.count == rAttach.count else { return false }
             return lText == rText && lAttach == rAttach && lEnv == rEnv
 
@@ -226,7 +218,6 @@ enum ContentBlockKind: Equatable {
             .compactionMarker(rSaved, rModel, rText)
         ):
             guard lSaved == rSaved && lModel == rModel else { return false }
-            guard lText.utf8.count == rText.utf8.count else { return false }
             return lText == rText
 
         case let (.followUpSuggestions(lId, lSugg), .followUpSuggestions(rId, rSugg)):

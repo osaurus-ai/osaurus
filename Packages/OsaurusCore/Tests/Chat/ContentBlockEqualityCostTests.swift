@@ -87,4 +87,14 @@ struct ContentBlockEqualityCostTests {
         #expect(a != c)
         #expect(a == d)
     }
+    @Test func canonicallyEquivalentTextRetainsStringEquality() {
+        let turn = UUID()
+        let composed = "caf\u{00e9}"
+        let decomposed = "cafe\u{0301}"
+        #expect(composed == decomposed)
+        #expect(composed.utf8.count != decomposed.utf8.count)
+        #expect(paragraph(composed, turn: turn, index: 0)
+            == paragraph(decomposed, turn: turn, index: 0))
+    }
+
 }
