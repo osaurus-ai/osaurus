@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The voice model stopped Osaurus while it was loading last time. Load it again from here." : {
+      "comment" : "Voice settings recovery message after the process exits during an automatic Core ML model load."
+    },
+    "The speech model stopped Osaurus while it was loading last time, so it is no longer loaded automatically. Use the microphone button to load it again." : {
+      "comment" : "Speech recovery message explaining how to manually retry a model load after a previous process exit."
+    },
     "Fixed schedule" : {
       "comment" : "Image composer label for a bundle-owned sampling schedule with no adjustable step count."
     },
