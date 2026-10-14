@@ -276,6 +276,24 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             )
         }
 
+        // The configured Liquid reasoning/tool template owns its native
+        // <think> generation tail and preserve_thinking history policy.
+        // A non-thinking tool fallback must not replace that contract.
+        if !(tools?.isEmpty ?? true),
+            LFM2ToolCallParser.preservesNativeReasoningTemplate(
+            upstream.configuredChatTemplate(forTools: !(tools?.isEmpty ?? true))
+        ) {
+            return try upstream.applyChatTemplate(
+                messages: messages,
+                chatTemplate: nil,
+                addGenerationPrompt: addGenerationPrompt,
+                truncation: false,
+                maxLength: nil,
+                tools: chatTemplateTools,
+                additionalContext: additionalContext
+            )
+        }
+
         let lagunaEos =
             String(UnicodeScalar(0x3008)!)
             + "|EOS|"
