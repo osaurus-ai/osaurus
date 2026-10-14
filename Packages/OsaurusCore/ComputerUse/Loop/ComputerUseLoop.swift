@@ -167,6 +167,11 @@ public struct AgentStepInput: Sendable {
 public typealias AgentStepProvider =
     @Sendable (_ input: AgentStepInput) async throws -> ModelActionCall?
 
+/// Image-processing dependency for cloud attachment, like the injected driver
+/// and model-step provider. A successful value must come from FrameScrubber.
+public typealias CloudFrameScrubOperation =
+    @Sendable (CUImage, ScrubMode) async throws -> ScrubbedFrame
+
 public enum ComputerUseLoop {
 
     /// Upper bound on a single `wait` so a model can't park the run against the
@@ -223,6 +228,14 @@ public enum ComputerUseLoop {
         sessionId: String,
         enableThinking: Bool? = nil,
         reasoningEffort: String? = nil,
+        scrubFrame: @escaping CloudFrameScrubOperation = { image, mode in
+            try await FrameScrubber.scrub(
+                image,
+                mode: mode,
+                honorUserRules: true,
+                useModelDetection: mode == .pii
+            )
+        },
         nextAction: AgentStepProvider? = nil
     ) async -> ComputerUseRunResult {
         // The wall clock measures the RUN, not the user. Time spent inside a
@@ -334,18 +347,23 @@ public enum ComputerUseLoop {
         )
         appendAppGuidance(app: currentApp, into: &messages, hinted: &hintedApps)
         if let frame = initialFrame {
-            await attachFrame(
-                image: frame,
-                vision: vision,
-                consent: &runConsent,
-                requestConsent: timedCloudVisionConsent,
-                availability: availability,
-                messages: &messages,
-                imageTokensInContext: &imageTokensInContext,
-                metrics: &metrics,
-                feed: feed,
-                step: 0
-            )
+            do {
+                try await attachFrame(
+                    image: frame,
+                    vision: vision,
+                    consent: &runConsent,
+                    requestConsent: timedCloudVisionConsent,
+                    availability: availability,
+                    messages: &messages,
+                    imageTokensInContext: &imageTokensInContext,
+                    metrics: &metrics,
+                    feed: feed,
+                    step: 0,
+                    scrubFrame: scrubFrame
+                )
+            } catch {
+                return frameScrubFailureResult(error, step: 0, completedSteps: 0, metrics: metrics, feed: feed)
+            }
         }
 
         var step = 0
@@ -921,18 +939,26 @@ public enum ComputerUseLoop {
             // Attach any escalated-capture frame as a trailing user turn (subject to
             // the VisionContext), again after the tool result for the same reason.
             if let frame = pendingFrameImage {
-                await attachFrame(
-                    image: frame,
-                    vision: vision,
-                    consent: &runConsent,
-                    requestConsent: timedCloudVisionConsent,
-                    availability: availability,
-                    messages: &messages,
-                    imageTokensInContext: &imageTokensInContext,
-                    metrics: &metrics,
-                    feed: feed,
-                    step: step + 1
-                )
+                do {
+                    try await attachFrame(
+                        image: frame,
+                        vision: vision,
+                        consent: &runConsent,
+                        requestConsent: timedCloudVisionConsent,
+                        availability: availability,
+                        messages: &messages,
+                        imageTokensInContext: &imageTokensInContext,
+                        metrics: &metrics,
+                        feed: feed,
+                        step: step + 1,
+                        scrubFrame: scrubFrame
+                    )
+                } catch {
+                    return frameScrubFailureResult(
+                        error, step: step + 1, completedSteps: step + (advancedStep ? 1 : 0),
+                        metrics: metrics, feed: feed
+                    )
+                }
             }
             if advancedStep { step += 1 }
         }
@@ -1852,8 +1878,9 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let effective = vision.withConsent(consent.granted)
         switch VisionAttachment.decide(image: image, context: effective, availability: availability) {
         case .none:
@@ -1861,7 +1888,7 @@ public enum ComputerUseLoop {
             // cloud-vision consent (remote image model + Screen Recording on),
             // offer a just-in-time prompt once per run rather than silently
             // dropping to AX-only.
-            await offerJustInTimeCloudConsent(
+            try await offerJustInTimeCloudConsent(
                 image: image,
                 vision: vision,
                 consent: &consent,
@@ -1871,7 +1898,8 @@ public enum ComputerUseLoop {
                 imageTokensInContext: &imageTokensInContext,
                 metrics: &metrics,
                 feed: feed,
-                step: step
+                step: step,
+                scrubFrame: scrubFrame
             )
         case .localFrame(let img):
             appendImageMessage(
@@ -1891,7 +1919,7 @@ public enum ComputerUseLoop {
                 )
             )
         case .needsScrubForCloud(let img):
-            await attachScrubbedForCloud(
+            try await attachScrubbedForCloud(
                 img,
                 vision: vision,
                 availability: availability,
@@ -1899,7 +1927,8 @@ public enum ComputerUseLoop {
                 imageTokensInContext: &imageTokensInContext,
                 metrics: &metrics,
                 feed: feed,
-                step: step
+                step: step,
+                scrubFrame: scrubFrame
             )
         }
     }
@@ -1919,8 +1948,9 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let effective = vision.withConsent(consent.granted)
         guard
             !consent.asked,
@@ -1964,7 +1994,7 @@ public enum ComputerUseLoop {
                 availability: availability
             )
         else { return }
-        await attachScrubbedForCloud(
+        try await attachScrubbedForCloud(
             img,
             vision: vision,
             availability: availability,
@@ -1972,7 +2002,8 @@ public enum ComputerUseLoop {
             imageTokensInContext: &imageTokensInContext,
             metrics: &metrics,
             feed: feed,
-            step: step
+            step: step,
+            scrubFrame: scrubFrame
         )
     }
 
@@ -1980,7 +2011,7 @@ public enum ComputerUseLoop {
     /// consented cloud route. The route is the only way to reach `.cloudVision`
     /// and only accepts a `ScrubbedFrame`, so a raw or unconsented frame can
     /// never be attached here. Only called once consent is effectively granted.
-    private static func attachScrubbedForCloud(
+    static func attachScrubbedForCloud(
         _ img: CUImage,
         vision: VisionContext,
         availability: MacDriverAvailability,
@@ -1988,16 +2019,12 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let mode = vision.cloudScrubMode
+        let frame = try await scrubFrame(img, mode)
         guard
-            let frame = await FrameScrubber.scrub(
-                img,
-                mode: mode,
-                honorUserRules: true,
-                useModelDetection: mode == .pii
-            ),
             let route = CaptureRouter.cloudRoute(
                 scrubbed: frame,
                 consentGranted: true,
@@ -2020,6 +2047,42 @@ public enum ComputerUseLoop {
                 detail: cloudFrameFeedDetail(mode: mode, masked: frame.report.maskedRegions)
             )
         )
+    }
+
+    private static func frameScrubFailureResult(
+        _ error: Error,
+        step: Int,
+        completedSteps: Int,
+        metrics: ComputerUseRunMetrics,
+        feed: SubagentFeed
+    ) -> ComputerUseRunResult {
+        var metrics = metrics
+        metrics.steps = completedSteps
+        let outcome: RunOutcome
+        if error is CancellationError {
+            outcome = .interrupted
+        } else {
+            let reason = error.localizedDescription
+            feed.emit(
+                SubagentActivityEvent(
+                    step: step,
+                    kind: .error,
+                    title: "Screenshot could not be redacted",
+                    detail: reason
+                )
+            )
+            outcome = .failed(reason: reason)
+        }
+        feed.emit(
+            SubagentActivityEvent(
+                step: step,
+                kind: .outcome,
+                title: outcome.summary,
+                success: outcome.isSuccess
+            )
+        )
+        feed.finish(success: outcome.isSuccess, summary: outcome.summary)
+        return ComputerUseRunResult(outcome: outcome, metrics: metrics)
     }
 
     /// The note attached to a cloud-bound screenshot, honest about what the

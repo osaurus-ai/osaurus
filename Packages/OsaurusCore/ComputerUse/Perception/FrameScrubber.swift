@@ -29,6 +29,53 @@ public enum ScrubMode: String, Sendable, Equatable {
     case allText
 }
 
+/// A processing failure is different from successfully recognizing no text.
+public enum FrameScrubError: Error, LocalizedError, Sendable, Equatable {
+    case imageDecodeFailed
+    case recognitionFailed(domain: String, code: Int)
+    case recognitionResultsUnavailable
+    case paintingFailed
+    case imageEncodeFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .imageDecodeFailed: return "The screenshot could not be decoded."
+        case .recognitionFailed: return "Text recognition failed, so the screenshot was not shared."
+        case .recognitionResultsUnavailable:
+            return "Text recognition returned no result, so the screenshot was not shared."
+        case .paintingFailed: return "Screenshot redaction failed, so the screenshot was not shared."
+        case .imageEncodeFailed: return "The redacted screenshot could not be encoded."
+        }
+    }
+}
+
+/// The image-processing boundary used by the scrubber. Calls are synchronous,
+/// so non-Sendable Vision observations stay on the calling executor.
+protocol FrameImageProcessing: Sendable {
+    func recognizeText(in image: CGImage) throws -> [VNRecognizedTextObservation]
+    func paintMasks(over image: CGImage, normalizedRegions: [CGRect]) throws -> CGImage
+}
+
+struct NativeFrameImageProcessing: FrameImageProcessing {
+    func recognizeText(in image: CGImage) throws -> [VNRecognizedTextObservation] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        guard let observations = request.results else {
+            throw FrameScrubError.recognitionResultsUnavailable
+        }
+        return observations
+    }
+
+    func paintMasks(over image: CGImage, normalizedRegions: [CGRect]) throws -> CGImage {
+        guard let masked = FrameScrubber.paintMasks(over: image, normalizedRegions: normalizedRegions) else {
+            throw FrameScrubError.paintingFailed
+        }
+        return masked
+    }
+}
+
 /// A summary of what a scrub did. Stays on-device (never sent); used for the
 /// activity feed, telemetry buckets, and tests.
 public struct ScrubReport: Sendable, Equatable {
@@ -70,9 +117,8 @@ public enum FrameScrubber {
     /// text-dense screen. `.allText` mode masks everything and never needs it.
     static let maxModelObservations = 200
 
-    /// Scrub a contract `CUImage`. Returns `nil` only if the bytes can't be
-    /// decoded; an image with no detected PII still returns a (visually
-    /// identical) `ScrubbedFrame` so the type guarantee holds.
+    /// Scrub a contract `CUImage`. Processing failures throw; a successful
+    /// scan with no detected PII still returns a (visually identical) frame.
     ///
     /// - `honorUserRules`: build the regex layer from the user's configured
     ///   Privacy Filter ruleset (custom rules / presets / per-category toggles)
@@ -87,33 +133,52 @@ public enum FrameScrubber {
         mode: ScrubMode = .pii,
         honorUserRules: Bool = false,
         useModelDetection: Bool = false
-    ) async -> ScrubbedFrame? {
-        guard let cg = decode(image) else { return nil }
+    ) async throws -> ScrubbedFrame {
+        try await scrub(
+            image,
+            mode: mode,
+            honorUserRules: honorUserRules,
+            useModelDetection: useModelDetection,
+            processing: NativeFrameImageProcessing()
+        )
+    }
+
+    static func scrub(
+        _ image: CUImage,
+        mode: ScrubMode,
+        honorUserRules: Bool,
+        useModelDetection: Bool,
+        processing: any FrameImageProcessing
+    ) async throws -> ScrubbedFrame {
+        guard let cg = decode(image) else { throw FrameScrubError.imageDecodeFailed }
         let ruleset = effectiveRuleset(honorUserRules: honorUserRules)
-        guard
-            let (masked, report) = await scrub(
-                cgImage: cg,
-                mode: mode,
-                ruleset: ruleset,
-                useModelDetection: useModelDetection
-            )
-        else { return nil }
+        let (masked, report) = try await scrub(
+            cgImage: cg,
+            mode: mode,
+            ruleset: ruleset,
+            useModelDetection: useModelDetection,
+            processing: processing
+        )
         guard let encoded = encode(masked, width: image.width, height: image.height) else {
-            return nil
+            throw FrameScrubError.imageEncodeFailed
         }
         return ScrubbedFrame(image: encoded, report: report)
     }
 
-    /// Back-compat core scrub over a `CGImage` (default safety net —
+    /// Core scrub over a `CGImage` (default safety net —
     /// built-ins plus the fresh-install presets — regex only, no
     /// model). Kept for callers/tests that hold pixels and want the
     /// deterministic, engine-free behaviour.
     public static func scrub(
         cgImage: CGImage,
         mode: ScrubMode = .pii
-    ) async -> (CGImage, ScrubReport)? {
-        await scrub(
-            cgImage: cgImage, mode: mode, ruleset: .defaultSafetyNet(), useModelDetection: false)
+    ) async throws -> (CGImage, ScrubReport) {
+        try await scrub(
+            cgImage: cgImage,
+            mode: mode,
+            ruleset: .defaultSafetyNet(),
+            useModelDetection: false
+        )
     }
 
     /// Core scrub over a `CGImage` with an explicit regex ruleset and optional
@@ -122,9 +187,10 @@ public enum FrameScrubber {
         cgImage: CGImage,
         mode: ScrubMode,
         ruleset: RegexEntityDetector.EffectiveRuleSet,
-        useModelDetection: Bool
-    ) async -> (CGImage, ScrubReport)? {
-        let scan = await recognizeAndDetect(in: cgImage, mode: mode, ruleset: ruleset)
+        useModelDetection: Bool,
+        processing: any FrameImageProcessing = NativeFrameImageProcessing()
+    ) async throws -> (CGImage, ScrubReport) {
+        let scan = try recognizeAndDetect(in: cgImage, mode: mode, ruleset: ruleset, processing: processing)
         var regions = scan.regions
         var categories = scan.categories
         // The regex pass (inside `recognizeAndDetect`) masks the precise spans it
@@ -141,7 +207,14 @@ public enum FrameScrubber {
                 for span in spans { categories[categoryToken(span.category), default: 0] += 1 }
             }
         }
-        let masked = paintMasks(over: cgImage, normalizedRegions: regions) ?? cgImage
+        let masked: CGImage
+        do {
+            masked = try processing.paintMasks(over: cgImage, normalizedRegions: regions)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw FrameScrubError.paintingFailed
+        }
         let report = ScrubReport(
             textRegions: scan.textRegions,
             maskedRegions: regions.count,
@@ -188,24 +261,20 @@ public enum FrameScrubber {
     private static func recognizeAndDetect(
         in image: CGImage,
         mode: ScrubMode,
-        ruleset: RegexEntityDetector.EffectiveRuleSet
-    ) async -> OCRScan {
-        // `VNImageRequestHandler.perform` is synchronous, so read the results
-        // after it returns instead of bridging a completion handler through a
-        // continuation. Vision invokes the completion handler even when the
-        // request fails *and* then throws from `perform`, which previously
-        // resumed the continuation twice (APPLE-MACOS-37K).
-        let empty = OCRScan(regions: [], categories: [:], textRegions: 0, observations: [])
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        ruleset: RegexEntityDetector.EffectiveRuleSet,
+        processing: any FrameImageProcessing
+    ) throws -> OCRScan {
+        let observations: [VNRecognizedTextObservation]
         do {
-            try handler.perform([request])
+            observations = try processing.recognizeText(in: image)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as FrameScrubError {
+            throw error
         } catch {
-            return empty
+            let error = error as NSError
+            throw FrameScrubError.recognitionFailed(domain: error.domain, code: error.code)
         }
-        guard let observations = request.results else { return empty }
 
         var regions: [CGRect] = []
         var categories: [String: Int] = [:]
@@ -246,7 +315,7 @@ public enum FrameScrubber {
     /// Paint opaque rectangles over the given normalized (0…1, bottom-left)
     /// regions. CGContext is bottom-left origin too, so Vision boxes map
     /// directly with no y-flip.
-    private static func paintMasks(over image: CGImage, normalizedRegions: [CGRect]) -> CGImage? {
+    fileprivate static func paintMasks(over image: CGImage, normalizedRegions: [CGRect]) -> CGImage? {
         let width = image.width
         let height = image.height
         guard width > 0, height > 0 else { return nil }
