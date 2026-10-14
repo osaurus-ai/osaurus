@@ -192,10 +192,20 @@ struct LFMNativeAppTokenizerTests {
         let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: directory)
         let upstream = try await AutoTokenizer.from(modelFolder: directory)
         let bridge = try #require(tokenizer as? any GenerationPromptControllableTokenizer)
+        let optionsSchema: [String: any Sendable] = [
+            "type": "object", "additionalProperties": false,
+            "properties": ["flag": ["type": "boolean"]] as [String: [String: String]],
+        ]
+        let textSchema: [String: any Sendable] = [
+            "type": ["string", "null"], "enum": ["red\nblue", "other"],
+        ]
+        let properties: [String: any Sendable] = ["text": textSchema, "options": optionsSchema]
+        let parameters: [String: any Sendable] = [
+            "type": "object", "additionalProperties": false,
+            "properties": properties, "required": ["text"],
+        ]
         let function: [String: any Sendable] = [
-            "name": "line_count", "description": "Count lines",
-            "parameters": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"]]
-                as [String: any Sendable],
+            "name": "line_count", "description": "Count lines", "parameters": parameters,
         ]
         let tools: [[String: any Sendable]] = [["type": "function", "function": function]]
         let callFunction: [String: any Sendable] = [
@@ -222,11 +232,23 @@ struct LFMNativeAppTokenizerTests {
                     let expected = try upstream.applyChatTemplate(
                         messages: messages, chatTemplate: nil, addGenerationPrompt: addPrompt,
                         truncation: false, maxLength: nil,
-                        tools: SwiftTransformersTokenizerLoader.normalizedToolsForChatTemplate(tools),
+                        tools: tools,
                         additionalContext: context)
                     #expect(actual == expected)
                     let text = tokenizer.decode(tokenIds: actual, skipSpecialTokens: false)
                     #expect(text.contains("Remember alpine-42."))
+                    let toolList = try #require(text.components(separatedBy: "List of tools: ").dropFirst().first)
+                        .components(separatedBy: "<|im_end|>")[0]
+                    let renderedTools = try #require(
+                        JSONSerialization.jsonObject(with: Data(toolList.utf8)) as? [[String: Any]])
+                    let renderedFunction = try #require(renderedTools.first?["function"] as? [String: Any])
+                    let parameters = try #require(renderedFunction["parameters"] as? [String: Any])
+                    #expect(parameters["additionalProperties"] as? Bool == false)
+                    let properties = try #require(parameters["properties"] as? [String: Any])
+                    let textSchema = try #require(properties["text"] as? [String: Any])
+                    #expect(textSchema["type"] as? [String] == ["string", "null"])
+                    let optionsSchema = try #require(properties["options"] as? [String: Any])
+                    #expect(optionsSchema["additionalProperties"] as? Bool == false)
                     #expect(text.contains("<think>Earlier native reasoning</think>") == preserve)
                     #expect(text.contains("<think>Current tool reasoning</think>"))
                     #expect(text.contains(#"<|tool_call_start|>[line_count(text='red\nblue')]<|tool_call_end|>"#))

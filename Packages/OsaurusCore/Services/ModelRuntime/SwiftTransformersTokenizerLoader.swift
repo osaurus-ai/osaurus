@@ -289,7 +289,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt,
                 truncation: false,
                 maxLength: nil,
-                tools: chatTemplateTools,
+                tools: tools,
                 additionalContext: additionalContext
             )
         }
