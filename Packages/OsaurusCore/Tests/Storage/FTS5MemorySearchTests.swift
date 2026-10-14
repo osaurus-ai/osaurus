@@ -119,6 +119,91 @@ struct FTS5MemorySearchTests {
     }
 
     @Test
+    func pinnedRelevanceSurvivesHigherSalienceClutter() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+        let relevant = PinnedFact(
+            id: "boat",
+            agentId: "a",
+            content: "My boat is named Peregrine Dusk.",
+            salience: 0.6
+        )
+        try db.insertPinnedFact(relevant)
+        for day in 14 ..< 26 {
+            try db.insertPinnedFact(
+                PinnedFact(
+                    id: "appointment-\(day)",
+                    agentId: "a",
+                    content: "The user's dermatology appointment is on day \(day).",
+                    salience: 0.9
+                )
+            )
+        }
+        let hits = try db.searchPinnedFactsText(
+            query: "What is the name of my boat?",
+            agentId: "a",
+            limit: 5
+        )
+        #expect(
+            hits.first?.id == relevant.id,
+            "relevance must survive generic-word matches with greater salience"
+        )
+        #expect(hits.count <= 5)
+    }
+
+    @Test
+    func pinnedFTSRankingRetainsAgentAndActiveFilters() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+        try db.insertPinnedFact(
+            PinnedFact(
+                id: "ours",
+                agentId: "a",
+                content: "Our boat is named Peregrine Dusk.",
+                salience: 0.4
+            )
+        )
+        try db.insertPinnedFact(
+            PinnedFact(
+                id: "foreign",
+                agentId: "b",
+                content: "Our boat is named Peregrine Dusk.",
+                salience: 1
+            )
+        )
+        try db.insertPinnedFact(
+            PinnedFact(
+                id: "evicted",
+                agentId: "a",
+                content: "Our boat is named Peregrine Dusk.",
+                salience: 1,
+                status: "evicted"
+            )
+        )
+        let hits = try db.searchPinnedFactsText(query: "boat Peregrine", agentId: "a", limit: 1)
+        #expect(hits.map(\.id) == ["ours"])
+        #expect(hits.allSatisfy { $0.agentId == "a" && $0.status == "active" })
+    }
+
+    @Test
+    func equalFTSRelevanceUsesSalienceThenStableId() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+        for (id, salience) in [("z-high", 0.9), ("low", 0.3), ("a-high", 0.9)] {
+            try db.insertPinnedFact(
+                PinnedFact(
+                    id: id,
+                    agentId: "a",
+                    content: "The boat is Peregrine Dusk.",
+                    salience: salience
+                )
+            )
+        }
+        let hits = try db.searchPinnedFactsText(query: "Peregrine", agentId: "a", limit: 3)
+        #expect(hits.map(\.id) == ["a-high", "z-high", "low"])
+    }
+
+    @Test
     func episodeSearchFallsBackToLooseNaturalRecallTerms() throws {
         let db = try openInMemory()
         defer { db.close() }
