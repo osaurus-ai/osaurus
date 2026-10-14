@@ -380,8 +380,8 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(looped == single * 2)
     }
 
-    @Test("Routed JANGTQ pre-load RAM gate uses MLXPress hot working set")
-    func routedJANGTQLoadFootprintUsesCompressionHotSet() throws {
+    @Test("Routed JANGTQ production admission counts all compute weights")
+    func routedJANGTQLoadFootprintCountsComputeWeights() throws {
         let dir = try makeIsolatedDir()
         let config = """
             {
@@ -414,11 +414,11 @@ struct ModelRuntimeFindDirectoryTests {
             modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L"
         )
 
-        #expect(effective == 30 * 1024 * 1024 * 1024)
+        #expect(effective == raw)
     }
 
-    @Test("MiMo JANGTQ config-side routed metadata uses hot working set")
-    func mimoJANGTQConfigRoutedMetadataUsesCompressionHotSet() throws {
+    @Test("MiMo JANGTQ metadata does not enable a compression discount")
+    func mimoJANGTQConfigDoesNotDiscountComputeWeights() throws {
         let dir = try makeIsolatedDir()
         let config = """
             {
@@ -452,11 +452,11 @@ struct ModelRuntimeFindDirectoryTests {
             modelName: "mimo-v2.5-jangtq_2"
         )
 
-        #expect(effective == 24 * 1024 * 1024 * 1024)
+        #expect(effective == raw)
     }
 
-    @Test("Plain MiMo JANG config-side routed metadata uses hot working set")
-    func plainMiMoJANGConfigRoutedMetadataUsesCompressionHotSet() throws {
+    @Test("Plain MiMo JANG production admission counts all compute weights")
+    func plainMiMoJANGConfigCountsComputeWeights() throws {
         let dir = try makeIsolatedDir()
         let config = """
             {
@@ -497,11 +497,11 @@ struct ModelRuntimeFindDirectoryTests {
             modelName: "mimo-v2.5-jang_2l"
         )
 
-        #expect(effective == Int64(Double(raw) * 0.30))
+        #expect(effective == raw)
     }
 
-    @Test("Plain N2 JANG nested text-config routed metadata uses hot working set")
-    func plainN2JANGNestedTextConfigRoutedMetadataUsesCompressionHotSet() throws {
+    @Test("Nested routed metadata does not discount production compute weights")
+    func plainN2JANGNestedTextConfigCountsComputeWeights() throws {
         let dir = try makeIsolatedDir()
         let config = """
             {
@@ -537,11 +537,11 @@ struct ModelRuntimeFindDirectoryTests {
             modelName: "nex-n2-pro-jang_1l"
         )
 
-        #expect(effective == Int64(Double(raw) * 0.30))
+        #expect(effective == raw)
     }
 
-    @Test("Known MiMo and N2 plain JANG names use hot working set without config JSON")
-    func knownPlainMiMoAndN2JANGNamesAvoidBundleJSONRead() throws {
+    @Test("Known JANG names cannot discount unreadable bundle weights")
+    func knownPlainMiMoAndN2JANGNamesCannotDiscountWeights() throws {
         for name in ["MiMo-V2.5-JANG_2L", "Nex-N2-Pro-JANG_1L"] {
             let dir = try makeIsolatedDir()
             try Data("{".utf8).write(to: dir.appendingPathComponent("config.json"))
@@ -554,12 +554,12 @@ struct ModelRuntimeFindDirectoryTests {
                 modelName: name
             )
 
-            #expect(effective == 30 * 1024 * 1024 * 1024)
+            #expect(effective == raw)
         }
     }
 
-    @Test("MiMo and N2 JANGTQ known names use hot working set without config JSON")
-    func mimoAndN2JANGTQKnownNameLoadFootprintAvoidsBundleJSONRead() throws {
+    @Test("Known JANGTQ names cannot discount unreadable bundle weights")
+    func mimoAndN2JANGTQKnownNamesCannotDiscountWeights() throws {
         for name in ["MiMo-V2.5-JANGTQ_2", "Nex-N2-Pro-JANGTQ2"] {
             let dir = try makeIsolatedDir()
             try Data("{".utf8).write(to: dir.appendingPathComponent("config.json"))
@@ -573,7 +573,7 @@ struct ModelRuntimeFindDirectoryTests {
                 modelName: name
             )
 
-            #expect(effective == 30 * 1024 * 1024 * 1024)
+            #expect(effective == raw)
         }
     }
 

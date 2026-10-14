@@ -2591,9 +2591,8 @@ struct RuntimePolicySourceTests {
             loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)")
         )
         #expect(
-            loadPreflight.contains("? Self.residentWeightBytes(rawWeightsBytes: weightsBytes, modelDirectory: localURL)")
-                && loadPreflight.contains(": Self.effectiveLoadFootprintBytes("),
-            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set; materialized near-RAM-scale loads must budget the full weight size instead."
+            loadPreflight.contains("let loadFootprintBytes = Self.effectiveLoadFootprintBytes("),
+            "Every production load must use the shared compute-weight estimate; mmap must not imply a disabled compression discount."
         )
         #expect(
             loadPreflight.contains(
@@ -2739,17 +2738,8 @@ struct RuntimePolicySourceTests {
         #expect(vlm.contains("LocalVisionEvidence.inspect(directory).hasVision"))
         #expect(vlm.contains("ExternalModelLocator.path(forId: id)"))
 
-        let compressionStart = try #require(runtime.range(of: "private static func isRoutedJANGTQCompressionLoad"))
-        let jsonRead = try #require(
-            runtime.range(of: "Self.readJSONObject", range: compressionStart.lowerBound ..< runtime.endIndex)
-        )
-        let compressionFastPath = try #require(
-            runtime.range(
-                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName)",
-                range: compressionStart.lowerBound ..< jsonRead.lowerBound
-            )
-        )
-        #expect(compressionFastPath.lowerBound < jsonRead.lowerBound)
+        #expect(!runtime.contains("private static func isRoutedJANGTQCompressionLoad"))
+        #expect(!runtime.contains("let hotFraction = 0.30"))
 
         let mtpStart = try #require(runtime.range(of: "private nonisolated static func resolveNativeMTPLaunchPlan"))
         let mtpJSONRead = try #require(

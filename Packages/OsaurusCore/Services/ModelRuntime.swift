@@ -4009,26 +4009,17 @@ public actor ModelRuntime {
             return residentName.caseInsensitiveCompare(canonicalName) == .orderedSame
         }
         let settings = ServerRuntimeSettingsStore.snapshot()
-        let preliminaryPlan = Self.resolveMemorySafetyLoadPlan(
-            modelName: canonicalName,
-            modelDirectory: localURL,
-            settings: settings,
-            baseLoadConfiguration: .osaurusProduction,
-            inspectBundleFacts: true
-        )
         let rawWeightsBytes = candidateWeightsSizeBytes(
             modelName: canonicalName,
             directory: localURL
         )
         let targetLoadFootprintBytes: Int64? =
             rawWeightsBytes > 0
-            ? (preliminaryPlan.loadConfiguration.useMmapSafetensors
-                ? Self.effectiveLoadFootprintBytes(
-                    rawWeightsBytes: rawWeightsBytes,
-                    modelDirectory: localURL,
-                    modelName: canonicalName
-                )
-                : rawWeightsBytes)
+            ? Self.effectiveLoadFootprintBytes(
+                rawWeightsBytes: rawWeightsBytes,
+                modelDirectory: localURL,
+                modelName: canonicalName
+            )
             : nil
         let perActiveChildHeadroomBytes = targetLoadFootprintBytes.map {
             Self.estimatedKVHeadroomBytes(
@@ -4849,14 +4840,11 @@ public actor ModelRuntime {
         )
         let willMaterialize =
             !preliminaryMemorySafetyPlan.loadConfiguration.useMmapSafetensors
-        let loadFootprintBytes =
-            willMaterialize
-            ? Self.residentWeightBytes(rawWeightsBytes: weightsBytes, modelDirectory: localURL)
-            : Self.effectiveLoadFootprintBytes(
-                rawWeightsBytes: weightsBytes,
-                modelDirectory: localURL,
-                modelName: name
-            )
+        let loadFootprintBytes = Self.effectiveLoadFootprintBytes(
+            rawWeightsBytes: weightsBytes,
+            modelDirectory: localURL,
+            modelName: name
+        )
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public) loadFootprintBytes=\(loadFootprintBytes, privacy: .public) materialized=\(willMaterialize, privacy: .public)"
         )
@@ -7679,121 +7667,20 @@ public actor ModelRuntime {
         return rawWeightsBytes - ssd
     }
 
+    /// Compute-weight accounting shared by load, UI projection, and child admission.
+    ///
+    /// The production loader disables MLXPress/JangPress. Mapped routed pages
+    /// can be reclaimed by macOS, but that is not evidence that only 30% of
+    /// their weights need a working-set budget. Count every compute weight,
+    /// regardless of quantization name or mmap/materialized storage. Only
+    /// model-owned SSD tables are excluded by the validated header contract.
+    /// This is an admission estimate, not a measurement of phys_footprint.
     static func effectiveLoadFootprintBytes(
         rawWeightsBytes: Int64,
         modelDirectory: URL?,
         modelName: String? = nil
     ) -> Int64 {
-        let rawWeightsBytes = residentWeightBytes(rawWeightsBytes: rawWeightsBytes, modelDirectory: modelDirectory)
-        guard rawWeightsBytes > 0, let modelDirectory else { return rawWeightsBytes }
-        guard isRoutedJANGCompressionLoad(at: modelDirectory, modelName: modelName) else {
-            return rawWeightsBytes
-        }
-
-        // vMLX `.osaurusProduction` loads routed JANG/JANGTQ through
-        // mmap-backed safetensors and MLXPress compression-first residency.
-        // The default compression policy advises 70% of routed weights cold,
-        // so the pre-load crash-prevention gate should budget the hot working
-        // set, not require the entire routed shard total to be immediately
-        // free.
-        let hotFraction = 0.30
-        let floor: Int64 = 4 * 1024 * 1024 * 1024
-        let estimated = Int64(Double(rawWeightsBytes) * hotFraction)
-        return min(rawWeightsBytes, max(floor, estimated))
-    }
-
-    private static func isRoutedJANGTQCompressionLoad(at directory: URL, modelName: String?) -> Bool {
-        isRoutedJANGCompressionLoad(at: directory, modelName: modelName, requireJANGTQ: true)
-    }
-
-    private static func isRoutedJANGCompressionLoad(
-        at directory: URL,
-        modelName: String?,
-        requireJANGTQ: Bool = false
-    ) -> Bool {
-        let fm = FileManager.default
-        let hasJANGTQSidecar = fm.fileExists(
-            atPath: directory.appendingPathComponent("jangtq_runtime.safetensors").path
-        )
-        if let modelName,
-            ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName),
-            fm.fileExists(atPath: directory.appendingPathComponent("jang_config.json").path)
-        {
-            let normalized = modelName.lowercased().replacingOccurrences(of: "_", with: "-")
-            if normalized.contains("jangtq") {
-                return hasJANGTQSidecar
-            }
-            return !requireJANGTQ
-        }
-
-        let config = Self.readJSONObject(at: directory.appendingPathComponent("config.json"))
-        let jang = Self.readJSONObject(at: directory.appendingPathComponent("jang_config.json"))
-        guard !config.isEmpty || !jang.isEmpty else { return false }
-
-        let weightFormat =
-            Self.stringValue(jang["weight_format"])
-            ?? Self.stringValue(config["weight_format"])
-            ?? ""
-        let profile =
-            ((jang["quantization"] as? [String: Any]).flatMap { Self.stringValue($0["profile"]) }
-                ?? Self.stringValue(jang["profile"])
-                ?? "")
-        let format =
-            (Self.stringValue(jang["format"])
-            ?? Self.stringValue(config["format"])
-            ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let declaresJANGTQ =
-            weightFormat.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "mxtq"
-            || profile.lowercased().contains("jangtq")
-            || (modelName?.lowercased().contains("jangtq") ?? false)
-        if declaresJANGTQ, !hasJANGTQSidecar { return false }
-        guard !requireJANGTQ || declaresJANGTQ else { return false }
-        let declaresJANG =
-            declaresJANGTQ
-            || format == "jang"
-            || profile.lowercased().contains("jang")
-            || (modelName?.lowercased().contains("jang") ?? false)
-        guard declaresJANG else { return false }
-
-        let routedExperts =
-            Self.intValue(config["n_routed_experts"])
-            ?? Self.intValue(config["num_routed_experts"])
-            ?? Self.intValue(config["num_experts"])
-            ?? Self.intValue(config["num_local_experts"])
-            ?? Self.intValue((config["text_config"] as? [String: Any])?["num_experts"])
-        if (routedExperts ?? 0) > 0 { return true }
-
-        if let actions = (jang["quantization"] as? [String: Any])?["actions"] as? [String: Any],
-            (Self.intValue(actions["routed_tq"]) ?? 0) > 0
-        {
-            return true
-        }
-        let configMxtqBits = config["mxtq_bits"] as? [String: Any]
-        let jangMxtqBits = jang["mxtq_bits"] as? [String: Any]
-        if configMxtqBits?["routed_expert"] != nil
-            || jangMxtqBits?["routed_expert"] != nil
-        {
-            return true
-        }
-        if config["routed_expert_bits"] != nil
-            || jang["routed_expert_bits"] != nil
-            || config["routed_expert_bit_plan"] != nil
-            || jang["routed_expert_bit_plan"] != nil
-        {
-            return true
-        }
-        if Self.stringValue((config["quantization"] as? [String: Any])?["routed_experts"]) != nil {
-            return true
-        }
-        if let architecture = jang["architecture"] as? [String: Any],
-            let hasMoE = architecture["has_moe"] as? Bool,
-            hasMoE
-        {
-            return true
-        }
-        return false
+        residentWeightBytes(rawWeightsBytes: rawWeightsBytes, modelDirectory: modelDirectory)
     }
 
     /// Verify every weight shard referenced by a `*.safetensors.index.json`
