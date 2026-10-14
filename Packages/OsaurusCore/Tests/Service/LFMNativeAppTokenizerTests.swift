@@ -181,8 +181,8 @@ struct LFMNativeAppTokenizerTests {
     }
 
 
-    @Test(arguments: [false, true])
-    func configuredNativeReasoningToolsPreserveTailAndHistory(named: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func configuredNativeReasoningToolsPreserveTailAndHistory(named: Bool, wrapped: Bool) async throws {
         let configured: Any = named
             ? [["name": "default", "template": Self.nativeTemplate],
                ["name": "tool_use", "template": Self.nativeTemplate]]
@@ -205,9 +205,9 @@ struct LFMNativeAppTokenizerTests {
             "properties": properties, "required": ["text"],
         ]
         let function: [String: any Sendable] = [
-            "name": "line_count", "description": "Count lines", "parameters": parameters,
+            "name": "line_count", "description": "Count lines", "parameters": parameters, "strict": true,
         ]
-        let tools: [[String: any Sendable]] = [["type": "function", "function": function]]
+        let tools: [[String: any Sendable]] = wrapped ? [["type": "function", "function": function]] : [function]
         let callFunction: [String: any Sendable] = [
             "name": "line_count", "arguments": ["text": "red\nblue"] as [String: String],
         ]
@@ -232,7 +232,7 @@ struct LFMNativeAppTokenizerTests {
                     let expected = try upstream.applyChatTemplate(
                         messages: messages, chatTemplate: nil, addGenerationPrompt: addPrompt,
                         truncation: false, maxLength: nil,
-                        tools: tools,
+                        tools: [function],
                         additionalContext: context)
                     #expect(actual == expected)
                     let text = tokenizer.decode(tokenIds: actual, skipSpecialTokens: false)
@@ -241,7 +241,10 @@ struct LFMNativeAppTokenizerTests {
                         .components(separatedBy: "<|im_end|>")[0]
                     let renderedTools = try #require(
                         JSONSerialization.jsonObject(with: Data(toolList.utf8)) as? [[String: Any]])
-                    let renderedFunction = try #require(renderedTools.first?["function"] as? [String: Any])
+                    let renderedFunction = try #require(renderedTools.first)
+                    #expect(renderedFunction["name"] as? String == "line_count")
+                    #expect(renderedFunction["strict"] as? Bool == true)
+                    #expect(renderedFunction["function"] == nil)
                     let parameters = try #require(renderedFunction["parameters"] as? [String: Any])
                     #expect(parameters["additionalProperties"] as? Bool == false)
                     let properties = try #require(parameters["properties"] as? [String: Any])
@@ -258,6 +261,22 @@ struct LFMNativeAppTokenizerTests {
                 }
             }
         }
+    }
+
+    @Test func toolShapeAdapterRetainsNoncanonicalMetadata() throws {
+        let function: ToolSpec = ["name": "f", "strict": true, "parameters": ["type": "object"]]
+        let wrapped: ToolSpec = ["type": "function", "function": function]
+        let extended: ToolSpec = ["type": "function", "function": function, "x-transport": "keep"]
+        let other: ToolSpec = ["type": "custom", "name": "keep"]
+        let adapted = try #require(LFM2ToolCallParser.nativeTemplateTools([wrapped, function, extended, other]))
+        #expect(adapted[0]["name"] as? String == "f")
+        #expect(adapted[0]["strict"] as? Bool == true)
+        #expect(adapted[0]["function"] == nil)
+        #expect(adapted[1]["name"] as? String == "f")
+        #expect(adapted[2]["x-transport"] as? String == "keep")
+        #expect(adapted[2]["function"] != nil)
+        #expect(adapted[3]["type"] as? String == "custom")
+        #expect(LFM2ToolCallParser.nativeTemplateTools(nil) == nil)
     }
 
     @Test func nativeArgumentValidationDoesNotFallBack() async throws {

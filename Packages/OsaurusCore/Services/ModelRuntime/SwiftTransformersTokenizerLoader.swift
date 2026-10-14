@@ -289,7 +289,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt,
                 truncation: false,
                 maxLength: nil,
-                tools: tools,
+                tools: LFM2ToolCallParser.nativeTemplateTools(tools),
                 additionalContext: additionalContext
             )
         }
