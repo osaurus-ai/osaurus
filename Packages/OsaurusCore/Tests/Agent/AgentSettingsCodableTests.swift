@@ -268,6 +268,126 @@ struct AgentSettingsCodableTests {
         #expect(byID[lowerID]?.manualToolNames == ["file_write"])
     }
 
+    private static var explicitLegacySizedBudgets: SubagentBudgets {
+        SubagentBudgets(
+            maxDelegateTokens: 2048,
+            maxDelegateTurns: 2,
+            maxElapsedSeconds: 120,
+            maxParallelSpawns: 5,
+            maxRemoteParallelSpawns: 7
+        )
+    }
+
+    private func budgetSettingsJSON(
+        _ budgets: SubagentBudgets,
+        migrated: Bool? = nil
+    ) throws -> Data {
+        let encodedBudgets = try JSONEncoder().encode(budgets)
+        var object: [String: Any] = [
+            "dbEnabled": false,
+            "subagentBudgets": try JSONSerialization.jsonObject(with: encodedBudgets),
+        ]
+        if let migrated { object["subagentBudgetDefaultsMigrated"] = migrated }
+        return try JSONSerialization.data(withJSONObject: object)
+    }
+
+    @Test("unmarked legacy budgets upgrade while keeping local and remote fanout")
+    func unmarkedLegacyWorkerBudgetsUpgrade() throws {
+        let markers: [Bool?] = [nil, false]
+        for marker in markers {
+            let data = try budgetSettingsJSON(Self.explicitLegacySizedBudgets, migrated: marker)
+            let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
+
+            #expect(
+                decoded.subagentBudgets.maxDelegateTokens == SubagentBudgets.defaultMaxDelegateTokens
+            )
+            #expect(
+                decoded.subagentBudgets.maxDelegateTurns == SubagentBudgets.defaultMaxDelegateTurns
+            )
+            #expect(
+                decoded.subagentBudgets.maxElapsedSeconds == SubagentBudgets.defaultMaxElapsedSeconds
+            )
+            #expect(decoded.subagentBudgets.maxParallelSpawns == 5)
+            #expect(decoded.subagentBudgets.maxRemoteParallelSpawns == 7)
+        }
+    }
+
+    @Test("a migration marker preserves an explicit old-sized worker budget")
+    func markedLegacySizedBudgetsAreExplicit() throws {
+        let data = try budgetSettingsJSON(Self.explicitLegacySizedBudgets, migrated: true)
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
+
+        #expect(decoded.subagentBudgets == Self.explicitLegacySizedBudgets)
+    }
+
+    @Test("new explicit old-sized budgets survive repeated encode and decode")
+    func newExplicitLegacySizedBudgetsSurviveReload() throws {
+        var settings = AgentSettings.defaultDisabled
+        settings.subagentBudgets = Self.explicitLegacySizedBudgets
+
+        for _ in 0..<3 {
+            let encoded = try JSONEncoder().encode(settings)
+            let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            #expect((object["subagentBudgetDefaultsMigrated"] as? Bool) == true)
+            settings = try JSONDecoder().decode(AgentSettings.self, from: encoded)
+            #expect(settings.subagentBudgets == Self.explicitLegacySizedBudgets)
+        }
+    }
+
+    @Test("a later old-sized choice survives after legacy budget migration")
+    func legacyUpgradeThenExplicitOldSizedChoiceSurvivesReload() throws {
+        let legacy = try budgetSettingsJSON(Self.explicitLegacySizedBudgets)
+        var settings = try JSONDecoder().decode(AgentSettings.self, from: legacy)
+        #expect(settings.subagentBudgets.maxDelegateTurns == SubagentBudgets.defaultMaxDelegateTurns)
+
+        // The user's later choice may equal the old defaults exactly.
+        settings.subagentBudgets = Self.explicitLegacySizedBudgets
+        for _ in 0..<3 {
+            let encoded = try JSONEncoder().encode(settings)
+            settings = try JSONDecoder().decode(AgentSettings.self, from: encoded)
+            #expect(settings.subagentBudgets == Self.explicitLegacySizedBudgets)
+        }
+    }
+
+    @Test("custom legacy worker budgets are preserved with and without a migration marker")
+    func customLegacyWorkerBudgetsRemainUnchanged() throws {
+        let customBudgets = [
+            SubagentBudgets(maxDelegateTokens: 4096, maxDelegateTurns: 3, maxElapsedSeconds: 300),
+            SubagentBudgets(maxDelegateTokens: 2048, maxDelegateTurns: 3, maxElapsedSeconds: 120),
+            SubagentBudgets(maxDelegateTokens: 2048, maxDelegateTurns: 2, maxElapsedSeconds: 121),
+        ]
+        let markers: [Bool?] = [nil, false, true]
+        for budgets in customBudgets {
+            for marker in markers {
+                let encoded = try budgetSettingsJSON(budgets, migrated: marker)
+                let decoded = try JSONDecoder().decode(AgentSettings.self, from: encoded)
+                #expect(decoded.subagentBudgets == budgets)
+                let saved = try JSONEncoder().encode(decoded)
+                let reloaded = try JSONDecoder().decode(AgentSettings.self, from: saved)
+                #expect(reloaded.subagentBudgets == budgets)
+            }
+        }
+    }
+
+    @Test("the full stored agent record preserves a later old-sized budget choice")
+    func fullAgentRecordPreservesExplicitOldSizedBudgets() throws {
+        let id = UUID(uuidString: "10000000-0000-4000-8000-000000000009")!
+        var agent = Agent(id: id, name: "Budget migration worker", defaultModel: "local/test-worker")
+        agent.settings.subagentBudgets = Self.explicitLegacySizedBudgets
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        for _ in 0..<3 {
+            let encoded = try encoder.encode(agent)
+            agent = try decoder.decode(Agent.self, from: encoded)
+            #expect(agent.id == id)
+            #expect(agent.defaultModel == "local/test-worker")
+            #expect(agent.settings.subagentBudgets == Self.explicitLegacySizedBudgets)
+        }
+    }
+
     @Test("legacy JSON without the new keys decodes to safe defaults")
     func backCompatDefaults() throws {
         // An older agent file that predates per-agent image / permission / budget.

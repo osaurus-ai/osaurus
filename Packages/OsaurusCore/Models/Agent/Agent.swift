@@ -1368,12 +1368,17 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentPermissions =
             (try? c.decodeIfPresent(SubagentPermissionDefaults.self, forKey: .subagentPermissions))
             ?? SubagentPermissionDefaults()
-        // Stored budgets equal to the pre-2026 defaults (2048 / 2 / 120) are
-        // upgraded to the current defaults once, so existing agents stop
-        // "ending too fast" (see `SubagentBudgets.migratingLegacyDefaults`).
-        subagentBudgets =
-            ((try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
-            ?? SubagentBudgets()).migratingLegacyDefaults
+        // Only unmarked legacy records adopt the new worker defaults. Once
+        // saved by this version, an explicit 2048 / 2 / 120 choice must
+        // survive reload just like any other user-chosen budget.
+        let decodedBudgets =
+            (try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
+            ?? SubagentBudgets()
+        let budgetDefaultsMigrated =
+            (try? c.decodeIfPresent(Bool.self, forKey: .subagentBudgetDefaultsMigrated))
+            ?? false
+        subagentBudgets = budgetDefaultsMigrated
+            ? decodedBudgets : decodedBudgets.migratingLegacyDefaults
         // Normalize on decode (trim values, drop blanks) so the per-agent stored
         // shape matches the global `SubagentConfiguration.subagentModelOverrides`
         // — a cleared picker round-trips as "no override", never an empty-string
@@ -1458,6 +1463,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case imageToVideoTarget
         case subagentPermissions
         case subagentBudgets
+        case subagentBudgetDefaultsMigrated
         case subagentModelOverrides
         case knowledgeEnabled
         case knowledgeCollectionIds
@@ -1497,6 +1503,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encodeIfPresent(imageToVideoTarget, forKey: .imageToVideoTarget)
         try c.encode(subagentPermissions, forKey: .subagentPermissions)
         try c.encode(subagentBudgets, forKey: .subagentBudgets)
+        // New settings are explicit; decoded settings have already completed
+        // legacy reconciliation. Persist that fact on every normal agent save.
+        try c.encode(true, forKey: .subagentBudgetDefaultsMigrated)
         try c.encode(subagentModelOverrides, forKey: .subagentModelOverrides)
         try c.encode(knowledgeEnabled, forKey: .knowledgeEnabled)
         try c.encode(knowledgeCollectionIds, forKey: .knowledgeCollectionIds)
