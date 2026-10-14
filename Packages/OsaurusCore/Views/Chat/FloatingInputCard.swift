@@ -1011,7 +1011,7 @@ struct FloatingInputCard: View {
 
                 if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
                     && !speechService.isLoadingModel
-                    && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                    && speechService.microphonePermissionGranted
                 {
                     if let model = SpeechModelManager.shared.selectedModel {
                         print("[VoiceDebug] Kicking off model load for: \(model.id)")
@@ -1068,7 +1068,7 @@ struct FloatingInputCard: View {
 
                 if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
                     && !speechService.isLoadingModel
-                    && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                    && speechService.microphonePermissionGranted
                 {
                     if let model = SpeechModelManager.shared.selectedModel {
                         Task { try? await speechService.loadModelAutomatically(model.id) }
