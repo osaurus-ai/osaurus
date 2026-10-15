@@ -14,6 +14,25 @@ enum GeneratedMediaToolArtifactBridge {
         toolNames.contains(name)
     }
 
+    /// Keep completed files visible when a later image fails. This does not
+    /// manufacture a successful tool result or put artifact bytes in the prompt.
+    static func preservePartialImages(_ images: [GeneratedImage], sessionID: String) {
+        for image in images {
+            let outcome = SharedArtifact.processTrustedLocalFileResult(
+                fileURL: image.url, filename: image.url.lastPathComponent,
+                mimeType: SharedArtifact.mimeType(from: image.url.lastPathComponent),
+                description: "Completed image from an interrupted batch",
+                contextId: sessionID, contextType: .chat)
+            switch outcome {
+            case .success(let processed):
+                SpawnArtifactCollector.deposit(processed.artifact, sessionId: sessionID)
+            case .failure(let reason):
+                NSLog("[NativeImageToolArtifactBridge] partial image preservation failed: %@",
+                    String(describing: reason))
+            }
+        }
+    }
+
     static func processFirstMediaArtifact(
         toolName: String,
         toolResult: String,

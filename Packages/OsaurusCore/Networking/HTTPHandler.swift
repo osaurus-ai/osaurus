@@ -12430,6 +12430,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // The bridge's explicit request classification outranks explanatory
         // text such as "strength ... is not implemented" in its detail.
         if m.hasPrefix("invalid request:") { return .badRequest }
+        if m == "image generation cancelled" { return .conflict }
         if m.contains("not found") { return .notFound }
         if m.contains("incomplete") { return .conflict }
         if m.contains("not implemented") { return .notImplemented }
@@ -13610,8 +13611,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 for try await event in stream {
                     switch event {
+                    case .imageCompleted(let image, _): produced.append(image)
                     case .completed(let images): produced = images
                     case .failed(let message, let hfAuth): failure = (message, hfAuth)
+                    case .cancelled: failure = failure ?? ("Image generation cancelled", false)
                     default: break
                     }
                 }
@@ -13621,8 +13624,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             if let failure {
                 let status = Self.imageErrorStatus(message: failure.message, hfAuth: failure.hfAuth)
-                let body =
-                    #"{"error":{"message":"\#(Self.jsonEscape(failure.message))","type":"invalid_request_error"}}"#
+                let response = ImagePartialFailureDTO(
+                    error: .init(message: failure.message, type: "image_generation_error"),
+                    data: produced.map { Self.imageResult(for: $0, responseFormat: responseFormat) })
+                let body = (try? JSONEncoder.osaurusCanonical().encode(response))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"error":{"message":"Image generation failed","type":"image_generation_error"}}"#
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)

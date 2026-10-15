@@ -233,6 +233,14 @@ struct ImagesResponseDTO: Encodable {
     let data: [ImageResultDTO]
 }
 
+/// A failed batch can still have durable, successfully completed images.
+/// Keep the normal error envelope while returning those artifacts explicitly.
+struct ImagePartialFailureDTO: Encodable {
+    struct Failure: Encodable { let message: String; let type: String }
+    let error: Failure
+    let data: [ImageResultDTO]
+}
+
 // MARK: - Streaming (SSE) event
 
 /// One SSE `data:` payload. A single struct with optional fields — the

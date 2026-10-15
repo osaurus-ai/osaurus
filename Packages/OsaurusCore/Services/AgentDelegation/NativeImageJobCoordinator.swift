@@ -491,6 +491,7 @@ actor NativeImageJobCoordinator {
         var retention: ParentResidencyRetention?
         var startedImageModel: String?
         var residencySettled = false
+        var produced: [GeneratedImage] = []
         func checkInterrupt() throws {
             if interrupt?.isInterrupted == true { throw NativeImageJobCoordinatorError.cancelled }
         }
@@ -570,7 +571,6 @@ actor NativeImageJobCoordinator {
                     enabled: true
                 )
             }
-            var produced: [GeneratedImage] = []
             try Task.checkCancellation()
             try checkInterrupt()
             startedImageModel = model
@@ -637,7 +637,17 @@ actor NativeImageJobCoordinator {
             )
             continuation.finish()
         } catch {
-            activityRow?.finish(producedCount: 0, jobId: jobID, error: error.localizedDescription)
+            activityRow?.finish(producedCount: produced.count, jobId: jobID, images: produced,
+                error: error.localizedDescription)
+            // A failed/cancelled batch still owns the images it already finished.
+            // Preserve them through the existing typed chat artifact channel;
+            // the job itself must continue to report failure.
+            if context.requestSource != .httpAPI, let sessionID = context.sessionID, !produced.isEmpty {
+                let completedImages = produced
+                await Task.detached(priority: .utility) {
+                    GeneratedMediaToolArtifactBridge.preservePartialImages(completedImages, sessionID: sessionID)
+                }.value
+            }
             if !residencySettled {
                 _ = await self.finishResidency(
                     lease: chatLease,

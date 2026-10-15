@@ -28,6 +28,24 @@ struct NativeImageToolArtifactBridgeTests {
     }
 
     @Test
+    func interruptedBatchKeepsCompletedArtifactsWithoutChangingFailureResult() async throws {
+        try await Self.runLocked { tmp in
+            let session = UUID().uuidString
+            let file = tmp.appendingPathComponent("completed-before-cancel.png")
+            let bytes = Data([0x89, 0x50, 0x4e, 0x47])
+            try bytes.write(to: file)
+            GeneratedMediaToolArtifactBridge.preservePartialImages(
+                [.init(url: file, seed: UInt64.max)], sessionID: session)
+            let artifacts = SpawnArtifactCollector.drain(sessionId: session)
+            #expect(artifacts.count == 1)
+            let artifact = try #require(artifacts.first)
+            #expect(try Data(contentsOf: URL(fileURLWithPath: artifact.hostPath)) == bytes)
+            #expect(FileManager.default.fileExists(atPath: file.path))
+            #expect(SpawnArtifactCollector.drain(sessionId: session).isEmpty)
+        }
+    }
+
+    @Test
     func batchPromotesEveryImageInOrder() async throws {
         try await Self.runLocked { tmp in
             var imagePayloads: [[String: Any]] = []

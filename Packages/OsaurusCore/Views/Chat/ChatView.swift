@@ -7360,7 +7360,8 @@ final class ChatSession: ObservableObject {
                         // `SpawnArtifactCollector` (the spawn payload carries
                         // only an `artifacts_shared` count). Drain after EVERY
                         // spawn return and attach to the owning assistant turn.
-                        if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName) {
+                        if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName)
+                            || GeneratedMediaToolArtifactBridge.isGeneratedMediaTool(inv.toolName) {
                             await self.promoteWorkerSharedArtifacts(callId: callId)
                         }
 
