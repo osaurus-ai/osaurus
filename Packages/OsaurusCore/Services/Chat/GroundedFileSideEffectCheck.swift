@@ -35,6 +35,25 @@ enum GroundedFileSideEffectCheck {
     /// so "I saved it" after that failure is exactly the fabrication this
     /// check exists to catch.
     static func isGroundedFileWriteOutcome(toolName: String, result: String) -> Bool {
+        // Native media tools save and display their own artifacts. Requiring a
+        // second file_write/share_artifact after that completion incorrectly
+        // tells the model that the file it just produced does not exist.
+        if toolName == "image" || toolName == "video" {
+            guard let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+                payload["status"] as? String == "completed"
+            else { return false }
+            if toolName == "image", payload["kind"] as? String == "native_image_generation_job",
+                let images = payload["images"] as? [[String: Any]]
+            {
+                return images.contains { ($0["path"] as? String)?.isEmpty == false }
+            }
+            if toolName == "video", payload["kind"] as? String == "generated_media_job",
+                let media = payload["media"] as? [String: Any]
+            {
+                return (media["path"] as? String)?.isEmpty == false
+            }
+            return false
+        }
         guard fileWritingToolNames.contains(toolName) else { return false }
         return ToolEnvelope.isSuccess(result)
     }
