@@ -84,6 +84,21 @@ public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
 /// the exact bundle directory name and is what callers must send back in a
 /// request (exact-name resolution preserves the `-4bit`/`-8bit`/`-qN` quant
 /// suffix so co-installed quants never collapse onto each other).
+public struct ImageRequestLimits: Sendable, Hashable {
+    public let minimumSteps: Int
+    public let maximumSteps: Int?
+    public let fixedSteps: Int?
+    public let dimensionMultiple: Int
+    public let minimumDimension: Int
+    public let maximumDimension: Int?
+    public let maximumPixels: Int?
+    public let maximumImages: Int
+    public let maximumSourceImages: Int
+    public let formats: [String]
+    public let samplers: [String]
+    public let schedulers: [String]
+}
+
 public struct ImageModelInfo: Sendable, Equatable {
     public let id: String
     public let canonicalName: String?
@@ -101,6 +116,7 @@ public struct ImageModelInfo: Sendable, Equatable {
     /// "incomplete" hint.
     public let blockedReasons: [String]
     public let totalBytes: UInt64
+    public let requestLimits: ImageRequestLimits?
 
     public init(
         id: String,
@@ -113,7 +129,8 @@ public struct ImageModelInfo: Sendable, Equatable {
         defaultGuidance: Float?,
         capabilities: ImageModelCapabilities,
         blockedReasons: [String],
-        totalBytes: UInt64
+        totalBytes: UInt64,
+        requestLimits: ImageRequestLimits? = nil
     ) {
         self.id = id
         self.canonicalName = canonicalName
@@ -126,6 +143,7 @@ public struct ImageModelInfo: Sendable, Equatable {
         self.capabilities = capabilities
         self.blockedReasons = blockedReasons
         self.totalBytes = totalBytes
+        self.requestLimits = requestLimits
     }
 }
 

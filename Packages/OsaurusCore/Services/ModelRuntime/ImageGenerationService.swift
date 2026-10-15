@@ -275,6 +275,7 @@ public actor ImageGenerationService {
     static func info(for local: LocalFluxModel) -> ImageModelInfo {
         let kind = local.kind ?? .imageGen
         let entry = local.canonicalName.flatMap { ModelRegistry.lookup(name: $0) }
+        let limits = try? entry?.limits?(local.directory)
         return ImageModelInfo(
             id: local.directoryName,
             canonicalName: local.canonicalName,
@@ -286,7 +287,15 @@ public actor ImageGenerationService {
             defaultGuidance: entry?.defaultGuidance,
             capabilities: capabilities(kind: kind, canonical: local.canonicalName, entry: entry),
             blockedReasons: local.blockedReasons,
-            totalBytes: local.totalBytes
+            totalBytes: local.totalBytes,
+            requestLimits: limits.map {
+                ImageRequestLimits(minimumSteps: $0.minimumSteps, maximumSteps: $0.maximumSteps,
+                    fixedSteps: $0.fixedSteps, dimensionMultiple: $0.dimensionMultiple,
+                    minimumDimension: $0.minDimension, maximumDimension: $0.maxDimension,
+                    maximumPixels: $0.maxPixels, maximumImages: $0.maximumImages,
+                    maximumSourceImages: $0.maxSourceImages, formats: $0.supportedFormats.map(\.rawValue),
+                    samplers: $0.samplers, schedulers: $0.schedulers)
+            }
         )
     }
 
@@ -409,8 +418,10 @@ public actor ImageGenerationService {
     private func edit(
         _ params: ImageEditParameters, jobID: String?, resolvedTarget: LoadTarget?, interrupt: InterruptToken? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(
-            model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt, validate: { info, limits in
+        let producerInterrupt = FluxInterrupt()
+        return drive(
+            model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget,
+            interrupt: interrupt, producerInterrupt: producerInterrupt, validate: { info, limits in
                 if limits == nil {
                     try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: true,
@@ -451,7 +462,7 @@ public actor ImageGenerationService {
             sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
             previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel,
             adapters: params.adapters.map { FluxAdapter(url: $0.url, scale: $0.scale,
-                target: FluxAdapter.Target(rawValue: $0.target.rawValue)!) }
+                target: FluxAdapter.Target(rawValue: $0.target.rawValue)!) }, interrupt: producerInterrupt
             )
             return await engine.edit(request)
         }

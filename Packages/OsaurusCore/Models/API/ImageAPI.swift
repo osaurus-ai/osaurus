@@ -207,10 +207,18 @@ struct ImageDefaultsDTO: Encodable {
 
 struct ImageLimitsDTO: Encodable {
     let min_steps: Int
-    let max_steps: Int
+    let max_steps: Int?
     let size_multiple: Int
-    let max_pixels: Int
+    let max_pixels: Int?
     let supported_sizes: [String]
+    var min_dimension: Int? = nil
+    var max_dimension: Int? = nil
+    var fixed_steps: Int? = nil
+    var max_images: Int? = nil
+    var max_source_images: Int? = nil
+    var formats: [String]? = nil
+    var samplers: [String]? = nil
+    var schedulers: [String]? = nil
 }
 
 struct ImageModelDTO: Encodable {

@@ -5205,7 +5205,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 steps: item.imageDefaultSteps,
                 guidance: item.imageDefaultGuidance.map { Double($0) }
             )
-            limits = ImageHTTPParameterBuilder.limits(canonicalName: item.imageCanonicalName, capabilities: caps)
+            limits = ImageHTTPParameterBuilder.limits(canonicalName: item.imageCanonicalName,
+                capabilities: caps, runtime: item.imageRequestLimits)
             maxGuidance = 20
         }
     }

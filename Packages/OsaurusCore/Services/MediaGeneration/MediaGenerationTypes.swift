@@ -352,6 +352,11 @@ struct MediaImageGenerationRequest: Sendable, Equatable {
     var sampler: String? = nil
     var scheduler: String? = nil
     var shift: Float? = nil
+    var seeds: [UInt64]? = nil
+    var batchSize: Int = 1
+    var previewInterval: Int? = nil
+    var previewMaxPixel: Int = 256
+    var adapters: [ImageAdapterParameters] = []
 }
 
 struct MediaVideoGenerationRequest: Sendable, Equatable {

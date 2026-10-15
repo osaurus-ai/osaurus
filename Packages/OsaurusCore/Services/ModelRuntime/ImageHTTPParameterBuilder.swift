@@ -40,11 +40,20 @@ enum ImageHTTPParameterBuilder {
     }
 
     static func limits(for info: ImageModelInfo) -> ImageLimitsDTO {
-        limits(canonicalName: info.canonicalName, capabilities: info.capabilities)
+        limits(canonicalName: info.canonicalName, capabilities: info.capabilities, runtime: info.requestLimits)
     }
 
     /// The same limits from a picker item's fields, for `/models/picker`.
-    static func limits(canonicalName: String?, capabilities: ImageModelCapabilities) -> ImageLimitsDTO {
+    static func limits(canonicalName: String?, capabilities: ImageModelCapabilities,
+                       runtime: ImageRequestLimits? = nil) -> ImageLimitsDTO {
+        if let runtime {
+            return ImageLimitsDTO(min_steps: runtime.minimumSteps, max_steps: runtime.maximumSteps,
+                size_multiple: runtime.dimensionMultiple, max_pixels: runtime.maximumPixels,
+                supported_sizes: [], min_dimension: runtime.minimumDimension,
+                max_dimension: runtime.maximumDimension, fixed_steps: runtime.fixedSteps,
+                max_images: runtime.maximumImages, max_source_images: runtime.maximumSourceImages,
+                formats: runtime.formats, samplers: runtime.samplers, schedulers: runtime.schedulers)
+        }
         let q21 = ImageModelRequestPolicy.isQwen21Family(canonicalName)
         return ImageLimitsDTO(min_steps: q21 ? 2 : 1, max_steps: 50,
             size_multiple: capabilities.dimensionMultiple,

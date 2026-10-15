@@ -66,9 +66,11 @@ actor MediaGenerationCoordinator {
                     steps: request.steps,
                     guidance: request.guidance.map(Float.init),
                     seed: request.seed.flatMap { $0 >= 0 ? UInt64($0) : nil },
-                    numImages: request.count,
+                    numImages: request.count, seeds: request.seeds, batchSize: request.batchSize,
                     outputFormat: request.format,
                     sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
+                    previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel,
+                    adapters: request.adapters,
                     context: .current()
                 )
             )
@@ -548,12 +550,15 @@ actor MediaGenerationCoordinator {
         guard !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw MediaGenerationError.invalidRequest("A prompt is required.")
         }
-        guard (1 ... 4).contains(request.count) else {
-            throw MediaGenerationError.invalidRequest("Image count must be between 1 and 4.")
+        let maximumCount = request.target.backend == .local ? 8 : 4
+        guard (1 ... maximumCount).contains(request.count) else {
+            throw MediaGenerationError.invalidRequest("Image count must be between 1 and \(maximumCount).")
         }
         guard request.target.backend != .local else { return }
-        guard request.sampler == nil, request.scheduler == nil, request.shift == nil else {
-            throw MediaGenerationError.invalidRequest("Sampler, scheduler and shift require a local image model.")
+        guard request.sampler == nil, request.scheduler == nil, request.shift == nil,
+            request.seeds == nil, request.batchSize == 1,
+            request.previewInterval == nil, request.previewMaxPixel == 256, request.adapters.isEmpty else {
+            throw MediaGenerationError.invalidRequest("Sampling, batching, adapters and previews require a local image model.")
         }
         let model = try await requiredMediaModel(for: request.target)
         guard model.kind == .image else {

@@ -159,6 +159,7 @@ struct ModelPickerItem: Identifiable, Hashable {
     let imageCapabilities: ImageModelCapabilities?
     let imageDefaultSteps: Int?
     let imageDefaultGuidance: Float?
+    let imageRequestLimits: ImageRequestLimits?
     let imageReady: Bool
     /// Provider-neutral media metadata for remote image/video rows. Local
     /// image rows retain their existing `image*` fields.
@@ -187,6 +188,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         imageCapabilities: ImageModelCapabilities? = nil,
         imageDefaultSteps: Int? = nil,
         imageDefaultGuidance: Float? = nil,
+        imageRequestLimits: ImageRequestLimits? = nil,
         imageReady: Bool = false,
         mediaModel: MediaModelInfo? = nil
     ) {
@@ -212,6 +214,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.imageCapabilities = imageCapabilities
         self.imageDefaultSteps = imageDefaultSteps
         self.imageDefaultGuidance = imageDefaultGuidance
+        self.imageRequestLimits = imageRequestLimits
         self.imageReady = imageReady
         self.mediaModel = mediaModel
     }
@@ -284,6 +287,7 @@ extension ModelPickerItem {
             imageCapabilities: model.capabilities,
             imageDefaultSteps: model.defaultSteps,
             imageDefaultGuidance: model.defaultGuidance,
+            imageRequestLimits: model.requestLimits,
             imageReady: model.ready
         )
     }
