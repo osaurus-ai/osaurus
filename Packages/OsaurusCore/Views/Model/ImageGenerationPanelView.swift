@@ -543,8 +543,9 @@ struct ImageGenerationPanelView: View {
                 ScrollView(.horizontal) {
                     HStack {
                         ForEach(Array(model.results.enumerated()), id: \.offset) { index, image in
-                            Button("Image \(index + 1)") { model.selectResult(image) }
-                                .disabled(image.url == url)
+                            Button { model.selectResult(image) } label: {
+                                Text("\(L("Image")) \(index + 1)")
+                            }.disabled(image.url == url)
                         }
                     }
                 }
