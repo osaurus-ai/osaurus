@@ -4078,31 +4078,35 @@ final class ChatSession: ObservableObject {
     /// render as first-class chat cards.
     private func processNativeImageToolResult(
         toolName: String,
-        toolResult: String
+        toolResult: String,
+        owner: ChatTurn
     ) async -> String {
         guard let sessionId else { return toolResult }
         let contextId = sessionId.uuidString
-        let outcome = await Task.detached(priority: .userInitiated) {
-            GeneratedMediaToolArtifactBridge.processFirstMediaArtifact(
-                toolName: toolName,
-                toolResult: toolResult,
-                contextId: contextId,
-                contextType: .chat
-            )
+        let outcomes = await Task.detached(priority: .userInitiated) {
+            GeneratedMediaToolArtifactBridge.processMediaArtifacts(
+                toolName: toolName, toolResult: toolResult,
+                contextId: contextId, contextType: .chat)
         }.value
-
-        guard let outcome else { return toolResult }
-        switch outcome {
-        case .success(let processed):
-            return ToolEnvelope.success(tool: toolName, text: processed.enrichedToolResult)
-        case .failure(let reason):
-            NSLog(
-                "[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@",
-                toolName,
-                String(describing: reason)
-            )
-            return toolResult
+        var first: SharedArtifact.ProcessingResult?
+        for outcome in outcomes {
+            switch outcome {
+            case .success(let processed):
+                if first == nil { first = processed }
+                else {
+                    // The first image retains the existing tool card. Remaining
+                    // outputs use typed attachments, including child-chat harvest.
+                    owner.sharedArtifacts.append(processed.artifact)
+                    await PluginManager.shared.notifyArtifactHandlers(artifact: processed.artifact)
+                }
+            case .failure(let reason):
+                NSLog("[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@",
+                    toolName, String(describing: reason))
+            }
         }
+        if outcomes.count > 1 { isDirty = true; rebuildVisibleBlocks() }
+        guard let first else { return toolResult }
+        return ToolEnvelope.success(tool: toolName, text: first.enrichedToolResult)
     }
 
     /// Card-only enrichment for a `file_read` image result: stage the
@@ -5839,6 +5843,10 @@ final class ChatSession: ObservableObject {
                     refresh()
                 case .preview:
                     break
+                case .imageCompleted:
+                    // The terminal event publishes the ordered gallery together.
+                    // Intermediate events must not settle the chat/model lease.
+                    break
                 case .completed(let images):
                     finishNativeImagePresentation(on: turn)
                     reachedTerminal = true
@@ -7332,7 +7340,10 @@ final class ChatSession: ObservableObject {
                             // string means success — route it to the card.
                             let enriched = await self.processNativeImageToolResult(
                                 toolName: inv.toolName,
-                                toolResult: resultText
+                                toolResult: resultText,
+                                owner: self.turns.last(where: {
+                                    $0.role == .assistant && ($0.toolCalls?.contains { $0.id == callId } ?? false)
+                                }) ?? assistantTurn
                             )
                             if enriched != resultText {
                                 toolCardOverrides[callId] = enriched
@@ -7349,7 +7360,8 @@ final class ChatSession: ObservableObject {
                         // `SpawnArtifactCollector` (the spawn payload carries
                         // only an `artifacts_shared` count). Drain after EVERY
                         // spawn return and attach to the owning assistant turn.
-                        if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName) {
+                        if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName)
+                            || GeneratedMediaToolArtifactBridge.isGeneratedMediaTool(inv.toolName) {
                             await self.promoteWorkerSharedArtifacts(callId: callId)
                         }
 

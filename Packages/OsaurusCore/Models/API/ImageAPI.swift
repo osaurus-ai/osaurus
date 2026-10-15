@@ -44,6 +44,8 @@ struct ImageGenerationRequestDTO: Decodable, Sendable {
     let prompt: String
     let negative_prompt: String?
     let n: Int?
+    var seeds: [UInt64]? = nil
+    var batch_size: Int? = nil
     let size: String?
     let width: Int?
     let height: Int?
@@ -231,6 +233,14 @@ struct ImagesResponseDTO: Encodable {
     let data: [ImageResultDTO]
 }
 
+/// A failed batch can still have durable, successfully completed images.
+/// Keep the normal error envelope while returning those artifacts explicitly.
+struct ImagePartialFailureDTO: Encodable {
+    struct Failure: Encodable { let message: String; let type: String }
+    let error: Failure
+    let data: [ImageResultDTO]
+}
+
 // MARK: - Streaming (SSE) event
 
 /// One SSE `data:` payload. A single struct with optional fields — the
@@ -247,6 +257,7 @@ struct ImageStreamEventDTO: Encodable {
     var eta_seconds: Double? = nil
     var image: String? = nil
     var images: [ImageResultDTO]? = nil
+    var index: Int? = nil
     var message: String? = nil
     var hf_auth: Bool? = nil
 }

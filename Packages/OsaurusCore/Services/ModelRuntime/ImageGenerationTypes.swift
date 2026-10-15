@@ -118,6 +118,8 @@ public struct ImageGenerationParameters: Sendable {
     public var guidance: Float?
     public var seed: UInt64?
     public var numImages: Int
+    public var seeds: [UInt64]?
+    public var batchSize: Int
     public var outputFormat: ImageOutputFormat
 
     public init(
@@ -130,6 +132,8 @@ public struct ImageGenerationParameters: Sendable {
         guidance: Float? = nil,
         seed: UInt64? = nil,
         numImages: Int = 1,
+        seeds: [UInt64]? = nil,
+        batchSize: Int = 1,
         outputFormat: ImageOutputFormat = .png
     ) {
         self.model = model
@@ -141,6 +145,8 @@ public struct ImageGenerationParameters: Sendable {
         self.guidance = guidance
         self.seed = seed
         self.numImages = numImages
+        self.seeds = seeds
+        self.batchSize = batchSize
         self.outputFormat = outputFormat
     }
 }
@@ -372,6 +378,8 @@ public enum ImageGenerationEvent: Sendable {
     case step(step: Int, total: Int, etaSeconds: Double?)
     /// Optional partial decode (not all models emit previews).
     case preview(pngData: Data, step: Int)
+    /// A durable image within a still-running batch. Does not release the GPU lane.
+    case imageCompleted(image: GeneratedImage, index: Int)
     /// Terminal success — all requested images saved to disk.
     case completed(images: [GeneratedImage])
     /// Terminal failure. `hfAuth == true` ⇒ a 401/403 → show "Add HF token".

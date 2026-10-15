@@ -45,6 +45,8 @@ struct NativeImageGenerateJobRequest: Sendable {
     var guidance: Float?
     var seed: UInt64?
     var numImages: Int
+    var seeds: [UInt64]?
+    var batchSize: Int
     var outputFormat: ImageOutputFormat
     var context: NativeImageJobContext
 
@@ -58,6 +60,8 @@ struct NativeImageGenerateJobRequest: Sendable {
         guidance: Float? = nil,
         seed: UInt64? = nil,
         numImages: Int = 1,
+        seeds: [UInt64]? = nil,
+        batchSize: Int = 1,
         outputFormat: ImageOutputFormat = .png,
         context: NativeImageJobContext = .empty
     ) {
@@ -69,7 +73,9 @@ struct NativeImageGenerateJobRequest: Sendable {
         self.steps = steps
         self.guidance = guidance
         self.seed = seed
-        self.numImages = max(1, min(4, numImages))
+        self.numImages = numImages
+        self.seeds = seeds
+        self.batchSize = batchSize
         self.outputFormat = outputFormat
         self.context = context
     }
@@ -379,7 +385,7 @@ actor NativeImageJobCoordinator {
                                 steps: request.steps,
                                 guidance: request.guidance,
                                 seed: request.seed,
-                                numImages: request.numImages,
+                                numImages: request.numImages, seeds: request.seeds, batchSize: request.batchSize,
                                 outputFormat: request.outputFormat
                             )
                             return await self.imageService.generate(params, jobID: jobID, interrupt: interrupt)
@@ -485,6 +491,7 @@ actor NativeImageJobCoordinator {
         var retention: ParentResidencyRetention?
         var startedImageModel: String?
         var residencySettled = false
+        var produced: [GeneratedImage] = []
         func checkInterrupt() throws {
             if interrupt?.isInterrupted == true { throw NativeImageJobCoordinatorError.cancelled }
         }
@@ -564,7 +571,6 @@ actor NativeImageJobCoordinator {
                     enabled: true
                 )
             }
-            var produced: [GeneratedImage] = []
             try Task.checkCancellation()
             try checkInterrupt()
             startedImageModel = model
@@ -587,6 +593,8 @@ actor NativeImageJobCoordinator {
                     )
                 case .preview:
                     continue
+                case .imageCompleted(let image, _):
+                    produced.append(image)
                 case .completed(let images):
                     produced = images
                 case .failed(let message, _):
@@ -629,7 +637,17 @@ actor NativeImageJobCoordinator {
             )
             continuation.finish()
         } catch {
-            activityRow?.finish(producedCount: 0, jobId: jobID, error: error.localizedDescription)
+            activityRow?.finish(producedCount: produced.count, jobId: jobID, images: produced,
+                error: error.localizedDescription)
+            // A failed/cancelled batch still owns the images it already finished.
+            // Preserve them through the existing typed chat artifact channel;
+            // the job itself must continue to report failure.
+            if context.requestSource != .httpAPI, let sessionID = context.sessionID, !produced.isEmpty {
+                let completedImages = produced
+                await Task.detached(priority: .utility) {
+                    GeneratedMediaToolArtifactBridge.preservePartialImages(completedImages, sessionID: sessionID)
+                }.value
+            }
             if !residencySettled {
                 _ = await self.finishResidency(
                     lease: chatLease,

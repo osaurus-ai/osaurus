@@ -29,6 +29,14 @@ struct ImageHTTPPreparedJob: Sendable {
 /// Q21 consumes explicit supported values without rounding or step clamping.
 /// Classification is exclusively the resolved ImageModelInfo canonical field.
 enum ImageHTTPParameterBuilder {
+    /// Provider adapters currently accept one base seed, not native seed arrays
+    /// or GPU batch sizing. Reject these before any billable remote request.
+    static func validateRemoteBatch(_ request: ImageGenerationRequestDTO) throws {
+        guard request.seeds == nil, request.batch_size == nil else {
+            throw ImageGenerationError.invalidRequest("seeds and batch_size require a local image model")
+        }
+    }
+
     static func limits(for info: ImageModelInfo) -> ImageLimitsDTO {
         limits(canonicalName: info.canonicalName, capabilities: info.capabilities)
     }
@@ -55,9 +63,7 @@ enum ImageHTTPParameterBuilder {
             negativePrompt: request.negative_prompt, width: width, height: height,
             steps: q21 ? request.steps : request.steps.map(HTTPHandler.clampImageSteps),
             guidance: request.guidance.map(Float.init), seed: request.seed,
-            // Keep the existing one-image endpoint policy; this patch is not
-            // evidence that production multi-image producer safety is proved.
-            numImages: 1, outputFormat: try outputFormat(request.output_format, isQwen21: q21))
+            numImages: request.n ?? 1, seeds: request.seeds, batchSize: request.batch_size ?? 1, outputFormat: try outputFormat(request.output_format, isQwen21: q21))
     }
 
     static func edit(_ request: ImageEditRequestDTO, info: ImageModelInfo, decodedSources: [Data?]) throws

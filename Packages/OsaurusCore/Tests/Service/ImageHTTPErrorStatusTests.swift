@@ -27,6 +27,7 @@ struct ImageHTTPErrorStatusTests {
     }
 
     @Test func independentStatusesAndAuthPrecedenceRemainUnchanged() {
+        #expect(HTTPHandler.imageErrorStatus(message: "Image generation cancelled", hfAuth: false).code == 409)
         #expect(HTTPHandler.imageErrorStatus(message: "operation not implemented", hfAuth: false).code == 501)
         #expect(HTTPHandler.imageErrorStatus(message: ImageGenerationError.modelNotFound("missing").description,
             hfAuth: false).code == 404)

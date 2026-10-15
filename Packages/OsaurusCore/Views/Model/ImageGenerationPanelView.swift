@@ -34,6 +34,7 @@ final class ImageGenerationPanelModel: ObservableObject {
     @Published var resultURL: URL?
     @Published var resultSeed: UInt64?
     @Published var resultParameters: ImageEffectiveParameters?
+    @Published private(set) var results: [GeneratedImage] = []
     /// `true` between a user Cancel press and the terminal event that resolves
     /// the job. The actual weight load inside vMLXFlux is not interruptible, so
     /// this drives immediate UI feedback while the soft cancel settles.
@@ -68,6 +69,7 @@ final class ImageGenerationPanelModel: ObservableObject {
             height: params.height,
             isEdit: false
         )
+        if params.numImages > 1 { durationKey = durationKey.map { $0 + "|images=\(params.numImages)" } }
         start { await ImageGenerationService.shared.generate(params, jobID: self.jobID) }
     }
 
@@ -100,6 +102,7 @@ final class ImageGenerationPanelModel: ObservableObject {
         resultURL = nil
         resultSeed = nil
         resultParameters = nil
+        results = []
         isCancelling = false
         lastDuration = nil
         estimate = durationKey.flatMap { ImageGenerationDurationStore.lastDuration(for: $0) }
@@ -136,11 +139,13 @@ final class ImageGenerationPanelModel: ObservableObject {
             phase = .running(step: step, total: total, eta: eta)
         case .preview:
             break
+        case .imageCompleted(let image, _):
+            results.append(image)
+            selectResult(image)
         case .completed(let images):
+            results = images
             if let first = images.first {
-                resultURL = first.url
-                resultSeed = first.seed
-                resultParameters = first.effectiveParameters
+                selectResult(first)
             }
             isCancelling = false
             finishTiming(persist: true)
@@ -154,6 +159,12 @@ final class ImageGenerationPanelModel: ObservableObject {
             finishTiming(persist: false)
             phase = .cancelled
         }
+    }
+
+    func selectResult(_ image: GeneratedImage) {
+        resultURL = image.url
+        resultSeed = image.seed
+        resultParameters = image.effectiveParameters
     }
 
     private func startTiming() {
@@ -230,6 +241,7 @@ struct ImageGenerationPanelView: View {
     @State private var negativePrompt: String = ""
     @State private var sizeIndex: Int = 1  // 0:512, 1:1024
     @State private var seedText: String = ""
+    @State private var imageCount = 1
     @State private var sourceURLs: [URL] = []
     @State private var stepsText = ""
     @State private var guidanceText = ""
@@ -397,6 +409,11 @@ struct ImageGenerationPanelView: View {
                 Text(localized: "Guidance").font(.system(size: 11))
                 TextField(String(modelInfo.defaultGuidance ?? 3.5), text: $guidanceText).frame(width: 70)
             }
+            if !isEdit {
+                Picker("Images", selection: $imageCount) {
+                    ForEach(1...8, id: \.self) { count in Text("\(count)").tag(count) }
+                }.frame(width: 160).disabled(model.isBusy)
+            }
             }
             if isEdit {
                 Toggle(isOn: $useSourceSize) {
@@ -522,6 +539,17 @@ struct ImageGenerationPanelView: View {
 
     private func resultCard(_ url: URL) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            if model.results.count > 1 {
+                ScrollView(.horizontal) {
+                    HStack {
+                        ForEach(Array(model.results.enumerated()), id: \.offset) { index, image in
+                            Button { model.selectResult(image) } label: {
+                                Text("\(L("Image")) \(index + 1)")
+                            }.disabled(image.url == url)
+                        }
+                    }
+                }
+            }
             if let nsImage = NSImage(contentsOf: url) {
                 Image(nsImage: nsImage)
                     .resizable()
@@ -649,7 +677,7 @@ struct ImageGenerationPanelView: View {
                     width: size,
                     height: size,
                     steps: input.steps, guidance: input.guidance,
-                    seed: seed
+                    seed: seed, numImages: imageCount
                 )
             )
         }

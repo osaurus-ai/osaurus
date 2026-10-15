@@ -28,6 +28,51 @@ struct NativeImageToolArtifactBridgeTests {
     }
 
     @Test
+    func interruptedBatchKeepsCompletedArtifactsWithoutChangingFailureResult() async throws {
+        try await Self.runLocked { tmp in
+            let session = UUID().uuidString
+            let file = tmp.appendingPathComponent("completed-before-cancel.png")
+            let bytes = Data([0x89, 0x50, 0x4e, 0x47])
+            try bytes.write(to: file)
+            GeneratedMediaToolArtifactBridge.preservePartialImages(
+                [.init(url: file, seed: UInt64.max)], sessionID: session)
+            let artifacts = SpawnArtifactCollector.drain(sessionId: session)
+            #expect(artifacts.count == 1)
+            let artifact = try #require(artifacts.first)
+            #expect(try Data(contentsOf: URL(fileURLWithPath: artifact.hostPath)) == bytes)
+            #expect(FileManager.default.fileExists(atPath: file.path))
+            #expect(SpawnArtifactCollector.drain(sessionId: session).isEmpty)
+        }
+    }
+
+    @Test
+    func batchPromotesEveryImageInOrder() async throws {
+        try await Self.runLocked { tmp in
+            var imagePayloads: [[String: Any]] = []
+            for index in 0..<4 {
+                let file = tmp.appendingPathComponent("batch-\(index).png")
+                try Data([UInt8(index)]).write(to: file)
+                imagePayloads.append(["path": file.path, "seed": 7 + index])
+            }
+            let payload = ToolEnvelope.success(tool: "image", result: [
+                "kind": "native_image_generation_job", "mode": "generate",
+                "images": imagePayloads,
+            ] as [String: Any])
+            let outcomes = GeneratedMediaToolArtifactBridge.processMediaArtifacts(
+                toolName: "image", toolResult: payload, contextId: "batch-chat")
+            #expect(outcomes.count == 4)
+            for (index, result) in outcomes.enumerated() {
+                switch result {
+                case .success(let processed):
+                    #expect(processed.artifact.filename == "batch-\(index).png")
+                    #expect(try Data(contentsOf: URL(fileURLWithPath: processed.artifact.hostPath)) == Data([UInt8(index)]))
+                case .failure(let reason): Issue.record("Unexpected artifact failure: \(reason)")
+                }
+            }
+        }
+    }
+
+    @Test
     func imageGenerateResult_copiesFirstImageIntoChatArtifactStore() async throws {
         try await Self.runLocked { tmp in
             let generatedDir = tmp.appendingPathComponent("generated", isDirectory: true)
