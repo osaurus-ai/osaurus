@@ -470,6 +470,7 @@ public enum ImageGenerationError: Error, CustomStringConvertible, LocalizedError
     case wrongModelKind(expected: String, actual: String)
     case invalidRequest(String)
     case engine(String)
+    case memoryAdmission(field: String, estimatedBytes: Int64, message: String)
 
     public var errorDescription: String? { description }
 
@@ -483,6 +484,8 @@ public enum ImageGenerationError: Error, CustomStringConvertible, LocalizedError
             return "wrong model kind: expected \(e), got \(a)"
         case .invalidRequest(let s): return "invalid request: \(s)"
         case .engine(let s): return s
+        case .memoryAdmission(let field, let bytes, let message):
+            return "Image memory admission refused by \(field) (estimated peak \(bytes) bytes): \(message)"
         }
     }
 }

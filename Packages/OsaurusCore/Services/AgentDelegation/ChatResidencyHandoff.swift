@@ -221,12 +221,13 @@ enum ChatResidencyHandoff {
         requiredBytes: Int64,
         enabled: Bool,
         physicalCapacityOnly: Bool = false,
+        estimateIncludesWorkspace: Bool = false,
         onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
     ) async throws {
         guard enabled, requiredBytes > 0 else { return }
         // Models occupy more resident RAM than their on-disk weights (KV +
         // activations + framework overhead); inflate the on-disk estimate.
-        let inflation = 1.3
+        let inflation = estimateIncludesWorkspace ? 1.0 : 1.3
         let needed = Int64(Double(requiredBytes) * inflation) + headroomBytes
         // Disk shard sizes are not resident/releasable bytes. The host sample
         // already includes reclaimable file-backed pages, and a handoff may

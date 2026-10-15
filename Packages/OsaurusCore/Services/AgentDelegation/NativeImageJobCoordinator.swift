@@ -435,7 +435,24 @@ actor NativeImageJobCoordinator {
     }
 
     func generate(_ request: NativeImageGenerateJobRequest, interrupt: InterruptToken? = nil) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
-        AsyncThrowingStream { continuation in
+        @Sendable func parameters(_ model: String) -> ImageGenerationParameters {
+            return ImageGenerationParameters(
+                                model: model,
+                                prompt: request.prompt,
+                                negativePrompt: request.negativePrompt,
+                                width: request.width,
+                                height: request.height,
+                                steps: request.steps,
+                                guidance: request.guidance,
+                                seed: request.seed,
+                                numImages: request.numImages, seeds: request.seeds, batchSize: request.batchSize,
+                                outputFormat: request.outputFormat,
+                                sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
+                                previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel, adapters: request.adapters
+                            )
+        }
+
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 await request.context.invocation.withContext {
                     await self.runJob(
@@ -451,22 +468,12 @@ actor NativeImageJobCoordinator {
                         ),
                         requestedModel: request.model,
                         configuredModel: { $0.defaultImageGenerationModelId },
+                        estimateMemory: { model in
+                            try await self.imageService.estimatedPeakBytes(for: parameters(model))
+                        },
                         makeStream: { model, jobID in
-                            let params = ImageGenerationParameters(
-                                model: model,
-                                prompt: request.prompt,
-                                negativePrompt: request.negativePrompt,
-                                width: request.width,
-                                height: request.height,
-                                steps: request.steps,
-                                guidance: request.guidance,
-                                seed: request.seed,
-                                numImages: request.numImages, seeds: request.seeds, batchSize: request.batchSize,
-                                outputFormat: request.outputFormat,
-                                sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
-                                previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel, adapters: request.adapters
-                            )
-                            return await self.imageService.generate(params, jobID: jobID, interrupt: interrupt)
+
+                            return await self.imageService.generate(parameters(model), jobID: jobID, interrupt: interrupt)
                         },
                         continuation: continuation
                     )
@@ -477,7 +484,25 @@ actor NativeImageJobCoordinator {
     }
 
     func edit(_ request: NativeImageEditJobRequest, interrupt: InterruptToken? = nil) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
-        AsyncThrowingStream { continuation in
+        @Sendable func parameters(_ model: String) -> ImageEditParameters {
+            return ImageEditParameters(
+                                model: model,
+                                prompt: request.prompt,
+                                sourceImages: request.sourceImages,
+                                negativePrompt: request.negativePrompt,
+                                strength: request.strength,
+                                width: request.width,
+                                height: request.height,
+                                steps: request.steps,
+                                guidance: request.guidance,
+                                seed: request.seed,
+                                outputFormat: request.outputFormat,
+                                sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
+                                previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel, adapters: request.adapters
+                            )
+        }
+
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 await request.context.invocation.withContext {
                     await self.runJob(
@@ -493,23 +518,12 @@ actor NativeImageJobCoordinator {
                         ),
                         requestedModel: request.model,
                         configuredModel: { $0.defaultImageEditModelId },
+                        estimateMemory: { model in
+                            try await self.imageService.estimatedPeakBytes(for: parameters(model))
+                        },
                         makeStream: { model, jobID in
-                            let params = ImageEditParameters(
-                                model: model,
-                                prompt: request.prompt,
-                                sourceImages: request.sourceImages,
-                                negativePrompt: request.negativePrompt,
-                                strength: request.strength,
-                                width: request.width,
-                                height: request.height,
-                                steps: request.steps,
-                                guidance: request.guidance,
-                                seed: request.seed,
-                                outputFormat: request.outputFormat,
-                                sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
-                                previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel, adapters: request.adapters
-                            )
-                            return await self.imageService.edit(params, jobID: jobID, interrupt: interrupt)
+
+                            return await self.imageService.edit(parameters(model), jobID: jobID, interrupt: interrupt)
                         },
                         continuation: continuation
                     )
@@ -551,6 +565,7 @@ actor NativeImageJobCoordinator {
         activity: ActivityFacts,
         requestedModel: String?,
         configuredModel: @Sendable (SubagentConfiguration) -> String?,
+        estimateMemory: @Sendable (_ model: String) async throws -> Int64,
         makeStream:
             @Sendable (_ model: String, _ jobID: String) async -> AsyncThrowingStream<
                 ImageGenerationEvent, Error
@@ -611,18 +626,19 @@ actor NativeImageJobCoordinator {
                 available: models,
                 kind: kind
             )
+            let requiredPeakBytes = try await estimateMemory(model)
             let plan = try await SubagentResidency.planForLocalTarget(
                 modelName: model,
-                requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
+                requiredBytes: requiredPeakBytes,
                 config: config,
                 idleWaitSeconds: config.budgets.maxElapsedSeconds,
                 deniedMessage: "Cannot hand off the invoking model for an image job.",
                 invokingParentModelName: context.invocation.parentModelName
             )
             try await ChatResidencyHandoff.memoryPreflight(
-                requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
+                requiredBytes: requiredPeakBytes,
                 enabled: config.ramSafetyPreflightEnabled,
-                physicalCapacityOnly: true
+                physicalCapacityOnly: true, estimateIncludesWorkspace: true
             )
             try checkInterrupt()
             chatLease = try await self.prepareChatResidencyIfNeeded(
@@ -647,8 +663,8 @@ actor NativeImageJobCoordinator {
                 _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
                 try await Task.sleep(for: .milliseconds(1_100))
                 try await ChatResidencyHandoff.memoryPreflight(
-                    requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
-                    enabled: true
+                    requiredBytes: requiredPeakBytes,
+                    enabled: true, estimateIncludesWorkspace: true
                 )
             }
             try Task.checkCancellation()

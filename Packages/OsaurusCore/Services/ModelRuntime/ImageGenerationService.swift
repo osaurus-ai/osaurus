@@ -54,7 +54,7 @@ public actor ImageGenerationService {
     }
     private var producerJobs: [String: ProducerJob] = [:]
 
-    /// Only the bundle lookup, gate instance and GPU cleanup are replaceable.
+    /// Bundle metadata lookup/peak estimate, gate instance and GPU cleanup are replaceable.
     /// The production service and FluxEngine stream/drain implementations are
     /// used unchanged by no-model producer-lifetime tests.
     struct LoadTarget: Sendable {
@@ -72,6 +72,7 @@ public actor ImageGenerationService {
     private let metalGate: MetalGate
     private let cleanupGPUCache: @Sendable () -> Void
     private let testResolve: (@Sendable (String) throws -> LoadTarget)?
+    private let testPeakEstimate: (@Sendable () throws -> Int64)?
 
     public init() {
         metalGate = .shared
@@ -81,6 +82,7 @@ public actor ImageGenerationService {
             }
         }
         testResolve = nil
+        testPeakEstimate = nil
         testStreamCheckpoint = nil
         testErrorSince = nil
     }
@@ -92,6 +94,7 @@ public actor ImageGenerationService {
         gate: MetalGate,
         cleanup: @escaping @Sendable () -> Void,
         resolve: @escaping @Sendable (String) throws -> LoadTarget,
+        peakEstimate: @escaping @Sendable () throws -> Int64,
         streamCheckpoint: (@Sendable (StreamCheckpoint) async -> Void)? = nil,
         errorSince: (@Sendable (UInt64) -> String?)? = nil
     ) {
@@ -99,6 +102,7 @@ public actor ImageGenerationService {
         metalGate = gate
         cleanupGPUCache = cleanup
         testResolve = resolve
+        testPeakEstimate = peakEstimate
         testStreamCheckpoint = streamCheckpoint
         testErrorSince = errorSince
         registered = true
@@ -448,6 +452,46 @@ public actor ImageGenerationService {
         }
     }
 
+    /// Metadata-only request estimate. No weights or GPU lease are acquired.
+    /// Keep the request builder shared with execution so admission sees the
+    /// actual defaults, batch and preview settings.
+    func estimatedPeakBytes(for params: ImageGenerationParameters) async throws -> Int64 {
+        if let testPeakEstimate { return try testPeakEstimate() }
+        let target = try resolveLoadTarget(params.model)
+        let request = Self.generationRequest(params, info: target.info, index: 0,
+            outputDir: OsaurusPaths.generatedImages(), nativeBatch: true)
+        let query = engine ?? FluxEngine()
+        return Int64(try await query.estimatedPeakBytes(for: request,
+            modelURL: target.directory, name: target.engineName))
+    }
+
+    func estimatedPeakBytes(for params: ImageEditParameters) async throws -> Int64 {
+        if let testPeakEstimate { return try testPeakEstimate() }
+        let target = try resolveLoadTarget(params.model)
+        let sources = try Self.stageInputs(params.sourceImages)
+        defer { for source in sources { try? FileManager.default.removeItem(at: source) } }
+        let mask = try params.maskImage.map(Self.stageInput)
+        defer { if let mask { try? FileManager.default.removeItem(at: mask) } }
+        let request = try Self.editRequest(params, info: target.info, sources: sources,
+            mask: mask, outputDir: OsaurusPaths.generatedImages())
+        let query = engine ?? FluxEngine()
+        return Int64(try await query.estimatedPeakBytes(for: request,
+            modelURL: target.directory, name: target.engineName))
+    }
+
+    func estimatedPeakBytes(for params: ImageUpscaleParameters) async throws -> Int64 {
+        if let testPeakEstimate { return try testPeakEstimate() }
+        let target = try resolveLoadTarget(params.model)
+        let source = try Self.stageInput(params.sourceImage)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let request = UpscaleRequest(sourceImage: source, scale: params.scale,
+            steps: params.steps ?? 1, seed: params.seed, outputDir: OsaurusPaths.generatedImages(),
+            outputFormat: Self.engineFormat(params.outputFormat))
+        let query = engine ?? FluxEngine()
+        return Int64(try await query.estimatedPeakBytes(for: request,
+            modelURL: target.directory, name: target.engineName))
+    }
+
     public func generate(
         _ params: ImageGenerationParameters,
         jobID: String? = nil,
@@ -462,7 +506,8 @@ public actor ImageGenerationService {
         let producerInterrupt = FluxInterrupt()
         return drive(
             model: params.model, expected: .imageGen, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt,
-            producerInterrupt: producerInterrupt, count: params.numImages, validate: { info, limits in
+            producerInterrupt: producerInterrupt, count: params.numImages,
+            estimatePeak: { try await self.estimatedPeakBytes(for: params) }, validate: { info, limits in
                 guard (1...8).contains(params.numImages) else {
                     throw ImageGenerationError.invalidRequest("numImages must be between 1 and 8")
                 }
@@ -528,7 +573,8 @@ public actor ImageGenerationService {
         let producerInterrupt = FluxInterrupt()
         return drive(
             model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget,
-            interrupt: interrupt, producerInterrupt: producerInterrupt, validate: { info, limits in
+            interrupt: interrupt, producerInterrupt: producerInterrupt,
+            estimatePeak: { try await self.estimatedPeakBytes(for: params) }, validate: { info, limits in
                 if limits == nil {
                     try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: true,
@@ -553,8 +599,16 @@ public actor ImageGenerationService {
                 throw ImageGenerationError.invalidRequest("edit requires at least one source image")
             }
             let mask = try params.maskImage.map { try Self.stageInput($0) }
-            let request = try ImageEditRequest(
-                prompt: params.prompt,
+            let request = try Self.editRequest(params, info: info, sources: sources, mask: mask,
+                outputDir: outputDir, interrupt: producerInterrupt)
+            return await engine.edit(request)
+        }
+    }
+
+    private static func editRequest(_ params: ImageEditParameters, info: ImageModelInfo,
+        sources: [URL], mask: URL?, outputDir: URL, interrupt: FluxInterrupt? = nil) throws -> ImageEditRequest {
+        try ImageEditRequest(
+            prompt: params.prompt,
                 sourceImages: sources,
                 mask: mask,
                 strength: ImageModelRequestPolicy(canonical: info.canonicalName)
@@ -569,10 +623,8 @@ public actor ImageGenerationService {
             sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
             previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel,
             adapters: params.adapters.map { FluxAdapter(url: $0.url, scale: $0.scale,
-                target: FluxAdapter.Target(rawValue: $0.target.rawValue)!) }, interrupt: producerInterrupt
+                target: FluxAdapter.Target(rawValue: $0.target.rawValue)!) }, interrupt: interrupt
             )
-            return await engine.edit(request)
-        }
     }
 
     public func upscale(
@@ -583,6 +635,7 @@ public actor ImageGenerationService {
         let producerInterrupt = FluxInterrupt()
         return drive(model: params.model, expected: .imageUpscale, jobID: jobID,
                      interrupt: interrupt, producerInterrupt: producerInterrupt,
+                     estimatePeak: { try await self.estimatedPeakBytes(for: params) },
                      validate: { info, _ in
                          if info.canonicalName == "seedvr2" {
                              guard let source = CGImageSourceCreateWithData(params.sourceImage as CFData, nil),
@@ -622,6 +675,7 @@ public actor ImageGenerationService {
         interrupt: InterruptToken? = nil,
         producerInterrupt: FluxInterrupt? = nil,
         count: Int = 1,
+        estimatePeak: (@Sendable () async throws -> Int64)? = nil,
         validate: @escaping @Sendable (ImageModelInfo, FluxModelLimits?) throws -> Void = { _, _ in },
         _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo, Bool) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
@@ -697,6 +751,21 @@ public actor ImageGenerationService {
                     var modelInfo: ImageModelInfo?
                     var modelLimits: FluxModelLimits?
                     if !cancelled {
+                        // All entry points honor the visible Memory Safety
+                        // mode/overrides. The delegation-only checkbox remains
+                        // an additional handoff check in its coordinator.
+                        if let estimatePeak {
+                            let peak = try await estimatePeak()
+                            let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                                for: ServerRuntimeSettingsStore.snapshot(),
+                                baseLoadConfiguration: .osaurusProduction,
+                                host: MemoryStatus.snapshot(),
+                                request: VMLXMemoryRequestEstimate(workingSetBytes: UInt64(peak)))
+                            if let issue = plan.blockingIssues.first {
+                                throw ImageGenerationError.memoryAdmission(field: issue.field,
+                                    estimatedBytes: peak, message: issue.message)
+                            }
+                        }
                         continuation.yield(.loadingModel(model: requestedModel))
                         let prepared = try await self.ensureLoaded(requestedModel, expected: kind,
                             resolvedTarget: resolvedTarget, validate: validate)
