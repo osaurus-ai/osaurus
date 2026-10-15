@@ -193,6 +193,7 @@ struct SettingsSearchSelfFindProbe {
             ("audit log", "insights.overview"),
             ("export activity", "insights.overview"),
             // Images: Defaults / Image Models.
+            ("Upscale", "imageGeneration.upscale"),
             ("Default Models", "imageGeneration.models"),
             ("Image jobs", "imageGeneration.permission"),
             ("Video jobs (cloud)", "imageGeneration.videoPermission"),

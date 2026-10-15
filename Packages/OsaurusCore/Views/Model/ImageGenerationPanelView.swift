@@ -81,6 +81,12 @@ final class ImageGenerationPanelModel: ObservableObject {
         start { await ImageGenerationService.shared.edit(params, jobID: self.jobID) }
     }
 
+    func upscale(_ params: ImageUpscaleParameters) {
+        let image = NSBitmapImageRep(data: params.sourceImage)
+        durationKey = "\(params.model)|\(image?.pixelsWide ?? 0)x\(image?.pixelsHigh ?? 0)|upscale\(params.scale)"
+        start { await ImageGenerationService.shared.upscale(params, jobID: self.jobID) }
+    }
+
     func cancel() {
         guard isBusy, !isCancelling else { return }
         isCancelling = true
@@ -214,10 +220,12 @@ struct ImageGenerationPanelView: View {
     /// `true` ⇒ image-edit bundle (needs a source image); `false` ⇒ text→image.
     let isEdit: Bool
     let modelInfo: ImageModelInfo
+    private var isUpscale: Bool { modelInfo.capabilities.upscale }
     private var requestPolicy: ImageModelRequestPolicy {
         ImageModelRequestPolicy(canonical: modelInfo.canonicalName)
     }
 
+    @State private var upscaleFactor = 2
     @State private var prompt: String = ""
     @State private var negativePrompt: String = ""
     @State private var sizeIndex: Int = 1  // 0:512, 1:1024
@@ -244,8 +252,8 @@ struct ImageGenerationPanelView: View {
     }
 
     private var canRun: Bool {
-        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (!isEdit || (!sourceURLs.isEmpty && sourceURLs.count <= sourceLimit))
+        (isUpscale || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            && (!(isEdit || isUpscale) || (!sourceURLs.isEmpty && sourceURLs.count <= sourceLimit))
             && parsedInput != nil
             && !model.isBusy
     }
@@ -255,8 +263,8 @@ struct ImageGenerationPanelView: View {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if isEdit { sourcePicker }
-                    promptField
+                    if isEdit || isUpscale { sourcePicker }
+                    if !isUpscale { promptField }
                     paramsRow
                     advancedParams
                     statusCard
@@ -278,7 +286,7 @@ struct ImageGenerationPanelView: View {
             Image(systemName: isEdit ? "wand.and.stars" : "photo.badge.plus")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.accentColor)
-            Text(isEdit ? "Edit Image" : "Generate Image", bundle: .module)
+            Text(isUpscale ? "Upscale Image" : (isEdit ? "Edit Image" : "Generate Image"), bundle: .module)
                 .font(.system(size: 16, weight: .bold))
                 .foregroundColor(theme.primaryText)
             Text(displayName)
@@ -378,12 +386,17 @@ struct ImageGenerationPanelView: View {
 
     private var advancedParams: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if isUpscale {
+                Text(localized: "SeedVR2 restores the image in one step. The source aspect ratio is preserved.")
+                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+            } else {
             HStack {
                 Text(localized: "Steps").font(.system(size: 11))
                 TextField(String(modelInfo.defaultSteps ?? 20), text: $stepsText).frame(width: 70)
                     .disabled(modelInfo.canonicalName == "qwen-image-2.1-turbo")
                 Text(localized: "Guidance").font(.system(size: 11))
                 TextField(String(modelInfo.defaultGuidance ?? 3.5), text: $guidanceText).frame(width: 70)
+            }
             }
             if isEdit {
                 Toggle(isOn: $useSourceSize) {
@@ -406,6 +419,13 @@ struct ImageGenerationPanelView: View {
     private var paramsRow: some View {
         HStack(spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
+                if isUpscale {
+                    fieldLabel("Scale")
+                    Picker("Scale", selection: $upscaleFactor) {
+                        Text("2×").tag(2)
+                        Text("4×").tag(4)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 150)
+                } else {
                 fieldLabel("Size")
                 Picker("", selection: $sizeIndex) {
                     ForEach(sizes.indices, id: \.self) { i in
@@ -416,6 +436,7 @@ struct ImageGenerationPanelView: View {
                 .pickerStyle(.segmented)
                 .disabled(isEdit && useSourceSize)
                 .frame(width: 150)
+                }
             }
             VStack(alignment: .leading, spacing: 8) {
                 fieldLabel("Seed (optional)")
@@ -573,7 +594,7 @@ struct ImageGenerationPanelView: View {
                 HStack(spacing: 6) {
                     Image(systemName: isEdit ? "wand.and.stars" : "sparkles")
                         .font(.system(size: 13))
-                    Text(isEdit ? "Edit" : "Generate", bundle: .module)
+                    Text(isUpscale ? "Upscale" : (isEdit ? "Edit" : "Generate"), bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -601,7 +622,10 @@ struct ImageGenerationPanelView: View {
         let seed = input.seed
         let negative = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if isEdit {
+        if isUpscale {
+            guard let source = sourceURLs.first, let data = try? Data(contentsOf: source) else { return }
+            model.upscale(ImageUpscaleParameters(model: modelId, sourceImage: data, scale: upscaleFactor, seed: seed))
+        } else if isEdit {
             guard !sourceURLs.isEmpty,
                 let sources = try? sourceURLs.map({ try Data(contentsOf: $0) }) else { return }
             model.edit(

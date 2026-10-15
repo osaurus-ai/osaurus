@@ -23,6 +23,7 @@
 //
 
 import Foundation
+import ImageIO
 import MLX
 import MLXLMCommon
 import vMLXFlux
@@ -436,17 +437,33 @@ public actor ImageGenerationService {
 
     public func upscale(
         _ params: ImageUpscaleParameters,
-        jobID: String? = nil
+        jobID: String? = nil,
+        interrupt: InterruptToken? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageUpscale, jobID: jobID) { engine, outputDir, _, _ in
+        let producerInterrupt = FluxInterrupt()
+        return drive(model: params.model, expected: .imageUpscale, jobID: jobID,
+                     interrupt: interrupt, producerInterrupt: producerInterrupt,
+                     validate: { info, _ in
+                         if info.canonicalName == "seedvr2" {
+                             guard let source = CGImageSourceCreateWithData(params.sourceImage as CFData, nil),
+                                   let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                                   let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                                   let height = properties[kCGImagePropertyPixelHeight] as? Int else {
+                                 throw ImageGenerationError.invalidRequest("Cannot read upscale source dimensions")
+                             }
+                             try SeedVR2BundleMetadata.validateUpscale(sourceWidth: width, sourceHeight: height,
+                                 scale: params.scale, format: Self.engineFormat(params.outputFormat))
+                         }
+                     }) { engine, outputDir, _, _ in
             let source = try Self.stageInput(params.sourceImage)
             let request = UpscaleRequest(
                 sourceImage: source,
                 scale: params.scale,
-                steps: params.steps ?? 10,
+                steps: params.steps ?? 1,
                 seed: params.seed,
                 outputDir: outputDir,
-                outputFormat: Self.engineFormat(params.outputFormat)
+                outputFormat: Self.engineFormat(params.outputFormat),
+                interrupt: producerInterrupt
             )
             return await engine.upscale(request)
         }
@@ -463,6 +480,7 @@ public actor ImageGenerationService {
         jobID: String?,
         resolvedTarget: LoadTarget? = nil,
         interrupt: InterruptToken? = nil,
+        producerInterrupt: FluxInterrupt? = nil,
         count: Int = 1,
         validate: @escaping @Sendable (ImageModelInfo, FluxModelLimits?) throws -> Void = { _, _ in },
         _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
@@ -477,8 +495,11 @@ public actor ImageGenerationService {
             // engine stream. Cancelling that consumer makes AsyncStream stop
             // iteration immediately even if the engine still produces work.
             let cancellation = ImageJobCancellation { try await self.metalGate.enterImageGeneration() }
-            let cancel: @Sendable () -> Void = { cancellation.cancel() }
-            // Only the gate waiter/soft-cancel flag is interrupted. Never cancel
+            let cancel: @Sendable () -> Void = {
+                cancellation.cancel()
+                producerInterrupt?.cancel()
+            }
+            // SeedVR2 also receives a cooperative producer signal. Never cancel
             // the consumer task: it must retain and drain the engine producer.
             let observer = interrupt?.observeInterrupt(cancel)
             let task = Task {

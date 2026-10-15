@@ -102,6 +102,28 @@ struct ImageGenerationProducerLifetimeTests {
         await fixture.service.unload()
     }
 
+    @Test func upscaleCancellationReachesProducerAndStillDrains() async throws {
+        let fixture = ImageProducerFixture(held: [0], kind: .imageUpscale,
+            capabilities: .init(textToImage: false, imageEdit: false, upscale: true))
+        defer { Task { await fixture.probe.releaseAll(); await fixture.service.unload() } }
+        let stream = await fixture.service.upscale(.init(model: fixture.first,
+            sourceImage: Data([1, 2, 3]), scale: 4, seed: 7), jobID: "upscale-cancel")
+        let consumer = Task { try await collectImageEvents(stream) }
+        try await waitForImageProbe { await fixture.probe.startCount == 1 }
+        await fixture.service.cancel(jobID: "upscale-cancel")
+        let beforeDrain = await fixture.probe.snapshot()
+        let request = try #require(beforeDrain.upscales.first)
+        #expect(request.interrupt?.isCancelled == true)
+        #expect(request.scale == 4 && request.seed == 7 && request.steps == 1)
+        #expect(beforeDrain.active == 1) // cancel has not released the GPU owner
+        await fixture.probe.release(0)
+        let events = try await consumer.value
+        await fixture.service.waitForJobDrain(jobID: "upscale-cancel")
+        #expect(events.contains { if case .cancelled = $0 { return true }; return false })
+        #expect(!events.contains { if case .completed = $0 { return true }; return false })
+        #expect(await fixture.probe.snapshot().active == 0)
+    }
+
     @Test func queuedCancelDoesNotLoad() async throws {
         let gate = MetalGate.makeForTesting()
         let fixture = ImageProducerFixture(held: [], gate: gate)
@@ -193,6 +215,7 @@ actor ImageProducerProbe {
     struct Snapshot: Sendable {
         let starts: [ImageGenRequest]
         let edits: [ImageEditRequest]
+        let upscales: [UpscaleRequest]
         let loads: [String]
         let maximumActive: Int
         let active: Int
@@ -205,6 +228,7 @@ actor ImageProducerProbe {
     private var waiters: [Int: CheckedContinuation<Void, Never>] = [:]
     private var starts: [ImageGenRequest] = []
     private var edits: [ImageEditRequest] = []
+    private var upscales: [UpscaleRequest] = []
     private var loads: [String] = []
     private var active = 0
     private var maximumActive = 0
@@ -221,6 +245,7 @@ actor ImageProducerProbe {
         log.record("start:\(index)"); return index
     }
     func edited(_ request: ImageEditRequest) { edits.append(request) }
+    func upscaled(_ request: UpscaleRequest) { upscales.append(request) }
     func wait(_ index: Int) async {
         guard held.contains(index), !released.contains(index), !releaseEverything else { return }
         await withCheckedContinuation { waiters[index] = $0 }
@@ -232,11 +257,11 @@ actor ImageProducerProbe {
         for waiter in pending { waiter.resume() }
     }
     func ended(_ index: Int) { active -= 1; log.record("end:\(index)") }
-    func snapshot() -> Snapshot { .init(starts: starts, edits: edits, loads: loads,
+    func snapshot() -> Snapshot { .init(starts: starts, edits: edits, upscales: upscales, loads: loads,
         maximumActive: maximumActive, active: active, loadWhileActive: loadWhileActive) }
 }
 
-struct ControlledImageProducer: ImageGenerator, ImageEditor {
+struct ControlledImageProducer: ImageGenerator, ImageEditor, ImageUpscaler {
     let probe: ImageProducerProbe
     var effectiveParameters: EffectiveImageParameters? = nil
     func generate(_ request: ImageGenRequest) -> AsyncThrowingStream<ImageGenEvent, Error> {
@@ -248,6 +273,23 @@ struct ControlledImageProducer: ImageGenerator, ImageEditor {
                 await probe.ended(index)
                 continuation.yield(.completed(url: request.outputDir.appendingPathComponent("fixture-\(index).png"),
                     seed: request.seed ?? 0, effectiveParameters: effectiveParameters))
+                continuation.finish()
+            }
+        }
+    }
+    func upscale(_ request: UpscaleRequest) -> AsyncThrowingStream<ImageGenEvent, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                await probe.upscaled(request)
+                let index = await probe.start(.init(prompt: "fixture", seed: request.seed, outputDir: request.outputDir))
+                continuation.yield(.step(step: 1, total: 1, etaSeconds: nil))
+                await probe.wait(index)
+                await probe.ended(index)
+                if request.interrupt?.isCancelled == true {
+                    continuation.yield(.cancelled)
+                } else {
+                    continuation.yield(.completed(url: request.outputDir.appendingPathComponent("upscale.png"), seed: request.seed ?? 0))
+                }
                 continuation.finish()
             }
         }

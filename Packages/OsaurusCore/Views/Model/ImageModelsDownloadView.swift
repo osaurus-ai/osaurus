@@ -121,7 +121,7 @@ struct ImageModelsDownloadView: View {
                     )
                 }
             }
-        }
+        }.settingsLandingAnchor("imageGeneration.upscale")
     }
 
     private var availableSection: some View {
@@ -182,10 +182,10 @@ struct ImageModelsDownloadView: View {
     private func installedPrimaryAction(_ model: InstalledModel) -> ModelListRow.Action? {
         let info = model.info
         // Ready + runnable kind → prominent Generate/Edit (opens the manual panel).
-        if info.ready, info.capabilities.textToImage || info.capabilities.imageEdit {
+        if info.ready, info.capabilities.textToImage || info.capabilities.imageEdit || info.capabilities.upscale {
             let isEdit = !info.capabilities.textToImage && info.capabilities.imageEdit
             return ModelListRow.Action(
-                title: isEdit ? "Edit" : "Generate",
+                title: info.capabilities.upscale ? "Upscale" : (isEdit ? "Edit" : "Generate"),
                 icon: isEdit ? "wand.and.stars" : "sparkles",
                 role: .primary
             ) {

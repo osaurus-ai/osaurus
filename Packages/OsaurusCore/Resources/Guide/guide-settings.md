@@ -197,3 +197,10 @@ SSM option retains architecture-specific companion state for hybrid models.
 - **Server → Concurrency & Batching → Prompt Prefill Chunk Size** sets how many prompt tokens are processed per prefill step. Empty uses the engine default. This is not the context window or the response token limit.
 
 Search settings or ask Settings Help using either exact control name to navigate directly to it.
+
+### Upscale an image
+
+In **Images → Models**, choose **Upscale** beside an installed SeedVR2 3B bundle.
+Select a source image, choose **Scale** (2× or 4×), and optionally enter a seed.
+SeedVR2 preserves the source aspect ratio and runs its fixed one-step restoration.
+Cancel stops cooperatively; the image lane remains held until the producer drains.

@@ -1220,6 +1220,14 @@ public enum SettingsSearchIndex {
             subTab: "Settings"
         ),
         .init(
+            id: "imageGeneration.upscale",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Upscale",
+            keywords: ["seedvr2", "super resolution", "upscale image", "scale", "2x", "4x"],
+            subTab: "Models"
+        ),
+        .init(
             id: "imageGeneration.download",
             tab: .imageGeneration,
             section: "Image Models",
