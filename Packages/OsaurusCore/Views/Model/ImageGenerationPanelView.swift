@@ -246,7 +246,16 @@ struct ImageGenerationPanelView: View {
     @State private var stepsText = ""
     @State private var guidanceText = ""
     @State private var useSourceSize = true
-    private var sourceLimit: Int { modelInfo.capabilities.multipleSourceImages ? 4 : 1 }
+    @State private var samplingCapabilities = ImageSamplingCapabilities()
+    @State private var sampler = ""
+    @State private var scheduler = ""
+    @State private var shiftText = ""
+
+    private var samplingInputValid: Bool {
+        shiftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || Float(shiftText).map { $0.isFinite } == true
+    }
+    private var sourceLimit: Int { max(1, samplingCapabilities.maxSourceImages) }
 
     private let sizes: [Int] = [512, 1024]
 
@@ -267,6 +276,7 @@ struct ImageGenerationPanelView: View {
         (isUpscale || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && (!(isEdit || isUpscale) || (!sourceURLs.isEmpty && sourceURLs.count <= sourceLimit))
             && parsedInput != nil
+            && samplingInputValid
             && !model.isBusy
     }
 
@@ -286,6 +296,13 @@ struct ImageGenerationPanelView: View {
                 .padding(.vertical, 18)
             }
             footer
+        }
+        .task(id: modelId) {
+            do {
+                samplingCapabilities = try await ImageGenerationService.shared.samplingCapabilities(for: modelId)
+            } catch {
+                model.phase = .failed(error.localizedDescription)
+            }
         }
         .fittedSheetFrame(width: 620, height: 640)
         .background(theme.primaryBackground)
@@ -408,6 +425,34 @@ struct ImageGenerationPanelView: View {
                     .disabled(modelInfo.canonicalName == "qwen-image-2.1-turbo")
                 Text(localized: "Guidance").font(.system(size: 11))
                 TextField(String(modelInfo.defaultGuidance ?? 3.5), text: $guidanceText).frame(width: 70)
+            }
+            if !samplingCapabilities.samplers.isEmpty {
+                Picker(selection: $sampler) {
+                    Text(localized: "Bundle default").tag("")
+                    ForEach(samplingCapabilities.samplers, id: \.self) { Text(verbatim: $0).tag($0) }
+                } label: { Text(localized: "Sampler") }
+                .settingsLandingAnchor("imageGeneration.sampler")
+                .disabled(model.isBusy)
+            }
+            if !samplingCapabilities.schedulers.isEmpty {
+                Picker(selection: $scheduler) {
+                    Text(localized: "Bundle default").tag("")
+                    ForEach(samplingCapabilities.schedulers, id: \.self) { Text(verbatim: $0).tag($0) }
+                } label: { Text(localized: "Scheduler") }
+                .settingsLandingAnchor("imageGeneration.scheduler")
+                .disabled(model.isBusy)
+            }
+            if samplingCapabilities.supportsShift {
+                HStack {
+                    Text(localized: "Timestep shift")
+                    TextField("", text: $shiftText).frame(width: 90)
+                        .disabled(model.isBusy)
+                }
+                .settingsLandingAnchor("imageGeneration.shift")
+                if !samplingInputValid {
+                    Text(localized: "Timestep shift must be a finite number.")
+                        .foregroundColor(theme.warningColor)
+                }
             }
             if !isEdit {
                 Picker("Images", selection: $imageCount) {
@@ -665,7 +710,9 @@ struct ImageGenerationPanelView: View {
                     width: useSourceSize ? nil : size,
                     height: useSourceSize ? nil : size,
                     steps: input.steps, guidance: input.guidance,
-                    seed: seed
+                    seed: seed,
+                    sampler: sampler.isEmpty ? nil : sampler, scheduler: scheduler.isEmpty ? nil : scheduler,
+                    shift: shiftText.isEmpty ? nil : Float(shiftText)
                 )
             )
         } else {
@@ -677,7 +724,9 @@ struct ImageGenerationPanelView: View {
                     width: size,
                     height: size,
                     steps: input.steps, guidance: input.guidance,
-                    seed: seed, numImages: imageCount
+                    seed: seed, numImages: imageCount,
+                    sampler: sampler.isEmpty ? nil : sampler, scheduler: scheduler.isEmpty ? nil : scheduler,
+                    shift: shiftText.isEmpty ? nil : Float(shiftText)
                 )
             )
         }

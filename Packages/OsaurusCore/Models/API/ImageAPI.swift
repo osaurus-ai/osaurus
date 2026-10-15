@@ -51,6 +51,9 @@ struct ImageGenerationRequestDTO: Decodable, Sendable {
     let height: Int?
     let steps: Int?
     let guidance: Double?
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
     let seed: UInt64?
     let response_format: String?  // "url" | "b64_json"
     let output_format: String?  // "png" | "jpeg" | "webp"
@@ -84,6 +87,9 @@ struct ImageEditRequestDTO: Decodable, Sendable {
     let height: Int?
     let steps: Int?
     let guidance: Double?
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
     let seed: UInt64?
     let response_format: String?
     let output_format: String?

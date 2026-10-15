@@ -349,6 +349,9 @@ struct MediaImageGenerationRequest: Sendable, Equatable {
     var seed: Int?
     var count: Int
     var format: ImageOutputFormat
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
 }
 
 struct MediaVideoGenerationRequest: Sendable, Equatable {

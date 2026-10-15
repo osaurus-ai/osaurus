@@ -204,3 +204,7 @@ In **Images → Models**, choose **Upscale** beside an installed SeedVR2 3B bund
 Select a source image, choose **Scale** (2× or 4×), and optionally enter a seed.
 SeedVR2 preserves the source aspect ratio and runs its fixed one-step restoration.
 Cancel stops cooperatively; the image lane remains held until the producer drains.
+
+### Image sampling controls
+
+In **Images → Image Models**, open **Generate** or **Edit** for an installed local bundle. **Sampler** and **Scheduler** list the choices supported by that bundle; **Bundle default** preserves its native behavior. **Timestep shift** appears only when the bundle supports an override. Leaving it empty preserves the default. Turbo bundles with a fixed sampling schedule reject alternate schedules or shifts. The same optional `sampler`, `scheduler`, and `shift` fields are accepted by the local image API and image tool; unsupported provider requests fail instead of silently dropping them.

@@ -121,6 +121,9 @@ public struct ImageGenerationParameters: Sendable {
     public var seeds: [UInt64]?
     public var batchSize: Int
     public var outputFormat: ImageOutputFormat
+    public var sampler: String?
+    public var scheduler: String?
+    public var shift: Float?
 
     public init(
         model: String,
@@ -134,7 +137,8 @@ public struct ImageGenerationParameters: Sendable {
         numImages: Int = 1,
         seeds: [UInt64]? = nil,
         batchSize: Int = 1,
-        outputFormat: ImageOutputFormat = .png
+        outputFormat: ImageOutputFormat = .png,
+        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil
     ) {
         self.model = model
         self.prompt = prompt
@@ -148,6 +152,9 @@ public struct ImageGenerationParameters: Sendable {
         self.seeds = seeds
         self.batchSize = batchSize
         self.outputFormat = outputFormat
+        self.sampler = sampler
+        self.scheduler = scheduler
+        self.shift = shift
     }
 }
 
@@ -168,6 +175,9 @@ public struct ImageEditParameters: Sendable {
     public var guidance: Float?
     public var seed: UInt64?
     public var outputFormat: ImageOutputFormat
+    public var sampler: String?
+    public var scheduler: String?
+    public var shift: Float?
 
     public init(
         model: String,
@@ -181,7 +191,8 @@ public struct ImageEditParameters: Sendable {
         steps: Int? = nil,
         guidance: Float? = nil,
         seed: UInt64? = nil,
-        outputFormat: ImageOutputFormat = .png
+        outputFormat: ImageOutputFormat = .png,
+        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil
     ) {
         self.model = model
         self.prompt = prompt
@@ -195,6 +206,9 @@ public struct ImageEditParameters: Sendable {
         self.guidance = guidance
         self.seed = seed
         self.outputFormat = outputFormat
+        self.sampler = sampler
+        self.scheduler = scheduler
+        self.shift = shift
     }
 }
 
@@ -416,4 +430,12 @@ public enum ImageGenerationError: Error, CustomStringConvertible, LocalizedError
         case .engine(let s): return s
         }
     }
+}
+
+/// Sampling controls advertised by the installed bundle, without loading weights.
+struct ImageSamplingCapabilities: Sendable, Equatable {
+    var samplers: [String] = []
+    var schedulers: [String] = []
+    var supportsShift = false
+    var maxSourceImages = 1
 }

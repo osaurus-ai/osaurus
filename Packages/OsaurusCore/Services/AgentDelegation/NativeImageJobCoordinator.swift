@@ -48,6 +48,9 @@ struct NativeImageGenerateJobRequest: Sendable {
     var seeds: [UInt64]?
     var batchSize: Int
     var outputFormat: ImageOutputFormat
+    var sampler: String?
+    var scheduler: String?
+    var shift: Float?
     var context: NativeImageJobContext
 
     init(
@@ -63,6 +66,7 @@ struct NativeImageGenerateJobRequest: Sendable {
         seeds: [UInt64]? = nil,
         batchSize: Int = 1,
         outputFormat: ImageOutputFormat = .png,
+        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
         context: NativeImageJobContext = .empty
     ) {
         self.prompt = prompt
@@ -77,6 +81,9 @@ struct NativeImageGenerateJobRequest: Sendable {
         self.seeds = seeds
         self.batchSize = batchSize
         self.outputFormat = outputFormat
+        self.sampler = sampler
+        self.scheduler = scheduler
+        self.shift = shift
         self.context = context
     }
 }
@@ -93,6 +100,9 @@ struct NativeImageEditJobRequest: Sendable {
     var strength: Float?
     var seed: UInt64?
     var outputFormat: ImageOutputFormat
+    var sampler: String?
+    var scheduler: String?
+    var shift: Float?
     var context: NativeImageJobContext
 
     init(
@@ -107,19 +117,23 @@ struct NativeImageEditJobRequest: Sendable {
         strength: Float? = nil,
         seed: UInt64? = nil,
         outputFormat: ImageOutputFormat = .png,
+        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
         context: NativeImageJobContext = .empty
     ) {
         self.prompt = prompt
         self.model = model
-        self.sourceImages = Array(sourceImages.prefix(4))
+        self.sourceImages = sourceImages
         self.negativePrompt = negativePrompt
         self.width = width
         self.height = height
         self.steps = steps
         self.guidance = guidance
-        self.strength = strength.map { min(1, max(0, $0)) }
+        self.strength = strength
         self.seed = seed
         self.outputFormat = outputFormat
+        self.sampler = sampler
+        self.scheduler = scheduler
+        self.shift = shift
         self.context = context
     }
 }
@@ -386,7 +400,8 @@ actor NativeImageJobCoordinator {
                                 guidance: request.guidance,
                                 seed: request.seed,
                                 numImages: request.numImages, seeds: request.seeds, batchSize: request.batchSize,
-                                outputFormat: request.outputFormat
+                                outputFormat: request.outputFormat,
+                                sampler: request.sampler, scheduler: request.scheduler, shift: request.shift
                             )
                             return await self.imageService.generate(params, jobID: jobID, interrupt: interrupt)
                         },
@@ -427,7 +442,8 @@ actor NativeImageJobCoordinator {
                                 steps: request.steps,
                                 guidance: request.guidance,
                                 seed: request.seed,
-                                outputFormat: request.outputFormat
+                                outputFormat: request.outputFormat,
+                                sampler: request.sampler, scheduler: request.scheduler, shift: request.shift
                             )
                             return await self.imageService.edit(params, jobID: jobID, interrupt: interrupt)
                         },

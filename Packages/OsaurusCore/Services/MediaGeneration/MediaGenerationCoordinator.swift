@@ -68,6 +68,7 @@ actor MediaGenerationCoordinator {
                     seed: request.seed.flatMap { $0 >= 0 ? UInt64($0) : nil },
                     numImages: request.count,
                     outputFormat: request.format,
+                    sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
                     context: .current()
                 )
             )
@@ -551,6 +552,9 @@ actor MediaGenerationCoordinator {
             throw MediaGenerationError.invalidRequest("Image count must be between 1 and 4.")
         }
         guard request.target.backend != .local else { return }
+        guard request.sampler == nil, request.scheduler == nil, request.shift == nil else {
+            throw MediaGenerationError.invalidRequest("Sampler, scheduler and shift require a local image model.")
+        }
         let model = try await requiredMediaModel(for: request.target)
         guard model.kind == .image else {
             throw MediaGenerationError.invalidRequest(

@@ -1220,6 +1220,30 @@ public enum SettingsSearchIndex {
             subTab: "Settings"
         ),
         .init(
+            id: "imageGeneration.sampler",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Sampler",
+            keywords: ["image sampling", "heun", "euler"],
+            subTab: "Models"
+        ),
+        .init(
+            id: "imageGeneration.scheduler",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Scheduler",
+            keywords: ["image schedule", "sigma", "linear"],
+            subTab: "Models"
+        ),
+        .init(
+            id: "imageGeneration.shift",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Timestep shift",
+            keywords: ["image shift", "flow matching", "sigma shift"],
+            subTab: "Models"
+        ),
+        .init(
             id: "imageGeneration.upscale",
             tab: .imageGeneration,
             section: "Image Models",

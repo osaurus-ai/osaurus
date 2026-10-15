@@ -49,6 +49,9 @@ struct ImageJobParams: Sendable {
     var numImages: Int?
     var seeds: [UInt64]? = nil
     var batchSize: Int? = nil
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
 
     /// `source_paths` present → edit an existing image; otherwise generate.
     var isEdit: Bool { !sourcePaths.isEmpty }
@@ -135,8 +138,9 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             let target =
                 selected.mediaModel?.target
                 ?? MediaModelTarget(backend: .local, modelID: selected.id)
-            if target.backend != .local, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1 {
-                throw SubagentError.unavailable("Explicit image batches are supported by local image generation only.")
+            if target.backend != .local, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1
+                || params.sampler != nil || params.scheduler != nil || params.shift != nil {
+                throw SubagentError.unavailable("Explicit batches and sampling controls require a local image model.")
             }
             if target.backend == .local {
                 // Canonical identity is from installed ImageModelInfo, copied
@@ -193,7 +197,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             negativePrompt: params.negativePrompt, width: params.width, height: params.height,
             steps: params.steps, guidance: params.guidance, seed: params.seed,
             numImages: params.numImages ?? 1, seeds: params.seeds, batchSize: params.batchSize ?? 1,
-            outputFormat: .png, context: context)
+            outputFormat: .png, sampler: params.sampler, scheduler: params.scheduler, shift: params.shift, context: context)
     }
 
     /// Every local image run owns one producer and may swap the parent under
@@ -416,6 +420,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                     strength: params.strength,
                     seed: params.seed,
                     outputFormat: .png,
+                    sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
                     context: NativeImageJobContext.current()
                 )
                 finalResult = try await Self.consumeEdit(request, interrupt: interrupt)

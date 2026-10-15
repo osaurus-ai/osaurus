@@ -193,6 +193,9 @@ struct SettingsSearchSelfFindProbe {
             ("audit log", "insights.overview"),
             ("export activity", "insights.overview"),
             // Images: Defaults / Image Models.
+            ("Sampler", "imageGeneration.sampler"),
+            ("Scheduler", "imageGeneration.scheduler"),
+            ("Timestep shift", "imageGeneration.shift"),
             ("Upscale", "imageGeneration.upscale"),
             ("Default Models", "imageGeneration.models"),
             ("Image jobs", "imageGeneration.permission"),

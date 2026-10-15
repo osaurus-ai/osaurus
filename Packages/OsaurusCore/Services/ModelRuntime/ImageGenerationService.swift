@@ -353,12 +353,14 @@ public actor ImageGenerationService {
                 let batchRequest = Self.generationRequest(params, info: info, index: 0,
                     outputDir: OsaurusPaths.generatedImages(), nativeBatch: true)
                 try ImageBatchPlan.validate(batchRequest, maximumImages: 8)
-                try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
+                if limits == nil {
+                    try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: false,
                     guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
                     negativePrompt: params.negativePrompt, steps: params.steps ?? info.defaultSteps,
                     outputFormat: params.outputFormat
                 )
+                }
                 let nativeBatch = (limits?.maximumImages ?? 1) > 1
                 try limits?.validate(Self.generationRequest(params, info: info, index: 0,
                     outputDir: OsaurusPaths.generatedImages(), nativeBatch: nativeBatch))
@@ -381,16 +383,15 @@ public actor ImageGenerationService {
             negativePrompt: params.negativePrompt,
             width: params.width ?? 1024,
             height: params.height ?? 1024,
-            steps: ImageModelRequestPolicy.isQwen21Family(info.canonicalName)
-                ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: info.canonicalName ?? "qwen-image-2.1"))
-                : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
+            steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
             guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
             seed: seed,
             numImages: nativeBatch ? params.numImages : 1,
             seeds: nativeBatch ? params.seeds : nil,
             batchSize: params.batchSize,
             outputDir: outputDir,
-            outputFormat: Self.engineFormat(params.outputFormat)
+            outputFormat: Self.engineFormat(params.outputFormat),
+            sampler: params.sampler, scheduler: params.scheduler, shift: params.shift
         )
     }
 
@@ -407,19 +408,22 @@ public actor ImageGenerationService {
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         drive(
             model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt, validate: { info, limits in
-                try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
+                if limits == nil {
+                    try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: true,
                     guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
                     negativePrompt: params.negativePrompt, strength: params.strength,
                     hasMask: params.maskImage != nil, sourceCount: params.sourceImages.count,
                     steps: params.steps ?? info.defaultSteps, outputFormat: params.outputFormat
                 )
+                }
+                try limits?.validateSampling(sampler: params.sampler, scheduler: params.scheduler, shift: params.shift)
                 try limits?.validateEdit(
                     width: params.width, height: params.height,
                     steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
                     guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
                     format: Self.engineFormat(params.outputFormat), sourceCount: params.sourceImages.count,
-                    hasMask: params.maskImage != nil, strength: params.strength)
+                    hasMask: params.maskImage != nil, strength: params.strength, negativePrompt: params.negativePrompt)
             }
         ) { engine, outputDir, _, info, _ in
             let sources = try Self.stageInputs(params.sourceImages)
@@ -435,13 +439,12 @@ public actor ImageGenerationService {
                     .editStrength(params.strength),
                 width: params.width,
                 height: params.height,
-                steps: ImageModelRequestPolicy.isQwen21Family(info.canonicalName)
-                        ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: info.canonicalName ?? "qwen-image-2.1"))
-                        : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
+                steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
                 guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
                 seed: params.seed,
                 outputDir: outputDir,
-                outputFormat: Self.engineFormat(params.outputFormat)
+                outputFormat: Self.engineFormat(params.outputFormat),
+            sampler: params.sampler, scheduler: params.scheduler, shift: params.shift
             )
             return await engine.edit(request)
         }
@@ -710,6 +713,15 @@ public actor ImageGenerationService {
     private func recoveredErrorSince(_ epoch: UInt64) -> String? {
         if let testErrorSince { return testErrorSince(epoch) }
         return MLXErrorRecovery.errorSince(epoch)
+    }
+
+    func samplingCapabilities(for modelID: String) throws -> ImageSamplingCapabilities {
+        let target = try resolveLoadTarget(modelID)
+        guard let limits = try ModelRegistry.lookup(name: target.engineName)?.limits?(target.directory) else {
+            return ImageSamplingCapabilities()
+        }
+        return ImageSamplingCapabilities(samplers: limits.samplers,
+            schedulers: limits.schedulers, supportsShift: limits.supportsShift, maxSourceImages: limits.maxSourceImages)
     }
 
     private func resolveLoadTarget(_ requestedModel: String) throws -> LoadTarget {
