@@ -353,10 +353,12 @@ public struct ImageUpscaleParameters: Sendable {
 public struct GeneratedImage: Sendable, Equatable {
     public let url: URL
     public let seed: UInt64
+    public let effectiveParameters: ImageEffectiveParameters?
 
-    public init(url: URL, seed: UInt64) {
+    public init(url: URL, seed: UInt64, effectiveParameters: ImageEffectiveParameters? = nil) {
         self.url = url
         self.seed = seed
+        self.effectiveParameters = effectiveParameters
     }
 }
 

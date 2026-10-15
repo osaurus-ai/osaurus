@@ -33,6 +33,7 @@ final class ImageGenerationPanelModel: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var resultURL: URL?
     @Published var resultSeed: UInt64?
+    @Published var resultParameters: ImageEffectiveParameters?
     /// `true` between a user Cancel press and the terminal event that resolves
     /// the job. The actual weight load inside vMLXFlux is not interruptible, so
     /// this drives immediate UI feedback while the soft cancel settles.
@@ -92,6 +93,7 @@ final class ImageGenerationPanelModel: ObservableObject {
         job?.cancel()
         resultURL = nil
         resultSeed = nil
+        resultParameters = nil
         isCancelling = false
         lastDuration = nil
         estimate = durationKey.flatMap { ImageGenerationDurationStore.lastDuration(for: $0) }
@@ -132,6 +134,7 @@ final class ImageGenerationPanelModel: ObservableObject {
             if let first = images.first {
                 resultURL = first.url
                 resultSeed = first.seed
+                resultParameters = first.effectiveParameters
             }
             isCancelling = false
             finishTiming(persist: true)
@@ -508,6 +511,11 @@ struct ImageGenerationPanelView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1)
                     )
+            }
+            if let parameters = model.resultParameters {
+                Text("\(parameters.width) × \(parameters.height) · \(parameters.steps) steps · CFG \(parameters.guidance, specifier: "%g")")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
             }
             HStack(spacing: 12) {
                 if let seed = model.resultSeed {

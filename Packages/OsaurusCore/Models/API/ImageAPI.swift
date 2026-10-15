@@ -223,6 +223,7 @@ struct ImageResultDTO: Encodable {
     let url: String?
     let b64_json: String?
     let seed: UInt64
+    var effective_parameters: ImageEffectiveParameters? = nil
 }
 
 struct ImagesResponseDTO: Encodable {

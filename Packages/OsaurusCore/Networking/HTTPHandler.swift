@@ -12419,9 +12419,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// Build the per-image result object honoring `response_format`.
     private static func imageResult(for image: GeneratedImage, responseFormat: String) -> ImageResultDTO {
         if responseFormat == "b64_json", let data = try? Data(contentsOf: image.url) {
-            return ImageResultDTO(url: nil, b64_json: data.base64EncodedString(), seed: image.seed)
+            return ImageResultDTO(url: nil, b64_json: data.base64EncodedString(), seed: image.seed, effective_parameters: image.effectiveParameters)
         }
-        return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed)
+        return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed, effective_parameters: image.effectiveParameters)
     }
 
     static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {

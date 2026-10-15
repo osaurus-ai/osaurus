@@ -344,34 +344,41 @@ public actor ImageGenerationService {
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         drive(
             model: params.model, expected: .imageGen, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt,
-            count: max(1, params.numImages), validate: { info in
+            count: max(1, params.numImages), validate: { info, limits in
                 try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: false,
                     guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
                     negativePrompt: params.negativePrompt, steps: params.steps ?? info.defaultSteps,
                     outputFormat: params.outputFormat
                 )
+                try limits?.validate(Self.generationRequest(params, info: info, index: 0, outputDir: OsaurusPaths.generatedImages()))
             }
         ) { engine, outputDir, index, info in
-                // n > 1 is not engine-batched; run sequentially with distinct
-                // seeds so each image differs while staying reproducible.
-                let seed = params.seed.map { $0 &+ UInt64(index) }
-                let request = ImageGenRequest(
-                    prompt: params.prompt,
-                    negativePrompt: params.negativePrompt,
-                    width: params.width ?? 1024,
-                    height: params.height ?? 1024,
-                    steps: ImageModelRequestPolicy.isQwen21Family(info.canonicalName)
-                        ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: info.canonicalName ?? "qwen-image-2.1"))
-                        : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
-                    guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
-                    seed: seed,
-                    numImages: 1,
-                    outputDir: outputDir,
-                    outputFormat: Self.engineFormat(params.outputFormat)
-                )
+            let request = Self.generationRequest(params, info: info, index: index, outputDir: outputDir)
             return await engine.generate(request)
         }
+    }
+
+    private static func generationRequest(
+        _ params: ImageGenerationParameters, info: ImageModelInfo, index: Int, outputDir: URL
+    ) -> ImageGenRequest {
+        // n > 1 is not engine-batched; run sequentially with distinct
+        // seeds so each image differs while staying reproducible.
+        let seed = params.seed.map { $0 &+ UInt64(index) }
+        return ImageGenRequest(
+            prompt: params.prompt,
+            negativePrompt: params.negativePrompt,
+            width: params.width ?? 1024,
+            height: params.height ?? 1024,
+            steps: ImageModelRequestPolicy.isQwen21Family(info.canonicalName)
+                ? (params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: info.canonicalName ?? "qwen-image-2.1"))
+                : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
+            guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
+            seed: seed,
+            numImages: 1,
+            outputDir: outputDir,
+            outputFormat: Self.engineFormat(params.outputFormat)
+        )
     }
 
     public func edit(
@@ -386,7 +393,7 @@ public actor ImageGenerationService {
         _ params: ImageEditParameters, jobID: String?, resolvedTarget: LoadTarget?, interrupt: InterruptToken? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         drive(
-            model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt, validate: { info in
+            model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt, validate: { info, limits in
                 try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: true,
                     guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
@@ -394,6 +401,12 @@ public actor ImageGenerationService {
                     hasMask: params.maskImage != nil, sourceCount: params.sourceImages.count,
                     steps: params.steps ?? info.defaultSteps, outputFormat: params.outputFormat
                 )
+                try limits?.validateEdit(
+                    width: params.width, height: params.height,
+                    steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
+                    guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
+                    format: Self.engineFormat(params.outputFormat), sourceCount: params.sourceImages.count,
+                    hasMask: params.maskImage != nil, strength: params.strength)
             }
         ) { engine, outputDir, _, info in
             let sources = try Self.stageInputs(params.sourceImages)
@@ -451,7 +464,7 @@ public actor ImageGenerationService {
         resolvedTarget: LoadTarget? = nil,
         interrupt: InterruptToken? = nil,
         count: Int = 1,
-        validate: @escaping @Sendable (ImageModelInfo) throws -> Void = { _ in },
+        validate: @escaping @Sendable (ImageModelInfo, FluxModelLimits?) throws -> Void = { _, _ in },
         _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -553,8 +566,16 @@ public actor ImageGenerationService {
                                 if !cancelled {
                                     continuation.yield(.preview(pngData: data, step: step))
                                 }
-                            case .completed(let url, let seed):
-                                produced.append(GeneratedImage(url: url, seed: seed))
+                            case .completed(let url, let seed, let effective):
+                                let parameters = effective.map {
+                                    ImageEffectiveParameters(
+                                        width: $0.width, height: $0.height, steps: $0.steps,
+                                        guidance: $0.guidance, seed: $0.seed,
+                                        sampler: $0.sampler, scheduler: $0.scheduler, shift: $0.shift,
+                                        strength: $0.strength, scale: $0.scale, modelRevision: $0.modelRevision,
+                                        sampleSigmas: $0.sampleSigmas)
+                                }
+                                produced.append(GeneratedImage(url: url, seed: seed, effectiveParameters: parameters))
                             case .failed(let message, let hfAuth):
                                 // Drain remaining work for gate safety, but the
                                 // job has failed — propagate and stop yielding.
@@ -653,7 +674,7 @@ public actor ImageGenerationService {
 
     private func ensureLoaded(
         _ requestedModel: String, expected kind: ModelKind, resolvedTarget: LoadTarget?,
-        validate: @Sendable (ImageModelInfo) throws -> Void
+        validate: @Sendable (ImageModelInfo, FluxModelLimits?) throws -> Void
     ) async throws -> ImageModelInfo {
         let target = try resolvedTarget ?? resolveLoadTarget(requestedModel)
         let info = target.info
@@ -663,7 +684,8 @@ public actor ImageGenerationService {
         guard ImageModelRequestPolicy.supports(kind.rawValue, capabilities: info.capabilities) else {
             throw ImageGenerationError.wrongModelKind(expected: kind.rawValue, actual: info.kind)
         }
-        try validate(info)
+        let limits = try ModelRegistry.lookup(name: target.engineName)?.limits?(target.directory)
+        try validate(info, limits)
         guard loadedDirectoryName != info.id else { return info }
         let engine = ensureEngine()
         // Free the previous model before loading a new one (bundles are large;
