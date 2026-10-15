@@ -13364,6 +13364,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        if let format = req.output_format,
+           !["png", "jpeg", "jpg", "webp"].contains(format.lowercased()) {
+            sendImageError(head: head, context: context, status: .badRequest,
+                message: "Invalid output_format: use png, jpeg, jpg or webp as supported by the model",
+                path: "/images/upscale", startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
         let params = ImageUpscaleParameters(
             model: req.model,
             sourceImage: source,

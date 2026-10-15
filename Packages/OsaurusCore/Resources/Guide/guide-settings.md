@@ -198,6 +198,13 @@ SSM option retains architecture-specific companion state for hybrid models.
 
 Search settings or ask Settings Help using either exact control name to navigate directly to it.
 
+### Upscale an image
+
+In **Images → Models**, choose **Upscale** beside an installed SeedVR2 3B bundle.
+Select a source image, choose **Scale** (2× or 4×), and optionally enter a seed.
+SeedVR2 preserves the source aspect ratio and runs its fixed one-step restoration.
+Cancel stops cooperatively; the image lane remains held until the producer drains.
+
 ### Keeping model weights resident
 
 Server → Memory Safety → **Keep Model in Memory** requests GPU residency while a local model is loaded. It is on by default when the model fits the GPU working-set ceiling and the OS reserve. Other apps may slow down because wired pages cannot be reclaimed. Turning it off permits the OS to evict model pages, which can slow replies under memory pressure. Saving changes reloads the model before its next request. This setting does not change **Keep Model Loaded** or the idle unload timer. A model that does not fit still loads in Safe Auto with an advisory; Strict retains its admission checks.

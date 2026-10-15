@@ -5,6 +5,16 @@ import vMLXFlux
 
 @Suite(.serialized)
 struct ImageEffectiveParametersTests {
+    @Test func validationReasonSurvivesFoundationErrorBridge() {
+        // Native image-tool failures use localizedDescription. Without LocalizedError,
+        // a valid rejection becomes only "ImageGenerationError error 4" to the agent.
+        let error: any Error = ImageGenerationError.invalidRequest("strength is an edit-only parameter")
+        #expect(error.localizedDescription == "invalid request: strength is an edit-only parameter")
+        #expect((error as NSError).localizedDescription == error.localizedDescription)
+        let engine: any Error = ImageGenerationError.engine("upscale output exceeds the pixel budget")
+        #expect(engine.localizedDescription == "upscale output exceeds the pixel budget")
+    }
+
     @Test func bridgeKeepsRuntimeValuesInsteadOfEchoingRequest() async throws {
         let actual = EffectiveImageParameters(
             width: 768, height: 512, steps: 8, guidance: 1, seed: UInt64.max,
