@@ -31,6 +31,7 @@ final class ImageGenerationPanelModel: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
+    @Published var previewImage: NSImage?
     @Published var resultURL: URL?
     @Published var resultSeed: UInt64?
     @Published var resultParameters: ImageEffectiveParameters?
@@ -100,6 +101,7 @@ final class ImageGenerationPanelModel: ObservableObject {
     ) {
         job?.cancel()
         resultURL = nil
+        previewImage = nil
         resultSeed = nil
         resultParameters = nil
         results = []
@@ -137,8 +139,8 @@ final class ImageGenerationPanelModel: ObservableObject {
             phase = .loadingModel(model)
         case .step(let step, let total, let eta):
             phase = .running(step: step, total: total, eta: eta)
-        case .preview:
-            break
+        case .preview(let data, _):
+            previewImage = NSImage(data: data)
         case .imageCompleted(let image, _):
             results.append(image)
             selectResult(image)
@@ -242,6 +244,7 @@ struct ImageGenerationPanelView: View {
     @State private var sizeIndex: Int = 1  // 0:512, 1:1024
     @State private var seedText: String = ""
     @State private var imageCount = 1
+    @State private var livePreviews = false
     @State private var sourceURLs: [URL] = []
     @State private var stepsText = ""
     @State private var guidanceText = ""
@@ -290,6 +293,9 @@ struct ImageGenerationPanelView: View {
                     paramsRow
                     advancedParams
                     statusCard
+                    if model.isBusy, let preview = model.previewImage {
+                        Image(nsImage: preview).resizable().scaledToFit().frame(maxHeight: 256)
+                    }
                     if let url = model.resultURL { resultCard(url) }
                 }
                 .padding(.horizontal, 22)
@@ -426,6 +432,9 @@ struct ImageGenerationPanelView: View {
                 Text(localized: "Guidance").font(.system(size: 11))
                 TextField(String(modelInfo.defaultGuidance ?? 3.5), text: $guidanceText).frame(width: 70)
             }
+            Toggle(isOn: $livePreviews) { Text(localized: "Live previews") }
+                .disabled(model.isBusy)
+                .settingsLandingAnchor("imageGeneration.previews")
             if !samplingCapabilities.samplers.isEmpty {
                 Picker(selection: $sampler) {
                     Text(localized: "Bundle default").tag("")
@@ -712,7 +721,8 @@ struct ImageGenerationPanelView: View {
                     steps: input.steps, guidance: input.guidance,
                     seed: seed,
                     sampler: sampler.isEmpty ? nil : sampler, scheduler: scheduler.isEmpty ? nil : scheduler,
-                    shift: shiftText.isEmpty ? nil : Float(shiftText)
+                    shift: shiftText.isEmpty ? nil : Float(shiftText),
+                    previewInterval: livePreviews ? 5 : nil
                 )
             )
         } else {
@@ -726,7 +736,8 @@ struct ImageGenerationPanelView: View {
                     steps: input.steps, guidance: input.guidance,
                     seed: seed, numImages: imageCount,
                     sampler: sampler.isEmpty ? nil : sampler, scheduler: scheduler.isEmpty ? nil : scheduler,
-                    shift: shiftText.isEmpty ? nil : Float(shiftText)
+                    shift: shiftText.isEmpty ? nil : Float(shiftText),
+                    previewInterval: livePreviews ? 5 : nil
                 )
             )
         }

@@ -65,6 +65,8 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             "sampler": .object(["type": .string("string"), "description": .string("Local model sampler; omit for the bundle default.")]),
             "scheduler": .object(["type": .string("string"), "description": .string("Local model timestep schedule; omit for the bundle default.")]),
             "shift": .object(["type": .string("number"), "description": .string("Local model timestep shift, where supported.")]),
+            "preview_interval": .object(["type": .string("integer"), "description": .string("Local generation/edit: optional positive step interval for progress previews.")]),
+            "preview_max_pixel": .object(["type": .string("integer"), "description": .string("Maximum preview side in pixels, 16...1024; default 256.")]),
             "strength": .object([
                 "type": .string("number"),
                 "description": .string("Optional edit strength, 0...1 (edit mode only)."),
@@ -115,6 +117,8 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             "sampler": .object(["type": .string("string"), "description": .string("Local model sampler; omit for the bundle default.")]),
             "scheduler": .object(["type": .string("string"), "description": .string("Local model timestep schedule; omit for the bundle default.")]),
             "shift": .object(["type": .string("number"), "description": .string("Local model timestep shift, where supported.")]),
+            "preview_interval": .object(["type": .string("integer"), "description": .string("Local generation/edit: optional positive step interval for progress previews.")]),
+            "preview_max_pixel": .object(["type": .string("integer"), "description": .string("Maximum preview side in pixels, 16...1024; default 256.")]),
             "seed": .object(["type": .string("integer"), "description": .string("Optional deterministic seed.")]),
             "seeds": .object([
                 "type": .string("array"), "items": .object(["type": .string("integer")]),
@@ -160,7 +164,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let prompt) = promptReq else { return promptReq.failureEnvelope ?? "" }
 
         var params = Self.buildParams(args: args, prompt: prompt)
-        struct BatchArguments: Decodable { let seeds: [UInt64]?; let batch_size: Int?; let num_images: Int?; let sampler: String?; let scheduler: String?; let shift: Float? }
+        struct BatchArguments: Decodable { let seeds: [UInt64]?; let batch_size: Int?; let num_images: Int?; let sampler: String?; let scheduler: String?; let shift: Float?; let preview_interval: Int?; let preview_max_pixel: Int? }
         let batch: BatchArguments
         do { batch = try JSONDecoder().decode(BatchArguments.self, from: Data(argumentsJSON.utf8)) }
         catch {
@@ -174,6 +178,8 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         params.sampler = batch.sampler
         params.scheduler = batch.scheduler
         params.shift = batch.shift
+        params.previewInterval = batch.preview_interval
+        params.previewMaxPixel = batch.preview_max_pixel
         return await SubagentSession.run(
             ImageSubagentKind(params: params, argumentsJSON: argumentsJSON),
             tool: name
@@ -205,7 +211,9 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             seeds: (args["seeds"] as? [Any])?.compactMap(optionalUInt64),
             batchSize: ArgumentCoercion.int(args["batch_size"]),
             sampler: optionalString(args["sampler"]), scheduler: optionalString(args["scheduler"]),
-            shift: optionalFloat(args["shift"])
+            shift: optionalFloat(args["shift"]),
+            previewInterval: ArgumentCoercion.int(args["preview_interval"]),
+            previewMaxPixel: ArgumentCoercion.int(args["preview_max_pixel"])
         )
     }
 
@@ -235,7 +243,8 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             negativePrompt: raw.negative_prompt, width: raw.width, height: raw.height,
             steps: raw.steps, guidance: raw.guidance, strength: raw.strength,
             seed: raw.seed, numImages: raw.num_images, seeds: raw.seeds, batchSize: raw.batch_size,
-            sampler: raw.sampler, scheduler: raw.scheduler, shift: raw.shift)
+            sampler: raw.sampler, scheduler: raw.scheduler, shift: raw.shift,
+            previewInterval: raw.preview_interval, previewMaxPixel: raw.preview_max_pixel)
     }
 
     private struct Qwen21Arguments: Decodable {
@@ -253,11 +262,13 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         let sampler: String?
         let scheduler: String?
         let shift: Float?
+        let preview_interval: Int?
+        let preview_max_pixel: Int?
         let mask: String?
         let output_format: String?
 
         enum CodingKeys: String, CodingKey {
-            case source_paths, negative_prompt, width, height, steps, guidance, strength, seed, num_images, seeds, batch_size, sampler, scheduler, shift, mask, output_format
+            case source_paths, negative_prompt, width, height, steps, guidance, strength, seed, num_images, seeds, batch_size, sampler, scheduler, shift, preview_interval, preview_max_pixel, mask, output_format
         }
 
         init(from decoder: Decoder) throws {
@@ -275,6 +286,8 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             sampler = try c.decodeIfPresent(String.self, forKey: .sampler)
             scheduler = try c.decodeIfPresent(String.self, forKey: .scheduler)
             shift = try c.decodeIfPresent(Float.self, forKey: .shift)
+            preview_interval = try c.decodeIfPresent(Int.self, forKey: .preview_interval)
+            preview_max_pixel = try c.decodeIfPresent(Int.self, forKey: .preview_max_pixel)
             mask = try c.decodeIfPresent(String.self, forKey: .mask)
             output_format = try c.decodeIfPresent(String.self, forKey: .output_format)
             if !c.contains(.seed) {

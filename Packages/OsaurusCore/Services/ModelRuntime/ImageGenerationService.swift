@@ -391,7 +391,8 @@ public actor ImageGenerationService {
             batchSize: params.batchSize,
             outputDir: outputDir,
             outputFormat: Self.engineFormat(params.outputFormat),
-            sampler: params.sampler, scheduler: params.scheduler, shift: params.shift
+            sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
+            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel
         )
     }
 
@@ -417,6 +418,7 @@ public actor ImageGenerationService {
                     steps: params.steps ?? info.defaultSteps, outputFormat: params.outputFormat
                 )
                 }
+                try limits?.validatePreview(interval: params.previewInterval, maxPixel: params.previewMaxPixel)
                 try limits?.validateSampling(sampler: params.sampler, scheduler: params.scheduler, shift: params.shift)
                 try limits?.validateEdit(
                     width: params.width, height: params.height,
@@ -444,7 +446,8 @@ public actor ImageGenerationService {
                 seed: params.seed,
                 outputDir: outputDir,
                 outputFormat: Self.engineFormat(params.outputFormat),
-            sampler: params.sampler, scheduler: params.scheduler, shift: params.shift
+            sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
+            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel
             )
             return await engine.edit(request)
         }

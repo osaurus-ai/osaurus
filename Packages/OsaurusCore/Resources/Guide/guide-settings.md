@@ -208,3 +208,5 @@ Cancel stops cooperatively; the image lane remains held until the producer drain
 ### Image sampling controls
 
 In **Images → Image Models**, open **Generate** or **Edit** for an installed local bundle. **Sampler** and **Scheduler** list the choices supported by that bundle; **Bundle default** preserves its native behavior. **Timestep shift** appears only when the bundle supports an override. Leaving it empty preserves the default. Turbo bundles with a fixed sampling schedule reject alternate schedules or shifts. The same optional `sampler`, `scheduler`, and `shift` fields are accepted by the local image API and image tool; unsupported provider requests fail instead of silently dropping them.
+
+**Live previews** in the local Generate/Edit panel shows an optional small image every five denoising steps. API/tool callers can set `preview_interval` and `preview_max_pixel`. Previews are off by default, may be dropped when busy or under memory pressure, and never replace the saved final image.

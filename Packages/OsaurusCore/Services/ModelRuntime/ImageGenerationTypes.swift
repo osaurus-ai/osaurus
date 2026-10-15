@@ -124,6 +124,8 @@ public struct ImageGenerationParameters: Sendable {
     public var sampler: String?
     public var scheduler: String?
     public var shift: Float?
+    public var previewInterval: Int?
+    public var previewMaxPixel: Int
 
     public init(
         model: String,
@@ -138,7 +140,8 @@ public struct ImageGenerationParameters: Sendable {
         seeds: [UInt64]? = nil,
         batchSize: Int = 1,
         outputFormat: ImageOutputFormat = .png,
-        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil
+        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
+        previewInterval: Int? = nil, previewMaxPixel: Int = 256
     ) {
         self.model = model
         self.prompt = prompt
@@ -155,6 +158,8 @@ public struct ImageGenerationParameters: Sendable {
         self.sampler = sampler
         self.scheduler = scheduler
         self.shift = shift
+        self.previewInterval = previewInterval
+        self.previewMaxPixel = previewMaxPixel
     }
 }
 
@@ -178,6 +183,8 @@ public struct ImageEditParameters: Sendable {
     public var sampler: String?
     public var scheduler: String?
     public var shift: Float?
+    public var previewInterval: Int?
+    public var previewMaxPixel: Int
 
     public init(
         model: String,
@@ -192,7 +199,8 @@ public struct ImageEditParameters: Sendable {
         guidance: Float? = nil,
         seed: UInt64? = nil,
         outputFormat: ImageOutputFormat = .png,
-        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil
+        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
+        previewInterval: Int? = nil, previewMaxPixel: Int = 256
     ) {
         self.model = model
         self.prompt = prompt
@@ -209,6 +217,8 @@ public struct ImageEditParameters: Sendable {
         self.sampler = sampler
         self.scheduler = scheduler
         self.shift = shift
+        self.previewInterval = previewInterval
+        self.previewMaxPixel = previewMaxPixel
     }
 }
 

@@ -1220,6 +1220,10 @@ public enum SettingsSearchIndex {
             subTab: "Settings"
         ),
         .init(
+            id: "imageGeneration.previews", tab: .imageGeneration, section: "Image Models",
+            title: "Live previews", keywords: ["image preview", "denoising preview", "progress image"], subTab: "Models"
+        ),
+        .init(
             id: "imageGeneration.sampler",
             tab: .imageGeneration,
             section: "Image Models",

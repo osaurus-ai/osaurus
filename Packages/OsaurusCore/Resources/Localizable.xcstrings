@@ -1,6 +1,35 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Live previews" : {
+      "comment": "Optional image denoising progress previews.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live-Vorschau"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实时预览"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실시간 미리보기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Предпросмотр в реальном времени"
+          }
+        }
+      }
+    },
     "Bundle default" : {
       "comment": "Local image generation sampling control.",
       "localizations": {

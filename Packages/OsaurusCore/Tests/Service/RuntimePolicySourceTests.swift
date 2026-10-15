@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "feec617e27d7ce7f1978a17671f4adca98eea917"
+        let expectedRuntimeHardenedRevision = "da683bee98ca07201102e0658dbe284e48439c39"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)

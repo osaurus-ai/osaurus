@@ -52,6 +52,8 @@ struct ImageJobParams: Sendable {
     var sampler: String? = nil
     var scheduler: String? = nil
     var shift: Float? = nil
+    var previewInterval: Int? = nil
+    var previewMaxPixel: Int? = nil
 
     /// `source_paths` present → edit an existing image; otherwise generate.
     var isEdit: Bool { !sourcePaths.isEmpty }
@@ -139,7 +141,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 selected.mediaModel?.target
                 ?? MediaModelTarget(backend: .local, modelID: selected.id)
             if target.backend != .local, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1
-                || params.sampler != nil || params.scheduler != nil || params.shift != nil {
+                || params.sampler != nil || params.scheduler != nil || params.shift != nil
+                || params.previewInterval != nil || params.previewMaxPixel != nil {
                 throw SubagentError.unavailable("Explicit batches and sampling controls require a local image model.")
             }
             if target.backend == .local {
@@ -197,7 +200,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             negativePrompt: params.negativePrompt, width: params.width, height: params.height,
             steps: params.steps, guidance: params.guidance, seed: params.seed,
             numImages: params.numImages ?? 1, seeds: params.seeds, batchSize: params.batchSize ?? 1,
-            outputFormat: .png, sampler: params.sampler, scheduler: params.scheduler, shift: params.shift, context: context)
+            outputFormat: .png, sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
+            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel ?? 256, context: context)
     }
 
     /// Every local image run owns one producer and may swap the parent under
@@ -421,6 +425,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                     seed: params.seed,
                     outputFormat: .png,
                     sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
+                    previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel ?? 256,
                     context: NativeImageJobContext.current()
                 )
                 finalResult = try await Self.consumeEdit(request, interrupt: interrupt)

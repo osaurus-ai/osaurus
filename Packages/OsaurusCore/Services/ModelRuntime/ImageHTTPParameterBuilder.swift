@@ -33,8 +33,9 @@ enum ImageHTTPParameterBuilder {
     /// or GPU batch sizing. Reject these before any billable remote request.
     static func validateRemoteBatch(_ request: ImageGenerationRequestDTO) throws {
         guard request.seeds == nil, request.batch_size == nil,
-            request.sampler == nil, request.scheduler == nil, request.shift == nil else {
-            throw ImageGenerationError.invalidRequest("seeds, batch_size, sampler, scheduler and shift require a local image model")
+            request.sampler == nil, request.scheduler == nil, request.shift == nil,
+            request.preview_interval == nil, request.preview_max_pixel == nil else {
+            throw ImageGenerationError.invalidRequest("seeds, batch_size, sampler, scheduler, shift and previews require a local image model")
         }
     }
 
@@ -64,7 +65,8 @@ enum ImageHTTPParameterBuilder {
             steps: request.steps,
             guidance: request.guidance.map(Float.init), seed: request.seed,
             numImages: request.n ?? 1, seeds: request.seeds, batchSize: request.batch_size ?? 1, outputFormat: try outputFormat(request.output_format, isQwen21: q21),
-            sampler: request.sampler, scheduler: request.scheduler, shift: request.shift)
+            sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
+            previewInterval: request.preview_interval, previewMaxPixel: request.preview_max_pixel ?? 256)
     }
 
     static func edit(_ request: ImageEditRequestDTO, info: ImageModelInfo, decodedSources: [Data?]) throws
@@ -97,7 +99,8 @@ enum ImageHTTPParameterBuilder {
             steps: request.steps,
             guidance: request.guidance.map(Float.init), seed: request.seed,
             outputFormat: try outputFormat(request.output_format, isQwen21: q21),
-            sampler: request.sampler, scheduler: request.scheduler, shift: request.shift)
+            sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
+            previewInterval: request.preview_interval, previewMaxPixel: request.preview_max_pixel ?? 256)
     }
 
     static func dimensions(size: String?, width: Int?, height: Int?, isQwen21: Bool) throws -> (Int?, Int?) {

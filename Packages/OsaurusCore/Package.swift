@@ -332,7 +332,7 @@ let package = Package(
         // self-speculation for K2 Horizon bundles that ship a uno/ adapter.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "feec617e27d7ce7f1978a17671f4adca98eea917"
+            revision: "da683bee98ca07201102e0658dbe284e48439c39"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
