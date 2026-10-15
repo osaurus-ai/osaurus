@@ -197,3 +197,7 @@ SSM option retains architecture-specific companion state for hybrid models.
 - **Server → Concurrency & Batching → Prompt Prefill Chunk Size** sets how many prompt tokens are processed per prefill step. Empty uses the engine default. This is not the context window or the response token limit.
 
 Search settings or ask Settings Help using either exact control name to navigate directly to it.
+
+### Keeping model weights resident
+
+Server → Memory Safety → **Keep Model in Memory** requests GPU residency while a local model is loaded. It is on by default when the model fits the GPU working-set ceiling and the OS reserve. Other apps may slow down because wired pages cannot be reclaimed. Turning it off permits the OS to evict model pages, which can slow replies under memory pressure. Saving changes reloads the model before its next request. This setting does not change **Keep Model Loaded** or the idle unload timer. A model that does not fit still loads in Safe Auto with an advisory; Strict retains its admission checks.
