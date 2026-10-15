@@ -382,7 +382,7 @@ public enum ImageGenerationEvent: Sendable {
 
 /// Errors the bridge raises before/around the engine call. Maps cleanly to
 /// HTTP status codes in the `/v1/images/*` layer.
-public enum ImageGenerationError: Error, CustomStringConvertible {
+public enum ImageGenerationError: Error, CustomStringConvertible, LocalizedError {
     /// No bundle with the requested id exists under the image models root.
     case modelNotFound(String)
     /// The bundle exists but is missing required components/shards.
@@ -393,6 +393,8 @@ public enum ImageGenerationError: Error, CustomStringConvertible {
     case wrongModelKind(expected: String, actual: String)
     case invalidRequest(String)
     case engine(String)
+
+    public var errorDescription: String? { description }
 
     public var description: String {
         switch self {
