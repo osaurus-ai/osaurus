@@ -343,29 +343,39 @@ public actor ImageGenerationService {
     private func generate(
         _ params: ImageGenerationParameters, jobID: String?, resolvedTarget: LoadTarget?, interrupt: InterruptToken? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(
+        let producerInterrupt = FluxInterrupt()
+        return drive(
             model: params.model, expected: .imageGen, jobID: jobID, resolvedTarget: resolvedTarget, interrupt: interrupt,
-            count: max(1, params.numImages), validate: { info, limits in
+            producerInterrupt: producerInterrupt, count: params.numImages, validate: { info, limits in
+                guard (1...8).contains(params.numImages) else {
+                    throw ImageGenerationError.invalidRequest("numImages must be between 1 and 8")
+                }
+                let batchRequest = Self.generationRequest(params, info: info, index: 0,
+                    outputDir: OsaurusPaths.generatedImages(), nativeBatch: true)
+                try ImageBatchPlan.validate(batchRequest, maximumImages: 8)
                 try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                     width: params.width, height: params.height, isEdit: false,
                     guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
                     negativePrompt: params.negativePrompt, steps: params.steps ?? info.defaultSteps,
                     outputFormat: params.outputFormat
                 )
-                try limits?.validate(Self.generationRequest(params, info: info, index: 0, outputDir: OsaurusPaths.generatedImages()))
+                let nativeBatch = (limits?.maximumImages ?? 1) > 1
+                try limits?.validate(Self.generationRequest(params, info: info, index: 0,
+                    outputDir: OsaurusPaths.generatedImages(), nativeBatch: nativeBatch))
             }
-        ) { engine, outputDir, index, info in
-            let request = Self.generationRequest(params, info: info, index: index, outputDir: outputDir)
+        ) { engine, outputDir, index, info, nativeBatch in
+            var request = Self.generationRequest(params, info: info, index: index, outputDir: outputDir, nativeBatch: nativeBatch)
+            request.interrupt = producerInterrupt
             return await engine.generate(request)
         }
     }
 
     private static func generationRequest(
-        _ params: ImageGenerationParameters, info: ImageModelInfo, index: Int, outputDir: URL
+        _ params: ImageGenerationParameters, info: ImageModelInfo, index: Int, outputDir: URL, nativeBatch: Bool = false
     ) -> ImageGenRequest {
-        // n > 1 is not engine-batched; run sequentially with distinct
-        // seeds so each image differs while staying reproducible.
-        let seed = params.seed.map { $0 &+ UInt64(index) }
+        // Older backends retain sequential requests. Native batches resolve the
+        // same seeds once and reuse conditioning inside the engine.
+        let seed = nativeBatch ? params.seed : (params.seeds.flatMap { $0.indices.contains(index) ? $0[index] : nil } ?? params.seed.map { $0 &+ UInt64(index) })
         return ImageGenRequest(
             prompt: params.prompt,
             negativePrompt: params.negativePrompt,
@@ -376,7 +386,9 @@ public actor ImageGenerationService {
                 : Self.safeDenoiseSteps(for: params.model, requested: params.steps ?? info.defaultSteps),
             guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
             seed: seed,
-            numImages: 1,
+            numImages: nativeBatch ? params.numImages : 1,
+            seeds: nativeBatch ? params.seeds : nil,
+            batchSize: params.batchSize,
             outputDir: outputDir,
             outputFormat: Self.engineFormat(params.outputFormat)
         )
@@ -409,7 +421,7 @@ public actor ImageGenerationService {
                     format: Self.engineFormat(params.outputFormat), sourceCount: params.sourceImages.count,
                     hasMask: params.maskImage != nil, strength: params.strength)
             }
-        ) { engine, outputDir, _, info in
+        ) { engine, outputDir, _, info, _ in
             let sources = try Self.stageInputs(params.sourceImages)
             guard !sources.isEmpty else {
                 throw ImageGenerationError.invalidRequest("edit requires at least one source image")
@@ -454,7 +466,7 @@ public actor ImageGenerationService {
                              try SeedVR2BundleMetadata.validateUpscale(sourceWidth: width, sourceHeight: height,
                                  scale: params.scale, format: Self.engineFormat(params.outputFormat))
                          }
-                     }) { engine, outputDir, _, _ in
+                     }) { engine, outputDir, _, _, _ in
             let source = try Self.stageInput(params.sourceImage)
             let request = UpscaleRequest(
                 sourceImage: source,
@@ -483,7 +495,7 @@ public actor ImageGenerationService {
         producerInterrupt: FluxInterrupt? = nil,
         count: Int = 1,
         validate: @escaping @Sendable (ImageModelInfo, FluxModelLimits?) throws -> Void = { _, _ in },
-        _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
+        _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo, Bool) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
             guard jobID.map({ producerJobs[$0] == nil }) ?? true else {
@@ -543,6 +555,7 @@ public actor ImageGenerationService {
                 // than report `.completed` with corrupt output.
                 let mlxErrorEpoch = MLXErrorRecovery.errorSequence()
                 var cancelled = false
+                var failed = false
                 var produced: [GeneratedImage] = []
                 func cancelRequested() -> Bool {
                     if cancellation.isRequested || interrupt?.isInterrupted == true { return true }
@@ -554,10 +567,13 @@ public actor ImageGenerationService {
                     // Load (or switch) the model under the gate — quantized
                     // bundles decode their weights with MLX eval at load time.
                     var modelInfo: ImageModelInfo?
+                    var modelLimits: FluxModelLimits?
                     if !cancelled {
                         continuation.yield(.loadingModel(model: requestedModel))
-                        modelInfo = try await self.ensureLoaded(requestedModel, expected: kind,
+                        let prepared = try await self.ensureLoaded(requestedModel, expected: kind,
                             resolvedTarget: resolvedTarget, validate: validate)
+                        modelInfo = prepared.0
+                        modelLimits = prepared.1
                     }
                     // Honor a cancel that arrived during the (uninterruptible)
                     // weight load so generation never starts. The gate-drain
@@ -566,14 +582,15 @@ public actor ImageGenerationService {
                     let engine = self.ensureEngine()
                     let outputDir = OsaurusPaths.generatedImages()
                     OsaurusPaths.ensureExistsSilent(outputDir)
-                    for index in 0 ..< count {
+                    let nativeBatch = kind == .imageGen && (modelLimits?.maximumImages ?? 1) > 1
+                    for index in 0 ..< (nativeBatch ? 1 : count) {
                         if cancelRequested() { cancelled = true }
                         if cancelled { break }
                         // An earlier producer may finish without a failed event
                         // after a recovered GPU error. Do not start another one.
                         if self.recoveredErrorSince(mlxErrorEpoch) != nil { break }
                         guard let modelInfo else { break }
-                        let stream = try await build(engine, outputDir, index, modelInfo)
+                        let stream = try await build(engine, outputDir, index, modelInfo, nativeBatch)
                         await self.testStreamCheckpoint?(.created(index))
                         await self.testStreamCheckpoint?(.willDrain(index))
                         for try await event in stream {
@@ -587,7 +604,18 @@ public actor ImageGenerationService {
                                 if !cancelled {
                                     continuation.yield(.preview(pngData: data, step: step))
                                 }
-                            case .completed(let url, let seed, let effective):
+                            case .completed(let url, let seed, let effective),
+                                 .imageCompleted(let url, let seed, _, let effective):
+                                if let message = self.recoveredErrorSince(mlxErrorEpoch) {
+                                    if !failed {
+                                        continuation.yield(.failed(message: MLXForwardPassError(message: message).localizedDescription, hfAuth: false))
+                                    }
+                                    failed = true
+                                    cancelled = true
+                                    cancel()
+                                    continue
+                                }
+                                guard !cancelled, !failed else { continue }
                                 let parameters = effective.map {
                                     ImageEffectiveParameters(
                                         width: $0.width, height: $0.height, steps: $0.steps,
@@ -596,13 +624,18 @@ public actor ImageGenerationService {
                                         strength: $0.strength, scale: $0.scale, modelRevision: $0.modelRevision,
                                         sampleSigmas: $0.sampleSigmas)
                                 }
-                                produced.append(GeneratedImage(url: url, seed: seed, effectiveParameters: parameters))
+                                let image = GeneratedImage(url: url, seed: seed, effectiveParameters: parameters)
+                                produced.append(image)
+                                if !cancelled, count > 1 {
+                                    continuation.yield(.imageCompleted(image: image, index: produced.count - 1))
+                                }
                             case .failed(let message, let hfAuth):
                                 // Drain remaining work for gate safety, but the
                                 // job has failed — propagate and stop yielding.
-                                if !cancelled {
+                                if !cancelled, !failed {
                                     continuation.yield(.failed(message: message, hfAuth: hfAuth))
                                 }
+                                failed = true
                                 cancelled = true
                             case .cancelled:
                                 cancelled = true
@@ -614,7 +647,10 @@ public actor ImageGenerationService {
                     // Cancellation can arrive after the last event while the
                     // final producer is finishing; there may be no next event.
                     if cancelRequested() { cancelled = true }
-                    if cancelled {
+                    if failed {
+                        // Failure is terminal. Do not overwrite it with a second
+                        // cancellation status after draining the producer.
+                    } else if cancelled {
                         continuation.yield(.cancelled)
                     } else if let mlxErr = self.recoveredErrorSince(mlxErrorEpoch) {
                         // The engine stream finished, but a GPU-side error was
@@ -696,7 +732,7 @@ public actor ImageGenerationService {
     private func ensureLoaded(
         _ requestedModel: String, expected kind: ModelKind, resolvedTarget: LoadTarget?,
         validate: @Sendable (ImageModelInfo, FluxModelLimits?) throws -> Void
-    ) async throws -> ImageModelInfo {
+    ) async throws -> (ImageModelInfo, FluxModelLimits?) {
         let target = try resolvedTarget ?? resolveLoadTarget(requestedModel)
         let info = target.info
         guard info.ready else {
@@ -707,7 +743,7 @@ public actor ImageGenerationService {
         }
         let limits = try ModelRegistry.lookup(name: target.engineName)?.limits?(target.directory)
         try validate(info, limits)
-        guard loadedDirectoryName != info.id else { return info }
+        guard loadedDirectoryName != info.id else { return (info, limits) }
         let engine = ensureEngine()
         // Free the previous model before loading a new one (bundles are large;
         // unload between switches per the integration spec).
@@ -722,7 +758,7 @@ public actor ImageGenerationService {
         loadedDirectoryName = info.id
         loadedDirectoryURL = target.directory
         NotificationCenter.default.post(name: .modelRuntimeResidencyChanged, object: nil)
-        return info
+        return (info, limits)
     }
 
     // MARK: - Defaults + helpers

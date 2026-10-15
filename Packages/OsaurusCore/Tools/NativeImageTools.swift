@@ -67,9 +67,17 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
                 "description": .string("Optional edit strength, 0...1 (edit mode only)."),
             ]),
             "seed": .object(["type": .string("integer"), "description": .string("Optional deterministic seed.")]),
+            "seeds": .object([
+                "type": .string("array"), "items": .object(["type": .string("integer")]),
+                "description": .string("Local generation only: explicit seed for each requested image, in order."),
+            ]),
+            "batch_size": .object([
+                "type": .string("integer"),
+                "description": .string("Local generation only: requested parallel image count; runtime may lower it to fit."),
+            ]),
             "num_images": .object([
                 "type": .string("integer"),
-                "description": .string("Optional number of images (generation only), clamped to 1...4."),
+                "description": .string("Optional number of images (generation only), 1...8 for local models."),
             ]),
         ]),
         "required": .array([.string("prompt")]),
@@ -102,9 +110,17 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             "steps": .object(["type": .string("integer"), "description": .string("Optional denoise step count.")]),
             "guidance": .object(["type": .string("number"), "description": .string("Optional guidance scale.")]),
             "seed": .object(["type": .string("integer"), "description": .string("Optional deterministic seed.")]),
+            "seeds": .object([
+                "type": .string("array"), "items": .object(["type": .string("integer")]),
+                "description": .string("Local generation only: explicit seed for each requested image, in order."),
+            ]),
+            "batch_size": .object([
+                "type": .string("integer"),
+                "description": .string("Local generation only: requested parallel image count; runtime may lower it to fit."),
+            ]),
             "num_images": .object([
                 "type": .string("integer"),
-                "description": .string("Optional number of images, clamped to 1...4."),
+                "description": .string("Optional number of images, 1...8 for local models."),
             ]),
         ]),
         "required": .array([.string("prompt")]),
@@ -137,7 +153,18 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         let promptReq = requireString(args, "prompt", expected: "non-empty image prompt", tool: name)
         guard case .value(let prompt) = promptReq else { return promptReq.failureEnvelope ?? "" }
 
-        let params = Self.buildParams(args: args, prompt: prompt)
+        var params = Self.buildParams(args: args, prompt: prompt)
+        struct BatchArguments: Decodable { let seeds: [UInt64]?; let batch_size: Int?; let num_images: Int? }
+        let batch: BatchArguments
+        do { batch = try JSONDecoder().decode(BatchArguments.self, from: Data(argumentsJSON.utf8)) }
+        catch {
+            return ToolEnvelope.failure(kind: .invalidArgs,
+                message: "Invalid image batch: seeds must be unsigned integers, and num_images and batch_size must be integers.",
+                tool: name)
+        }
+        params.seeds = batch.seeds
+        params.batchSize = batch.batch_size
+        params.numImages = batch.num_images
         return await SubagentSession.run(
             ImageSubagentKind(params: params, argumentsJSON: argumentsJSON),
             tool: name
@@ -165,7 +192,9 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             guidance: optionalFloat(args["guidance"]).map { min(20, max(0, $0)) },
             strength: optionalFloat(args["strength"]),
             seed: optionalUInt64(args["seed"]),
-            numImages: ArgumentCoercion.int(args["num_images"])
+            numImages: ArgumentCoercion.int(args["num_images"]),
+            seeds: (args["seeds"] as? [Any])?.compactMap(optionalUInt64),
+            batchSize: ArgumentCoercion.int(args["batch_size"])
         )
     }
 
@@ -201,7 +230,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         return ImageJobParams(prompt: legacy.prompt, sourcePaths: paths, model: legacy.model,
             negativePrompt: raw.negative_prompt, width: raw.width, height: raw.height,
             steps: raw.steps, guidance: raw.guidance, strength: raw.strength,
-            seed: raw.seed, numImages: raw.num_images)
+            seed: raw.seed, numImages: raw.num_images, seeds: raw.seeds, batchSize: raw.batch_size)
     }
 
     private struct Qwen21Arguments: Decodable {
@@ -214,11 +243,13 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         let strength: Float?
         let seed: UInt64?
         let num_images: Int?
+        let seeds: [UInt64]?
+        let batch_size: Int?
         let mask: String?
         let output_format: String?
 
         enum CodingKeys: String, CodingKey {
-            case source_paths, negative_prompt, width, height, steps, guidance, strength, seed, num_images, mask, output_format
+            case source_paths, negative_prompt, width, height, steps, guidance, strength, seed, num_images, seeds, batch_size, mask, output_format
         }
 
         init(from decoder: Decoder) throws {
@@ -231,6 +262,8 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             guidance = try c.decodeIfPresent(Float.self, forKey: .guidance)
             strength = try c.decodeIfPresent(Float.self, forKey: .strength)
             num_images = try c.decodeIfPresent(Int.self, forKey: .num_images)
+            seeds = try c.decodeIfPresent([UInt64].self, forKey: .seeds)
+            batch_size = try c.decodeIfPresent(Int.self, forKey: .batch_size)
             mask = try c.decodeIfPresent(String.self, forKey: .mask)
             output_format = try c.decodeIfPresent(String.self, forKey: .output_format)
             if !c.contains(.seed) {

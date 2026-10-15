@@ -12549,6 +12549,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         if selectedTarget.backend != .local {
+            do { try ImageHTTPParameterBuilder.validateRemoteBatch(req) }
+            catch {
+                sendImageError(head: head, context: context, status: .badRequest,
+                    message: String(describing: error), path: "/images/generations",
+                    startTime: startTime, userAgent: userAgent, requestBody: loggedBody)
+                return
+            }
             guard req.allow_remote_media_spend == true else {
                 sendImageError(
                     head: head,
@@ -13518,6 +13525,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         case .preview(let pngData, let step):
                             let uri = "data:image/png;base64," + pngData.base64EncodedString()
                             emit(ImageStreamEventDTO(type: "preview", job_id: jobID, step: step, image: uri))
+                        case .imageCompleted(let image, let index):
+                            produced.append(image)
+                            emit(ImageStreamEventDTO(type: "image_completed", job_id: jobID,
+                                images: [Self.imageResult(for: image, responseFormat: responseFormat)], index: index))
                         case .completed(let images):
                             produced = images
                             await onCompleted?(images)

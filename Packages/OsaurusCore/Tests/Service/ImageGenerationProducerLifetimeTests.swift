@@ -160,7 +160,8 @@ struct ImageProducerFixture: Sendable {
          canonical: String? = nil, kind: ModelKind = .imageGen,
          capabilities: ImageModelCapabilities? = nil, identityStem: String? = nil,
          heldCheckpoints: Set<ImageGenerationService.StreamCheckpoint> = [],
-         effectiveParameters: EffectiveImageParameters? = nil, limits: FluxModelLimits? = nil) {
+         effectiveParameters: EffectiveImageParameters? = nil, limits: FluxModelLimits? = nil,
+         failAfterImages: Int? = nil) {
         let newLog = ImageProducerLog()
         let newProbe = ImageProducerProbe(held: held, log: newLog)
         let newCheckpoints = ImageProducerCheckpoints(held: heldCheckpoints)
@@ -181,7 +182,8 @@ struct ImageProducerFixture: Sendable {
                 loader: { [weak newProbe] _, _ in
                     guard let newProbe else { throw CancellationError() }
                     await newProbe.loaded(name)
-                    return ControlledImageProducer(probe: newProbe, effectiveParameters: effectiveParameters)
+                    return ControlledImageProducer(probe: newProbe, effectiveParameters: effectiveParameters,
+                        failAfterImages: failAfterImages)
                 }))
             let info = ImageModelInfo(id: name, canonicalName: canonical ?? name,
                 displayName: name, kind: kind.rawValue, ready: true,
@@ -264,6 +266,7 @@ actor ImageProducerProbe {
 struct ControlledImageProducer: ImageGenerator, ImageEditor, ImageUpscaler {
     let probe: ImageProducerProbe
     var effectiveParameters: EffectiveImageParameters? = nil
+    var failAfterImages: Int? = nil
     func generate(_ request: ImageGenRequest) -> AsyncThrowingStream<ImageGenEvent, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -271,8 +274,25 @@ struct ControlledImageProducer: ImageGenerator, ImageEditor, ImageUpscaler {
                 continuation.yield(.step(step: 1, total: request.steps, etaSeconds: nil))
                 await probe.wait(index)
                 await probe.ended(index)
-                continuation.yield(.completed(url: request.outputDir.appendingPathComponent("fixture-\(index).png"),
-                    seed: request.seed ?? 0, effectiveParameters: effectiveParameters))
+                if request.numImages > 1 {
+                    guard let plan = try? ImageBatchPlan(request, maximumImages: 8, maximumParallelImages: 1) else {
+                        continuation.finish(throwing: ImageGenerationError.invalidRequest("invalid fixture batch"))
+                        return
+                    }
+                    for (imageIndex, seed) in plan.seeds.enumerated() {
+                        if imageIndex == failAfterImages {
+                            continuation.yield(.failed(message: "injected image failure", hfAuth: false))
+                            continuation.finish()
+                            return
+                        }
+                        continuation.yield(.imageCompleted(
+                            url: request.outputDir.appendingPathComponent("fixture-\(index)-\(imageIndex).png"),
+                            seed: seed, index: imageIndex, effectiveParameters: effectiveParameters))
+                    }
+                } else {
+                    continuation.yield(.completed(url: request.outputDir.appendingPathComponent("fixture-\(index).png"),
+                        seed: request.seed ?? 0, effectiveParameters: effectiveParameters))
+                }
                 continuation.finish()
             }
         }

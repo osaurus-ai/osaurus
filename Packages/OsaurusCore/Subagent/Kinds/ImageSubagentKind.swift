@@ -47,6 +47,8 @@ struct ImageJobParams: Sendable {
     var strength: Float?
     var seed: UInt64?
     var numImages: Int?
+    var seeds: [UInt64]? = nil
+    var batchSize: Int? = nil
 
     /// `source_paths` present → edit an existing image; otherwise generate.
     var isEdit: Bool { !sourcePaths.isEmpty }
@@ -133,6 +135,9 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             let target =
                 selected.mediaModel?.target
                 ?? MediaModelTarget(backend: .local, modelID: selected.id)
+            if target.backend != .local, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1 {
+                throw SubagentError.unavailable("Explicit image batches are supported by local image generation only.")
+            }
             if target.backend == .local {
                 // Canonical identity is from installed ImageModelInfo, copied
                 // into the picker; it is independent of a renamed directory.
@@ -171,6 +176,13 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     func prepareLocalParameters(canonical: String?, defaultGuidance: Float?) throws {
         params = try ImageTool.paramsForResolvedLocalModel(params, argumentsJSON: argumentsJSON,
             canonical: canonical, defaultGuidance: defaultGuidance)
+        guard (1...8).contains(params.numImages ?? 1), (params.batchSize ?? 1) > 0,
+            params.seeds.map({ $0.count == (params.numImages ?? 1) }) ?? true else {
+            throw ImageGenerationError.invalidRequest("Image batch requires 1...8 images, a positive batch_size and one seed per image when seeds is supplied")
+        }
+        if params.isEdit, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1 {
+            throw ImageGenerationError.invalidRequest("Image batch parameters are generation-only")
+        }
         usesQwen21Parameters = ImageModelRequestPolicy.isQwen21Family(canonical)
     }
 
@@ -180,7 +192,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         NativeImageGenerateJobRequest(prompt: params.prompt, model: usesQwen21Parameters ? (resolved.id ?? resolved.name) : resolved.name,
             negativePrompt: params.negativePrompt, width: params.width, height: params.height,
             steps: params.steps, guidance: params.guidance, seed: params.seed,
-            numImages: 1, outputFormat: .png, context: context)
+            numImages: params.numImages ?? 1, seeds: params.seeds, batchSize: params.batchSize ?? 1,
+            outputFormat: .png, context: context)
     }
 
     /// Every local image run owns one producer and may swap the parent under

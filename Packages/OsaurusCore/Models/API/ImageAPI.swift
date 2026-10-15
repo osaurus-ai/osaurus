@@ -44,6 +44,8 @@ struct ImageGenerationRequestDTO: Decodable, Sendable {
     let prompt: String
     let negative_prompt: String?
     let n: Int?
+    var seeds: [UInt64]? = nil
+    var batch_size: Int? = nil
     let size: String?
     let width: Int?
     let height: Int?
@@ -247,6 +249,7 @@ struct ImageStreamEventDTO: Encodable {
     var eta_seconds: Double? = nil
     var image: String? = nil
     var images: [ImageResultDTO]? = nil
+    var index: Int? = nil
     var message: String? = nil
     var hf_auth: Bool? = nil
 }

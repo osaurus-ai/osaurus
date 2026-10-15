@@ -45,6 +45,8 @@ struct NativeImageGenerateJobRequest: Sendable {
     var guidance: Float?
     var seed: UInt64?
     var numImages: Int
+    var seeds: [UInt64]?
+    var batchSize: Int
     var outputFormat: ImageOutputFormat
     var context: NativeImageJobContext
 
@@ -58,6 +60,8 @@ struct NativeImageGenerateJobRequest: Sendable {
         guidance: Float? = nil,
         seed: UInt64? = nil,
         numImages: Int = 1,
+        seeds: [UInt64]? = nil,
+        batchSize: Int = 1,
         outputFormat: ImageOutputFormat = .png,
         context: NativeImageJobContext = .empty
     ) {
@@ -69,7 +73,9 @@ struct NativeImageGenerateJobRequest: Sendable {
         self.steps = steps
         self.guidance = guidance
         self.seed = seed
-        self.numImages = max(1, min(4, numImages))
+        self.numImages = numImages
+        self.seeds = seeds
+        self.batchSize = batchSize
         self.outputFormat = outputFormat
         self.context = context
     }
@@ -379,7 +385,7 @@ actor NativeImageJobCoordinator {
                                 steps: request.steps,
                                 guidance: request.guidance,
                                 seed: request.seed,
-                                numImages: request.numImages,
+                                numImages: request.numImages, seeds: request.seeds, batchSize: request.batchSize,
                                 outputFormat: request.outputFormat
                             )
                             return await self.imageService.generate(params, jobID: jobID, interrupt: interrupt)
@@ -587,6 +593,8 @@ actor NativeImageJobCoordinator {
                     )
                 case .preview:
                     continue
+                case .imageCompleted(let image, _):
+                    produced.append(image)
                 case .completed(let images):
                     produced = images
                 case .failed(let message, _):
