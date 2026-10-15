@@ -145,11 +145,17 @@ struct ImageProducerFixture: Sendable {
         let newError = ImageProducerErrorSignal()
         let stem = (identityStem ?? canonical ?? "image-service") + "-fixture-" + UUID().uuidString.lowercased()
         let nameA = stem + "-a", nameB = stem + "-b"
+        let metadata: (@Sendable (URL) throws -> FluxModelLimits)?
+        if let limits {
+            metadata = { _ in limits }
+        } else {
+            metadata = nil
+        }
         var targets: [String: ImageGenerationService.LoadTarget] = [:]
         for name in [nameA, nameB] {
             ModelRegistry.register(ModelEntry(name: name, displayName: name,
                 kind: kind, defaultSteps: 40, defaultGuidance: 1,
-                limits: limits.map { value in { _ in value } },
+                limits: metadata,
                 loader: { [weak newProbe] _, _ in
                     guard let newProbe else { throw CancellationError() }
                     await newProbe.loaded(name)
