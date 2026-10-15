@@ -57,6 +57,15 @@ struct MemorySafetySection: View {
                 }
             }
 
+            SettingsToggle(
+                title: L("Keep Model in Memory"),
+                description:
+                    "Keeps model weights resident while loaded when they fit the GPU ceiling and OS reserve. Other apps may slow down. Takes effect after reload; the idle unload timer is unchanged.",
+                isOn: $draft.memorySafety.keepModelInMemory
+            )
+            .accessibilityIdentifier("server.memorySafety.keepModelInMemory")
+            .settingsLandingAnchor("server.memorySafety.keepModelInMemory")
+
             SettingsDivider()
 
             SettingsSubsection(label: "Resolved Plan") {

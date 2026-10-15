@@ -797,6 +797,14 @@ public enum SettingsSearchIndex {
             subTab: "cache"
         ),
         .init(
+            id: "server.memorySafety.keepModelInMemory",
+            tab: .server,
+            section: "Memory Safety",
+            title: "Keep Model in Memory",
+            keywords: ["pin weights", "wired memory", "gpu residency", "page eviction"],
+            subTab: "memorySafety"
+        ),
+        .init(
             id: "server.memorySafety",
             tab: .server,
             section: "Memory Safety",

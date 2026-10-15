@@ -280,6 +280,15 @@ struct ServerControllerConfigLoadingTests {
             )
         )
 
+        var residencyChanged = base
+        residencyChanged.memorySafety.keepModelInMemory.toggle()
+        #expect(
+            ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: residencyChanged
+            )
+        )
+
         var memorySafetyChanged = base
         memorySafetyChanged.memorySafety.mode = .strict
         memorySafetyChanged.memorySafety.slider = 1
