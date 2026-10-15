@@ -615,7 +615,7 @@ actor NativeImageJobCoordinator {
             residencySettled = true
             try checkInterrupt()
             record(NativeImageJobProgress(jobID: jobID, phase: .completed, model: model))
-            activityRow?.finish(producedCount: produced.count, jobId: jobID, error: nil)
+            activityRow?.finish(producedCount: produced.count, jobId: jobID, images: produced, error: nil)
             continuation.yield(
                 NativeImageJobResult(
                     jobID: jobID,

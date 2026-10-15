@@ -13491,6 +13491,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 emit(ImageStreamEventDTO(type: "queued", job_id: jobID))
                 let prepared = await build()
                 let stream = prepared.stream
+                var produced: [GeneratedImage] = []
                 do {
                     for try await event in stream {
                         switch event {
@@ -13511,6 +13512,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             let uri = "data:image/png;base64," + pngData.base64EncodedString()
                             emit(ImageStreamEventDTO(type: "preview", job_id: jobID, step: step, image: uri))
                         case .completed(let images):
+                            produced = images
                             await onCompleted?(images)
                             let results = images.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
                             emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
@@ -13540,7 +13542,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    details: activityDetails.merging(prepared.activityDetails) { _, actual in actual }
+                    details: ImageEffectiveParameters.activityDetails(
+                        activityDetails.merging(prepared.activityDetails) { _, actual in actual }, images: produced)
                 )
             }
             return
@@ -13638,7 +13641,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers.append(contentsOf: cors)
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
             }
-            var details = activityDetails.merging(prepared.activityDetails) { _, actual in actual }
+            var details = ImageEffectiveParameters.activityDetails(
+                activityDetails.merging(prepared.activityDetails) { _, actual in actual }, images: produced)
             details["count"] = String(produced.count)
             logSelf.logRequest(
                 method: "POST",

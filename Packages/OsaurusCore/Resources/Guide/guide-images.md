@@ -25,6 +25,8 @@ Osaurus can create and edit images entirely on your Mac using local image models
 
 The server exposes an OpenAI-compatible endpoint at `POST /v1/images/generations` when it is running, using the same local models.
 
+Qwen-Image 2.1/Turbo results include `effective_parameters`: the actual dimensions, step count, guidance, seed and sampling schedule. Turbo uses its bundle's fixed schedule even when a different step count was requested. The generation panel displays the actual values after completion. Other backends omit this field until they support runtime parameter reporting; requested values are not a substitute for it.
+
 ## Notes
 
 - Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). The built-in Orchestrator has no image tool of its own — add an image-enabled agent to Settings → Orchestrator → Subagents → Allowed subagents and the Orchestrator delegates "generate an image of …" to it.

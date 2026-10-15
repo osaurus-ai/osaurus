@@ -246,7 +246,7 @@ enum MediaActivityLogger {
             return copy
         }
 
-        func finish(producedCount: Int?, jobId: String? = nil, error: String?) {
+        func finish(producedCount: Int?, jobId: String? = nil, images: [GeneratedImage] = [], error: String?) {
             let durationMs = Date().timeIntervalSince(started) * 1000
             let host = EgressInfo.host(from: endpoint)
             let isRemote = host != nil
@@ -263,6 +263,7 @@ enum MediaActivityLogger {
             if let durationSeconds, durationSeconds > 0 { details["duration_seconds"] = String(format: "%.0f", durationSeconds) }
             if let jobId, !jobId.isEmpty { details["job_id"] = jobId }
             if let prompt { details["prompt_chars"] = String(prompt.count) }
+            details = ImageEffectiveParameters.activityDetails(details, images: images)
             let egress = isRemote
                 ? EgressInfo(
                     destinationLabel: provider,

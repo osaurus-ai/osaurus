@@ -32,6 +32,23 @@ public struct ImageEffectiveParameters: Sendable, Codable, Equatable {
         return result
     }
 
+    /// Do not label requested values as actual in Insights. Only replace a
+    /// shared field when every returned image reports the same effective value.
+    static func activityDetails(_ requested: [String: String], images: [GeneratedImage]) -> [String: String] {
+        let parameters = images.compactMap(\.effectiveParameters)
+        guard parameters.count == images.count, let first = parameters.first else { return requested }
+        var result = requested
+        if parameters.allSatisfy({ $0.steps == first.steps }) {
+            result["requested_steps"] = requested["steps"]
+            result["steps"] = String(first.steps)
+        }
+        if parameters.allSatisfy({ $0.width == first.width && $0.height == first.height }) {
+            result["requested_size"] = requested["size"]
+            result["size"] = "\(first.width)x\(first.height)"
+        }
+        return result
+    }
+
     public init(
         width: Int, height: Int, steps: Int, guidance: Float, seed: UInt64,
         sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,

@@ -31,6 +31,9 @@ struct ImageEffectiveParametersTests {
         #expect(tool["steps"] as? Int == 8)
         #expect(tool["seed"] as? UInt64 == UInt64.max)
         #expect(tool["strength"] == nil && tool["modelRevision"] == nil)
+        let details = ImageEffectiveParameters.activityDetails(["steps": "40", "size": "1024x1024"], images: [image])
+        #expect(details["steps"] == "8" && details["requested_steps"] == "40")
+        #expect(details["size"] == "768x512" && details["requested_size"] == "1024x1024")
         await fixture.service.unload()
     }
 
@@ -55,5 +58,7 @@ struct ImageEffectiveParametersTests {
         let result = ImageResultDTO(url: "file:///image.png", b64_json: nil, seed: 7)
         let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
         #expect(json["effective_parameters"] == nil)
+        let requested = ["steps": "40"]
+        #expect(ImageEffectiveParameters.activityDetails(requested, images: [.init(url: URL(fileURLWithPath: "/image.png"), seed: 7)]) == requested)
     }
 }
