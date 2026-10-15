@@ -54,6 +54,7 @@ struct ImageGenerationRequestDTO: Decodable, Sendable {
     var sampler: String? = nil
     var scheduler: String? = nil
     var shift: Float? = nil
+    var adapters: [ImageAdapterParameters]? = nil
     var preview_interval: Int? = nil
     var preview_max_pixel: Int? = nil
     let seed: UInt64?
@@ -92,6 +93,7 @@ struct ImageEditRequestDTO: Decodable, Sendable {
     var sampler: String? = nil
     var scheduler: String? = nil
     var shift: Float? = nil
+    var adapters: [ImageAdapterParameters]? = nil
     var preview_interval: Int? = nil
     var preview_max_pixel: Int? = nil
     let seed: UInt64?

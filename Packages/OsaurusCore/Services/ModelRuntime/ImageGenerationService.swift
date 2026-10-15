@@ -392,7 +392,9 @@ public actor ImageGenerationService {
             outputDir: outputDir,
             outputFormat: Self.engineFormat(params.outputFormat),
             sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
-            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel
+            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel,
+            adapters: params.adapters.map { FluxAdapter(url: $0.url, scale: $0.scale,
+                target: FluxAdapter.Target(rawValue: $0.target.rawValue)!) }
         )
     }
 
@@ -447,7 +449,9 @@ public actor ImageGenerationService {
                 outputDir: outputDir,
                 outputFormat: Self.engineFormat(params.outputFormat),
             sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
-            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel
+            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel,
+            adapters: params.adapters.map { FluxAdapter(url: $0.url, scale: $0.scale,
+                target: FluxAdapter.Target(rawValue: $0.target.rawValue)!) }
             )
             return await engine.edit(request)
         }

@@ -53,6 +53,7 @@ struct NativeImageGenerateJobRequest: Sendable {
     var shift: Float?
     var previewInterval: Int?
     var previewMaxPixel: Int
+    var adapters: [ImageAdapterParameters]
     var context: NativeImageJobContext
 
     init(
@@ -69,7 +70,7 @@ struct NativeImageGenerateJobRequest: Sendable {
         batchSize: Int = 1,
         outputFormat: ImageOutputFormat = .png,
         sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
-        previewInterval: Int? = nil, previewMaxPixel: Int = 256,
+        previewInterval: Int? = nil, previewMaxPixel: Int = 256, adapters: [ImageAdapterParameters] = [],
         context: NativeImageJobContext = .empty
     ) {
         self.prompt = prompt
@@ -89,6 +90,7 @@ struct NativeImageGenerateJobRequest: Sendable {
         self.shift = shift
         self.previewInterval = previewInterval
         self.previewMaxPixel = previewMaxPixel
+        self.adapters = adapters
         self.context = context
     }
 }
@@ -110,6 +112,7 @@ struct NativeImageEditJobRequest: Sendable {
     var shift: Float?
     var previewInterval: Int?
     var previewMaxPixel: Int
+    var adapters: [ImageAdapterParameters]
     var context: NativeImageJobContext
 
     init(
@@ -125,7 +128,7 @@ struct NativeImageEditJobRequest: Sendable {
         seed: UInt64? = nil,
         outputFormat: ImageOutputFormat = .png,
         sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
-        previewInterval: Int? = nil, previewMaxPixel: Int = 256,
+        previewInterval: Int? = nil, previewMaxPixel: Int = 256, adapters: [ImageAdapterParameters] = [],
         context: NativeImageJobContext = .empty
     ) {
         self.prompt = prompt
@@ -144,6 +147,7 @@ struct NativeImageEditJobRequest: Sendable {
         self.shift = shift
         self.previewInterval = previewInterval
         self.previewMaxPixel = previewMaxPixel
+        self.adapters = adapters
         self.context = context
     }
 }
@@ -412,7 +416,7 @@ actor NativeImageJobCoordinator {
                                 numImages: request.numImages, seeds: request.seeds, batchSize: request.batchSize,
                                 outputFormat: request.outputFormat,
                                 sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
-                                previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel
+                                previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel, adapters: request.adapters
                             )
                             return await self.imageService.generate(params, jobID: jobID, interrupt: interrupt)
                         },
@@ -455,7 +459,7 @@ actor NativeImageJobCoordinator {
                                 seed: request.seed,
                                 outputFormat: request.outputFormat,
                                 sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
-                                previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel
+                                previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel, adapters: request.adapters
                             )
                             return await self.imageService.edit(params, jobID: jobID, interrupt: interrupt)
                         },

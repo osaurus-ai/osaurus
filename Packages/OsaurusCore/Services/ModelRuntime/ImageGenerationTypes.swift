@@ -19,6 +19,29 @@ public enum ImageOutputFormat: String, Sendable, Codable, CaseIterable {
     case webp
 }
 
+/// A local safetensor adapter. Kept independent of the engine module so API,
+/// tools and delegation carry exactly the same request contract.
+public struct ImageAdapterParameters: Sendable, Codable, Hashable {
+    public enum Target: String, Sendable, Codable { case transformer, textEncoder, both }
+    public var url: URL
+    public var scale: Float
+    public var target: Target
+    public init(url: URL, scale: Float = 1, target: Target = .transformer) {
+        self.url = url; self.scale = scale; self.target = target
+    }
+    enum CodingKeys: String, CodingKey { case url, scale, target }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(URL.self, forKey: .url)
+        scale = try c.decodeIfPresent(Float.self, forKey: .scale) ?? 1
+        target = try c.decodeIfPresent(Target.self, forKey: .target) ?? .transformer
+        guard url.isFileURL, scale.isFinite else {
+            throw DecodingError.dataCorruptedError(forKey: .url, in: c,
+                debugDescription: "Adapters require a local file URL and finite scale")
+        }
+    }
+}
+
 /// Capability flags the UI uses to show/hide controls for a given model.
 public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
     public var textToImage: Bool
@@ -126,6 +149,7 @@ public struct ImageGenerationParameters: Sendable {
     public var shift: Float?
     public var previewInterval: Int?
     public var previewMaxPixel: Int
+    public var adapters: [ImageAdapterParameters]
 
     public init(
         model: String,
@@ -141,7 +165,7 @@ public struct ImageGenerationParameters: Sendable {
         batchSize: Int = 1,
         outputFormat: ImageOutputFormat = .png,
         sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
-        previewInterval: Int? = nil, previewMaxPixel: Int = 256
+        previewInterval: Int? = nil, previewMaxPixel: Int = 256, adapters: [ImageAdapterParameters] = []
     ) {
         self.model = model
         self.prompt = prompt
@@ -160,6 +184,7 @@ public struct ImageGenerationParameters: Sendable {
         self.shift = shift
         self.previewInterval = previewInterval
         self.previewMaxPixel = previewMaxPixel
+        self.adapters = adapters
     }
 }
 
@@ -185,6 +210,7 @@ public struct ImageEditParameters: Sendable {
     public var shift: Float?
     public var previewInterval: Int?
     public var previewMaxPixel: Int
+    public var adapters: [ImageAdapterParameters]
 
     public init(
         model: String,
@@ -200,7 +226,7 @@ public struct ImageEditParameters: Sendable {
         seed: UInt64? = nil,
         outputFormat: ImageOutputFormat = .png,
         sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
-        previewInterval: Int? = nil, previewMaxPixel: Int = 256
+        previewInterval: Int? = nil, previewMaxPixel: Int = 256, adapters: [ImageAdapterParameters] = []
     ) {
         self.model = model
         self.prompt = prompt
@@ -219,6 +245,7 @@ public struct ImageEditParameters: Sendable {
         self.shift = shift
         self.previewInterval = previewInterval
         self.previewMaxPixel = previewMaxPixel
+        self.adapters = adapters
     }
 }
 
