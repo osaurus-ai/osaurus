@@ -86,6 +86,16 @@ struct SeatbeltSandboxTests {
         }
     }
 
+    /// `isSupported` is read on the main actor from hot paths (chat preview
+    /// recomposition via `effectiveAutonomousExec`), so it must be a
+    /// process-lifetime constant rather than a filesystem probe per access.
+    @Test("isSupported is resolved once and matches the host binary")
+    func isSupportedIsStableAndAccurate() {
+        let expected = FileManager.default.isExecutableFile(atPath: SeatbeltSandbox.sandboxExecPath)
+        #expect(SeatbeltSandbox.isSupported == expected)
+        #expect(SeatbeltSandbox.isSupported == SeatbeltSandbox.isSupported)
+    }
+
     @Test("first sandbox operation resolves the actor-local availability cache")
     func firstOperationResolvesAvailability() async {
         let manager = SandboxManager()

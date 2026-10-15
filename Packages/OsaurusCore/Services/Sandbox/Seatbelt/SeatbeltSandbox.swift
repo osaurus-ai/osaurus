@@ -58,9 +58,14 @@ public enum SeatbeltSandbox {
 
     /// True when this host can run the Seatbelt fallback at all.
     /// Only meaningful when `SandboxBackend.current == .seatbelt`.
-    public static var isSupported: Bool {
-        FileManager.default.isExecutableFile(atPath: sandboxExecPath)
-    }
+    ///
+    /// Resolved once per process: `sandbox-exec` ships with the OS and
+    /// cannot appear or disappear while the app runs. This is read on the
+    /// main actor via `SandboxManager.resolveAvailability()` (e.g. from
+    /// `AgentManager.effectiveAutonomousExec` during chat preview
+    /// recomposition), so re-stat'ing the binary on every access put a
+    /// blocking filesystem syscall on the UI thread and caused app hangs.
+    public static let isSupported: Bool = FileManager.default.isExecutableFile(atPath: sandboxExecPath)
 
     /// Scratch directory granted read-write in every profile and
     /// exported as `TMPDIR` — the user's real `$TMPDIR` stays denied.
