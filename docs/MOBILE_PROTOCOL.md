@@ -577,6 +577,20 @@ Both endpoints are owner-only (`403 owner_only`). A Mac too old for this
 ignores `osaurus_run_id` and answers `/runs` with 404, so the client
 behaves as before.
 
+### 6.5 Voice-call turns
+
+The phone speaks a reply aloud during a voice call, so a turn of a call
+**SHOULD** carry `"osaurus_voice_call": true` in the §6.3 body. The Mac then
+adds a note asking for a short, plain spoken answer (a few sentences, no
+markdown or lists) to the end of the latest user message, after the
+conversation, so the system prompt and history stay the same as the chat
+around the call and a local model's prompt cache keeps them. The note is
+never saved: a continued chat (§14.5) stores the turn without it.
+
+Owner callers only (loopback or a master-scoped key); for anyone else the
+field is ignored. A Mac too old for it ignores the field, and the reply is
+as long as in the chat.
+
 ---
 
 ## 7. Presence, errors, and key lifecycle

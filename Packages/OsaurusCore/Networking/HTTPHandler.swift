@@ -10209,12 +10209,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     PhoneChatHandoff.shared.notePhoneRun(sessionId: continuedSessionId, keyNonce: callerKeyNonce)
                 }
             }
+            // A turn of the owner's phone call: ask for a short, spoken reply,
+            // after the conversation so the prompt and history keep their cache
+            // (docs/MOBILE_PROTOCOL.md §6.5). Taken off again before saving.
+            let voiceCall = includeToolDetail && req.osaurus_voice_call == true
+            if voiceCall { VoiceCallReplies.addNote(to: &messages) }
             // Append this run's turns to the continued chat when the request
             // ends, however it ends (finished, errored, client gone).
             defer {
                 if let continuedSessionId {
                     let start = min(persistFrom.value, messages.count)
-                    let appended = Array(messages[start...]).filter { $0.role != "system" }
+                    let turns = Array(messages[start...])
+                    let saved = voiceCall ? VoiceCallReplies.removingNote(from: turns) : turns
+                    let appended = saved.filter { $0.role != "system" }
                     let runModel = model
                     if !appended.isEmpty {
                         Task { @MainActor in
