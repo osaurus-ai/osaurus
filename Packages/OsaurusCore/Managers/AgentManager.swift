@@ -1166,13 +1166,20 @@ extension AgentManager {
     /// own persisted value; an agent with no explicit choice defaults ON
     /// where the sandbox is supported — the chat chip is gone, so agent
     /// settings is the opt-out (which persists an explicit `enabled: false`).
+    ///
+    /// Reads availability from `SandboxManager.State.shared.availability` — the
+    /// @MainActor-cached value seeded at launch — rather than calling
+    /// `SandboxManager.resolveAvailability()` directly. The direct call crosses
+    /// a Swift actor boundary synchronously, blocking the main thread whenever
+    /// this is evaluated during SwiftUI body rendering (e.g. FloatingInputCard).
+    @MainActor
     public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
         guard let agent = agent(for: agentId) else {
             return nil
         }
         return Self.resolvedAutonomousExec(
             for: agent,
-            availability: SandboxManager.resolveAvailability()
+            availability: SandboxManager.State.shared.availability
         )
     }
 
