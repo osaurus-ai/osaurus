@@ -12987,7 +12987,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
-        guard dto.allow_remote_media_spend == true else {
+        guard request.target.backend == .local || dto.allow_remote_media_spend == true else {
             sendImageError(
                 head: head,
                 context: context,

@@ -23,6 +23,10 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
         return "video: \(value.count > 72 ? String(value.prefix(72)) + "…" : value)"
     }
 
+    func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
+        resolved.isLocal ? .localExclusive : .remote
+    }
+
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = scope.agentId == Agent.defaultId
@@ -70,7 +74,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
         }
         try Self.validate(params: params, model: model)
         selectedModel = model
-        return ResolvedModel(name: model.displayName, id: model.id, isLocal: false)
+        return ResolvedModel(name: model.displayName, id: model.id, isLocal: model.target.backend == .local)
     }
 
     func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision {
@@ -109,7 +113,8 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                 values: [
                     "resolved_model": model.displayName,
                     "quote_usd": quote.usd,
-                    "billing_notice": "This queues a billable remote video job.",
+                    "billing_notice": model.target.backend == .local
+                        ? "This runs a local video job on this Mac." : "This queues a billable remote video job.",
                 ]
             )
             let approved = await ToolPermissionPromptService.requestApproval(
@@ -139,7 +144,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
         do {
             let media = try await MediaGenerationCoordinator.shared.generateVideo(
                 request,
-                approvedQuote: quote
+                approvedQuote: quote, interrupt: interrupt
             ) { event in
                 switch event {
                 case .queued(let id):
@@ -159,7 +164,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                     feed.emitPhase("cancelled")
                 }
             }
-            let payload: [String: Any] = [
+            var payload: [String: Any] = [
                 "kind": "generated_media_job",
                 "media_type": "video",
                 "job_id": media.url.deletingPathExtension().lastPathComponent,
@@ -175,6 +180,9 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                     "mime_type": media.mimeType,
                 ],
             ]
+            if let effective = media.effectiveVideo {
+                payload["effective_parameters"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(effective))
+            }
             return SubagentResult(payload: payload, summary: "Generated a video with \(resolved.name).")
         } catch let error as MediaGenerationError {
             let retryable: Bool
@@ -211,7 +219,9 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
             duration: params.duration,
             aspectRatio: params.aspectRatio,
             resolution: params.resolution,
-            audio: params.audio
+            audio: params.audio,
+            width: params.width, height: params.height, frameCount: params.frameCount,
+            fps: params.fps, steps: params.steps, guidance: params.guidance, seed: params.seed
         )
     }
 

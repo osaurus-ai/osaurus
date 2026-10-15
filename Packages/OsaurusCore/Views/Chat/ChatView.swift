@@ -6055,7 +6055,9 @@ final class ChatSession: ObservableObject {
                 "resolved_model": model.displayName,
                 "duration": duration,
                 "quote_usd": quote.usd,
-                "billing_notice": "Approving queues a billable remote job that cannot be cancelled upstream.",
+                "billing_notice": model.target.backend == .local
+                    ? "Approving runs this video locally on your Mac."
+                    : "Approving queues a billable remote job that cannot be cancelled upstream.",
             ]
             approvalValues["resolution"] = settings.resolution
             approvalValues["aspect_ratio"] = settings.aspectRatio

@@ -386,6 +386,54 @@ actor NativeImageJobCoordinator {
         self.imageService = imageService
     }
 
+    /// Video uses the same swap/keep-parent policy and restoration helpers as
+    /// images, rather than introducing another model-residency setting.
+    func generateVideo(_ request: MediaVideoGenerationRequest, context: NativeImageJobContext,
+                       interrupt: InterruptToken?,
+                       progress: @escaping @Sendable (MediaGenerationEvent) -> Void) async throws -> GeneratedMedia {
+        let info = try await imageService.validateVideo(request)
+        let config = SubagentConfigurationStore.snapshot()
+        let jobID = UUID().uuidString
+        let required = Int64(clamping: info.totalBytes)
+        let plan = try await SubagentResidency.planForLocalTarget(modelName: info.id, requiredBytes: required,
+            config: config, idleWaitSeconds: config.budgets.maxElapsedSeconds,
+            deniedMessage: "Cannot hand off the invoking model for a video job.",
+            invokingParentModelName: context.invocation.parentModelName)
+        try await ChatResidencyHandoff.memoryPreflight(requiredBytes: required,
+            enabled: config.ramSafetyPreflightEnabled, physicalCapacityOnly: true)
+        var lease = ChatResidencyLease.empty
+        var retention: ParentResidencyRetention?
+        var started = false
+        do {
+            try Task.checkCancellation()
+            if interrupt?.isInterrupted == true { throw CancellationError() }
+            lease = try await prepareChatResidencyIfNeeded(plan: plan, config: config,
+                invocation: context.invocation, jobID: jobID, record: { _ in progress(.queued(jobID: jobID)) })
+            if plan.coexists {
+                let idle = await InferenceLoadCoordinator.shared.waitForChatIdle(
+                    timeoutMs: max(15, min(config.budgets.maxElapsedSeconds, 300)) * 1000)
+                guard idle else { throw ChatResidencyHandoff.HandoffError.chatBusy }
+                retention = try await ModelRuntime.shared.retainInvokingParent(named: context.invocation.parentModelName,
+                    for: info.id, source: context.invocation.source?.inferenceSource)
+            }
+            if config.ramSafetyPreflightEnabled {
+                _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
+                try await ChatResidencyHandoff.memoryPreflight(requiredBytes: required, enabled: true)
+            }
+            started = true
+            let media = try await imageService.generateVideo(request, interrupt: interrupt, progress: progress)
+            _ = await finishResidency(lease: lease, retention: retention,
+                unloadImage: config.imageJobLoadPolicy.unloadAfterJob(restoresParent: !lease.isEmpty),
+                jobID: jobID, context: context)
+            return media
+        } catch {
+            _ = await finishResidency(lease: lease, retention: retention,
+                unloadImage: started && config.imageJobLoadPolicy.unloadAfterJob(restoresParent: !lease.isEmpty),
+                jobID: jobID, context: context)
+            throw error
+        }
+    }
+
     func generate(_ request: NativeImageGenerateJobRequest, interrupt: InterruptToken? = nil) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {

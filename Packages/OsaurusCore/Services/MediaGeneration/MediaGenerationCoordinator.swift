@@ -162,7 +162,11 @@ actor MediaGenerationCoordinator {
         try await validateVideoRequest(request)
         switch request.target.backend {
         case .local:
-            throw MediaGenerationError.unsupported("Local video generation is not available.")
+            _ = try LocalVideoRequestPolicy(request)
+            guard try await ImageGenerationService.shared.availableVideoModels().contains(where: { $0.target == request.target }) else {
+                throw MediaGenerationError.modelUnavailable(request.target.modelID)
+            }
+            return MediaVideoQuote(usd: 0)
         case .remoteProvider(let providerID):
             let provider = await MainActor.run {
                 RemoteProviderManager.shared.configuredProvider(id: providerID)
@@ -194,10 +198,16 @@ actor MediaGenerationCoordinator {
     func generateVideo(
         _ request: MediaVideoGenerationRequest,
         approvedQuote: MediaVideoQuote,
+        interrupt: InterruptToken? = nil,
         progress: @escaping @Sendable (MediaGenerationEvent) -> Void
     ) async throws -> GeneratedMedia {
         try await validateVideoRequest(request)
         try Task.checkCancellation()
+
+        if request.target.backend == .local {
+            return try await NativeImageJobCoordinator.shared.generateVideo(request,
+                context: .current(), interrupt: interrupt, progress: progress)
+        }
 
         var durableID: UUID?
         do {
@@ -247,6 +257,30 @@ actor MediaGenerationCoordinator {
         _ request: MediaVideoGenerationRequest,
         approvedQuote: MediaVideoQuote
     ) async throws -> DurableMediaJob {
+        if request.target.backend == .local {
+            try await validateVideoRequest(request)
+            _ = try await ImageGenerationService.shared.validateVideo(request)
+            let id = UUID()
+            let job = DurableMediaJob(id: id, backend: .local, providerID: nil,
+                modelID: request.target.modelID, kind: request.sourceImage == nil ? .textToVideo : .imageToVideo,
+                queueID: id.uuidString, downloadURL: nil, quoteUSD: 0, state: .queued, outputURL: nil,
+                errorMessage: nil, cleanupPending: false, createdAt: Date(), updatedAt: Date())
+            try await jobs.upsert(job)
+            let context = NativeImageJobContext.current()
+            recoveryTasks[id] = Task {
+                do {
+                    let media = try await NativeImageJobCoordinator.shared.generateVideo(request,
+                        context: context, interrupt: nil, progress: { _ in })
+                    try await self.jobs.update(id: id, state: .completed, outputURL: media.url,
+                        effectiveVideo: media.effectiveVideo)
+                } catch {
+                    try? await self.jobs.update(id: id, state: .failed, errorMessage: error.localizedDescription)
+                }
+                await self.recoveryFinished(id)
+            }
+            await notifyJobChanged()
+            return job
+        }
         let job = try await submitVideo(request, approvedQuote: approvedQuote)
         await notifyJobChanged()
         scheduleRecovery(job)
@@ -405,7 +439,7 @@ actor MediaGenerationCoordinator {
                 case .osaurusCloud:
                     _ = try await self.retrieveCloud(job: job, progress: { _ in })
                 case .local:
-                    throw MediaGenerationError.unsupported("Local jobs are not durable.")
+                    throw MediaGenerationError.unsupported("Local video generation was interrupted by an app restart. Submit the job again.")
                 }
             } catch {
                 try? await self.jobs.update(
@@ -605,6 +639,10 @@ actor MediaGenerationCoordinator {
             throw MediaGenerationError.invalidRequest("A duration is required.")
         }
         guard request.target.backend != .local else { return }
+        guard request.width == nil, request.height == nil, request.frameCount == nil,
+            request.fps == nil, request.steps == nil, request.guidance == nil, request.seed == nil else {
+            throw MediaGenerationError.invalidRequest("Explicit dimensions, frames, fps, steps, guidance and seed require a local video model.")
+        }
         let model = try await requiredMediaModel(for: request.target)
         let expectedKind: MediaGenerationKind =
             request.sourceImage == nil ? .textToVideo : .imageToVideo

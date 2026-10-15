@@ -131,9 +131,16 @@ struct VideoGenerationRequestDTO: Decodable {
     let audio: Bool?
     let quote_token: String?
     let allow_remote_media_spend: Bool?
+    var width: Int? = nil
+    var height: Int? = nil
+    var frame_count: Int? = nil
+    var fps: Int? = nil
+    var steps: Int? = nil
+    var guidance: Float? = nil
+    var seed: UInt64? = nil
 
     func request() -> MediaVideoGenerationRequest? {
-        guard let target = target.target(), target.backend != .local else { return nil }
+        guard let target = target.target() else { return nil }
         let source = source_image.flatMap(HTTPHandler.decodeImageInputWithMIME)
         if source_image != nil, source == nil { return nil }
         return MediaVideoGenerationRequest(
@@ -145,7 +152,8 @@ struct VideoGenerationRequestDTO: Decodable {
             duration: duration,
             aspectRatio: aspect_ratio,
             resolution: resolution,
-            audio: audio
+            audio: audio, width: width, height: height, frameCount: frame_count,
+            fps: fps, steps: steps, guidance: guidance, seed: seed
         )
     }
 }
@@ -171,6 +179,7 @@ struct VideoJobResponseDTO: Encodable {
     let quote_usd: Double?
     let url: String?
     let error: String?
+    let effective_parameters: VideoEffectiveParameters?
 
     init(_ job: DurableMediaJob) {
         id = job.id.uuidString.lowercased()
@@ -183,6 +192,7 @@ struct VideoJobResponseDTO: Encodable {
             ? nil
             : "/v1/videos/jobs/\(job.id.uuidString.lowercased())/content"
         error = job.errorMessage
+        effective_parameters = job.effectiveVideo
     }
 }
 

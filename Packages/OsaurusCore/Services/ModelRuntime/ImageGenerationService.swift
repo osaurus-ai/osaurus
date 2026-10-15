@@ -272,6 +272,113 @@ public actor ImageGenerationService {
         return locals.map { Self.info(for: $0) }
     }
 
+    func availableVideoModels() throws -> [MediaModelInfo] {
+        ensureRegistered()
+        return try store().scan().compactMap { local in
+            guard local.canEnterNativeLoadPath, local.canonicalName == "wan-2.1",
+                let data = try? Data(contentsOf: local.directory.appendingPathComponent("config.json")),
+                let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let type = config["model_type"] as? String, ["t2v", "i2v"].contains(type) else { return nil }
+            return MediaModelInfo(target: MediaModelTarget(backend: .local, modelID: local.directoryName),
+                displayName: local.directoryName, providerName: "Local (MLX)",
+                kind: type == "i2v" ? .imageToVideo : .textToVideo,
+                constraints: MediaModelConstraints(aspectRatios: ["16:9", "9:16", "1:1"],
+                    defaultAspectRatio: "16:9", resolutions: ["480p", "720p"], defaultResolution: "480p",
+                    durations: ["3.0625s", "5.0625s"], defaultSteps: 50, dimensionDivisor: 16),
+                pricing: nil, privacy: "Runs on this Mac", offline: false, deprecatedAt: nil)
+        }
+    }
+
+    func validateVideo(_ request: MediaVideoGenerationRequest) throws -> ImageModelInfo {
+        _ = try LocalVideoRequestPolicy(request)
+        let target = try resolveLoadTarget(request.target.modelID)
+        guard target.info.ready, target.kind == .videoGen, target.engineName == "wan-2.1" else {
+            throw ImageGenerationError.invalidRequest("A complete native Wan 2.1 bundle is required.")
+        }
+        let data = try Data(contentsOf: target.directory.appendingPathComponent("config.json"))
+        let config = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard (config?["model_type"] as? String == "i2v") == (request.sourceImage != nil) else {
+            throw ImageGenerationError.invalidRequest("The source image must match the bundle's text-to-video or image-to-video operation.")
+        }
+        if let source = request.sourceImage { try ImageHTTPParameterBuilder.validateSourceImages([source]) }
+        return target.info
+    }
+
+    /// One native producer owns the Metal lane until every GPU operation drains,
+    /// including after cancellation. Callers own the shared chat residency handoff.
+    func generateVideo(_ request: MediaVideoGenerationRequest, interrupt: InterruptToken?,
+                       progress: @escaping @Sendable (MediaGenerationEvent) -> Void) async throws -> GeneratedMedia {
+        let resolved = try LocalVideoRequestPolicy(request)
+        _ = try validateVideo(request)
+        let stop = FluxInterrupt()
+        let cancellation = ImageJobCancellation { try await self.metalGate.enterImageGeneration() }
+        let producer = Task {
+            try await cancellation.enter()
+            self.cleanupGPUCache()
+            let epoch = MLXErrorRecovery.errorSequence()
+            var produced: URL?
+            var effectiveVideo: VideoEffectiveParameters?
+            var stagedSource: URL?
+            do {
+                if cancellation.isRequested || interrupt?.isInterrupted == true { throw CancellationError() }
+                _ = try await self.ensureLoaded(request.target.modelID, expected: .videoGen,
+                    resolvedTarget: nil, validate: { _, _ in })
+                if cancellation.isRequested || interrupt?.isInterrupted == true { throw CancellationError() }
+                stagedSource = try request.sourceImage.map(Self.stageInput)
+                let output = OsaurusPaths.generatedVideos()
+                OsaurusPaths.ensureExistsSilent(output)
+                let engine = self.ensureEngine()
+                let job = VideoGenRequest(prompt: request.prompt, negativePrompt: request.negativePrompt,
+                    width: resolved.width, height: resolved.height, numFrames: resolved.frames,
+                    fps: resolved.fps, steps: resolved.steps, guidance: resolved.guidance,
+                    seed: request.seed, outputDir: output, sourceImage: stagedSource, interrupt: stop)
+                var failure: String?
+                for try await event in await engine.generateVideo(job, interrupt: stop) {
+                    if cancellation.isRequested || interrupt?.isInterrupted == true { stop.cancel() }
+                    switch event {
+                    case .step(let step, let total, let eta):
+                        if !stop.isCancelled { progress(.running(progress: total > 0 ? Double(step) / Double(total) : nil, etaSeconds: eta)) }
+                    case .completed(let url, let seed, let fps, let frames, let effective):
+                        produced = url
+                        if let effective {
+                            effectiveVideo = VideoEffectiveParameters(width: effective.width, height: effective.height,
+                                frameCount: frames, fps: fps, steps: effective.steps, guidance: effective.guidance,
+                                seed: seed, sampler: effective.sampler, scheduler: effective.scheduler, shift: effective.shift)
+                        }
+                    case .cancelled: stop.cancel()
+                    case .failed(let message, _): failure = message
+                    case .preview: break
+                    }
+                }
+                if let error = self.recoveredErrorSince(epoch) { throw ImageGenerationError.engine(error) }
+                if stop.isCancelled || cancellation.isRequested { throw CancellationError() }
+                if let failure { throw ImageGenerationError.engine(failure) }
+                guard let produced else { throw MediaGenerationError.invalidResponse }
+                if let stagedSource { try? FileManager.default.removeItem(at: stagedSource) }
+                self.cleanupGPUCache()
+                await self.metalGate.exitImageGeneration()
+                let media = GeneratedMedia(url: produced, mimeType: "video/mp4", modelID: request.target.modelID,
+                    kind: request.sourceImage == nil ? .textToVideo : .imageToVideo, settledCostUSD: 0,
+                    effectiveVideo: effectiveVideo)
+                progress(.completed(media))
+                return media
+            } catch {
+                if let produced { try? FileManager.default.removeItem(at: produced) }
+                if let stagedSource { try? FileManager.default.removeItem(at: stagedSource) }
+                self.cleanupGPUCache()
+                await self.metalGate.exitImageGeneration()
+                if self.recoveredErrorSince(epoch) != nil { await self.unload() }
+                throw error
+            }
+        }
+        return try await withTaskCancellationHandler {
+            try await producer.value
+        } onCancel: {
+            stop.cancel()
+            cancellation.cancel()
+        }
+    }
+
     static func info(for local: LocalFluxModel) -> ImageModelInfo {
         let kind = local.kind ?? .imageGen
         let entry = local.canonicalName.flatMap { ModelRegistry.lookup(name: $0) }
@@ -768,7 +875,8 @@ public actor ImageGenerationService {
         guard info.ready else {
             throw ImageGenerationError.modelIncomplete(model: requestedModel, reasons: info.blockedReasons)
         }
-        guard ImageModelRequestPolicy.supports(kind.rawValue, capabilities: info.capabilities) else {
+        guard (kind == .videoGen && info.kind == ModelKind.videoGen.rawValue)
+            || ImageModelRequestPolicy.supports(kind.rawValue, capabilities: info.capabilities) else {
             throw ImageGenerationError.wrongModelKind(expected: kind.rawValue, actual: info.kind)
         }
         let limits = try ModelRegistry.lookup(name: target.engineName)?.limits?(target.directory)

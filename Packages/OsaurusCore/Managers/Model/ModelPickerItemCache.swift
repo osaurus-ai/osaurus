@@ -246,9 +246,14 @@ final class ModelPickerItemCache: ObservableObject {
         // that are fully staged/loadable; incomplete ones stay hidden until
         // their weights are present.
         let imageModels = (try? await ImageGenerationService.shared.availableModels()) ?? []
-        for model in imageModels where model.ready {
+        for model in imageModels where model.ready && model.kind != "videoGen" {
             options.append(.fromImageModel(model))
         }
+        let videoModels = (try? await ImageGenerationService.shared.availableVideoModels()) ?? []
+        options.append(contentsOf: videoModels.map { model in
+            ModelPickerItem(id: model.id, displayName: model.displayName, source: .imageGeneration,
+                imageKind: "videoGen", imageReady: true, mediaModel: model)
+        })
 
         let manager = RemoteProviderManager.shared
         let remote = Self.remoteModelItems(
