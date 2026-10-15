@@ -162,10 +162,7 @@ actor MediaGenerationCoordinator {
         try await validateVideoRequest(request)
         switch request.target.backend {
         case .local:
-            _ = try LocalVideoRequestPolicy(request)
-            guard try await ImageGenerationService.shared.availableVideoModels().contains(where: { $0.target == request.target }) else {
-                throw MediaGenerationError.modelUnavailable(request.target.modelID)
-            }
+            _ = try await ImageGenerationService.shared.validateVideo(request)
             return MediaVideoQuote(usd: 0)
         case .remoteProvider(let providerID):
             let provider = await MainActor.run {
@@ -638,7 +635,20 @@ actor MediaGenerationCoordinator {
         guard !request.duration.isEmpty else {
             throw MediaGenerationError.invalidRequest("A duration is required.")
         }
-        guard request.target.backend != .local else { return }
+        if let source = request.sourceImage, source.count > 25 * 1_024 * 1_024 {
+            throw MediaGenerationError.invalidRequest("The source image must not exceed 25 MB.")
+        }
+        if request.sourceImage != nil,
+            !["image/png", "image/jpeg", "image/webp"].contains(request.sourceImageMIMEType ?? "")
+        {
+            throw MediaGenerationError.invalidRequest(
+                "The source image must be PNG, JPEG, or WebP."
+            )
+        }
+        if request.target.backend == .local {
+            _ = try LocalVideoRequestPolicy(request)
+            return
+        }
         guard request.width == nil, request.height == nil, request.frameCount == nil,
             request.fps == nil, request.steps == nil, request.guidance == nil, request.seed == nil else {
             throw MediaGenerationError.invalidRequest("Explicit dimensions, frames, fps, steps, guidance and seed require a local video model.")
@@ -672,16 +682,6 @@ actor MediaGenerationCoordinator {
         if request.audio != nil, !model.constraints.audioConfigurable {
             throw MediaGenerationError.invalidRequest(
                 "Audio cannot be configured for the selected model."
-            )
-        }
-        if let source = request.sourceImage, source.count > 25 * 1_024 * 1_024 {
-            throw MediaGenerationError.invalidRequest("The source image must not exceed 25 MB.")
-        }
-        if request.sourceImage != nil,
-            !["image/png", "image/jpeg", "image/webp"].contains(request.sourceImageMIMEType ?? "")
-        {
-            throw MediaGenerationError.invalidRequest(
-                "The source image must be PNG, JPEG, or WebP."
             )
         }
     }

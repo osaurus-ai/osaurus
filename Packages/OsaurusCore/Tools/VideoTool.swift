@@ -58,7 +58,7 @@ public final class VideoTool: OsaurusTool, @unchecked Sendable {
             ]),
             "duration": .object([
                 "type": .string("string"),
-                "description": .string("Catalog-supported duration such as `5s` or `10s`."),
+                "description": .string("Cloud: a catalog-supported duration. Local: exact frame_count/fps in seconds, e.g. `3.0625s` for 49 frames at 16 fps."),
             ]),
             "resolution": .object([
                 "type": .string("string"),
@@ -93,7 +93,7 @@ public final class VideoTool: OsaurusTool, @unchecked Sendable {
         let durationReq = requireString(
             args,
             "duration",
-            expected: "catalog-supported duration",
+            expected: "catalog-supported cloud duration, or exact local frame_count/fps",
             tool: name
         )
         guard case .value(let duration) = durationReq else {

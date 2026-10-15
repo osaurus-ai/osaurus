@@ -12,6 +12,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
     private let argumentsJSON: String
     private var selectedModel: MediaModelInfo?
     private var approvedQuote: MediaVideoQuote?
+    private var approvedSource: (Data, String)?
 
     init(params: VideoJobParams, argumentsJSON: String) {
         self.params = params
@@ -72,7 +73,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                     : "No configured text-to-video model is available."
             )
         }
-        try Self.validate(params: params, model: model)
+        try validate(model: model)
         selectedModel = model
         return ResolvedModel(name: model.displayName, id: model.id, isLocal: model.target.backend == .local)
     }
@@ -81,9 +82,10 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
         guard let model = selectedModel else {
             return .denied("The selected video model is no longer available.")
         }
-        let request = makeRequest(model: model, source: nil)
         let quote: MediaVideoQuote
         do {
+            approvedSource = try params.sourcePath.map(Self.loadSourceImage)
+            let request = makeRequest(model: model, source: approvedSource)
             quote = try await MediaGenerationCoordinator.shared.quoteVideo(request)
             approvedQuote = quote
         } catch {
@@ -138,8 +140,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                 retryable: true
             )
         }
-        let source: (Data, String)? = try params.sourcePath.map(Self.loadSourceImage)
-        let request = makeRequest(model: model, source: source)
+        let request = makeRequest(model: model, source: approvedSource)
         feed.emitPhase("quoted", detail: OsaurusRouter.formatUSDAsCredits(quote.usd))
         do {
             let media = try await MediaGenerationCoordinator.shared.generateVideo(
@@ -225,7 +226,13 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
         )
     }
 
-    private static func validate(params: VideoJobParams, model: MediaModelInfo) throws {
+    func validate(model: MediaModelInfo) throws {
+        if model.target.backend == .local {
+            // Catalog durations are presets. Native requests are constrained by
+            // the actual frame grid, including explicit frames/fps and audio=false.
+            _ = try LocalVideoRequestPolicy(makeRequest(model: model, source: nil))
+            return
+        }
         let c = model.constraints
         if !c.durations.isEmpty, !c.durations.contains(params.duration) {
             throw SubagentError.invalidArgs(
