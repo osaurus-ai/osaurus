@@ -55,6 +55,8 @@ enum AgentCapabilitiesPayload {
             "self_scheduling_enabled": agent.settings.selfSchedulingEnabled,
             "computer_use_enabled": agent.settings.computerUseEnabled,
             "browser_use_enabled": agent.settings.browserUseEnabled,
+            "image_enabled": agent.settings.imageEnabled,
+            "video_enabled": agent.settings.videoEnabled,
             "apple_apps": AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue),
             "speak_enabled": agent.settings.speakEnabled,
             "render_chart_enabled": agent.settings.renderChartEnabled,
@@ -768,6 +770,14 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             return read
         }
 
+        let mediaModels: [ImageModelInfo]
+        do {
+            mediaModels = scope == "models" ? try await ImageGenerationService.shared.availableModels() : []
+        } catch {
+            return ToolEnvelope.failure(kind: .executionError,
+                message: "Could not inspect local media models: \(error.localizedDescription)", tool: name)
+        }
+
         let envelope: String = await MainActor.run {
             let payload: [String: Any]
             switch scope {
@@ -785,6 +795,8 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                         "tools_enabled": agent.toolsEnabled,
                         "computer_use_enabled": agent.settings.computerUseEnabled,
                         "browser_use_enabled": agent.settings.browserUseEnabled,
+                        "image_enabled": agent.settings.imageEnabled,
+                        "video_enabled": agent.settings.videoEnabled,
                         "apple_apps": AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue),
                     ]
                 }
@@ -817,7 +829,10 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     if let bytes = model.totalSizeEstimateBytes { dict["size_bytes"] = bytes }
                     return dict
                 }
-                payload = ["scope": "models", "filter": filter.isEmpty ? "installed" : filter, "items": items]
+                let mediaItems = ["", "installed", "all"].contains(filter)
+                    ? mediaModels.filter { filter == "all" || $0.ready }.map(Self.mediaModelPayload) : []
+                payload = ["scope": "models", "filter": filter.isEmpty ? "installed" : filter,
+                    "items": items + mediaItems]
             case "providers":
                 let providers = ConfigurationProviderReadVisibility.visibleProviders()
                 let items = providers.map { p -> [String: Any] in
@@ -1239,6 +1254,12 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
 
 extension OsaurusInspectTool {
 
+    static func mediaModelPayload(_ model: ImageModelInfo) -> [String: Any] {
+        ["id": model.id, "name": model.displayName, "kind": model.kind,
+         "installed": model.ready, "chat_model": false, "size_bytes": model.totalBytes,
+         "blocked_reasons": model.blockedReasons]
+    }
+
     fileprivate func describeItem(scope: String, idStr: String) async -> String {
         // Skills and knowledge collections load from disk off the main
         // actor; resolve those scopes before the MainActor hop below.
@@ -1305,6 +1326,14 @@ extension OsaurusInspectTool {
             await PluginRepositoryService.shared.ensureInstalledPluginsLoaded()
         }
 
+        let mediaModels: [ImageModelInfo]
+        do {
+            mediaModels = scope == "models" ? try await ImageGenerationService.shared.availableModels() : []
+        } catch {
+            return ToolEnvelope.failure(kind: .executionError,
+                message: "Could not inspect local media models: \(error.localizedDescription)", tool: name)
+        }
+
         let envelope: String = await MainActor.run {
             let payload: [String: Any]?
             switch scope {
@@ -1363,6 +1392,10 @@ extension OsaurusInspectTool {
                     ]
                     if let bytes = model.totalSizeEstimateBytes { dict["size_bytes"] = bytes }
                     payload = dict
+                } else if let media = mediaModels.first(where: {
+                    $0.id == idStr || $0.displayName.caseInsensitiveCompare(idStr) == .orderedSame
+                }) {
+                    payload = Self.mediaModelPayload(media)
                 } else {
                     payload = nil
                 }

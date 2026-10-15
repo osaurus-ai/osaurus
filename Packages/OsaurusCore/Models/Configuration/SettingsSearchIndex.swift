@@ -1197,7 +1197,7 @@ public enum SettingsSearchIndex {
             id: "imageGeneration.videoPermission",
             tab: .imageGeneration,
             section: "Permissions",
-            title: "Video jobs (cloud)",
+            title: "Video jobs",
             keywords: ["video permission", "video jobs", "quoted video", "ask", "deny"],
             subTab: "Settings"
         ),
@@ -1205,7 +1205,7 @@ public enum SettingsSearchIndex {
             id: "imageGeneration.video",
             tab: .imageGeneration,
             section: "Defaults",
-            title: "Video (cloud)",
+            title: "Video",
             keywords: [
                 "video", "text to video", "image to video", "video model", "venice", "video jobs",
             ],

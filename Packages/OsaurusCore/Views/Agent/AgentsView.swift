@@ -4228,7 +4228,7 @@ struct AgentDetailView: View {
                     flag: .video,
                     title: "Video",
                     subtitle:
-                        "Let the agent queue billable text-to-video or image-to-video jobs after a quote-aware approval."
+                        "Let the agent generate local or cloud text-to-video and image-to-video jobs. Cloud jobs require a price quote."
                 )
             case .appleScript:
                 return PerAgentFeature(
@@ -4578,7 +4578,7 @@ struct AgentDetailView: View {
                 label: "Permission"
             )
             subagentFootnote(
-                "The approval includes the current price. Queued paid jobs continue recovery after Stop or relaunch."
+                "Local jobs are free and cancellable. Cloud approval includes the current price; queued paid jobs continue recovery after Stop or relaunch."
             )
         case .appleScript:
             // AppleScript owns its own dedicated model (supportsModelOverride is
