@@ -103,6 +103,13 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Provider IDs created from Bonjour discovery — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
+    /// Providers whose credential write is queued but has not landed yet.
+    private var pendingCredentialStaging: Set<UUID> = []
+    /// Providers that were told their save stalled, so a late success can
+    /// clear that warning.
+    private var stalledCredentialStaging: Set<UUID> = []
+    /// How long a queued credential write may take before the user is told.
+    static let credentialStagingStallLimit: Duration = .seconds(15)
 
     /// Per-model metadata for the managed Osaurus Router, keyed by unprefixed
     /// model id (e.g. "<upstream>/model-b"). Captured from `/models` on
@@ -232,6 +239,7 @@ public final class RemoteProviderManager: ObservableObject {
         let providerId = provider.id
         let shouldConnect = provider.enabled
         let persistsToDisk = !isEphemeral
+        watchCredentialStaging(providerId: providerId, providerName: provider.name)
         Keychain.performInBackground {
             var credentialsDurable = true
             if let apiKey = apiKey, !apiKey.isEmpty {
@@ -268,6 +276,11 @@ public final class RemoteProviderManager: ObservableObject {
         persistsToDisk: Bool,
         connect shouldConnect: Bool
     ) {
+        pendingCredentialStaging.remove(providerId)
+        if stalledCredentialStaging.remove(providerId) != nil, credentialsDurable {
+            providerStates[providerId]?.lastError = nil
+            notifyStatusChanged()
+        }
         if !credentialsDurable, !KeychainQueryHelpers.disablesKeychainForProcess {
             providerStates[providerId]?.lastError =
                 "Could not save credentials to the Keychain — they may not survive relaunch."
@@ -280,6 +293,27 @@ public final class RemoteProviderManager: ObservableObject {
             Task { @MainActor in
                 try? await RemoteProviderManager.shared.connect(providerId: providerId)
             }
+        }
+    }
+
+    /// The credential write runs on the shared serial Keychain queue. When
+    /// the Keychain stalls (#3109) that block may not run for a long time, and
+    /// the edit sheet has already closed, so the save would otherwise fail
+    /// silently. Past the limit the provider shows an error and the user gets
+    /// a toast. A late success clears it in `finishCredentialStaging`.
+    private func watchCredentialStaging(providerId: UUID, providerName: String) {
+        pendingCredentialStaging.insert(providerId)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.credentialStagingStallLimit)
+            guard let self, self.pendingCredentialStaging.contains(providerId) else { return }
+            self.stalledCredentialStaging.insert(providerId)
+            self.providerStates[providerId]?.lastError =
+                "Saving credentials to the Keychain is taking longer than expected. The key may not be saved yet."
+            self.notifyStatusChanged()
+            ToastManager.shared.error(
+                L("Credentials not saved yet"),
+                message: L("The Keychain has not responded for \(providerName). Try saving again in a few minutes.")
+            )
         }
     }
 
@@ -306,6 +340,7 @@ public final class RemoteProviderManager: ObservableObject {
         // reads the fresh key.
         let providerId = provider.id
         let shouldReconnect = wasConnected && provider.enabled
+        watchCredentialStaging(providerId: providerId, providerName: provider.name)
         Keychain.performInBackground {
             var credentialsDurable = true
             if let apiKey = apiKey {

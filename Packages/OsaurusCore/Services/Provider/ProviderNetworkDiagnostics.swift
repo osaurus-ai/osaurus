@@ -86,7 +86,8 @@ public enum ProviderNetworkDiagnostics {
         state: RemoteProviderState?,
         proxy: GlobalProxyDiagnosticState,
         apiKeyPresent: Bool,
-        oauthTokensPresent: Bool
+        oauthTokensPresent: Bool,
+        credentialsChecked: Bool = true
     ) -> ProviderDiagnosticReport {
         var rows = [
             remoteStateRow(provider: provider, state: state),
@@ -94,7 +95,8 @@ public enum ProviderNetworkDiagnostics {
                 provider: provider,
                 state: state,
                 apiKeyPresent: apiKeyPresent,
-                oauthTokensPresent: oauthTokensPresent
+                oauthTokensPresent: oauthTokensPresent,
+                credentialsChecked: credentialsChecked
             ),
         ]
         if let oauthContext = remoteOAuthContextRow(
@@ -211,8 +213,19 @@ public enum ProviderNetworkDiagnostics {
         provider: RemoteProvider,
         state: RemoteProviderState?,
         apiKeyPresent: Bool,
-        oauthTokensPresent: Bool
+        oauthTokensPresent: Bool,
+        credentialsChecked: Bool = true
     ) -> ProviderDiagnosticRow {
+        // A Keychain check that has not finished is not a missing credential.
+        if !credentialsChecked, provider.authType != .none {
+            return ProviderDiagnosticRow(
+                id: "auth",
+                title: L("Authentication"),
+                value: L("Checking Keychain…"),
+                severity: .info,
+                detail: L("Osaurus is still reading the saved credentials for this provider.")
+            )
+        }
         switch provider.authType {
         case .none:
             return ProviderDiagnosticRow(

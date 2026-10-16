@@ -476,6 +476,34 @@ struct ModelManagerTests {
     }
 
 
+    /// A scan that never finishes must not hold every send forever (#3109):
+    /// the dispatch wait gives up at its limit and the turn proceeds.
+    @Test func awaitLocalModelsCacheReadyForDispatch_returnsWhenScanIsStuck() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let previousOverride = ModelManager.scanLocalModelsOverrideForTests
+            let previousLimit = ModelManager.localModelsDispatchWaitLimitOverrideForTests
+            let releaseScan = DispatchSemaphore(value: 0)
+            defer {
+                releaseScan.signal()
+                ModelManager.scanLocalModelsOverrideForTests = previousOverride
+                ModelManager.localModelsDispatchWaitLimitOverrideForTests = previousLimit
+                ModelManager.invalidateLocalModelsCache()
+            }
+            ModelManager.scanLocalModelsOverrideForTests = { _ in
+                releaseScan.wait()
+                releaseScan.signal()
+                return []
+            }
+            ModelManager.localModelsDispatchWaitLimitOverrideForTests = 0.2
+            ModelManager.invalidateLocalModelsCache()
+
+            let started = Date()
+            await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+            #expect(Date().timeIntervalSince(started) < 10)
+            #expect(!ModelManager.isLocalModelsCacheWarm)
+        }
+    }
+
     @Test func discoverLocalModels_invalidationKeepsDispatchWaitingForCurrentScan() async throws {
         try await StoragePathsTestLock.shared.run {
             let previousOverride = ModelManager.scanLocalModelsOverrideForTests
