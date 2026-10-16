@@ -64,7 +64,6 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     let capability = SubagentCapabilityRegistry.image
 
     private var params: ImageJobParams
-    private var usesQwen21Parameters = false
     private let argumentsJSON: String
     private var resolvedTarget: MediaModelTarget?
     private var selectedMediaModel: MediaModelInfo?
@@ -191,13 +190,12 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         if params.isEdit, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1 {
             throw ImageGenerationError.invalidRequest("Image batch parameters are generation-only")
         }
-        usesQwen21Parameters = ImageModelRequestPolicy.isQwen21Family(canonical)
     }
 
     func localGenerateRequest(_ resolved: ResolvedModel,
         context: NativeImageJobContext) -> NativeImageGenerateJobRequest
     {
-        NativeImageGenerateJobRequest(prompt: params.prompt, model: usesQwen21Parameters ? (resolved.id ?? resolved.name) : resolved.name,
+        NativeImageGenerateJobRequest(prompt: params.prompt, model: resolved.id ?? resolved.name,
             negativePrompt: params.negativePrompt, width: params.width, height: params.height,
             steps: params.steps, guidance: params.guidance, seed: params.seed,
             numImages: params.numImages ?? 1, seeds: params.seeds, batchSize: params.batchSize ?? 1,
@@ -412,10 +410,10 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         do {
             if params.isEdit {
                 let sources = try Self.loadSourceImages(paths: params.sourcePaths)
-                if usesQwen21Parameters { try ImageHTTPParameterBuilder.validateSourceImages(sources) }
+                try ImageHTTPParameterBuilder.validateSourceImages(sources)
                 let request = NativeImageEditJobRequest(
                     prompt: params.prompt,
-                    model: usesQwen21Parameters ? (resolved.id ?? resolved.name) : resolved.name,
+                    model: resolved.id ?? resolved.name,
                     sourceImages: sources,
                     negativePrompt: params.negativePrompt,
                     width: params.width,

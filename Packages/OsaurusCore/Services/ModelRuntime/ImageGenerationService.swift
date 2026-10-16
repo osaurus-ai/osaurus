@@ -465,9 +465,13 @@ public actor ImageGenerationService {
             modelURL: target.directory, name: target.engineName))
     }
 
-    func estimatedPeakBytes(for params: ImageEditParameters) async throws -> Int64 {
+    func estimatedPeakBytes(for params: ImageEditParameters, resolvedTarget: LoadTarget? = nil) async throws -> Int64 {
+        let target = try resolvedTarget ?? resolveLoadTarget(params.model)
+        let limits = try ModelRegistry.lookup(name: target.engineName)?.limits?(target.directory)
+        // Validate app-only fields before the caller admits the job or unloads
+        // its parent. ImageEditRequest cannot carry negative conditioning.
+        try Self.validateEdit(params, info: target.info, limits: limits)
         if let testPeakEstimate { return try testPeakEstimate() }
-        let target = try resolveLoadTarget(params.model)
         let sources = try Self.stageInputs(params.sourceImages)
         defer { for source in sources { try? FileManager.default.removeItem(at: source) } }
         let mask = try params.maskImage.map(Self.stageInput)
@@ -574,24 +578,9 @@ public actor ImageGenerationService {
         return drive(
             model: params.model, expected: .imageEdit, jobID: jobID, resolvedTarget: resolvedTarget,
             interrupt: interrupt, producerInterrupt: producerInterrupt,
-            estimatePeak: { try await self.estimatedPeakBytes(for: params) }, validate: { info, limits in
-                if limits == nil {
-                    try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
-                    width: params.width, height: params.height, isEdit: true,
-                    guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
-                    negativePrompt: params.negativePrompt, strength: params.strength,
-                    hasMask: params.maskImage != nil, sourceCount: params.sourceImages.count,
-                    steps: params.steps ?? info.defaultSteps, outputFormat: params.outputFormat
-                )
-                }
-                try limits?.validatePreview(interval: params.previewInterval, maxPixel: params.previewMaxPixel)
-                try limits?.validateSampling(sampler: params.sampler, scheduler: params.scheduler, shift: params.shift)
-                try limits?.validateEdit(
-                    width: params.width, height: params.height,
-                    steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
-                    guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
-                    format: Self.engineFormat(params.outputFormat), sourceCount: params.sourceImages.count,
-                    hasMask: params.maskImage != nil, strength: params.strength, negativePrompt: params.negativePrompt)
+            estimatePeak: { try await self.estimatedPeakBytes(for: params, resolvedTarget: resolvedTarget) },
+            validate: { info, limits in
+                try Self.validateEdit(params, info: info, limits: limits)
             }
         ) { engine, outputDir, _, info, _ in
             let sources = try Self.stageInputs(params.sourceImages)
@@ -603,6 +592,27 @@ public actor ImageGenerationService {
                 outputDir: outputDir, interrupt: producerInterrupt)
             return await engine.edit(request)
         }
+    }
+
+    private static func validateEdit(_ params: ImageEditParameters, info: ImageModelInfo,
+        limits: FluxModelLimits?) throws {
+        if limits == nil {
+            try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
+                width: params.width, height: params.height, isEdit: true,
+                guidance: params.guidance ?? info.defaultGuidance ?? 3.5,
+                negativePrompt: params.negativePrompt, strength: params.strength,
+                hasMask: params.maskImage != nil, sourceCount: params.sourceImages.count,
+                steps: params.steps ?? info.defaultSteps, outputFormat: params.outputFormat
+            )
+        }
+        try limits?.validatePreview(interval: params.previewInterval, maxPixel: params.previewMaxPixel)
+        try limits?.validateSampling(sampler: params.sampler, scheduler: params.scheduler, shift: params.shift)
+        try limits?.validateEdit(
+            width: params.width, height: params.height,
+            steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
+            guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
+            format: Self.engineFormat(params.outputFormat), sourceCount: params.sourceImages.count,
+            hasMask: params.maskImage != nil, strength: params.strength, negativePrompt: params.negativePrompt)
     }
 
     private static func editRequest(_ params: ImageEditParameters, info: ImageModelInfo,
