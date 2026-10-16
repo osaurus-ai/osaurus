@@ -633,6 +633,14 @@ public final class BackgroundTaskManager: ObservableObject {
             return
         }
 
+        finishChatCancellation(state, stopSession: true)
+    }
+
+    /// Shared terminal path for Activity Stop and the delegated chat's own
+    /// Stop button. The latter has already stopped the session; do not enter
+    /// its cleanup a second time from the synchronous streaming observer.
+    private func finishChatCancellation(_ state: BackgroundTaskState, stopSession: Bool) {
+        let backgroundId = state.id
         // A queued task never started — drop its deferred start so a later
         // pump can't resurrect it.
         queuedOrder.removeAll { $0 == backgroundId }
@@ -642,7 +650,7 @@ public final class BackgroundTaskManager: ObservableObject {
         // first so the streaming observer cannot resume a delegation waiter
         // with .completed and promote its buffered partial answer to success.
         state.status = .cancelled
-        state.chatSession?.stop()
+        if stopSession { state.chatSession?.stop() }
         state.captureContextPreview()
         // Mirror the markCompleted finalisation for the agent_runs row
         // so cancelled runs don't sit in `running` forever in the
@@ -2136,6 +2144,10 @@ public final class BackgroundTaskManager: ObservableObject {
             state.currentStep = "Running..."
         } else if state.status == .running, streamingObserved.contains(taskId) {
             defer { pumpQueue() }
+            if state.chatSession?.stopRequested == true {
+                finishChatCancellation(state, stopSession: false)
+                return
+            }
             // Belt-and-suspenders: if the streaming-end tick somehow
             // races ahead of the clarify sink, inspect the live session
             // before tripping the terminal branch. The `.running` guard

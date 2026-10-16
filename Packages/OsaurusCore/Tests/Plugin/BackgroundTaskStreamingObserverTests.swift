@@ -48,6 +48,29 @@ struct BackgroundTaskStreamingObserverTests {
     // MARK: - Tests
 
     @Test
+    func childChatStop_resumesPendingDelegateAsCancelledNotCompleted() async throws {
+        let (state, mgr) = makeObservedState()
+        defer { mgr.finalizeTask(state.id) }
+        state.chatSession?.turns = [
+            ChatTurn(role: .user, content: "Check the result"),
+            ChatTurn(role: .assistant, content: "I am still checking"),
+        ]
+        state.chatSession?.isStreaming = true
+        let waiter = Task { @MainActor in
+            await mgr.awaitCompletion(state.id, timeoutSeconds: 5)
+        }
+        await Task.yield()
+        // The visible child chat calls stop() directly, bypassing cancelTask.
+        state.chatSession?.stop()
+        guard case .cancelled = await waiter.value else {
+            Issue.record("The child chat's Stop reported its partial answer as success")
+            return
+        }
+        #expect(state.status == .cancelled)
+        #expect(mgr.hasPendingAutoFinalizeForTesting(state.id))
+    }
+
+    @Test
     func cancelTask_resumesPendingDelegateAsCancelledNotCompleted() async throws {
         let (state, mgr) = makeObservedState()
         defer { mgr.finalizeTask(state.id) }
