@@ -2355,6 +2355,11 @@ extension AppDelegate {
         // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
         Task { @MainActor in
             let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: modelId)
+            if case .image = resolution {
+                ManagementStateManager.shared.imageGenerationSubTabRequest = ImageGenerationTab.models.rawValue
+                showManagementWindow(initialTab: .imageGeneration)
+                return
+            }
             // The Models tab is reached through shared state, never through
             // `showManagementWindow(deeplinkModelId:)`: that path rebuilds the
             // window's hosting controller when the window already exists, and
