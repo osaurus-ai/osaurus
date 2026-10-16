@@ -3167,7 +3167,18 @@ struct RuntimePolicySourceTests {
             "public func cancelTask(",
             in: tasks
         )
-        #expect(cancelBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
+        #expect(cancelBody.contains("finishChatCancellation(state, stopSession: true)"))
+        let streamingBody = try Self.functionBody(
+            "private func handleChatStreamingChange(",
+            in: tasks
+        )
+        #expect(streamingBody.contains("state.chatSession?.stopRequested == true"))
+        #expect(streamingBody.contains("finishChatCancellation(state, stopSession: false)"))
+        let cancellationBody = try Self.functionBody(
+            "private func finishChatCancellation(",
+            in: tasks
+        )
+        #expect(cancellationBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
 
         let releaseBody = try Self.functionBody(
             "private func releaseResidencyAndRearmChatWarmup(",
