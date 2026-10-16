@@ -1,6 +1,793 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The voice model stopped Osaurus while it was loading last time. Load it again from here." : {
+      "comment" : "Voice settings recovery message after the process exits during an automatic Core ML model load."
+    },
+    "The speech model stopped Osaurus while it was loading last time, so it is no longer loaded automatically. Use the microphone button to load it again." : {
+      "comment" : "Speech recovery message explaining how to manually retry a model load after a previous process exit."
+    },
+    "Fixed schedule" : {
+      "comment" : "Image composer label for a bundle-owned sampling schedule with no adjustable step count."
+    },
+    "Cannot attach image" : {
+      "comment" : "Title of the toast shown when the selected model cannot accept an image attachment."
+    },
+    "The model stopped at its output limit before finishing the reply." : {
+      "comment" : "Error when a provider reaches its output limit before completing a reply."
+    },
+    "Speak now…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jetzt sprechen …"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请开始说话…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지금 말하세요…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Говорите…"
+          }
+        }
+      }
+    },
+    "/ %@ tokens" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/ %@ Tokens"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/ %@ 个 token"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/ %@ 토큰"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/ %@ токенов"
+          }
+        }
+      }
+    },
+    "%@ remaining" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ verbleibend"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剩余 %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 남음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Осталось %@"
+          }
+        }
+      }
+    },
+    "Breakdown" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufschlüsselung"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "明细"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "세부 내역"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Структура"
+          }
+        }
+      }
+    },
+    "Context budget" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kontextbudget"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文预算"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컨텍스트 예산"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бюджет контекста"
+          }
+        }
+      }
+    },
+    "credits available" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Credits verfügbar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可用积分"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "크레딧 사용 가능"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "кредитов доступно"
+          }
+        }
+      }
+    },
+    "Disk cache" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Festplatten-Cache"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盘缓存"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "디스크 캐시"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дисковый кэш"
+          }
+        }
+      }
+    },
+    "Share of the tokens used in this chat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anteil der in diesem Chat verwendeten Tokens"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此聊天中已用 token 的占比"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 채팅에서 사용된 토큰의 비율"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доля токенов, использованных в этом чате"
+          }
+        }
+      }
+    },
+    "The usable budget is %lld%% of the model maximum, leaving room for the reply." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das nutzbare Budget beträgt %lld %% des Modellmaximums, damit Platz für die Antwort bleibt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可用预算为模型上限的 %lld%%，为回复预留空间。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용 가능한 예산은 모델 최대치의 %lld%%이며, 응답을 위한 여유를 남깁니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступный бюджет составляет %lld%% от максимума модели, чтобы оставить место для ответа."
+          }
+        }
+      }
+    },
+    "Off (AR)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus (AR)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "끔 (AR)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выкл. (AR)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭 (AR)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉 (AR)"
+          }
+        }
+      }
+    },
+    "On (Adaptive)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein (Adaptiv)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "켬 (적응형)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вкл. (адаптивно)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启（自适应）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟（自適應）"
+          }
+        }
+      }
+    },
+    "Clear unsupported edit settings" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear unsupported edit settings"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht unterstützte Bearbeitungseinstellungen löschen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "清除不支持的编辑设置"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "지원하지 않는 편집 설정 지우기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Очистить неподдерживаемые настройки редактирования"
+          }
+        }
+      }
+    },
+    "Guidance" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guidance"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Steuerung"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "引导强度"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "가이던스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление"
+          }
+        }
+      }
+    },
+    "Source images (ordered, up to 4)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Source images (ordered, up to 4)"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quellbilder (geordnet, bis zu 4)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "源图像（按顺序，最多 4 张）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원본 이미지 (순서대로, 최대 4개)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Исходные изображения (по порядку, до 4)"
+          }
+        }
+      }
+    },
+    "Choose up to %lld source images." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose up to %lld source images."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle bis zu %lld Quellbilder."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最多选择 %lld 张源图像。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원본 이미지를 최대 %lld개 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите до %lld исходных изображений."
+          }
+        }
+      }
+    },
+    "Negative prompt applies when guidance is above 1." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Negative prompt applies when guidance is above 1."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein negativer Prompt wird bei einer Steuerung über 1 angewendet."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "引导强度大于 1 时，负面提示词才会生效。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "가이던스가 1보다 클 때 부정 프롬프트가 적용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Негативный промпт применяется при управлении выше 1."
+          }
+        }
+      }
+    },
+    "Use a structured JSON caption." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use a structured JSON caption."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verwende eine strukturierte JSON-Beschreibung."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请使用结构化的 JSON 描述。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "구조화된 JSON 설명을 사용하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Используйте структурированное описание JSON."
+          }
+        }
+      }
+    },
+    "Use source aspect ratio" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use source aspect ratio"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seitenverhältnis der Quelle verwenden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用源图像的宽高比"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원본 종횡비 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Использовать пропорции исходного изображения"
+          }
+        }
+      }
+    },
+    "Turbo uses the fixed sampling schedule from its bundle." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turbo uses the fixed sampling schedule from its bundle."
+          }
+        }
+      }
+    },
+    "Qwen-Image-2.1 uses at least 2 steps." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen-Image-2.1 uses at least 2 steps."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qwen-Image-2.1 verwendet mindestens 2 Schritte."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qwen-Image-2.1 至少使用 2 个步骤。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qwen-Image-2.1은 최소 2단계를 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qwen-Image-2.1 использует минимум 2 шага."
+          }
+        }
+      }
+    },
+    "Research / non-commercial license" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Research / non-commercial license"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Forschungs- / nichtkommerzielle Lizenz"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "研究／非商业许可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "연구 / 비상업용 라이선스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Исследовательская / некоммерческая лицензия"
+          }
+        }
+      }
+    },
+    "Non-commercial license" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Non-commercial license"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nichtkommerzielle Lizenz"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "非商业许可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "비상업용 라이선스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Некоммерческая лицензия"
+          }
+        }
+      }
+    },
+    "Enter a positive whole number of steps." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a positive whole number of steps."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gib eine positive ganze Zahl für die Schritte ein."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请输入正整数步数。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "단계 수를 양의 정수로 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Введите положительное целое число шагов."
+          }
+        }
+      }
+    },
+    "Guidance must be a finite number." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guidance must be a finite number."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Steuerung muss eine endliche Zahl sein."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "引导强度必须是有限数值。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "가이던스는 유한한 숫자여야 합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление должно быть конечным числом."
+          }
+        }
+      }
+    },
+    "Enter a seed from 0 to 18446744073709551615." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a seed from 0 to 18446744073709551615."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gib einen Seed von 0 bis 18446744073709551615 ein."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请输入 0 到 18446744073709551615 之间的种子值。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "시드 값을 0부터 18446744073709551615 사이로 입력하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Введите seed от 0 до 18446744073709551615."
+          }
+        }
+      }
+    },
     "" : {
       "shouldTranslate" : false
     },
@@ -1252,34 +2039,6 @@
       },
       "shouldTranslate" : false
     },
-    "/ %@ tokens" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "/ %@ Tokens"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "/ %@ 토큰"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "/ %@ токенов"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "/ %@ 个 token"
-          }
-        }
-      }
-    },
     "/%@" : {
       "localizations" : {
         "de" : {
@@ -2309,7 +3068,6 @@
       }
     },
     "%@ %@ · usable budget %lld%%" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -2383,16 +3141,6 @@
         }
       },
       "shouldTranslate" : false
-    },
-    "%@ %lld" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@ %2$lld"
-          }
-        }
-      }
     },
     "%@ → %@ · %@" : {
       "comment" : "A label showing the name of an agent, a connection ID, and a room ID.",
@@ -4334,9 +5082,6 @@
         }
       }
     },
-    "%@ of this download is an n-gram table that stays on SSD and is not counted toward running memory." : {
-
-    },
     "%@ on disk" : {
       "comment" : "A string describing the size of a downloaded MLX model. The argument is the size of the model, formatted as a file size.",
       "extractionState" : "stale",
@@ -4518,34 +5263,6 @@
         }
       }
     },
-    "%@ remaining" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ verbleibend"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ 남음"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Осталось %@"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剩余 %@"
-          }
-        }
-      }
-    },
     "%@ remaining of %@" : {
       "comment" : "A text showing the remaining number of tokens out of the maximum allowed. The first argument is the string “%arg”, the string “%.1fk”, or the string “%argk”. The second argument is the string “%arg”, the string “%.1fk”, or the string “%argk”.",
       "extractionState" : "stale",
@@ -4590,7 +5307,6 @@
       }
     },
     "%@ remaining of %@ usable" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6941,16 +7657,6 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$lld → %2$lld lines"
-          }
-        }
-      }
-    },
-    "%lld × %lld · %lld steps · CFG %g" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$lld × %2$lld · %3$lld steps · CFG %4$g"
           }
         }
       }
@@ -13156,7 +13862,6 @@
       "shouldTranslate" : false
     },
     "%lld%% used" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -16807,9 +17512,6 @@
     "1 year" : {
 
     },
-    "2×" : {
-
-    },
     "3–20 characters: a–z, 0–9, and hyphens." : {
 
     },
@@ -16889,9 +17591,6 @@
           }
         }
       }
-    },
-    "4×" : {
-
     },
     "5 minutes" : {
       "localizations" : {
@@ -19877,67 +20576,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "僅在 Osaurus 在該 Slack 討論串中回覆後，接受無需再次提及的後續訊息。"
-          }
-        }
-      }
-    },
-    "Accept messages sent through apps?" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
-        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
-        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "接受通过应用发送的消息？" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "接受透過應用程式傳送的訊息？" } }
-      }
-    },
-    "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
-        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
-        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许列表中的成员授权以其身份发布的任何 Slack 应用（例如 Zapier 或工作流）都将能够向此代理发送消息。其他机器人仍会被阻止。" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許清單中的成員授權以其身分發布的任何 Slack 應用程式（例如 Zapier 或工作流程）都將能夠傳送訊息給此代理。其他機器人仍會被封鎖。" } }
-      }
-    },
-    "Turn On" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
-        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
-        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "开启" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟" } }
-      }
-    },
-    "Accept Messages Sent Through Apps" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Accept Messages Sent Through Apps"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Accept Messages Sent Through Apps"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Accept Messages Sent Through Apps"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "接受通过应用发送的消息"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "接受透過應用程式傳送的訊息"
           }
         }
       }
@@ -28223,6 +28861,51 @@
         }
       }
     },
+    "Accept messages sent through apps?" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "接受通过应用发送的消息？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "接受透過應用程式傳送的訊息？" } }
+      }
+    },
+    "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许列表中的成员授权以其身份发布的任何 Slack 应用（例如 Zapier 或工作流）都将能够向此代理发送消息。其他机器人仍会被阻止。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許清單中的成員授權以其身分發布的任何 Slack 應用程式（例如 Zapier 或工作流程）都將能夠傳送訊息給此代理。其他機器人仍會被封鎖。" } }
+      }
+    },
+    "Turn On" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "开启" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟" } }
+      }
+    },
+    "Accept Messages Sent Through Apps" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "接受通过应用发送的消息" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "接受透過應用程式傳送的訊息" } }
+      }
+    },
+    "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复允许列表中的成员使用自己的令牌通过 Slack 应用或 API 发布的消息，例如手机快捷操作。Slack 会将这些标记为应用消息，因此默认会被忽略。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "回覆允許清單中的成員使用自己的權杖透過 Slack 應用程式或 API 發布的訊息，例如手機捷徑。Slack 會將這些標記為應用程式訊息，因此預設會被忽略。" } }
+      }
+    },
     "Allow Broadcast Mentions" : {
       "localizations" : {
         "de" : {
@@ -31459,40 +32142,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "儘可能使用已加載的聊天模型回答 Mac 查詢。"
-          }
-        }
-      }
-    },
-    "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "回复允许列表中的成员使用自己的令牌通过 Slack 应用或 API 发布的消息，例如手机快捷操作。Slack 会将这些标记为应用消息，因此默认会被忽略。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "回覆允許清單中的成員使用自己的權杖透過 Slack 應用程式或 API 發布的訊息，例如手機捷徑。Slack 會將這些標記為應用程式訊息，因此預設會被忽略。"
           }
         }
       }
@@ -42247,7 +42896,6 @@
       }
     },
     "Blank = engine recommendation" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -43734,34 +44382,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Brave 搜尋結果。無需金鑰。"
-          }
-        }
-      }
-    },
-    "Breakdown" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aufschlüsselung"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "세부 내역"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Структура"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "明细"
           }
         }
       }
@@ -45344,7 +45964,6 @@
       }
     },
     "built-in" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -46876,74 +47495,6 @@
         }
       }
     },
-    "Calculated" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Berechnet"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "계산함"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вычислено"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已计算"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已計算"
-          }
-        }
-      }
-    },
-    "Calculating" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wird berechnet"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "계산 중"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вычисление"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在计算"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在計算"
-          }
-        }
-      }
-    },
     "Calendar" : {
       "localizations" : {
         "de" : {
@@ -47182,6 +47733,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法驗證 %@"
+          }
+        }
+      }
+    },
+    "Calculated" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Berechnet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계산함"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вычислено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已计算"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已計算"
+          }
+        }
+      }
+    },
+    "Calculating" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird berechnet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계산 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вычисление"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在计算"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在計算"
           }
         }
       }
@@ -47812,9 +48431,6 @@
           }
         }
       }
-    },
-    "Cannot attach image" : {
-      "comment" : "Title of the toast shown when the selected model cannot accept an image attachment."
     },
     "Cannot modify built-in skills" : {
       "localizations" : {
@@ -54846,40 +55462,6 @@
         }
       }
     },
-    "Choose up to %lld source images." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wähle bis zu %lld Quellbilder."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choose up to %lld source images."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "원본 이미지를 최대 %lld개 선택하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Выберите до %lld исходных изображений."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "最多选择 %lld 张源图像。"
-          }
-        }
-      }
-    },
     "Choose what agents may do" : {
       "comment" : "Title of a section in the agent channel setup screen that lets the user choose which actions agents can perform on a channel.",
       "isCommentAutoGenerated" : true,
@@ -56786,40 +57368,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "清除此智能體的地址，並撤銷所有限定於它的訪問密鑰。"
-          }
-        }
-      }
-    },
-    "Clear unsupported edit settings" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Nicht unterstützte Bearbeitungseinstellungen löschen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clear unsupported edit settings"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "지원하지 않는 편집 설정 지우기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Очистить неподдерживаемые настройки редактирования"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "清除不支持的编辑设置"
           }
         }
       }
@@ -60562,7 +61110,6 @@
     },
     "Composition" : {
       "comment" : "The title of the composition section in the context breakdown popover.",
-      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -66160,34 +66707,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上下文與 KV 策略"
-          }
-        }
-      }
-    },
-    "Context budget" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kontextbudget"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "컨텍스트 예산"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Бюджет контекста"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上下文预算"
           }
         }
       }
@@ -73939,34 +74458,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "積分已添加"
-          }
-        }
-      }
-    },
-    "credits available" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Credits verfügbar"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "크레딧 사용 가능"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "кредитов доступно"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "可用积分"
           }
         }
       }
@@ -83195,34 +83686,6 @@
         }
       }
     },
-    "Disk cache" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Festplatten-Cache"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "디스크 캐시"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Дисковый кэш"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "磁盘缓存"
-          }
-        }
-      }
-    },
     "Disk Cache" : {
       "comment" : "Title of a toggle that enables or disables the disk cache.",
       "isCommentAutoGenerated" : true,
@@ -86640,7 +87103,6 @@
       }
     },
     "Draft Tokens Per Step" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -93793,40 +94255,6 @@
         }
       }
     },
-    "Enter a positive whole number of steps." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Gib eine positive ganze Zahl für die Schritte ein."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enter a positive whole number of steps."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "단계 수를 양의 정수로 입력하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Введите положительное целое число шагов."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "请输入正整数步数。"
-          }
-        }
-      }
-    },
     "Enter a prompt to generate an image." : {
       "localizations" : {
         "de" : {
@@ -93891,40 +94319,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "請輸入代碼。"
-          }
-        }
-      }
-    },
-    "Enter a seed from 0 to 18446744073709551615." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Gib einen Seed von 0 bis 18446744073709551615 ein."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enter a seed from 0 to 18446744073709551615."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "시드 값을 0부터 18446744073709551615 사이로 입력하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Введите seed от 0 до 18446744073709551615."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "请输入 0 到 18446744073709551615 之间的种子值。"
           }
         }
       }
@@ -95710,6 +96104,9 @@
           }
         }
       }
+    },
+    "%@ of this download is an n-gram table that stays on SSD and is not counted toward running memory." : {
+
     },
     "Estimated memory while running" : {
 
@@ -103960,9 +104357,6 @@
         }
       }
     },
-    "Fixed schedule" : {
-      "comment" : "Image composer label for a bundle-owned sampling schedule with no adjustable step count."
-    },
     "Flagged" : {
       "localizations" : {
         "de" : {
@@ -111781,40 +112175,6 @@
         }
       }
     },
-    "Guidance" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Steuerung"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Guidance"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "가이던스"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Управление"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "引导强度"
-          }
-        }
-      }
-    },
     "Guidance added to every chat." : {
       "localizations" : {
         "de" : {
@@ -111845,40 +112205,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "加入每個聊天的指引。"
-          }
-        }
-      }
-    },
-    "Guidance must be a finite number." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Die Steuerung muss eine endliche Zahl sein."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Guidance must be a finite number."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "가이던스는 유한한 숫자여야 합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Управление должно быть конечным числом."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "引导强度必须是有限数值。"
           }
         }
       }
@@ -115021,7 +115347,6 @@
       }
     },
     "How many tokens the draft model proposes before the main model verifies." : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -148593,40 +148918,6 @@
         }
       }
     },
-    "Negative prompt applies when guidance is above 1." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ein negativer Prompt wird bei einer Steuerung über 1 angewendet."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Negative prompt applies when guidance is above 1."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "가이던스가 1보다 클 때 부정 프롬프트가 적용됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Негативный промпт применяется при управлении выше 1."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "引导强度大于 1 时，负面提示词才会生效。"
-          }
-        }
-      }
-    },
     "Net credits" : {
       "localizations" : {
         "de" : {
@@ -152821,9 +153112,6 @@
           }
         }
       }
-    },
-    "No external folder selected — a compatible bundled DFlash 2 drafter is used first, otherwise the model's native MTP policy applies. Off (AR) disables both." : {
-
     },
     "No families found" : {
       "localizations" : {
@@ -159466,40 +159754,6 @@
         }
       }
     },
-    "Non-commercial license" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Nichtkommerzielle Lizenz"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Non-commercial license"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "비상업용 라이선스"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Некоммерческая лицензия"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "非商业许可"
-          }
-        }
-      }
-    },
     "none" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -159700,6 +159954,10 @@
           }
         }
       }
+    },
+    "None selected — speculation falls back to the model's own MTP head, per Mode above." : {
+      "comment" : "Text displayed in a field that shows when no drafter is selected.",
+      "isCommentAutoGenerated" : true
     },
     "None yet" : {
 
@@ -162822,40 +163080,6 @@
         }
       }
     },
-    "Off (AR)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aus (AR)"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "끔 (AR)"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выкл. (AR)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关闭 (AR)"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "關閉 (AR)"
-          }
-        }
-      }
-    },
     "off (global)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -163168,9 +163392,6 @@
           }
         }
       }
-    },
-    "Off uses ordinary autoregressive decoding. On uses a compatible bundled or selected DFlash 2 drafter, or adaptive native MTP when supported. Ineligible requests continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged." : {
-
     },
     "Off: access expires in 90 days. On: access never expires until revoked." : {
       "localizations" : {
@@ -163635,40 +163856,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "開啓"
-          }
-        }
-      }
-    },
-    "On (Adaptive)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ein (Adaptiv)"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "켬 (적응형)"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вкл. (адаптивно)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开启（自适应）"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開啟（自適應）"
           }
         }
       }
@@ -165523,9 +165710,6 @@
         }
       }
     },
-    "Open [Osaurus](https://testflight.apple.com/join/yTF86bVb) (in TestFlight currently) on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing." : {
-
-    },
     "Open @BotFather in Telegram" : {
       "comment" : "Link to open @BotFather in Telegram.",
       "isCommentAutoGenerated" : true,
@@ -166958,6 +167142,9 @@
           }
         }
       }
+    },
+    "Open [Osaurus](https://testflight.apple.com/join/yTF86bVb) (in TestFlight currently) on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing." : {
+
     },
     "Open osaurus.ai/themes" : {
       "localizations" : {
@@ -197265,40 +197452,6 @@
       "comment" : "A label for the quoted price of a media generation.",
       "isCommentAutoGenerated" : true
     },
-    "Qwen-Image-2.1 uses at least 2 steps." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Qwen-Image-2.1 verwendet mindestens 2 Schritte."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Qwen-Image-2.1 uses at least 2 steps."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Qwen-Image-2.1은 최소 2단계를 사용합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Qwen-Image-2.1 использует минимум 2 шага."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Qwen-Image-2.1 至少使用 2 个步骤。"
-          }
-        }
-      }
-    },
     "RAM" : {
       "localizations" : {
         "de" : {
@@ -197643,6 +197796,9 @@
           }
         }
       }
+    },
+    "Raptor by Osaurus runs in less than 4GB, and is built for Macs with 16GB RAM or less.\n\nWe hope Osaurus is useful to you and if so, we need your support to share it with more people! A comment about what you like really helps." : {
+
     },
     "Raptor v0.5" : {
       "extractionState" : "stale",
@@ -211285,40 +211441,6 @@
         }
       }
     },
-    "Research / non-commercial license" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Forschungs- / nichtkommerzielle Lizenz"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Research / non-commercial license"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "연구 / 비상업용 라이선스"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Исследовательская / некоммерческая лицензия"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "研究／非商业许可"
-          }
-        }
-      }
-    },
     "Research & writing" : {
       "comment" : "The title of the research & writing onboarding specialty.",
       "isCommentAutoGenerated" : true
@@ -223900,9 +224022,6 @@
         }
       }
     },
-    "Scale" : {
-
-    },
     "Scan a QR code from your phone: WhatsApp → Settings → Linked Devices → Link a Device." : {
       "comment" : "Text displayed in a row of a WhatsApp settings view that describes how to link a WhatsApp account.",
       "isCommentAutoGenerated" : true,
@@ -229150,6 +229269,40 @@
         }
       }
     },
+    "SeedVR2 restores the image in one step. The source aspect ratio is preserved.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SeedVR2 stellt das Bild in einem Schritt wieder her. Das Seitenverhältnis des Quellbildes bleibt erhalten."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SeedVR2는 한 단계로 이미지를 복원합니다. 원본 이미지의 가로세로 비율은 유지됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SeedVR2 восстанавливает изображение за один шаг. Соотношение сторон исходного изображения сохраняется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SeedVR2 只需一步即可修复图像，并保留原图的宽高比。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SeedVR2 只需一步即可修復影像，並保留原圖的長寬比。"
+          }
+        }
+      }
+    },
     "seed %@" : {
       "comment" : "A small label at the bottom of the image card, displaying the seed value used to generate the image.",
       "isCommentAutoGenerated" : true,
@@ -229182,40 +229335,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "種子 %@"
-          }
-        }
-      }
-    },
-    "SeedVR2 restores the image in one step. The source aspect ratio is preserved." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "SeedVR2 stellt das Bild in einem Schritt wieder her. Das Seitenverhältnis des Quellbildes bleibt erhalten."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "SeedVR2는 한 단계로 이미지를 복원합니다. 원본 이미지의 가로세로 비율은 유지됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "SeedVR2 восстанавливает изображение за один шаг. Соотношение сторон исходного изображения сохраняется."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "SeedVR2 只需一步即可修复图像，并保留原图的宽高比。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "SeedVR2 只需一步即可修復影像，並保留原圖的長寬比。"
           }
         }
       }
@@ -234849,37 +234968,8 @@
         }
       }
     },
-    "Share of the tokens used in this chat" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Anteil der in diesem Chat verwendeten Tokens"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 채팅에서 사용된 토큰의 비율"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Доля токенов, использованных в этом чате"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此聊天中已用 token 的占比"
-          }
-        }
-      }
-    },
     "share of used context" : {
       "comment" : "A label describing the share of the context that is used.",
-      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -243577,40 +243667,6 @@
       "comment" : "A label for the number of source images in a",
       "isCommentAutoGenerated" : true
     },
-    "Source images (ordered, up to 4)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Quellbilder (geordnet, bis zu 4)"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Source images (ordered, up to 4)"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "원본 이미지 (순서대로, 최대 4개)"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Исходные изображения (по порядку, до 4)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "源图像（按顺序，最多 4 张）"
-          }
-        }
-      }
-    },
     "Sources" : {
       "comment" : "A heading for a section of a popover that lists the sources of a context breakdown.",
       "isCommentAutoGenerated" : true,
@@ -243851,34 +243907,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "說話後可在這裏看到你的文字..."
-          }
-        }
-      }
-    },
-    "Speak now…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Jetzt sprechen …"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "지금 말하세요…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Говорите…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请开始说话…"
           }
         }
       }
@@ -244163,6 +244191,9 @@
           }
         }
       }
+    },
+    "Speculative decoding starts Off. Select Auto or a maximum depth of 1–3 explicitly. The runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect." : {
+
     },
     "Speculative Depth" : {
       "extractionState" : "manual"
@@ -246841,16 +246872,22 @@
       "comment" : "A label for the number of steps in a media generation.",
       "isCommentAutoGenerated" : true,
       "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steps"
+          }
+        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Schritte"
           }
         },
-        "en" : {
+        "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Steps"
+            "state" : "needs_review",
+            "value" : "步数"
           }
         },
         "ko" : {
@@ -246863,12 +246900,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Шаги"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "步数"
           }
         }
       }
@@ -258191,9 +258222,6 @@
         }
       }
     },
-    "The model stopped at its output limit before finishing the reply." : {
-      "comment" : "Error when a provider reaches its output limit before completing a reply."
-    },
     "The models image jobs fall back to. Each agent can override these in its own Subagents settings." : {
       "comment" : "A description of the default models used for image generation and editing.",
       "isCommentAutoGenerated" : true,
@@ -260075,9 +260103,6 @@
         }
       }
     },
-    "The speech model stopped Osaurus while it was loading last time, so it is no longer loaded automatically. Use the microphone button to load it again." : {
-      "comment" : "Speech recovery message explaining how to manually retry a model load after a previous process exit."
-    },
     "The SSD cache reached its %@ limit. Removing older cached data to make room can make replies slower to start. Clearing frees cache space, but the next reply may need to rebuild it." : {
       "extractionState" : "manual"
     },
@@ -260434,43 +260459,12 @@
         }
       }
     },
-    "The usable budget is %lld%% of the model maximum, leaving room for the reply." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das nutzbare Budget beträgt %lld %% des Modellmaximums, damit Platz für die Antwort bleibt."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "사용 가능한 예산은 모델 최대치의 %lld%%이며, 응답을 위한 여유를 남깁니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Доступный бюджет составляет %lld%% от максимума модели, чтобы оставить место для ответа."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "可用预算为模型上限的 %lld%%，为回复预留空间。"
-          }
-        }
-      }
-    },
     "The user cleared the activity log; %@ rows were removed and the chain anchor moved forward." : {
 
     },
     "The video prompt exceeds this model's %d character limit." : {
       "comment" : "A localized string that can be used to show a warning to the user. The argument is the limit.",
       "isCommentAutoGenerated" : true
-    },
-    "The voice model stopped Osaurus while it was loading last time. Load it again from here." : {
-      "comment" : "Voice settings recovery message after the process exits during an automatic Core ML model load."
     },
     "The whatsmeow-based bridge helper is required for all WhatsApp actions. Build it with `make wa-helper` (needs the Go toolchain)." : {
       "comment" : "Text describing the WhatsApp helper.",
@@ -263122,7 +263116,6 @@
     },
     "This conversation already has an agent turn in flight; the message will need to be re-sent once it finishes." : {
       "comment" : "Actionable recovery guidance for when an inbound message is rejected because a previous message is still being processed.",
-      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -268575,7 +268568,6 @@
     },
     "tokens used" : {
       "comment" : "A description of the number of tokens used.",
-      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -272195,16 +272187,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "專爲編寫和修復代碼調優。"
-          }
-        }
-      }
-    },
-    "Turbo uses the fixed sampling schedule from its bundle." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Turbo uses the fixed sampling schedule from its bundle."
           }
         }
       }
@@ -277080,9 +277062,6 @@
       "comment" : "A label for the \"Upscale factor\" of a photo.",
       "isCommentAutoGenerated" : true
     },
-    "Upscale Image" : {
-
-    },
     "Upscaled" : {
 
     },
@@ -277376,7 +277355,6 @@
       }
     },
     "Usable budget" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -277679,40 +277657,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用完整路徑，例如 /opt/homebrew/bin/npx，或切換執行主機。"
-          }
-        }
-      }
-    },
-    "Use a structured JSON caption." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verwende eine strukturierte JSON-Beschreibung."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Use a structured JSON caption."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "구조화된 JSON 설명을 사용하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Используйте структурированное описание JSON."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "请使用结构化的 JSON 描述。"
           }
         }
       }
@@ -278438,40 +278382,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用「沙盒」選項卡中的「設置沙盒」，並在完成後重新運行此預檢。"
-          }
-        }
-      }
-    },
-    "Use source aspect ratio" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Seitenverhältnis der Quelle verwenden"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Use source aspect ratio"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "원본 종횡비 사용"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Использовать пропорции исходного изображения"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "使用源图像的宽高比"
           }
         }
       }
