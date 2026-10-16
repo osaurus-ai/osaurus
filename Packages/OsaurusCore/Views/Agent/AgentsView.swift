@@ -7136,6 +7136,15 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Fields this form never edits because their own controls save them
+    /// straight to `AgentManager` (the Working Folder picker calls
+    /// `updateWorkingFolder`). Rebuilding the agent without them reset them to
+    /// nil on every unrelated save, e.g. a System Prompt edit (#3110).
+    static func carryDirectlySavedFields(from current: Agent, into updated: inout Agent) {
+        updated.workingFolderBookmark = current.workingFolderBookmark
+        updated.workingFolderPath = current.workingFolderPath
+    }
+
     @MainActor
     private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -7170,7 +7179,7 @@ struct AgentDetailView: View {
         // metadata, so drop it and let `AgentDescriptionBackfill` redo it.
         let promptUnchanged =
             current.generatedDescriptionPromptHash == AgentDescriptionPolicy.promptHash(trimmedPrompt)
-        let updated = Agent(
+        var updated = Agent(
             id: agent.id,
             name: trimmedName,
             description: AgentDescriptionPolicy.normalized(description),
@@ -7267,6 +7276,7 @@ struct AgentDetailView: View {
             order: current.order
         )
 
+        Self.carryDirectlySavedFields(from: current, into: &updated)
         agentManager.update(updated)
         // Advance both editor and baseline to the exact state just persisted.
         // A later unrelated save can now distinguish new local permission edits
