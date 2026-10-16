@@ -229,6 +229,13 @@ struct GeminiImageConfig: Codable, Sendable {
     let imageSize: String?  // "512px", "1K", "2K", "4K"
 }
 
+/// Gemini `generationConfig.thinkingConfig`. Exactly one of the two fields
+/// is set, matching the model family's documented control.
+struct GeminiThinkingConfig: Codable, Sendable, Equatable {
+    var thinkingLevel: String? = nil
+    var thinkingBudget: Int? = nil
+}
+
 /// Gemini generation configuration
 struct GeminiGenerationConfig: Codable, Sendable {
     let temperature: Double?
@@ -243,6 +250,10 @@ struct GeminiGenerationConfig: Codable, Sendable {
     /// `"application/json"` for JSON mode (maps OpenAI
     /// `response_format: {type: json_object}`).
     var responseMimeType: String? = nil
+    /// Thinking control. Gemini 3 models take `thinkingLevel`; Gemini 2.5
+    /// models take a `thinkingBudget` token count. See
+    /// `GeminiReasoningContract`.
+    var thinkingConfig: GeminiThinkingConfig? = nil
 }
 
 // MARK: - Response Models
