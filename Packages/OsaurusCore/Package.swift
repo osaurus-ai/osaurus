@@ -330,9 +330,11 @@ let package = Package(
         // vmlx-swift#572 (stacked on #570 and #571): write-behind SSD prompt-cache stores so the
         // end of a turn or tool call no longer waits for the files to reach disk, and Uno
         // self-speculation for K2 Horizon bundles that ship a uno/ adapter.
+        // Nemotron 3.5 Super-VL: image-only bundle loading, quantized projector,
+        // physical capability checks and staged recurrent MTP state handling.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "e301414b814c876635ad33306c0532374b4e39b4"
+            revision: "8467b0e340f48b961d10e6a4e425379107d74a5a"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

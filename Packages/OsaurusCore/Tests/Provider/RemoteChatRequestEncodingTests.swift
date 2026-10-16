@@ -186,6 +186,36 @@ struct RemoteChatRequestEncodingTests {
         #expect(config?["responseMimeType"] == nil)
     }
 
+    /// The picker's effort reaches native Gemini as `thinkingLevel` on
+    /// Gemini 3 and as a `thinkingBudget` on 2.5 (#3108).
+    @Test func geminiRequest_mapsReasoningEffortIntoThinkingConfig() throws {
+        let level = try Self.encodeAsDictionary(
+            Self.makeRequest(model: "gemini-3.8-flash", maxTokens: nil, reasoningEffort: "high").toGeminiRequest()
+        )
+        let levelThinking = (level["generationConfig"] as? [String: Any])?["thinkingConfig"] as? [String: Any]
+        #expect(levelThinking?["thinkingLevel"] as? String == "high")
+        #expect(levelThinking?["thinkingBudget"] == nil)
+
+        let budget = try Self.encodeAsDictionary(
+            Self.makeRequest(model: "gemini-2.5-flash", maxTokens: nil, reasoningEffort: "low").toGeminiRequest()
+        )
+        let budgetThinking = (budget["generationConfig"] as? [String: Any])?["thinkingConfig"] as? [String: Any]
+        #expect(budgetThinking?["thinkingBudget"] as? Int == 1024)
+        #expect(budgetThinking?["thinkingLevel"] == nil)
+    }
+
+    /// An effort the model does not document (3 Pro has no `medium`) and
+    /// models with no contract send no thinkingConfig at all.
+    @Test func geminiRequest_omitsThinkingConfig_whenEffortUnsupported() throws {
+        for (model, effort) in [("gemini-3-pro-preview", "medium"), ("gemini-2.0-flash", "high"), ("gemini-3.8-flash", nil)] {
+            let payload = try Self.encodeAsDictionary(
+                Self.makeRequest(model: model, maxTokens: 256, reasoningEffort: effort).toGeminiRequest()
+            )
+            let config = payload["generationConfig"] as? [String: Any]
+            #expect(config?["thinkingConfig"] == nil, "\(model) \(effort ?? "nil")")
+        }
+    }
+
     // MARK: - Dropped-media rejection (Anthropic/Gemini wire)
 
     /// Audio and video parts have no Anthropic/Gemini wire mapping and were

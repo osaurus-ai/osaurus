@@ -1,4 +1,4 @@
-//
+// || thinkingConfig != nil
 //  RemoteProviderService.swift
 //  osaurus
 //
@@ -5413,10 +5413,17 @@ struct RemoteChatRequest: Encodable {
         // Map OpenAI parameter-fidelity fields into Gemini's generationConfig:
         // `seed` carries over directly; JSON mode becomes `responseMimeType`.
         let jsonMimeType: String? = response_format?.type == "json_object" ? "application/json" : nil
+        // The picker's effort becomes Gemini's native thinking control:
+        // `thinkingLevel` on Gemini 3, a `thinkingBudget` on 2.5.
+        let thinkingConfig = GeminiReasoningContract.thinkingConfig(
+            forModelId: model,
+            effort: reasoning_effort
+        )
         var generationConfig: GeminiGenerationConfig?
         if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil
             || responseModalities != nil || imageConfig != nil
             || seed != nil || jsonMimeType != nil
+            || thinkingConfig != nil
         {
             generationConfig = GeminiGenerationConfig(
                 temperature: temperature.map { Double($0) },
@@ -5427,7 +5434,8 @@ struct RemoteChatRequest: Encodable {
                 responseModalities: responseModalities,
                 imageConfig: imageConfig,
                 seed: seed,
-                responseMimeType: jsonMimeType
+                responseMimeType: jsonMimeType,
+                thinkingConfig: thinkingConfig
             )
         }
 

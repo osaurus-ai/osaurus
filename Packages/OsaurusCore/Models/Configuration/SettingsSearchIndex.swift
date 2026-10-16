@@ -983,6 +983,8 @@ public enum SettingsSearchIndex {
             keywords: [
                 "slack bot token", "slack signing secret", "socket mode",
                 "slack workspace ids", "slack channel allowlist",
+                "accept messages sent through apps", "slack api", "chat.postmessage",
+                "user token", "bot_message_denied", "phone shortcut",
             ]
         ),
         .init(

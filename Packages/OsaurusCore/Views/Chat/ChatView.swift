@@ -775,7 +775,9 @@ final class ChatSession: ObservableObject {
     /// Set to true at the start of `stop()` so `completeRunCleanup` knows the
     /// run was cancelled by the user (or by `sendNowInterrupting`) and must
     /// not auto-flush a queued send. Reset to false at the top of `send(...)`.
-    private var stopRequested: Bool = false
+    // Background-task observers read this before interpreting streaming=false:
+    // the child's own chat Stop must not look like successful completion.
+    private(set) var stopRequested: Bool = false
     /// Takes the session's own inference provenance. It used to hardcode
     /// `.chatUI` and ignore `source` entirely, so every headless run -- cron
     /// schedule, file watcher, agent self-wake -- reached the model claiming to
