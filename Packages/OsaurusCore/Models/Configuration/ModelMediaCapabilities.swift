@@ -264,8 +264,6 @@ public enum ModelMediaCapabilities {
         "qwen3_5", "qwen3_5_moe", "qwen4_exp",
         "qwen3_6", "qwen3_6_moe",
         "smolvlm",
-        "nemotron_h_omni",
-        "NemotronH_Nano_Omni_Reasoning_V3".lowercased(),
         // Muse Glimmer's vision tower carries `patch_temporal: 2`, i.e. it
         // consumes frames in temporal pairs, and the chat template has a
         // dedicated `<|video|>` placeholder alongside `<|patch|>`. Without this

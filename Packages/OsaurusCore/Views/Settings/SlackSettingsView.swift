@@ -29,6 +29,8 @@ struct SlackSettingsView: View {
     @State private var senderAllowlistText: String = ""
     @State private var writeEnabled: Bool = false
     @State private var allowBroadcastMentions: Bool = false
+    @State private var acceptAppPostsFromAllowlistedSenders = false
+    @State private var pendingAcceptAppPostsConfirm = false
     @State private var defaultReadLimit: String = "50"
     @State private var inboundDispatchEnabled = false
     @State private var inboundTarget: AgentDispatchTarget?
@@ -72,6 +74,7 @@ struct SlackSettingsView: View {
         var senderAllowlistText: String
         var writeEnabled: Bool
         var allowBroadcastMentions: Bool
+        var acceptAppPostsFromAllowlistedSenders: Bool
         var defaultReadLimit: String
         var inboundDispatchEnabled: Bool
         var inboundTarget: AgentDispatchTarget?
@@ -89,6 +92,7 @@ struct SlackSettingsView: View {
             senderAllowlistText: senderAllowlistText,
             writeEnabled: writeEnabled,
             allowBroadcastMentions: allowBroadcastMentions,
+            acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders,
             defaultReadLimit: defaultReadLimit,
             inboundDispatchEnabled: inboundDispatchEnabled,
             inboundTarget: inboundTarget,
@@ -533,6 +537,33 @@ struct SlackSettingsView: View {
                     isOn: $inboundRequireMention
                 )
                 SettingsToggle(
+                    title: L("Accept Messages Sent Through Apps"),
+                    description: L(
+                        "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default."
+                    ),
+                    isOn: Binding(
+                        get: { acceptAppPostsFromAllowlistedSenders },
+                        set: { enabled in
+                            // Turning this on widens who can start a run, so confirm first.
+                            if enabled {
+                                pendingAcceptAppPostsConfirm = true
+                            } else {
+                                acceptAppPostsFromAllowlistedSenders = false
+                            }
+                        }
+                    )
+                )
+                .themedAlert(
+                    L("Accept messages sent through apps?"),
+                    isPresented: $pendingAcceptAppPostsConfirm,
+                    message: L(
+                        "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked."
+                    ),
+                    primaryButton: .primary(L("Turn On")) { acceptAppPostsFromAllowlistedSenders = true },
+                    secondaryButton: .cancel(L("Cancel")),
+                    presentationStyle: .window
+                )
+                SettingsToggle(
                     title: L("Continue Participating Threads"),
                     description: L(
                         "Accept follow-ups without another mention only after Osaurus has replied in that Slack thread."
@@ -973,6 +1004,7 @@ struct SlackSettingsView: View {
         senderAllowlistText = configuration.senderAllowlist.joined(separator: "\n")
         writeEnabled = configuration.writeEnabled
         allowBroadcastMentions = configuration.allowBroadcastMentions
+        acceptAppPostsFromAllowlistedSenders = configuration.acceptAppPostsFromAllowlistedSenders
         defaultReadLimit = "\(configuration.defaultReadLimit)"
         inboundDispatchEnabled = configuration.inboundDispatch.enabled
         inboundTarget = configuration.inboundDispatch.target
@@ -1202,7 +1234,8 @@ struct SlackSettingsView: View {
                 continueThreads: inboundContinueThreads,
                 autoReplyEnabled: inboundAutoReplyEnabled
             ),
-            workspaceAccounts: previous.workspaceAccounts
+            workspaceAccounts: previous.workspaceAccounts,
+            acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders
         )
     }
 

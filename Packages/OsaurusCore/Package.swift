@@ -330,14 +330,11 @@ let package = Package(
         // vmlx-swift#572 (stacked on #570 and #571): write-behind SSD prompt-cache stores so the
         // end of a turn or tool call no longer waits for the files to reach disk, and Uno
         // self-speculation for K2 Horizon bundles that ship a uno/ adapter.
-        // vmlx-swift#607 native media workflows; feat/nemotron35-bolt-super-oct16 adds the
-        // Nemotron 3.5 runtime: Super-VL (latent MoE, fp32 router, native MTP with a staged
-        // Mamba-2 verify rollback, vision final LayerNorm) and Bolt JANGH2 (puzzle MoE blocks,
-        // relu2 JANGH experts), the 3.5 image prompt layout, and the MTP verify-prefetch
-        // stream fix.
+        // Nemotron 3.5 Super-VL: image-only bundle loading, quantized projector,
+        // physical capability checks and staged recurrent MTP state handling.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "fab69adb4d6a379aa011f0ef562f6d5494bd8164"
+            revision: "8467b0e340f48b961d10e6a4e425379107d74a5a"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

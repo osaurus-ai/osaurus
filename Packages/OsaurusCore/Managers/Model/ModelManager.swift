@@ -215,6 +215,7 @@ public final class ModelManager: NSObject, ObservableObject {
     // MARK: - Published Properties
     @Published var availableModels: [MLXModel] = []
     @Published var isLoadingModels: Bool = false
+    @Published private(set) var imageSearchRepoId: String?
     @Published var suggestedModels: [MLXModel] = ModelManager.curatedSuggestedModels
     @Published var manifestChecks: [String: ModelManifestCheck] = [:]
     @Published var manifestChecksInFlight: Set<String> = []
@@ -381,26 +382,37 @@ public final class ModelManager: NSObject, ObservableObject {
 
         // Mark loading to show spinner if needed
         isLoadingModels = true
+        imageSearchRepoId = nil
 
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // If user pasted a direct HF URL or "org/repo", immediately surface it without requiring SDK allowlist
-        if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty,
-            !Self.isGGUFRepo(id: directId), !findExistingModel(id: directId).found
-        {
-            let probe = MLXModel(id: directId, name: "", description: "", downloadURL: "")
-            let model = MLXModel(
-                id: directId,
-                name: ModelMetadataParser.friendlyName(from: directId),
-                description: probe.isDownloaded ? L("Local model (detected)") : L("Imported from input"),
-                downloadURL: "https://huggingface.co/\(directId)"
-            )
-            availableModels.insert(model, at: 0)
-            downloadService.downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
-        }
-
         remoteSearchTask = Task { [weak self] in
             guard let self else { return }
+
+            // Diffusers/mflux bundles intentionally have nested configs, not
+            // the root config required by the language-model downloader.
+            if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty,
+                !Self.isGGUFRepo(id: directId)
+            {
+                let isImage = await ImageModelDownloadService.isImageRepo(directId)
+                guard !Task.isCancelled else { return }
+                if isImage {
+                    self.imageSearchRepoId = directId
+                    self.availableModels.removeAll { $0.id.caseInsensitiveCompare(directId) == .orderedSame }
+                    self.isLoadingModels = false
+                    return
+                }
+                if !self.findExistingModel(id: directId).found {
+                    self.insertModel(
+                        MLXModel(
+                            id: directId,
+                            name: ModelMetadataParser.friendlyName(from: directId),
+                            description: L("Imported from input"),
+                            downloadURL: "https://huggingface.co/\(directId)"
+                        )
+                    )
+                }
+            }
 
             // Build candidate URLs
             let limit = 100
@@ -431,13 +443,17 @@ public final class ModelManager: NSObject, ObservableObject {
                 for await arr in group { collected.append(arr) }
                 return collected
             }
+            guard !Task.isCancelled else { return }
 
             var byId: [String: HFModel] = [:]
             for arr in results { for m in arr { byId[m.id] = m } }
 
             let allow = Self.sdkSupportedModelIds()
             let allowedMapped: [MLXModel] = byId.values.compactMap { hf in
-                guard allow.contains(hf.id.lowercased()), !Self.isGGUFRepo(id: hf.id, tags: hf.tags) else {
+                guard allow.contains(hf.id.lowercased()),
+                    Self.isChatCatalogEligible(id: hf.id, pipelineTag: hf.pipeline_tag, tags: hf.tags),
+                    !Self.isGGUFRepo(id: hf.id, tags: hf.tags)
+                else {
                     return nil
                 }
                 return MLXModel(
@@ -450,11 +466,8 @@ public final class ModelManager: NSObject, ObservableObject {
                 )
             }
 
-            // Publish to UI on main actor (we already are, but be explicit about ordering)
-            await MainActor.run {
-                self.mergeAvailable(with: allowedMapped)
-                self.isLoadingModels = false
-            }
+            self.mergeAvailable(with: allowedMapped)
+            self.isLoadingModels = false
         }
     }
 
@@ -518,6 +531,7 @@ public final class ModelManager: NSObject, ObservableObject {
     /// (a `huggingface://` / `osaurus://open_from_hf` link or a pasted id).
     enum DeepLinkResolution {
         case model(MLXModel)
+        case image(repoId: String)
         /// The Hub or the bundle rejected the repo; see the failure for why.
         case unsupported(HuggingFaceService.MLXCompatibility.Failure)
         /// A public OsaurusAI repo that is not in the curated registry. Other
@@ -530,6 +544,13 @@ public final class ModelManager: NSObject, ObservableObject {
     func resolveModelForDeepLink(byRepoId repoId: String) async -> DeepLinkResolution {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .unsupported(.notFound) }
+
+        // Check the actual layout even for a cached catalog entry: older
+        // versions could insert an image repo into the language-model list.
+        if await ImageModelDownloadService.isImageRepo(trimmed) {
+            ImageModelDownloadService.shared.offer(repoId: trimmed)
+            return .image(repoId: trimmed)
+        }
 
         if let existing = findExistingModel(id: trimmed).model { return .model(existing) }
 

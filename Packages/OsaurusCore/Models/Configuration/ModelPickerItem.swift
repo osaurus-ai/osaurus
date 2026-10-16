@@ -296,13 +296,15 @@ extension ModelPickerItem {
         modelId: String,
         providerName: String,
         providerId: UUID,
-        contextLength: Int? = nil
+        contextLength: Int? = nil,
+        reasoningCapabilities: ModelReasoningCapabilities? = nil
     ) -> ModelPickerItem {
         ModelPickerItem(
             id: modelId,
             displayName: displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
-            contextLength: contextLength
+            contextLength: contextLength,
+            reasoningCapabilities: reasoningCapabilities
         )
     }
 

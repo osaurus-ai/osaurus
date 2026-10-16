@@ -28861,6 +28861,51 @@
         }
       }
     },
+    "Accept messages sent through apps?" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "接受通过应用发送的消息？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "接受透過應用程式傳送的訊息？" } }
+      }
+    },
+    "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许列表中的成员授权以其身份发布的任何 Slack 应用（例如 Zapier 或工作流）都将能够向此代理发送消息。其他机器人仍会被阻止。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許清單中的成員授權以其身分發布的任何 Slack 應用程式（例如 Zapier 或工作流程）都將能夠傳送訊息給此代理。其他機器人仍會被封鎖。" } }
+      }
+    },
+    "Turn On" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "开启" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟" } }
+      }
+    },
+    "Accept Messages Sent Through Apps" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "接受通过应用发送的消息" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "接受透過應用程式傳送的訊息" } }
+      }
+    },
+    "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复允许列表中的成员使用自己的令牌通过 Slack 应用或 API 发布的消息，例如手机快捷操作。Slack 会将这些标记为应用消息，因此默认会被忽略。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "回覆允許清單中的成員使用自己的權杖透過 Slack 應用程式或 API 發布的訊息，例如手機捷徑。Slack 會將這些標記為應用程式訊息，因此預設會被忽略。" } }
+      }
+    },
     "Allow Broadcast Mentions" : {
       "localizations" : {
         "de" : {
