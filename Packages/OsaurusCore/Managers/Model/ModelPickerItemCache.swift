@@ -346,7 +346,13 @@ final class ModelPickerItemCache: ObservableObject {
                         contextLength: remoteContextLength(
                             providerInfo.providerId,
                             unprefixedRouterModelId(modelId)
-                        )
+                        ),
+                        // Gemini text models get their documented thinking
+                        // levels on routes that forward the effort intact.
+                        reasoningCapabilities: GeminiReasoningContract.routeHonorsContract(
+                            providerType: providerInfo.providerType,
+                            host: providerInfo.host
+                        ) ? GeminiReasoningContract.capabilities(forModelId: modelId) : nil
                     )
                 }
                 items.append(item)
