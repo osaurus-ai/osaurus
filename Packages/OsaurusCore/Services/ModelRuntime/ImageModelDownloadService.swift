@@ -13,6 +13,9 @@
 //
 
 import Foundation
+import OSLog
+
+private let imageDownloadLog = Logger(subsystem: "com.dinoki.osaurus", category: "ImageModelDownload")
 
 /// A downloadable image model. `id` is the local bundle directory name (and the
 /// request id used everywhere else); it's derived from the repo's last path
@@ -402,6 +405,9 @@ final class ImageModelDownloadService: ObservableObject {
                 )) == true
             if complete { return (destination, true) }
             let recovered = try Self.recoverMisroutedFile(file, from: legacyRoot, to: destination)
+            if recovered {
+                imageDownloadLog.info("Recovered verified image-model file from the managed model folder: \(expectedSize) bytes")
+            }
             return (destination, recovered)
         }
         let staged = try await withTaskCancellationHandler {
