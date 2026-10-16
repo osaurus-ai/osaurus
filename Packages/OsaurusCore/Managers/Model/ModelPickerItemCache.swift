@@ -18,17 +18,25 @@ final class ModelPickerItemCache: ObservableObject {
     /// in flight. Concurrent rebuild requests are coalesced through a single
     /// in-flight Task so that the "last writer wins" race that previously caused
     /// remote-provider models to disappear at launch can no longer occur.
-    @Published private(set) var items: [ModelPickerItem] = [] {
-        didSet { chatModelCandidates = items.chatModelCandidates }
-    }
+    @Published private(set) var items: [ModelPickerItem] = []
     @Published private(set) var isLoaded = false
 
-    /// Stored projection of `items.chatModelCandidates`, recomputed once per
-    /// rebuild. The filter runs `isLikelyChatCapable` string matching over
-    /// every item, and the subagent model pickers read the candidate list in
-    /// their view bodies — per-render recomputation there multiplies that
-    /// scan by every graph update while the picker is on screen.
+    /// Stored projection of `items.chatModelCandidates`, recomputed only when
+    /// `items` actually changes (see `apply(_:)`). The filter runs
+    /// `isLikelyChatCapable` string matching over every item, and the
+    /// subagent model pickers read the candidate list in their view bodies —
+    /// per-render recomputation there multiplies that scan by every graph
+    /// update while the picker is on screen.
     private(set) var chatModelCandidates: [ModelPickerItem] = []
+
+    /// Debounce window for notification-driven rebuilds. Connectivity flaps
+    /// (`NWPathMonitor` toggling satisfied/unsatisfied) and provider bursts
+    /// post many notifications in quick succession; running a full MainActor
+    /// rebuild for each one previously stalled the main thread for seconds.
+    static let notificationRebuildDebounce: UInt64 = 300_000_000  // 300ms
+
+    /// Pending debounced rebuild scheduled by a notification observer.
+    private var debouncedRebuildTask: Task<Void, Never>?
 
     /// Whether at least one ready text-to-image model is installed. A synchronous
     /// read off the already-warmed picker cache, used by the subagent gate to
@@ -104,9 +112,10 @@ final class ModelPickerItemCache: ObservableObject {
                     // Note: do NOT call `invalidateCache()` here. Blanking
                     // `items` mid-rebuild created a window where readers
                     // (e.g. ChatView.init) could observe an empty list. The
-                    // serialized rebuild below atomically replaces `items`
-                    // when finished and coalesces concurrent requests.
-                    await self?.buildModelPickerItems()
+                    // serialized rebuild atomically replaces `items` when
+                    // finished and coalesces concurrent requests; the
+                    // debounce collapses notification bursts into one pass.
+                    self?.scheduleDebouncedRebuild()
                 }
             }
         }
@@ -121,10 +130,33 @@ final class ModelPickerItemCache: ObservableObject {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     await MediaGenerationCoordinator.shared.refreshCloudCatalog()
-                    await self?.buildModelPickerItems()
+                    self?.scheduleDebouncedRebuild()
                 }
             }
         }
+    }
+
+    /// Schedule a rebuild after a short quiet period, replacing any rebuild
+    /// already pending. Bursts of change notifications (e.g. a flapping
+    /// network path posting `.remoteProviderModelsChanged` on every edge)
+    /// therefore cost a single MainActor rebuild instead of one per post.
+    private func scheduleDebouncedRebuild() {
+        debouncedRebuildTask?.cancel()
+        debouncedRebuildTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.notificationRebuildDebounce)
+            guard !Task.isCancelled, let self else { return }
+            self.debouncedRebuildTask = nil
+            await self.buildModelPickerItems()
+        }
+    }
+
+    /// Publish a new item list together with its chat-candidate projection.
+    /// Identical lists are skipped so no-op rebuilds neither rescan the
+    /// candidates nor invalidate every observing SwiftUI view.
+    private func apply(_ newItems: [ModelPickerItem]) {
+        guard newItems != items else { return }
+        chatModelCandidates = newItems.chatModelCandidates
+        items = newItems
     }
 
     /// Rebuilds the picker items, coalescing concurrent callers. Returns the
@@ -146,8 +178,8 @@ final class ModelPickerItemCache: ObservableObject {
             repeat {
                 self.pendingRebuild = false
                 let options = await Self.computeItems()
-                self.items = options
-                self.isLoaded = true
+                self.apply(options)
+                if !self.isLoaded { self.isLoaded = true }
                 latest = options
             } while self.pendingRebuild
             self.rebuildTask = nil
@@ -176,8 +208,10 @@ final class ModelPickerItemCache: ObservableObject {
     /// for explicit invalidation paths (e.g. completing onboarding) where the
     /// caller will immediately trigger a rebuild.
     func invalidateCache() {
+        debouncedRebuildTask?.cancel()
+        debouncedRebuildTask = nil
         isLoaded = false
-        items = []
+        apply([])
     }
 
     #if DEBUG
@@ -189,7 +223,7 @@ final class ModelPickerItemCache: ObservableObject {
         @discardableResult
         func _setItemsForTesting(_ newItems: [ModelPickerItem]) -> [ModelPickerItem] {
             let previous = items
-            items = newItems
+            apply(newItems)
             isLoaded = true
             return previous
         }

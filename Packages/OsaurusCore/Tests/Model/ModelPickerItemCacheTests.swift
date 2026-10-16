@@ -430,4 +430,48 @@ struct ModelPickerItemCacheTests {
                 == ["low", "medium", "high"]
         )
     }
+
+    /// `chatModelCandidates` is published together with `items` (no longer
+    /// via a synchronous `didSet` scan), so every assignment path must keep
+    /// the projection in sync.
+    @Test func setItems_keepsChatCandidatesInSync() throws {
+        let cache = ModelPickerItemCache.shared
+        let providerId = UUID()
+        let seeded: [ModelPickerItem] = [
+            .foundation(),
+            .fromRemoteModel(modelId: "p/gpt-chat", providerName: "p", providerId: providerId),
+            .fromRemoteModel(
+                modelId: "p/text-embedding-3-small",
+                providerName: "p",
+                providerId: providerId
+            ),
+        ]
+        let previous = cache._setItemsForTesting(seeded)
+        defer { cache._setItemsForTesting(previous) }
+
+        #expect(cache.chatModelCandidates.map(\.id) == seeded.chatModelCandidates.map(\.id))
+        #expect(!cache.chatModelCandidates.contains { $0.id == "p/text-embedding-3-small" })
+    }
+
+    /// A burst of change notifications (e.g. a flapping network path posting
+    /// `.remoteProviderModelsChanged` on every edge) is debounced into a
+    /// single rebuild; once it settles the cache is populated and the
+    /// candidate projection matches the published items.
+    @Test func notificationBurst_debouncedRebuildKeepsCandidatesInSync() async throws {
+        try await withStableCatalog {
+            let cache = ModelPickerItemCache.shared
+            _ = await cache.buildModelPickerItems()
+            try #require(!cache.items.isEmpty)
+
+            for _ in 0 ..< 50 {
+                NotificationCenter.default.post(name: .remoteProviderModelsChanged, object: nil)
+            }
+            try? await Task.sleep(nanoseconds: ModelPickerItemCache.notificationRebuildDebounce * 3)
+            let final = await cache.buildModelPickerItems()
+
+            #expect(!final.isEmpty)
+            #expect(cache.items == final)
+            #expect(cache.chatModelCandidates == cache.items.chatModelCandidates)
+        }
+    }
 }
