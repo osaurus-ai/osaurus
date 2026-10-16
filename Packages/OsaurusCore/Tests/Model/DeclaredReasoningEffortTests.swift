@@ -433,3 +433,73 @@ struct DeclaredReasoningEffortTests {
         #expect(undeclared["preserve_thinking"] == nil)
     }
 }
+
+// MARK: - Declared reasoning modes (Nemotron 3.5: on / medium / off)
+
+extension DeclaredReasoningEffortTests {
+    private static let nemotronJang = """
+        {"capabilities": {"family": "nemotron_h", "reasoning_parser": "deepseek_r1",
+          "reasoning_modes": {"on": {"enable_thinking": true},
+                              "medium": {"enable_thinking": true, "medium_effort": true},
+                              "off": {"enable_thinking": false}}},
+         "chat": {"thinking": {"supported": true, "template_flag": "enable_thinking", "default": true}}}
+        """
+
+    @Test("capabilities.reasoning_modes parses into ladder levels with declared kwargs")
+    func reasoningModesParse() throws {
+        let declaration = try #require(
+            DeclaredReasoningEffort.parseJangDeclaration(data: Data(Self.nemotronJang.utf8)))
+        guard case .modeKwargs(let levels, let defaultLevel, let kwargs)? = declaration.control else {
+            Issue.record("expected modeKwargs, got \(String(describing: declaration.control))")
+            return
+        }
+        #expect(levels == ["medium", "high"])
+        #expect(defaultLevel == "high")
+        #expect(kwargs["medium"] == ["enable_thinking": .bool(true), "medium_effort": .bool(true)])
+        #expect(kwargs["high"] == ["enable_thinking": .bool(true)])
+        #expect(kwargs["none"] == ["enable_thinking": .bool(false)])
+    }
+
+    @Test("a reasoning mode outside the effort ladder voids the whole declaration")
+    func unknownReasoningModeFailsClosed() {
+        let json = """
+            {"capabilities": {"reasoning_modes": {"on": {"enable_thinking": true},
+                                                  "turbo": {"enable_thinking": true}}}}
+            """
+        #expect(DeclaredReasoningEffort.parseJangDeclaration(data: Data(json.utf8)) == nil)
+    }
+
+    @Test("dispatch sends exactly the declared kwargs for off, medium and on")
+    func reasoningModesDispatch() throws {
+        let declaration = try #require(
+            DeclaredReasoningEffort.parseJangDeclaration(data: Data(Self.nemotronJang.utf8)))
+        let model = "proof/Nemotron-3.5-modes"
+        withOverride(declaration, forModelId: model) {
+            func context(_ options: [String: ModelOptionValue]) -> [String: any Sendable] {
+                MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(temperature: nil, maxTokens: 64, modelOptions: options),
+                    modelName: model)
+            }
+            let medium = context(["reasoningEffort": .string("medium")])
+            #expect(medium["enable_thinking"] as? Bool == true)
+            #expect(medium["medium_effort"] as? Bool == true)
+            #expect(medium["reasoning_effort"] == nil)
+
+            let high = context(["reasoningEffort": .string("high")])
+            #expect(high["enable_thinking"] as? Bool == true)
+            #expect(high["medium_effort"] == nil)
+
+            // `low` snaps to the nearest declared level (medium); `max` to on.
+            #expect(context(["reasoningEffort": .string("low")])["medium_effort"] as? Bool == true)
+            #expect(context(["reasoningEffort": .string("max")])["medium_effort"] == nil)
+
+            let off = context(["reasoningEffort": .string("none")])
+            #expect(off["enable_thinking"] as? Bool == false)
+            #expect(off["medium_effort"] == nil)
+            #expect(context(["disableThinking": .bool(true)])["enable_thinking"] as? Bool == false)
+
+            // No request: nothing is synthesized; the template default applies.
+            #expect(context([:]).isEmpty)
+        }
+    }
+}

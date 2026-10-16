@@ -1308,6 +1308,10 @@ struct MLXBatchAdapter {
                     ontoLevels: levels,
                     defaultLevel: defaultLevel
                 ) ?? requested
+            case .modeKwargs:
+                // Mode bundles never receive `reasoning_effort`; their declared
+                // kwargs are applied below.
+                return nil
             case .fixedNativeEffort:
                 // The bundle exposes no picker, but its engine still owns a
                 // strict native effort contract. Preserve explicit input so
@@ -1334,6 +1338,31 @@ struct MLXBatchAdapter {
         // Omission means the bundle/template default, including on required
         // tool turns. Do not close reasoning to compensate for a failed run.
         guard normalizedReasoningEffort != nil || disableThinking != nil else {
+            return context
+        }
+
+        // Declared reasoning modes (Nemotron 3.5): send exactly the kwargs the
+        // bundle declares for the selected mode. Off = the declared `off` mode
+        // (else `enable_thinking: false`); an effort snaps onto the declared
+        // levels (high = on, medium = medium); the plain toggle selects the
+        // declared default when thinking is on.
+        if case .modeKwargs(let levels, let defaultLevel, let kwargs)? =
+            DeclaredReasoningEffort.control(forModelId: modelName)
+        {
+            let level: String?
+            if disableThinking == true || directRailReasoningEffort {
+                level = "none"
+            } else if let requested = normalizedReasoningEffort, hasPositiveReasoningEffort {
+                level = DeclaredReasoningEffort.snapped(
+                    requested, ontoLevels: levels, defaultLevel: defaultLevel)
+            } else {
+                level = defaultLevel ?? levels.last
+            }
+            if let level, let declared = kwargs[level] {
+                for (key, value) in declared { context[key] = value.sendable }
+            } else if level == "none" {
+                context["enable_thinking"] = false
+            }
             return context
         }
 
@@ -2531,6 +2560,7 @@ struct MLXBatchAdapter {
             guard
                 key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice"
                     || key == "tool_choice_name" || key == "preserve_thinking"
+                    || key == "medium_effort"
             else {
                 return nil
             }
