@@ -761,7 +761,7 @@ struct SlackConnectionTests {
         }
     }
 
-    @Test func slackInboundEventAcceptsUserTokenPostWithBotIdAndDeniesOtherBots() async throws {
+    @Test func slackInboundEventAcceptsAppPostsFromAllowlistedSendersOnlyWhenOptedIn() async throws {
         try await withIsolatedSlackStores { credentials in
             let store = AgentChannelMessageStore()
             try store.openInMemory()
@@ -776,7 +776,8 @@ struct SlackConnectionTests {
                 SlackConnectionConfiguration(
                     readableChannelIds: ["C23456"],
                     senderAllowlist: ["U55555"],
-                    botUserId: "UOSABOT"
+                    botUserId: "UOSABOT",
+                    acceptAppPostsFromAllowlistedSenders: true
                 )
             )
             func envelope(user: String?, eventId: String, ts: String) -> SlackEventEnvelope {
@@ -800,6 +801,17 @@ struct SlackConnectionTests {
                     eventTime: 1_718_800_001
                 )
             }
+
+            var optedOut = service.configuration()
+            optedOut.acceptAppPostsFromAllowlistedSenders = false
+            try service.saveConfiguration(optedOut)
+            #expect(
+                try service.recordInboundEventOutcome(
+                    envelope(user: "U55555", eventId: "EvOptedOut", ts: "1718800001.000200")
+                ) == .rejected(reason: "bot_message_denied")
+            )
+            optedOut.acceptAppPostsFromAllowlistedSenders = true
+            try service.saveConfiguration(optedOut)
 
             let userTokenPost = try service.recordInboundEventOutcome(
                 envelope(user: "U55555", eventId: "EvUserToken", ts: "1718800001.000300")

@@ -1620,10 +1620,11 @@ final class SlackConnectionService: @unchecked Sendable {
                 roomId: normalized.roomId,
                 senderId: normalized.authorId,
                 // Slack stamps the posting app's bot_id even on chat.postMessage
-                // calls made with an allowlisted person's own user token, so
-                // only treat the event as a bot when no allowlisted human sent it.
+                // calls made with a person's own user token. When the user opts in,
+                // an allowlisted human author outranks that bot_id.
                 isBotMessage: envelope.event?.botId != nil
-                    && !config.canUseSender(senderId: envelope.event?.user),
+                    && !(config.acceptAppPostsFromAllowlistedSenders
+                        && config.canUseSender(senderId: envelope.event?.user)),
                 isSelfMessage: false
             ),
             messageStore: messageStore

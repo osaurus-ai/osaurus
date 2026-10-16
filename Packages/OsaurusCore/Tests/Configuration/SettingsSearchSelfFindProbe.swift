@@ -115,6 +115,7 @@ struct SettingsSearchSelfFindProbe {
             // The control that makes every tool always allowed. It had no
             // entry at all, and "tool calls" matched Max Tool Attempts —
             // a wrong-destination hit, which is worse than no hit.
+            ("Accept Messages Sent Through Apps", "agentChannels.slack"),
             ("auto allow", "tools.autoAllowAll"),
             ("allow all tools", "tools.autoAllowAll"),
             ("always allow", "tools.autoAllowAll"),
