@@ -65,7 +65,8 @@ struct ImageBundleRoutingTests {
     @Test func recoveryRejectsSameSizeWrongContent() throws {
         try withFiles { root, source, destination, file in
             try Data("garbage".utf8).write(to: source)
-            #expect(try !ImageModelDownloadService.recoverMisroutedFile(file, from: root, to: destination))
+            let recovered = try ImageModelDownloadService.recoverMisroutedFile(file, from: root, to: destination)
+            #expect(!recovered)
             #expect(!FileManager.default.fileExists(atPath: destination.path))
         }
     }
@@ -74,7 +75,8 @@ struct ImageBundleRoutingTests {
         try withFiles { root, _, destination, original in
             var file = original
             file.digest = nil
-            #expect(try !ImageModelDownloadService.recoverMisroutedFile(file, from: root, to: destination))
+            let recovered = try ImageModelDownloadService.recoverMisroutedFile(file, from: root, to: destination)
+            #expect(!recovered)
         }
     }
 
