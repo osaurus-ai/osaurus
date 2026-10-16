@@ -545,17 +545,14 @@ struct RuntimePolicySourceTests {
             #expect(contextCount >= queryCount)
         }
 
-        // The shared store performs the actual reads for those wrappers, so it
-        // must pair every UI-skip with a non-interactive authentication context.
+        // The shared store performs the actual reads for those wrappers. Every
+        // read takes the shared options, which always skip UI and add the
+        // non-interactive context whenever coreauthd answered in time (#3109).
         let store = try Self.source("Services/Keychain/Keychain.swift")
-        let storeQueryCount =
-            store.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count - 1
-        let storeContextCount =
-            store.components(
-                separatedBy: "kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext()"
-            ).count - 1
-        #expect(storeQueryCount >= 1)
-        #expect(storeContextCount >= storeQueryCount)
+        #expect(store.components(separatedBy: "KeychainQueryHelpers.nonInteractiveQueryOptions()").count - 1 >= 2)
+        #expect(!store.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        #expect(helper.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        #expect(helper.contains("options[kSecUseAuthenticationContext as String] = context"))
 
         let storageKey = try Self.source("Identity/StorageKeyManager.swift")
         #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
