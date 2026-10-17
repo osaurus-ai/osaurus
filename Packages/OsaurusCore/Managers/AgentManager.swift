@@ -1245,6 +1245,19 @@ extension AgentManager {
             return (config.workingFolderBookmark, config.workingFolderPath)
         }
         guard let agent = agent(for: agentId) else { return nil }
+        return workingFolder(for: agent)
+    }
+
+    /// Agent-instance overload that avoids a second `agents` array access.
+    /// Pass a pre-fetched `Agent` value to skip the `agent(for:)` lookup (and
+    /// the associated `@Published` property read) when iterating over a
+    /// snapshot of the agents array.
+    func workingFolder(for agent: Agent) -> (bookmark: Data?, path: String?)? {
+        if agent.id == Agent.defaultId {
+            let config = DefaultAgentConfigurationStore.load()
+            guard config.hasWorkingFolder else { return nil }
+            return (config.workingFolderBookmark, config.workingFolderPath)
+        }
         let hasFolder =
             agent.workingFolderBookmark != nil || agent.workingFolderPath?.isEmpty == false
         guard hasFolder else { return nil }
@@ -1420,6 +1433,15 @@ extension AgentManager {
         guard let agent = agent(for: agentId) else {
             return defaultAgentModel ?? ChatConfigurationStore.load().defaultModel
         }
+        return effectiveModel(for: agent, defaultAgentModel: defaultAgentModel)
+    }
+
+    /// Agent-instance overload that avoids a second `agents` array access.
+    /// Pass a pre-fetched `Agent` value to skip the `agent(for:)` lookup (and
+    /// the associated `@Published` property read) when iterating over a
+    /// snapshot of the agents array.
+    func effectiveModel(for agent: Agent, defaultAgentModel: String? = nil) -> String? {
+        let defaultAgentModel = defaultAgentModel ?? DefaultAgentConfigurationStore.load().defaultModel
 
         if agent.id == Agent.defaultId {
             return defaultAgentModel

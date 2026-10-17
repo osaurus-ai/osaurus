@@ -515,16 +515,24 @@ public enum SpawnDescriptors {
 
     @MainActor
     private static func liveAgentSources() -> [AgentSource] {
-        AgentManager.shared.agents.map { agent in
+        // Snapshot the @Published array once so the per-iteration calls to
+        // effectiveModel(for:) and workingFolder(for:) do not re-read the
+        // property (each read triggers swift_conformsToProtocol checks in the
+        // Swift runtime; with many agents this accumulates into a main-thread
+        // hang). The Agent-instance overloads accept the already-fetched value
+        // directly and bypass the internal agent(for:) lookup entirely.
+        let manager = AgentManager.shared
+        let agents = manager.agents
+        return agents.map { agent in
             AgentSource(
                 id: agent.id,
                 name: agent.name,
                 description: agent.routingDescription,
-                modelId: AgentManager.shared.effectiveModel(for: agent.id),
+                modelId: manager.effectiveModel(for: agent),
                 // Same source of truth as the dispatch-folder fallback
                 // (`BackgroundTaskManager.resolveDispatchFolder`), so the
                 // folder the prompt advertises is the folder the child runs in.
-                workingFolderPath: AgentManager.shared.workingFolder(for: agent.id)?.path
+                workingFolderPath: manager.workingFolder(for: agent)?.path
             )
         }
     }
