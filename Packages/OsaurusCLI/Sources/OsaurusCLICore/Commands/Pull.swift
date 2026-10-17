@@ -347,18 +347,27 @@ public struct PullCommand: Command {
         total: Int64,
         fraction: Double
     ) {
-        let percent = Int(fraction * 100)
+        let percent = Int(min(max(fraction, 0), 1) * 100)
         let receivedStr = ByteCountFormatter.string(fromByteCount: received, countStyle: .file)
         let totalStr = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
 
-        // 20-character progress bar
-        let barWidth = 20
-        let filled = Int(Double(barWidth) * fraction)
-        let bar = String(repeating: "=", count: filled) + String(repeating: " ", count: barWidth - filled)
+        let bar = renderProgressBar(fraction: fraction, width: 20)
 
         let line = "\r[\(bar)] \(percent)%  \(receivedStr)/\(totalStr)  \(fileName)"
         fputs(line, stdout)
         fflush(stdout)
+    }
+
+    /// Renders the fixed-width progress-bar body: `filled` `=` characters
+    /// followed by padding spaces to `width`. `fraction` is clamped into
+    /// `0...1` first, so an over-reported fraction (e.g. a download whose
+    /// actual byte count exceeds the precomputed size estimate, giving
+    /// `fraction > 1.0`) can never make `width - filled` negative and trap
+    /// `String(repeating:count:)`, which would abort the whole `pull`.
+    static func renderProgressBar(fraction: Double, width: Int) -> String {
+        let clamped = min(max(fraction, 0), 1)
+        let filled = Int(Double(width) * clamped)
+        return String(repeating: "=", count: filled) + String(repeating: " ", count: width - filled)
     }
 }
 
