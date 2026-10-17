@@ -93,7 +93,20 @@ final class AppKitOwnedWindowHostingController<Content: View>: NSHostingControll
         super.viewDidLayout()
         // The titlebar strip is only known once the view is in a window
         // that has laid out; re-mirror so the first measurement lands.
-        mirrorMinimumSizeIntoWindow()
+        //
+        // Defer to the next run-loop turn so the assignment to
+        // `window.contentMinSize` does not execute inside the current
+        // CoreAnimation layout pass.  Doing it synchronously causes AppKit
+        // to run its full min/max-size change chain
+        // (_commonMinMaxSizeChanged → _noteAllowedResizeDirectionsMayHaveChanged
+        //  → _updateEdgeResizingTrackingAreas → _wantsRoundedCornerResize)
+        // on the main thread before the pass finishes, which blocks for 3 s+
+        // (Sentry APPLE-MACOS-38F).  The guards inside
+        // `mirrorMinimumSizeIntoWindow` (nil-window, equality) make the
+        // deferred path safe.
+        DispatchQueue.main.async { [weak self] in
+            self?.mirrorMinimumSizeIntoWindow()
+        }
     }
 
     private var titlebarChromeHeight: CGFloat {

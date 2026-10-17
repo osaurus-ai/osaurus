@@ -95,6 +95,27 @@ struct ManagementWindowFloorTests {
         }
     }
 
+    @Test("viewDidLayout does not synchronously block the main thread updating contentMinSize")
+    func viewDidLayoutDefersMinSizeUpdate() throws {
+        // Regression test for Sentry APPLE-MACOS-38F: setting window.contentMinSize
+        // synchronously inside a layout pass triggered AppKit's tracking-area
+        // chain (_commonMinMaxSizeChanged → _updateEdgeResizingTrackingAreas →
+        // _wantsRoundedCornerResize), blocking the main thread for 3 s+.
+        // The fix defers the assignment via DispatchQueue.main.async, so repeated
+        // layout passes must complete quickly.
+        try withManagementWindow { window, _ in
+            let start = Date()
+            for _ in 0 ..< 10 {
+                window.layoutIfNeeded()
+                window.contentView?.layoutSubtreeIfNeeded()
+            }
+            let elapsed = Date().timeIntervalSince(start)
+            // 10 synchronous layout passes should finish well under 1 second;
+            // the hang manifested as 3 s+ for a single pass.
+            #expect(elapsed < 1.0, "layout passes blocked the main thread for \(elapsed) s (expected < 1 s)")
+        }
+    }
+
     @Test("the deeplink replacement controller is the same AppKit-owned kind")
     func replacementControllerHasNoSizingOptions() throws {
         let controller = WindowManager.shared.makeHostingController(for: .management, rootView: Color.clear)
