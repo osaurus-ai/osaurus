@@ -587,4 +587,38 @@ struct ModelManagerSuggestedTests {
             #expect(twentyFourGB?.id == raptorId)
         }
     }
+
+    // MARK: - HF timestamp parsing
+
+    @Test func parseHFTimestamp_parsesFractionalSeconds() {
+        let date = ModelManager.parseHFTimestamp("2024-05-01T12:34:56.789Z")
+        #expect(date != nil)
+        if let date {
+            #expect(abs(date.timeIntervalSince1970 - 1_714_566_896.789) < 0.01)
+        }
+    }
+
+    @Test func parseHFTimestamp_parsesWithoutFractionalSeconds() {
+        let date = ModelManager.parseHFTimestamp("2024-05-01T12:34:56Z")
+        #expect(date?.timeIntervalSince1970 == 1_714_566_896)
+    }
+
+    @Test func parseHFTimestamp_returnsNilForMissingOrInvalidInput() {
+        #expect(ModelManager.parseHFTimestamp(nil) == nil)
+        #expect(ModelManager.parseHFTimestamp("") == nil)
+        #expect(ModelManager.parseHFTimestamp("not-a-date") == nil)
+    }
+
+    @Test func parseHFTimestamp_isSafeOffMainActor() async {
+        let results = await withTaskGroup(of: Date?.self) { group in
+            for _ in 0..<32 {
+                group.addTask { ModelManager.parseHFTimestamp("2024-05-01T12:34:56.000Z") }
+            }
+            var collected: [Date?] = []
+            for await value in group { collected.append(value) }
+            return collected
+        }
+        #expect(results.count == 32)
+        #expect(results.allSatisfy { $0?.timeIntervalSince1970 == 1_714_566_896 })
+    }
 }

@@ -1612,7 +1612,7 @@ extension ModelManager {
 // MARK: - Hugging Face discovery helpers
 
 extension ModelManager {
-    fileprivate struct HFModel: Decodable {
+    fileprivate struct HFModel: Decodable, Sendable {
         let id: String
         let tags: [String]?
         let pipeline_tag: String?
@@ -1684,20 +1684,35 @@ extension ModelManager {
         }
     }
 
-    /// Parse a HF `lastModified` ISO8601 string into a `Date`.
-    fileprivate static func parseHFTimestamp(_ s: String?) -> Date? {
-        guard let s, !s.isEmpty else { return nil }
+    /// Cached HF timestamp formatters. Building an `ISO8601DateFormatter` (or
+    /// changing its `formatOptions`) re-initialises the underlying ICU
+    /// formatter, which loads locale symbol tables. Doing that once per repo
+    /// for a 200-entry org listing hung the main thread (APPLE-MACOS-38J).
+    /// Formatters are configured once and only read afterwards, which is
+    /// thread-safe for `ISO8601DateFormatter`.
+    nonisolated(unsafe) private static let hfTimestampFractionalFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = formatter.date(from: s) { return d }
+        return formatter
+    }()
+
+    nonisolated(unsafe) private static let hfTimestampPlainFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: s)
+        return formatter
+    }()
+
+    /// Parse a HF `lastModified` ISO8601 string into a `Date`.
+    nonisolated static func parseHFTimestamp(_ s: String?) -> Date? {
+        guard let s, !s.isEmpty else { return nil }
+        if let d = hfTimestampFractionalFormatter.date(from: s) { return d }
+        return hfTimestampPlainFormatter.date(from: s)
     }
 
     /// Map HF tags to a known `model_type` string when possible.
     /// Returns the first tag that matches the VLM type registry, otherwise nil
     /// (auto-fetched LLM entries fall back to post-download detection).
-    fileprivate static func inferModelType(from tags: [String]?) -> String? {
+    nonisolated fileprivate static func inferModelType(from tags: [String]?) -> String? {
         guard let tags else { return nil }
         for tag in tags {
             if VLMDetection.isVLM(modelType: tag) { return tag }
@@ -1818,7 +1833,7 @@ extension ModelManager {
     /// The use-case pill is inferred where the HF metadata supports it
     /// (multimodal tags → Vision) so auto-fetched cards aren't all blank
     /// next to curated ones.
-    fileprivate static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
+    nonisolated fileprivate static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
         let modelType = inferModelType(from: hf.tags)
         let isMultimodal =
             modelType.map { VLMDetection.isVLM(modelType: $0) } ?? false
@@ -1860,10 +1875,14 @@ extension ModelManager {
         guard !raw.isEmpty else { return }
 
         let curatedIds = Self.curatedSuggestedIds
-        let autoFetched: [MLXModel] =
+        // Build the auto-fetched cards off the main actor: up to
+        // `osaurusOrgFetchLimit` repos are mapped (timestamp parsing, VLM
+        // type inference), which must not block the UI at launch.
+        let autoFetched: [MLXModel] = await Task.detached(priority: .utility) {
             raw
-            .filter { !curatedIds.contains($0.id.lowercased()) }
-            .map(Self.makeAutoFetchedModel(from:))
+                .filter { !curatedIds.contains($0.id.lowercased()) }
+                .map { Self.makeAutoFetchedModel(from: $0) }
+        }.value
 
         var statsById: [String: Int] = [:]
         // HF `lastModified` per repo — the revision used to gate the size
