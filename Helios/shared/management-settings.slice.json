@@ -1,0 +1,52 @@
+{
+  "bridgeCapabilities" : [
+    "clipboard",
+    "external_link",
+    "file_picker"
+  ],
+  "primaryUIFramework" : "SwiftCrossUI",
+  "serviceInterfaces" : [
+    "ClipboardService",
+    "ExternalLinkService",
+    "ServerControlService",
+    "SettingsNavigationService",
+    "FilePickerService"
+  ],
+  "slice" : "management_settings",
+  "sourcePaths" : [
+    "Packages/OsaurusCore/Views/Management/ManagementView.swift",
+    "Packages/OsaurusCore/Models/Configuration/ManagementTab.swift",
+    "Packages/OsaurusCore/Views/Settings/ServerView.swift",
+    "Packages/OsaurusCore/Views/Management/SidebarNavigation.swift",
+    "Packages/OsaurusCore/Views/Management/ManagerHeader.swift",
+    "Packages/OsaurusCore/Views/Management/SharedSidebarComponents.swift",
+    "Packages/OsaurusCore/Views/Common/AnimatedTabSelector.swift"
+  ],
+  "tabs" : [
+    "models",
+    "providers",
+    "agents",
+    "plugins",
+    "sandbox",
+    "tools",
+    "skills",
+    "commands",
+    "memory",
+    "schedules",
+    "watchers",
+    "voice",
+    "themes",
+    "insights",
+    "server",
+    "permissions",
+    "identity",
+    "settings"
+  ],
+  "todoMarkers" : [
+    "TODO(Helios): Replace NSOpenPanel-driven endpoint tester flows with a Windows file picker service.",
+    "TODO(Helios): Route clipboard writes through ClipboardService instead of NSPasteboard.",
+    "TODO(Helios): Route NSWorkspace-powered links and launches through ExternalLinkService.",
+    "TODO(Helios): Rebuild the interactive endpoint tester incrementally once the Windows shell owns the server diagnostics flow."
+  ],
+  "windowsBridgePackage" : "Packages/HeliosWindowsBridge"
+}
