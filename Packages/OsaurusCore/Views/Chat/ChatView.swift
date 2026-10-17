@@ -163,6 +163,7 @@ final class ChatSession: ObservableObject {
 
     @Published var turns: [ChatTurn] = [] {
         didSet {
+            invalidateTranscriptTokenTotals()
             _cachedRouterSpendMicro = turns.reduce(0) { sum, turn in
                 guard let raw = turn.routerBilling?.costMicro else { return sum }
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -179,6 +180,54 @@ final class ChatSession: ObservableObject {
     }
 
     private var _cachedRouterSpendMicro: Int = 0
+
+    /// Memoized conversation/output token totals for the model-visible
+    /// transcript, read by `estimatedContextBreakdown` from the chat view
+    /// body. Walking every turn on each SwiftUI render stalled the main
+    /// thread on long conversations (APPLE-MACOS-2NW). Keyed on the session's
+    /// transcript revision (bumped when `turns` or `conversationSummary`
+    /// change) plus `ChatTurn.tokenEstimateRevision` (bumped on in-place
+    /// turn edits), so it never serves stale numbers.
+    private struct TranscriptTokenTotals {
+        let sessionRevision: UInt64
+        let turnRevision: UInt64
+        let outputTokens: Int
+        let conversationTokens: Int
+    }
+    private var transcriptRevision: UInt64 = 0
+    private var cachedTranscriptTokenTotals: TranscriptTokenTotals?
+
+    private func invalidateTranscriptTokenTotals() {
+        transcriptRevision &+= 1
+        cachedTranscriptTokenTotals = nil
+    }
+
+    /// Output and conversation (non-output) token estimates for the turns
+    /// the model will actually see on the next send. O(1) on cache hit.
+    private func transcriptTokenTotals() -> (outputTokens: Int, conversationTokens: Int) {
+        let turnRevision = ChatTurn.tokenEstimateRevision
+        if let cached = cachedTranscriptTokenTotals,
+            cached.sessionRevision == transcriptRevision,
+            cached.turnRevision == turnRevision
+        {
+            return (cached.outputTokens, cached.conversationTokens)
+        }
+        // With an LLM compaction summary, the model sees the summary message
+        // instead of the covered turns.
+        let coveredIds = summaryCoveredTurnIds
+        let modelVisibleTurns =
+            coveredIds.isEmpty ? turns : turns.filter { !coveredIds.contains($0.id) }
+        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: modelVisibleTurns)
+        let conversationTokens =
+            ContextBudgetManager.estimateTokens(for: modelVisibleTurns) - outputTokens
+        cachedTranscriptTokenTotals = TranscriptTokenTotals(
+            sessionRevision: transcriptRevision,
+            turnRevision: turnRevision,
+            outputTokens: outputTokens,
+            conversationTokens: conversationTokens
+        )
+        return (outputTokens, conversationTokens)
+    }
     private var _cachedRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) = (0, 0)
 
     /// The model's OUTPUT for the in-flight run is complete (vmlx emitted its
@@ -598,7 +647,9 @@ final class ChatSession: ObservableObject {
     /// visible transcript is untouched). Persisted with the session;
     /// invalidated when covered turns are edited/regenerated away (see
     /// `validateConversationSummary`).
-    @Published var conversationSummary: ConversationSummary?
+    @Published var conversationSummary: ConversationSummary? {
+        didSet { invalidateTranscriptTokenTotals() }
+    }
 
     /// Live compaction progress, rendered by the Context Budget popover
     /// (inline) and the compaction dialog.
@@ -2214,18 +2265,15 @@ final class ChatSession: ObservableObject {
 
         // With an LLM compaction summary, the model sees the summary message
         // instead of the covered turns — price the next send accordingly and
-        // surface the summary's own cost as a dedicated row.
-        let coveredIds = summaryCoveredTurnIds
-        let modelVisibleTurns =
-            coveredIds.isEmpty ? turns : turns.filter { !coveredIds.contains($0.id) }
+        // surface the summary's own cost as a dedicated row. The per-turn
+        // walk is memoized (see `transcriptTokenTotals`) because this runs
+        // inside view-body evaluation.
         let summaryTokens =
             conversationSummary.map {
                 ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
             } ?? 0
 
-        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: modelVisibleTurns)
-        let conversationTokens =
-            ContextBudgetManager.estimateTokens(for: modelVisibleTurns) - outputTokens
+        let (outputTokens, conversationTokens) = transcriptTokenTotals()
         var inputTokens = 0
         if !input.isEmpty { inputTokens += ContextBudgetManager.estimateTokens(for: input) }
         for attachment in pendingAttachments { inputTokens += attachment.estimatedTokens }
