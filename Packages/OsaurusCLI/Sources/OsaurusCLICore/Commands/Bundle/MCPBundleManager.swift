@@ -112,16 +112,21 @@ class MCPBundleManager {
 
         try FileManager.default.createDirectory(atPath: extractPath, withIntermediateDirectories: true)
 
-        // Use unzip CLI
-        try unzipWithCLI(bundlePath, to: extractPath)
+        do {
+            // Use unzip CLI
+            try unzipWithCLI(bundlePath, to: extractPath)
 
-        let manifestPath = "\(extractPath)/manifest.json"
-        guard FileManager.default.fileExists(atPath: manifestPath) else {
+            let manifestPath = "\(extractPath)/manifest.json"
+            guard FileManager.default.fileExists(atPath: manifestPath) else {
+                throw BundleLoadError.missingManifest
+            }
+
+            return BundleInfo(extractedPath: extractPath, manifestPath: manifestPath, bundleUUID: uuid)
+        } catch {
+            // Any failure after the directory was created must not leak it.
             try? FileManager.default.removeItem(atPath: extractPath)
-            throw BundleLoadError.missingManifest
+            throw error
         }
-
-        return BundleInfo(extractedPath: extractPath, manifestPath: manifestPath, bundleUUID: uuid)
     }
 
     private static func unzipWithCLI(_ zipPath: String, to destination: String) throws {
