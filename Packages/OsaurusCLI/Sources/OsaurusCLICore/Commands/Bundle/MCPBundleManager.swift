@@ -154,10 +154,21 @@ enum Shell {
         process.standardOutput = pipe
         process.standardError = Pipe()
 
-        try? process.run()
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
         process.waitUntilExit()
 
+        // `which` exits non-zero and prints nothing when the command is not
+        // found. Without this guard the empty stdout was returned as `""`,
+        // which the launcher then treated as a resolved path and tried to exec
+        // an empty file instead of falling back to the bare command name.
+        guard process.terminationStatus == 0 else { return nil }
+
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (path?.isEmpty == false) ? path : nil
     }
 }
