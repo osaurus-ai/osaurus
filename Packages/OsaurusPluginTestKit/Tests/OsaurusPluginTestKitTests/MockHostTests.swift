@@ -13,6 +13,13 @@ import Testing
 
 @testable import OsaurusPluginTestKit
 
+// Serialized so the host installs these tests perform never overlap a
+// concurrently-installed host from another test. That matters for the
+// background-thread fallback exercised by the nested `Threading` suite
+// (`MockHostThreadingTests.swift`): a host-global callback from a background
+// thread resolves to the uniquely-installed host, which is only well-defined
+// when installs don't run in parallel.
+@Suite(.serialized)
 struct MockHostTests {
 
     @Test func hostAPIPointerAdvertisesV6() throws {
