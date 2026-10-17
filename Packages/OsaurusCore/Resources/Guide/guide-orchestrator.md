@@ -73,6 +73,7 @@ default_agent:
 - "Ask Research@Acme for a market summary." — a teammate's shared agent, on their Mac.
 - "Make Coder my default agent." — sets `new_chat_agent`; "back to Osaurus" restores the Orchestrator.
 - "Export my setup as a template."
+- "Make me an agent from the Cloud Agent template that summarizes RSS feeds." — bases the new agent on a template flagged Available to the Orchestrator (Agents → Templates).
 
 ## Where its settings are stored
 

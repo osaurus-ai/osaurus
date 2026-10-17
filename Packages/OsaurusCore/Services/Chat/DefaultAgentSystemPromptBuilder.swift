@@ -463,7 +463,8 @@ public enum DefaultAgentSystemPromptBuilder {
         if exposure.spawnAvailable {
             return
                 "A fitting agent exists → call `spawn_agent` with the complete task. None fits → "
-                + "create one (apply an `agents:` entry with `osaurus_config`; it inherits "
+                + "create one (check `osaurus_config {action: 'templates'}` first and plan + apply a "
+                + "fitting agent template with `overrides`; else apply an `agents:` entry; it inherits "
                 + "your model unless you set one), then call `spawn_agent` in the SAME "
                 + "turn — a newly created agent is spawnable right away. "
         }
@@ -480,7 +481,9 @@ public enum DefaultAgentSystemPromptBuilder {
         if exposure.spawnAvailable {
             return
                 "When a fitting agent exists, call `spawn_agent` with the complete, standalone "
-                + "task. When none fits, create one (apply an `agents:` entry with "
+                + "task. When none fits, create one (check `osaurus_config {action: 'templates'}` "
+                + "first and plan + apply a fitting agent template with `overrides`, which gives it "
+                + "that template's model and tools; else apply an `agents:` entry with "
                 + "`osaurus_config`; it inherits your model unless you set one) and call "
                 + "`spawn_agent` in the SAME turn — a newly created agent is spawnable "
                 + "immediately."
