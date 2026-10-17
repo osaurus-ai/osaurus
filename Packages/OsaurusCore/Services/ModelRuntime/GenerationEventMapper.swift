@@ -21,6 +21,7 @@
 //
 
 import Foundation
+import MLX
 @preconcurrency import MLXLMCommon
 import os.log
 
@@ -427,10 +428,20 @@ enum GenerationEventMapper {
         let promptMs = Int(info.promptTime * 1000)
         let genTokens = info.generationTokenCount
         let genTps = info.tokensPerSecond
+        // Kernel wire-limit rejections since the previous step (rootless sysctl). Non-zero means the model's
+        // GPU working set did not fit macOS's wired-memory budget during this step — the Allosaurus-on-48GB
+        // failure (0.2 tok/s with plenty of free RAM and a green pressure graph). See vmlx-swift #608.
+        let wireRejections = WireRejectionTracker.delta()
+        if let wireRejections, wireRejections > 0 {
+            mapperLog.warning(
+                "[perf] wire-limit rejections=\(wireRejections, privacy: .public) this step: the model's GPU working set exceeds the macOS wired-memory budget"
+            )
+        }
         PrefillDebugLog.shared.log(
             "     STEP-STATS promptTokens=\(promptTokens) promptMs=\(promptMs) "
                 + "promptTps=\(String(format: "%.1f", promptTps)) genTokens=\(genTokens) "
-                + "genTps=\(String(format: "%.1f", genTps)) stop=\(String(describing: info.stopReason))"
+                + "genTps=\(String(format: "%.1f", genTps)) stop=\(String(describing: info.stopReason)) "
+                + "wireRejections=\(wireRejections.map(String.init) ?? "unknown")"
         )
         if PrefillDebugLog.shared.isEnabled {
             Task.detached {
@@ -543,5 +554,21 @@ enum GenerationEventMapper {
     /// looking for the `_error` field — `MCPProviderTool` already does so.
     private static func errorEnvelope(toolName: String) -> String {
         "{\"_error\":\"argument_serialization_failed\",\"_tool\":\"\(toolName)\"}"
+    }
+}
+
+
+/// Process-wide delta of `vm.add_wire_count_over_global_limit` between generation steps.
+enum WireRejectionTracker {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var last: Int?
+
+    /// Rejections since the previous call; `nil` when the counter cannot be read (unknown, never a limit).
+    static func delta() -> Int? {
+        guard let now = SystemWireBudget.snapshot().wireLimitRejections else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        defer { last = now }
+        guard let last else { return 0 }
+        return max(0, now - last)
     }
 }

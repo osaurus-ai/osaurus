@@ -81,6 +81,7 @@ struct SettingsSearchSelfFindProbe {
             ("speculative depth", "server.speculative"),
             ("On Adaptive", "server.speculative"),
             ("Off AR", "server.speculative"),
+            ("Keep Model in Memory", "server.memorySafety.keepModelInMemory"),
             ("keep model loaded", "server.residency"),
             ("unload after", "server.residency"),
             ("eviction policy", "server.residency"),
