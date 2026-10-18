@@ -416,11 +416,13 @@ public final class WindowManager: NSObject, ObservableObject {
 
         window.contentViewController = hostingController
 
-        // Pre-layout to avoid jank
-        hostingController.view.layoutSubtreeIfNeeded()
+        // No forced `layoutSubtreeIfNeeded()` here: for the settings window it
+        // realized and laid out the entire SwiftUI graph synchronously inside
+        // this call and hung the main thread for >3s (Sentry APPLE-MACOS-39C).
+        // AppKit lays the hosting view out on its normal display pass instead.
 
-        // Force set content size again to ensure we start with the intended size
-        // This prevents the window from starting at 0x0 or wrong size if layoutSubtreeIfNeeded did something unexpected
+        // Force set content size to ensure we start with the intended size
+        // (attaching the content view controller can otherwise resize the window).
         window.setContentSize(defaultSize)
 
         if let autosaveKey = config.autosaveKey {
@@ -676,6 +678,22 @@ private final class WindowManagerDelegate: NSObject, NSWindowDelegate {
 
     func windowDidChangeScreen(_ notification: Notification) {
         manager?.windowDidChangeScreen(identifier)
+    }
+
+    /// The settings window is hidden rather than closed so its (heavy) SwiftUI
+    /// graph survives. Closing used to unregister it, which forced the next
+    /// open down `createWindow`'s cold path — a full synchronous SwiftUI
+    /// realization + layout on main that hung for >3s (Sentry APPLE-MACOS-39C).
+    /// Keeping it registered lets `showManagementWindow` take its reuse path.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard identifier == .management else { return true }
+        // A SwiftUI `.sheet` presentation stays attached to the window and
+        // would linger offscreen; dismiss it as a real close would.
+        while let sheet = sender.attachedSheet {
+            sender.endSheet(sheet)
+        }
+        sender.orderOut(nil)
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {

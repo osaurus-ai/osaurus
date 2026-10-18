@@ -95,6 +95,19 @@ struct ManagementWindowFloorTests {
         }
     }
 
+    @Test("closing the settings window hides it and keeps it registered for reuse")
+    func closingManagementWindowKeepsItRegistered() throws {
+        // Sentry APPLE-MACOS-39C: a close used to unregister the window, so the
+        // next open rebuilt the whole SwiftUI graph synchronously on main.
+        try withManagementWindow { window, _ in
+            window.orderFront(nil)
+            let shouldClose = try #require(window.delegate?.windowShouldClose?(window))
+            #expect(shouldClose == false)
+            #expect(window.isVisible == false)
+            #expect(WindowManager.shared.window(for: .management) === window)
+        }
+    }
+
     @Test("the deeplink replacement controller is the same AppKit-owned kind")
     func replacementControllerHasNoSizingOptions() throws {
         let controller = WindowManager.shared.makeHostingController(for: .management, rootView: Color.clear)
