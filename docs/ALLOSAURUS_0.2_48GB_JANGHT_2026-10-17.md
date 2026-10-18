@@ -4,12 +4,12 @@ Branch `feat/allosaurus-48gb-janght` = `main` @ `e614fc0ac` (0.25.23) + `fix/all
 (#3107, which carries #3097: Keep Model in Memory / residency setting, prefill progress). The runtime work lives in
 vmlx-swift branch `feat/allosaurus-48gb-janght` (`docs/ALLOSAURUS-0.2-JANGHT-48GB.md` there).
 
-Status: **not verified.** The vmlx-swift pin is still `main`'s `f3586f93f` (merge conflicts resolved to it). Re-pin only
-after the vmlx-swift checklist passes on the real bundle.
+Status (2026-10-17): vmlx-swift pinned to `feat/allosaurus-48gb-janght` (PR osaurus-ai/vmlx-swift#613); its checklist
+items 1-6 pass on the real bundle; the GUI proof below ran on a 128 GiB Mac (PR #3125). Open: a 48 GiB hardware run.
 
 ## What changes here
 
-1. Re-pin vmlx-swift in all five places: `Packages/OsaurusCore/Package.swift`, `Packages/OsaurusCore/Package.resolved`,
+1. Re-pin vmlx-swift in all six places (done for each runtime commit on this branch): `Packages/OsaurusCore/Package.swift`, `Packages/OsaurusCore/Package.resolved`,
    `App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`,
    `osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved`, and the revision-pinning tests
    (`Tests/Service/ImageGenerationBridgeContractTests.swift`, `Tests/Service/RuntimePolicySourceTests.swift`).
@@ -46,6 +46,9 @@ after the vmlx-swift checklist passes on the real bundle.
 Through the running dev app's GUI (never curl/HTTP/CLI against Osaurus): download/load the bundle, multi-turn chat,
 a terminal tool-call loop with the SSD cache on, MTP Adaptive vs Off, Keep Model in Memory on a 48 GiB Mac (wired
 bytes and `vm.add_wire_count_over_global_limit`, decode speed stable over a long session).
+
+Done on a 128 GiB Mac (PR #3125): load, multi-turn chat with tool calls, SSD cache restore after tool results, MTP
+Auto vs Off (tool turns +23-43 %, reasoning-heavy replies -2..-3 %). Not yet done: the 48 GiB hardware session.
 
 ## Upload contract (OsaurusAI)
 
