@@ -2952,7 +2952,7 @@ public actor ModelRuntime {
     /// and is capped by a fraction of system RAM. Returns 0 when idle.
     private func mlxCacheLimit() -> Int {
         guard !modelCache.isEmpty else { return 0 }
-        let systemRAM = Int(ProcessInfo.processInfo.physicalMemory)
+        let systemRAM = Int(MLXLMCommon.HostPhysicalMemory.bytes)
         let totalWeights = Int(modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes })
         let byModel = max(totalWeights / 4, 1 * 1024 * 1024 * 1024)
         let bySystem = min(systemRAM / 8, 8 * 1024 * 1024 * 1024)
@@ -3120,7 +3120,7 @@ public actor ModelRuntime {
             persistentLimit: mlxCacheLimit(),
             admittedMemoryLimit: Memory.memoryLimit,
             modelWeightsBytes: holder.weightsSizeBytes,
-            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+            physicalMemoryBytes: MLXLMCommon.HostPhysicalMemory.bytes,
             requiresAdmittedCeiling: Self.requiresAdmittedMLXAllocatorCeiling(
                 isPlainDeepseekV4AffineJANG: holder.requiresAdmittedMLXAllocatorCeiling,
                 usesNativeMTP: requestStrategy?.usesNativeMTP == true
@@ -5050,6 +5050,9 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
             )
+            // Same receipt on stderr, where support bundles and the 48 GB test plan read load time.
+            FileHandle.standardError.write(Data(
+                "[ModelRuntime] model_loaded model=\(name) elapsedMs=\(elapsedMs)\n".utf8))
             let holder = SessionHolder(
                 name: name,
                 container: container,
