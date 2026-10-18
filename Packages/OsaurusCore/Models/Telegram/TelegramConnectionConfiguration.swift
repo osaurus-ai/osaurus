@@ -191,6 +191,11 @@ enum TelegramConnectionConfigurationStore {
     nonisolated(unsafe) static var overrideDirectory: URL?
 
     private static let fileName = "telegram.json"
+    /// Cached production URL. Swift static lets are lazily initialized on first access,
+    /// so the blocking `appendingPathComponent` filesystem call happens at most once and
+    /// never during a hot main-thread path such as `ChatSession.init`.
+    private nonisolated(unsafe) static let productionFileURL: URL =
+        OsaurusPaths.config().appendingPathComponent(fileName)
 
     static func load() -> TelegramConnectionConfiguration {
         let url = configurationFileURL()
@@ -216,10 +221,7 @@ enum TelegramConnectionConfigurationStore {
     }
 
     static func configurationFileURL() -> URL {
-        if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent(fileName)
-        }
-        return OsaurusPaths.config().appendingPathComponent(fileName)
+        overrideDirectory.map { $0.appendingPathComponent(fileName) } ?? productionFileURL
     }
 }
 
