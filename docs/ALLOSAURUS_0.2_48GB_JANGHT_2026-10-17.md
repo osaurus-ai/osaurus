@@ -54,3 +54,28 @@ Auto vs Off (tool turns +23-43 %, reasoning-heavy replies -2..-3 %). Not yet don
 
 `osaurus.json` at the bundle root with `required_osaurus_version` = the first release containing the re-pin (named by
 the release owner) and `model_version`; read it back from the Hub after the push.
+
+## Final integration audit (2026-10-17)
+
+Engine #613 is merged as `8b1e19e157d9748eaa95d016aa560bad03bdcaca`; its tree is identical to the tested
+`b42c2b7ab` head. This pin includes merged MLX #25 and engine #612, plus the #608 wire-budget changes.
+The audit corrected a final wire-ceiling clamp and enabled exact Qwen hybrid prefix restoration for
+forced-tool selection, retaining full media salts. Focused results: wire budget11/11, residency8/8,
+MTP priming3/3, media-cache4/4 (zero logit differences), mixed-affine5 pass/3 environment-gated skips.
+
+Actual Release app UI proof: Keep Model in Memory Off/On saved and survived relaunch with effective
+load targets0/46,017,987,192 bytes on the128GB host. Forced-tool follow-up restored7,394/7,744 tokens
+(TTFT1.179s vs the prior16.102s full-prefill row); its continuation restored7,743/7,847 in616ms TTFT.
+Explicit Off ran AR and still restored both prefixes. Reset to bundle default ran Adaptive in the parent
+and same-model Helper; Helper executed calculate, restored2,586/2,804 after the tool, and the parent
+restored9,282/9,683 before its correct final answer. Seven delegation writes took55-135ms in background;
+request-path stores2.66-3.55ms. Process physical footprint peaked10.84GB, excluding clean mapped weights;
+weight inventory28,838,118,008 bytes. These are not total-memory fit guarantees.
+
+This candidate has no vision tower or processor. File-picker PNG attachment was rejected; the test-mode
+launch omits the toast host, so its warning presentation was not qualified. Do not advertise vision.
+Existing shared media-cache tests remain exact. Real48GB hardware qualification remains open by Eric's
+explicit decision; no release or model publication was requested in this audit.
+
+Proof comment: https://github.com/osaurus-ai/vmlx-swift/pull/613#issuecomment-6246265331
+Private ledger: `~/vmlx-private-evidence/allosaurus-v02-audit-20261017/TODO.md`.
