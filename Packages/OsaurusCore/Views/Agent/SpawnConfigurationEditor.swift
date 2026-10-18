@@ -59,6 +59,22 @@ struct SpawnConfigurationEditor: View {
     /// the pre-edit ceiling until the user left and came back (live proof,
     /// 2026-09-29: stepper 2, row "up to 1").
     @State private var runtimeSettingsRevision = 0
+    /// Cached result of the admission planner so that `body` is never
+    /// blocked by the sort inside `logDiagnostics`. Recomputed asynchronously
+    /// via `.task(id: capacityPlanRefreshKey)` whenever the inputs change.
+    @State private var cachedLocalCapacityPlan: SubagentBatchAdmissionPlan?
+
+    private struct CapacityPlanRefreshKey: Equatable, Sendable {
+        var runtimeRevision: Int
+        var maxParallelSpawns: Int
+    }
+
+    private var capacityPlanRefreshKey: CapacityPlanRefreshKey {
+        CapacityPlanRefreshKey(
+            runtimeRevision: runtimeSettingsRevision,
+            maxParallelSpawns: budgets.normalized.maxParallelSpawns
+        )
+    }
 
     private var isOrchestrator: Bool { excludedAgentID == nil }
 
@@ -103,6 +119,19 @@ struct SpawnConfigurationEditor: View {
             )
             .receive(on: DispatchQueue.main)
         ) { _ in runtimeSettingsRevision &+= 1 }
+        .task(id: capacityPlanRefreshKey) {
+            // Run the planner (and its internal sort) off the render path so
+            // `body` is never stalled. The detached task executes the sort on a
+            // cooperative thread pool worker rather than on the main actor.
+            let key = capacityPlanRefreshKey
+            let plan = await Task.detached(priority: .userInitiated) {
+                SpawnConfigurationEditor.makeLocalCapacityPlan(
+                    runtimeRevision: key.runtimeRevision,
+                    maxParallelSpawns: key.maxParallelSpawns
+                )
+            }.value
+            cachedLocalCapacityPlan = plan
+        }
     }
 
     private func anchor(_ suffix: String) -> String? {
@@ -617,12 +646,11 @@ struct SpawnConfigurationEditor: View {
     }
 
     private var currentLocalExecutionContract: some View {
-        let plan = currentLocalCapacityPlan
-        return controlRow(
+        controlRow(
             "Configured same-model local ceiling",
             subtitle: localExecutionContractSubtitle
         ) {
-            Text("up to \(plan.localParallelism)")
+            Text(cachedLocalCapacityPlan.map { "up to \($0.localParallelism)" } ?? "–")
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundColor(theme.primaryText)
                 .frame(width: 76, alignment: .trailing)
@@ -643,9 +671,14 @@ struct SpawnConfigurationEditor: View {
     /// Reuse the runtime admission planner for the static settings-level
     /// ceiling. Target-specific RAM facts are intentionally absent here; the
     /// live preparation path supplies those and may clamp this value further.
-    private var currentLocalCapacityPlan: SubagentBatchAdmissionPlan {
+    ///
+    /// Accepts pre-read inputs so the function can be called from a detached
+    /// `Task` without capturing any `@MainActor`-isolated state.
+    private static func makeLocalCapacityPlan(
+        runtimeRevision _: Int,
+        maxParallelSpawns requested: Int
+    ) -> SubagentBatchAdmissionPlan {
         let runtime = ServerRuntimeSettingsStore.snapshot()
-        let requested = budgets.normalized.maxParallelSpawns
         let engineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
             in: .standard,
             runtime: runtime
