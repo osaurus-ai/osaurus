@@ -1775,9 +1775,11 @@ struct MLXBatchAdapter {
             // 4× spread was measured between a small dense model and a 35B
             // MoE on the same machine), so a per-model measured value from
             // `osaurus bench --tune-prefill` beats the server-wide setting;
-            // the setting remains the fallback, then vmlx's default.
+            // the setting remains the fallback, then the architecture's own
+            // measured recommendation, then vmlx's default.
             prefillStepSize: ModelPrefillTuningStore.tunedStepSize(for: modelName)
-                ?? runtime.concurrency.prefillStepSize,
+                ?? runtime.concurrency.prefillStepSize
+                ?? container.recommendedPrefillStepSize,
             modelName: modelName
         )
         mlxParams.nativeMTPDepthPolicy = Self.nativeMTPDepthPolicy(runtime.mtp)
@@ -1860,7 +1862,7 @@ struct MLXBatchAdapter {
                     + "tokenizedPrompt=\(prepared.promptTokens.count) "
                     + "lcpVsPrev=\(lcp)/\(prevCount) "
                     + "toolsInSpec=\(toolsCount) toolChoice=\(String(describing: toolChoice)) "
-                    + "lastMsgRole=\(lastRole) \(cacheStr)"
+                    + "lastMsgRole=\(lastRole) prefillStep=\(mlxParams.prefillStepSize) \(cacheStr)"
             )
         }
 
