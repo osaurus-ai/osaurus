@@ -180,8 +180,10 @@ enum RegexEntityDetector {
             }
         }
 
-        // The same numbers read out as words, judged by the rules above.
+        // The same numbers read out as words, and addresses said aloud,
+        // judged by the rules above.
         raw += spokenNumberMatches(in: text, ruleset: ruleset)
+        raw += spokenEmailMatches(in: text, ruleset: ruleset)
 
         return resolveOverlaps(raw)
     }

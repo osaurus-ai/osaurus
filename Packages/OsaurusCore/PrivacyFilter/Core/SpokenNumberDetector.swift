@@ -13,6 +13,9 @@
 //  would flag is flagged, under the same switches, with its checksum and
 //  length checks. The words themselves are what gets replaced.
 //
+//  Email addresses said aloud ("john dot smith at example dot com") are read
+//  the same way, and judged by the email rule.
+//
 
 import Foundation
 
@@ -131,5 +134,74 @@ enum SpokenDigitRuns {
     private static func joins(_ text: NSString, from left: NSRange, to right: NSRange) -> Bool {
         let gap = text.substring(with: NSRange(location: NSMaxRange(left), length: right.location - NSMaxRange(left)))
         return gap.allSatisfy { $0.isWhitespace || $0 == "," || $0 == "-" }
+    }
+}
+
+// MARK: - Addresses said aloud
+
+extension RegexEntityDetector {
+
+    /// Spans of `text` that are email addresses said aloud ("john dot smith
+    /// at example dot com"), which the email rule would flag written out.
+    static func spokenEmailMatches(in text: String, ruleset: EffectiveRuleSet) -> [Match] {
+        guard let email = ruleset.builtins.first(where: { $0.category == .email }) else { return [] }
+        return SpokenEmails.find(in: text).compactMap { spoken in
+            let written = spoken.address
+            let whole = NSRange(location: 0, length: (written as NSString).length)
+            guard let found = email.regex.firstMatch(in: written, options: [], range: whole), found.range == whole,
+                email.accepts(written)
+            else { return nil }
+            return Match(category: .email, original: String(text[spoken.range]), range: spoken.range)
+        }
+    }
+}
+
+/// Email addresses said aloud, with where each sits and what it spells.
+/// Only one ending in "dot" and a known ending (com, org, a country…), so
+/// "at home" and "at noon" are never read as one; "underscore" and "dash"
+/// or "hyphen" join the words either side.
+enum SpokenEmails {
+
+    struct Spoken: Equatable {
+        let range: Range<String.Index>
+        let address: String
+    }
+
+    static let endings = [
+        "com", "org", "net", "io", "co", "edu", "gov", "me", "app", "dev", "ai", "info", "biz", "xyz", "tech",
+        "us", "uk", "ca", "au", "de", "fr", "in", "jp", "nl", "es", "it", "se", "ch", "nz", "ie", "sg",
+    ]
+
+    // swiftlint:disable:next force_try
+    private static let pattern = try! NSRegularExpression(
+        pattern: #"\b([a-z0-9]+(?:\s+(?:dot|underscore|dash|hyphen)\s+[a-z0-9]+)*)\s+at\s+"#
+            + #"([a-z0-9]+(?:\s+(?:dot|dash|hyphen)\s+[a-z0-9]+)*\s+dot\s+(?:"#
+            + endings.joined(separator: "|") + #"))\b"#,
+        options: [.caseInsensitive]
+    )
+
+    static func find(in text: String) -> [Spoken] {
+        let nsText = text as NSString
+        return pattern.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap { match in
+            guard let range = Range(match.range, in: text) else { return nil }
+            let local = written(nsText.substring(with: match.range(at: 1)))
+            let domain = written(nsText.substring(with: match.range(at: 2)))
+            return Spoken(range: range, address: "\(local)@\(domain)")
+        }
+    }
+
+    /// "john dot smith" → "john.smith", lower case, no spaces.
+    private static func written(_ said: String) -> String {
+        said.lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .map { word -> String in
+                switch word {
+                case "dot": return "."
+                case "underscore": return "_"
+                case "dash", "hyphen": return "-"
+                default: return String(word)
+                }
+            }
+            .joined()
     }
 }

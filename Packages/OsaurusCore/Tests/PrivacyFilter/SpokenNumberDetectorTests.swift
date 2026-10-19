@@ -3,7 +3,8 @@
 //  osaurus / PrivacyFilter Tests
 //
 //  Numbers read out digit by digit, as dictation and voice transcripts write
-//  them, are flagged as the same numbers typed would be, and only those.
+//  them, are flagged as the same numbers typed would be, and only those;
+//  so are email addresses said aloud.
 //
 
 import Testing
@@ -61,5 +62,41 @@ struct SpokenNumberDetectorTests {
         let text = "four one five five five five zero one five five"
         let none = RegexEntityDetector.EffectiveRuleSet(builtins: [], presets: [], customs: [])
         #expect(RegexEntityDetector.detect(in: text, ruleset: none).isEmpty)
+    }
+
+    // MARK: Addresses said aloud
+
+    @Test func anAddressSaidAloudIsAnEmail() {
+        let text = "email it to john dot smith at example dot com please"
+        let emails = RegexEntityDetector.detect(in: text).filter { $0.category == .email }
+        #expect(emails.map(\.original) == ["john dot smith at example dot com"])
+        #expect(SpokenEmails.find(in: text).map(\.address) == ["john.smith@example.com"])
+    }
+
+    @Test func separatorsAndCountryDomains() {
+        let text = "Mary underscore Jones at mail dot company dash name dot co dot uk"
+        #expect(SpokenEmails.find(in: text).map(\.address) == ["mary_jones@mail.company-name.co.uk"])
+        #expect(RegexEntityDetector.detect(in: text).contains { $0.category == .email })
+    }
+
+    @Test func ordinaryAtIsNoAddress() {
+        for text in [
+            "I'll be at home",
+            "meet me at noon dot",
+            "we arrived at example dot",
+            "she is at the office dot com stuff",
+        ] {
+            #expect(RegexEntityDetector.detect(in: text).isEmpty, "\(text)")
+        }
+    }
+
+    @Test func withTheEmailRuleOffNoAddressIsFlagged() {
+        let text = "john at example dot com"
+        let phonesOnly = RegexEntityDetector.EffectiveRuleSet(
+            builtins: RegexEntityDetector.Pattern.all.filter { $0.category == .phone },
+            presets: [],
+            customs: []
+        )
+        #expect(RegexEntityDetector.detect(in: text, ruleset: phonesOnly).isEmpty)
     }
 }
