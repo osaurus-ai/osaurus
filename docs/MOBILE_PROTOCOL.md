@@ -1703,8 +1703,24 @@ was started from (§14.5), so a call adds turns to that one chat however
 often the user interrupts. The phone feeds the `text` stream events to the
 synthesiser sentence by sentence. Thinking and tool blocks are not spoken.
 
-Anything the Mac asks mid-run — an approval card (§14), a Privacy Filter
-review (§19) — arrives the way it always does, and the phone pauses the
-call's listening while it is shown, since a card cannot be answered by voice
-yet. A call ends nothing on the Mac: hanging up cancels the in-flight run
+Anything the Mac asks mid-run — a tool approval (§16.1), a Privacy Filter
+review (§19), a config plan (§16.3), a computer-use step (§16.4), a secret
+(§16.5) — arrives the way it always does, and is answered on the call, so a
+call never needs the chat screen. The phone reads the card out ("I need your
+approval for this: … Say yes to approve, or no to decline.") over a sheet
+with the same choices, and takes a short spoken yes or no; the answer goes
+back through the card's own route, as a tap in the chat would.
+
+- A risky step takes "confirm", not "yes": a tool that runs on the Mac
+  itself or on a remote server, or changes or sends something; a high-risk
+  config plan; a computer-use step that edits or is consequential.
+- A Privacy Filter review is read as kinds only ("a name and a phone
+  number"), never the details. Yes redacts them all, as the Mac's sheet
+  defaults to; no cancels the send. Sending as written is a button only.
+- A secret is typed on the sheet, never said; by voice it can only be
+  declined.
+- Choices the voice doesn't take (Always Allow, Allow for This Task, Approve
+  the Rest) are buttons on the sheet.
+
+A call ends nothing on the Mac: hanging up cancels the in-flight run
 exactly as tapping stop in the chat does.
