@@ -43,9 +43,14 @@ struct QwenHybridAdmissionTests {
         try JSONSerialization.data(withJSONObject: wrapper).write(to: directory.appendingPathComponent("config.json"))
         for positions in [2048, 8192, 32768] {
             let attention = Int64(12 * positions * 2 * 2 * 256 * 2)
-            let recurrent = Int64(36 * (48 * 128 * 128 * 4 + 3 * (2 * 16 * 128 + 48 * 128) * 2))
+            let statePerLayer: Int64 = 48 * 128 * 128 * 4
+            let convWidth: Int64 = 2 * 16 * 128 + 48 * 128
+            let convPerLayer: Int64 = 3 * convWidth * 2
+            let recurrent: Int64 = 36 * (statePerLayer + convPerLayer)
             let indexer = Int64(12 * 128 * (positions + positions / 4) * 2)
-            let ple = Int64(1 * (2560 * 4 * 9 * 2 + 2 * 4))
+            let pleConv: Int64 = 2560 * 4 * 9 * 2
+            let pleHistory: Int64 = 2 * 4
+            let ple = pleConv + pleHistory
             let state = attention + recurrent + indexer + ple
             let expected = max(512 << 20, state + state / 4)
             let actual = ModelRuntime.estimatedKVHeadroomBytes(
