@@ -5259,7 +5259,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Chat models, ready on-device image models and available cloud
             // image models, which the Mac picker also lists (picking one puts
             // the composer in image mode).
-            let items = await ModelPickerItemCache.shared.buildModelPickerItems()
+            // The items as they stand: kept current by every change already,
+            // where a rebuild per request cost the phone seconds a time.
+            let clock = ContinuousClock()
+            let began = clock.now
+            let allItems = await ModelPickerItemCache.shared.currentItems()
+            let gathered = clock.now
+            let items = allItems
                 .filter { $0.isLikelyChatCapable || $0.isPhoneImageModel || PickerCloudImageDTO($0) != nil }
             let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
             // Grouped as the Mac picker groups them, so the phone shows the
@@ -5318,7 +5324,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let favoritesJSON = (try? encoder.encode(favorites)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
             let json = #"{"favorites":"# + favoritesJSON + #","models":["# + encoded.joined(separator: ",") + "]}"
             let sentCount = encoded.count
-            MobileConnectLog.write("models/picker: sent \(sentCount) of \(models.count) models")
+            let ms = { (from: ContinuousClock.Instant, to: ContinuousClock.Instant) in
+                Int(from.duration(to: to) / .milliseconds(1))
+            }
+            MobileConnectLog.write(
+                "models/picker: sent \(sentCount) of \(models.count) models, \(json.utf8.count) bytes; "
+                    + "items \(ms(began, gathered)) ms, rest \(ms(gathered, clock.now)) ms"
+            )
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)

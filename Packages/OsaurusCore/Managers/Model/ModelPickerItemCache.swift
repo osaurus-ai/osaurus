@@ -157,6 +157,17 @@ final class ModelPickerItemCache: ObservableObject {
         return await task.value
     }
 
+    /// The items as they stand, for a reader that doesn't need a rebuild of
+    /// its own: every change (models, providers, the cloud catalog) already
+    /// rebuilds them as it happens. Waits only for a rebuild under way, or
+    /// for a first one. A full rebuild runs to seconds with cloud providers
+    /// connected, which the phone's picker waited out on every open.
+    func currentItems() async -> [ModelPickerItem] {
+        if let rebuildTask { return await rebuildTask.value }
+        if isLoaded { return items }
+        return await buildModelPickerItems()
+    }
+
     /// Kick off a rebuild without awaiting it. Safe to call at app launch for a
     /// fast first paint — when no remote providers are connected yet this
     /// naturally produces `[foundation + local + 0 remote]`, and a subsequent
