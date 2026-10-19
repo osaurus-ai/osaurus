@@ -11132,9 +11132,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // change checkpoints to THIS run's granted folder.
                 // The owner's phone call may turn the Privacy Filter off, or
                 // its review to auto-accept, for its own turns (§6.5).
-                let callPrivacy =
-                    remoteReviewer && req.osaurus_voice_call == true
-                    ? req.osaurus_privacy.flatMap(VoiceCallPrivacy.init(rawValue:)) : nil
+                let callPrivacy = remoteReviewer ? req.osaurus_privacy.flatMap(VoiceCallPrivacy.init(rawValue:)) : nil
                 let runResult = try await ChatExecutionContext.$voiceCallPrivacy
                     .withValue(callPrivacy) {
                     try await ChatExecutionContext.$hasRemoteReviewer

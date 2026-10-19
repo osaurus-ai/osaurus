@@ -743,8 +743,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     var osaurus_voice_call: Bool? = nil
     /// Osaurus Connect: how the Privacy Filter treats this voice-call turn,
     /// as the user chose when the call started: `off` sends it as written,
-    /// `auto` redacts every detection without a review. Honoured only with
-    /// `osaurus_voice_call`, from the owner on the Secure Channel
+    /// `auto` redacts every detection without a review. Honoured only from
+    /// the owner on the Secure Channel
     /// (docs/MOBILE_PROTOCOL.md §6.5).
     var osaurus_privacy: String? = nil
     /// Deterministic-sampling seed (OpenAI v1.x). When set, identical

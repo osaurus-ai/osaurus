@@ -598,9 +598,9 @@ A review read out mid-call is slow to answer, so when the call's model has
 `privacy` set (§12.1), the phone asks as the call starts whether to keep
 reviewing, auto-accept or turn the filter off, for this call only. Its turns
 then carry `"osaurus_privacy": "auto"` (every detection redacted, no review)
-or `"off"` (sent as written), or neither. The field is honoured only with
-`osaurus_voice_call`, from the owner on the Secure Channel (§19); otherwise
-it is ignored and the filter runs as configured. Nothing is saved: the next
+or `"off"` (sent as written), or neither. The field is honoured only from
+the owner on the Secure Channel (§19), with or without `osaurus_voice_call`;
+otherwise it is ignored and the filter runs as configured. Nothing is saved: the next
 call asks again.
 
 ---
