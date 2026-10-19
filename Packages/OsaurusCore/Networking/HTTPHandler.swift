@@ -10620,7 +10620,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         n: nil,
                         tools: tools.isEmpty ? nil : tools,
                         tool_choice: resolvedToolChoice,
-                        session_id: req.session_id,
+                        // A continued chat is keyed as the Mac's own window
+                        // keys it, so the Privacy Filter remembers its
+                        // redactions across steps and turns (and shares them
+                        // with the Mac). Without a key it started afresh on
+                        // every model call: the phone, which sends none for
+                        // a Mac chat, was asked again each step, and earlier
+                        // turns went out unredacted. With no key at all, the
+                        // run's own: its steps at least share one memory.
+                        session_id: continuedSessionId?.uuidString ?? req.session_id ?? requestId,
                         seed: req.seed,
                         response_format: req.response_format,
                         stream_options: req.stream_options

@@ -1656,6 +1656,13 @@ Owner-only, and the payload is the detected PII itself, so it travels only
 inside the Secure Channel to the user's own device. It is never written to
 the request log.
 
+Decisions are remembered per chat: a run continuing a Mac chat (§14.5) is
+filtered under that chat's id, as the Mac's own window filters it, so what
+was answered once is not asked again on the run's later steps or later
+turns, earlier turns go out with the same placeholders, and a review's
+`session_id` is that chat's id. A run with neither that nor a `session_id`
+is remembered for its own steps only.
+
 ### 19.1 `GET /privacy/reviews`
 
 ```json
