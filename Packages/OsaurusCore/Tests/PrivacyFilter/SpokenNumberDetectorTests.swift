@@ -99,4 +99,30 @@ struct SpokenNumberDetectorTests {
         )
         #expect(RegexEntityDetector.detect(in: text, ruleset: phonesOnly).isEmpty)
     }
+
+    /// What the speech recogniser actually wrote on a call (2026-10-19):
+    /// no "dot", the domain glued together.
+    @Test func aGluedDomainInASentenceAboutEmailIsAnEmail() {
+        let text = "Right a resignation email to john smith at examplecom"
+        let emails = RegexEntityDetector.detect(in: text).filter { $0.category == .email }
+        #expect(emails.map(\.original) == ["smith at examplecom"])
+        #expect(SpokenEmails.find(in: text).map(\.address) == ["smith@example.com"])
+    }
+
+    @Test func aWrittenDomainAfterASpokenNameIsAnEmail() {
+        // As the phone sends it, the glued domain given its dot back.
+        let text = "Right a resignation email to john smith at example.com"
+        #expect(RegexEntityDetector.detect(in: text).filter { $0.category == .email }.map(\.original) == [
+            "smith at example.com"
+        ])
+        // A name said with "dot" needs no email word to count.
+        let spoken = SpokenEmails.find(in: "it's john dot smith at example.com")
+        #expect(spoken.map(\.address) == ["john.smith@example.com"])
+    }
+
+    @Test func aWebsiteOrAGluedWordOutsideEmailTalkIsLeftAlone() {
+        for text in ["see the docs at example.com", "laughing at sitcom reruns", "email me at radio"] {
+            #expect(RegexEntityDetector.detect(in: text).filter { $0.category == .email }.isEmpty, "\(text)")
+        }
+    }
 }

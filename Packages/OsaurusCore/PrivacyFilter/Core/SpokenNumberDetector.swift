@@ -182,13 +182,54 @@ enum SpokenEmails {
 
     static func find(in text: String) -> [Spoken] {
         let nsText = text as NSString
-        return pattern.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap { match in
-            guard let range = Range(match.range, in: text) else { return nil }
-            let local = written(nsText.substring(with: match.range(at: 1)))
-            let domain = written(nsText.substring(with: match.range(at: 2)))
-            return Spoken(range: range, address: "\(local)@\(domain)")
+        let whole = NSRange(location: 0, length: nsText.length)
+        // Forms whose domain is not said word by word count only in a
+        // sentence about email, or with a name said with "dot" and the like:
+        // "see the docs at example.com" is a website, not an address.
+        let aboutEmail = Self.aboutEmail.firstMatch(in: text, range: whole) != nil
+        var found: [Spoken] = []
+        for (form, needsContext) in [(pattern, false), (writtenDomain, true), (gluedDomain, true)] {
+            for match in form.matches(in: text, range: whole) {
+                guard let range = Range(match.range, in: text) else { continue }
+                let saidName = nsText.substring(with: match.range(at: 1))
+                if needsContext, !aboutEmail, !saidName.contains(where: \.isWhitespace) { continue }
+                var domain = written(nsText.substring(with: match.range(at: 2)))
+                // The glued form's ending, given its dot back.
+                if match.numberOfRanges > 3, match.range(at: 3).location != NSNotFound {
+                    domain += "." + nsText.substring(with: match.range(at: 3)).lowercased()
+                }
+                found.append(Spoken(range: range, address: "\(written(saidName))@\(domain)"))
+            }
         }
+        return found
     }
+
+    /// A domain already written ("john dot smith at example.com").
+    // swiftlint:disable:next force_try
+    private static let writtenDomain = try! NSRegularExpression(
+        pattern: #"\b([a-z0-9]+(?:\s+(?:dot|underscore|dash|hyphen)\s+[a-z0-9]+)*)\s+at\s+"#
+            + #"([a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:"# + endings.joined(separator: "|") + #"))\b"#,
+        options: [.caseInsensitive]
+    )
+
+    /// The speech recogniser writes no punctuation and no "dot": "example
+    /// dot com" comes out "examplecom". Only these endings are split off; the
+    /// country ones end too many words ("radio", "welcome").
+    static let gluedEndings = ["com", "org", "net", "edu", "gov"]
+
+    // swiftlint:disable:next force_try
+    private static let gluedDomain = try! NSRegularExpression(
+        pattern: #"\b([a-z0-9]+(?:\s+(?:dot|underscore|dash|hyphen)\s+[a-z0-9]+)*)\s+at\s+"#
+            + #"([a-z0-9]{2,}?)("# + gluedEndings.joined(separator: "|") + #")\b"#,
+        options: [.caseInsensitive]
+    )
+
+    /// Words that make a sentence about email.
+    // swiftlint:disable:next force_try
+    private static let aboutEmail = try! NSRegularExpression(
+        pattern: #"\b(?:e-?mail\w*|mail\w*|address\w*|send\w*|sent|writ\w*|reach\w*|contact\w*)\b"#,
+        options: [.caseInsensitive]
+    )
 
     /// "john dot smith" → "john.smith", lower case, no spaces.
     private static func written(_ said: String) -> String {
