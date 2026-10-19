@@ -189,8 +189,42 @@ enum RemoteSessionContinuation {
         return caller == nonce
     }
 
-    /// Whether `session` is one of the phone's chats (see `isFromPairedPhone`).
+    /// Whether `session` is one of the phone's chats: one it started (see
+    /// `startPhoneChat`), or an older hosted row (see `isFromPairedPhone`).
     static func isFromPairedPhone(_ session: ChatSessionData) -> Bool {
-        session.workspace.map(isFromPairedPhone) ?? false
+        if session.source == .chat, session.externalSessionKey == phoneChatKey { return true }
+        return session.workspace.map(isFromPairedPhone) ?? false
+    }
+
+    /// Marks a chat the phone started. It is otherwise an ordinary chat:
+    /// no workspace stamp, so the Mac can open and continue it as its own.
+    static let phoneChatKey = "osaurus-connect-phone"
+
+    /// Whether the caller's access key is the one the phone was paired with.
+    static func isPairedPhoneKey(_ keyNonce: String?) -> Bool {
+        guard let keyNonce, let paired = MobilePairingService.shared.pairedKeyNonce else { return false }
+        return keyNonce.lowercased() == paired.lowercased()
+    }
+
+    /// Starts the chat the phone named `sessionId` on its first run
+    /// (docs/MOBILE_PROTOCOL.md §14.5), titled from what was asked. The run
+    /// appends its turns when it ends, as for any continued chat. False when
+    /// the id is already taken: an existing chat is never replaced.
+    static func startPhoneChat(_ sessionId: UUID, agentId: UUID, messages: [ChatMessage]) async -> Bool {
+        guard ChatSessionsManager.shared.session(for: sessionId) == nil,
+            await ChatSessionStore.loadAsync(id: sessionId) == nil
+        else { return false }
+        let asked = ChatHistoryWriter.turns(from: messages.filter { $0.role == "user" })
+        let session = ChatSessionData(
+            id: sessionId,
+            title: ChatSessionData.generateTitle(from: asked),
+            // As a hosted phone row does, so `GET /sessions?agent_id=` lists it.
+            agentId: agentId,
+            externalSessionKey: phoneChatKey
+        )
+        ChatSessionsManager.shared.save(session)
+        NotificationCenter.default.post(name: ChatHistoryWriter.didPersistExternallyNotification, object: nil)
+        MobileConnectLog.write("phone started chat \(sessionId)")
+        return true
     }
 }

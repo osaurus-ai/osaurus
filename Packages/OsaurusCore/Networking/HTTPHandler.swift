@@ -4726,7 +4726,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private struct AgentListResponse: Codable {
         let agents: [AgentListItem]
+        /// What this Mac does that an older one doesn't, for a client to
+        /// check before relying on it (docs/MOBILE_PROTOCOL.md §14.5).
+        var features: [String] = HTTPHandler.connectFeatures
     }
+
+    /// `session_create`: a run may start a chat with `osaurus_create_session`.
+    static let connectFeatures = ["session_create"]
 
     /// The Action Bar a client shows for `agent`: its own, else for the
     /// Orchestrator the configure-oriented defaults its Mac chat shows (a
@@ -7415,13 +7421,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let contentMatches: Set<UUID> =
                 search.isEmpty ? [] : await ChatSessionStore.sessionIds(withContentContaining: search)
             let phoneSessions: Set<UUID> = await MainActor.run {
-                Set(
-                    sessions
-                        .filter { session in
-                            session.workspace.map(RemoteSessionContinuation.isFromPairedPhone) ?? false
-                        }
-                        .map(\.id)
-                )
+                Set(sessions.filter { RemoteSessionContinuation.isFromPairedPhone($0) }.map(\.id))
             }
             // One predicate rather than a chain of `.filter`s: the chain grew
             // long enough that the type checker gave up on it.
@@ -10193,7 +10193,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let raw = req.osaurus_session_id,
                     let id = UUID(uuidString: raw)
                 else { return nil }
-                return await MainActor.run { RemoteSessionContinuation.isContinuable(id) ? id : nil }
+                if await MainActor.run(body: { RemoteSessionContinuation.isContinuable(id) }) { return id }
+                // A chat the phone starts with this run: the Mac keeps it from
+                // the first message, so it stays one chat however the phone's
+                // copy and the Mac's differ (tool steps, an interrupted reply).
+                guard req.osaurus_create_session == true,
+                    await MainActor.run(body: { RemoteSessionContinuation.isPairedPhoneKey(callerKeyNonce) })
+                else { return nil }
+                let started = await RemoteSessionContinuation.startPhoneChat(
+                    id,
+                    agentId: agentId,
+                    messages: req.messages
+                )
+                return started ? id : nil
             }()
             // Index of the first message this run adds to that chat (its own
             // request messages and everything the loop appends).

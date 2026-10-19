@@ -2346,7 +2346,7 @@ private struct SessionRow: View {
                             // early while empty space sat after the badges.
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        if session.source != .chat {
+                        if session.source != .chat || isFromPairedPhone {
                             sourceBadge
                         }
 
@@ -2762,9 +2762,9 @@ private struct SessionRow: View {
 
     /// Compact icon-only badge that surfaces the session's `SessionSource`
     /// (plugin / http / schedule / watcher). Chat-source rows hide it.
-    /// A chat from the paired iPhone. Stored as a `.workspace` row (it runs
-    /// through the shared-agent path), but it is the owner's own chat, not a
-    /// teammate's, and is shown as the iPhone's.
+    /// A chat from the paired iPhone: an ordinary chat the phone started, or
+    /// an older `.workspace` row (from the shared-agent path), which is the
+    /// owner's own chat, not a teammate's. Either is shown as the iPhone's.
     private var isFromPairedPhone: Bool {
         RemoteSessionContinuation.isFromPairedPhone(session)
     }
@@ -2824,6 +2824,9 @@ private struct SessionRow: View {
     private var sourceBadgeHelp: Text {
         switch session.source {
         case .chat:
+            if isFromPairedPhone {
+                return Text("Mobile", bundle: .module)
+            }
             return Text("Chat", bundle: .module)
         case .plugin:
             if let pid = session.sourcePluginId {

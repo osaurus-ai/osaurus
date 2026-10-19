@@ -450,7 +450,10 @@ Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch`, and every
 owner-only request that changes something (any method but `GET`: creating,
 editing or deleting an agent, its tools, answering an approval or a privacy
 review, editing or deleting a chat, stopping a run), that arrive in plaintext
-are refused with `426`. Loopback callers are exempt; owner reads stay open:
+are refused with `426`. So is every owner route, reads included, when a
+remote caller presents an owner (master-scoped) key outside the channel
+(`HTTPHandler.ownerChannelRoutes`; see SECURE_CHANNEL.md). Loopback callers
+are exempt:
 
 ```json
 {"error":{"code":"secure_channel_required","message":"…","type":"upgrade_required"}}
@@ -1227,8 +1230,8 @@ the title or any message body, the same scan the Mac search uses), `limit`
 the chat came from (`chat`, `http`, `channel`, `schedule`, …).
 
 `origin` is what a client shows as the row icon: `mac` for the user's own
-chats, `ios` for chats this phone started (hosted runs stamp the pairing
-key as their caller), otherwise the source. `capabilities` are the Mac's
+chats, `ios` for chats this phone started (§14.5; older ones are hosted
+rows that stamp the pairing key as their caller), otherwise the source. `capabilities` are the Mac's
 badges (`vision`, `voice`, `code`, `search`).
 
 ### 14.2 `GET /sessions/{id}`
@@ -1318,6 +1321,32 @@ live; otherwise History refreshes. The run's model becomes the chat's
 Ignored (the run proceeds statelessly) when the id is unknown or names a
 workspace chat served for a teammate. `session_id` keeps its existing
 meaning (host-side cache scoping) and is unrelated.
+
+A run that continues a chat is not also hosted as a shared-agent run
+(§15): the chat is the only place its turns go.
+
+**Starting a chat.** The phone names a new chat itself: on its first run it
+sends a fresh `osaurus_session_id` with `"osaurus_create_session": true`,
+and the Mac creates the chat under that id (empty, titled from the message),
+then treats the run as a continuation. From then on the Mac owns the
+history and the phone sends only each new message, so the chat stays one
+chat however the phone's copy and the Mac's differ (tool steps, a reply the
+user interrupted). The flag may be sent on every run of such a chat: an id
+the Mac already has is simply continued, so a retried first run creates
+nothing twice. An existing chat is never replaced.
+
+- Honoured only for the paired phone's own key, inside the Secure Channel
+  (the run route refuses remote plaintext, §6.2). Any other caller's flag is
+  ignored and the run proceeds as above.
+- The chat is an ordinary Mac chat, not a workspace row, so the Mac can open
+  and continue it too. It is marked as the phone's, and §14.1 reports it with
+  `origin: "ios"`.
+- A Mac that supports this lists `"session_create"` in `features` on
+  `GET /agents`. A phone checks for it (from a roster read inside the
+  channel) before starting chats this way; an older Mac would treat the
+  unknown id as a stateless run and drop the history.
+- Image requests (§12.5) do not create chats yet: an image prompt as a new
+  chat's first message is not saved to the Mac until a chat run creates it.
 
 ### 14.6 `GET /projects`
 
@@ -1653,8 +1682,9 @@ via the same FluidAudio models the Mac uses for its own dictation and read-
 aloud.
 
 So there is no call API. Each spoken turn is `POST /agents/{id}/run` (§6.3)
-with the transcript as the user message, in the same session as the chat it
-was started from, and the phone feeds the `text` stream events to the
+with the transcript as the user message, continuing the Mac chat the call
+was started from (§14.5), so a call adds turns to that one chat however
+often the user interrupts. The phone feeds the `text` stream events to the
 synthesiser sentence by sentence. Thinking and tool blocks are not spoken.
 
 Anything the Mac asks mid-run — an approval card (§14), a Privacy Filter
