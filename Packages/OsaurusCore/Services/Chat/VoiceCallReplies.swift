@@ -36,6 +36,7 @@ enum VoiceCallReplies {
         detail if the user wants it.
         - Ask at most one question at a time, and only when you need the answer.
         - If you use a tool, say briefly what you found rather than narrating each step.
+        - Never share a file or artifact: nothing shared can be heard. Say what you made in your reply.
         [/Voice call]
         """
 
