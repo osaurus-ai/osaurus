@@ -5535,6 +5535,7 @@ public actor ModelRuntime {
             let name = url.lastPathComponent
             return name.hasSuffix(".safetensors")
                 || name == "config.json"
+                || name == "jang_config.json"
                 || name == "tokenizer.json"
                 || name == "tokenizer_config.json"
         }
@@ -5542,6 +5543,16 @@ public actor ModelRuntime {
         let parts =
             interesting
             .map { url -> String in
+                // JANG normalization/storage declarations alter activations without
+                // changing weight files. Hash this small sidecar so even a same-size
+                // edit with a preserved timestamp invalidates old KV/SSM state.
+                if url.lastPathComponent == "jang_config.json" {
+                    guard let data = try? Data(contentsOf: url) else {
+                        return "jang_config.json:unreadable:\(UUID().uuidString)"
+                    }
+                    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                    return "jang_config.json:sha256:\(digest)"
+                }
                 let values = try? url.resourceValues(forKeys: [
                     .fileSizeKey, .contentModificationDateKey,
                 ])
