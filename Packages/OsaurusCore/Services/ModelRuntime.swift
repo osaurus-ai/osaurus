@@ -7282,6 +7282,14 @@ public actor ModelRuntime {
                 else {
                     throw ImageInputError(imageIndex: index, reason: "the image format is unsupported or its data is corrupt.")
                 }
+                if PrefillDebugLog.shared.isEnabled {
+                    // Identifies the bytes each turn hands the processor, next to the engine's
+                    // per-component media salt trace.
+                    let digest = SHA256.hash(data: imageData).prefix(6).map { String(format: "%02x", $0) }.joined()
+                    PrefillDebugLog.shared.log(
+                        "     IMAGE-SOURCE index=\(index) bytes=\(imageData.count) sha=\(digest) "
+                            + "extent=\(ciImage.extent) colorSpace=\(ciImage.colorSpace?.name.map { $0 as String } ?? "nil")")
+                }
                 sources.append(.ciImage(ciImage))
             } else if let url = URL(string: urlString), url.scheme != nil {
                 sources.append(.url(url))
