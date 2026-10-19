@@ -10292,8 +10292,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // background task: a live read-only tab of the shared agent
             // ("Alice → Research Agent" with step + Stop), a History row from
             // the first turn, retained across relaunch until dismissed.
+            // Not a run continuing one of the Mac's chats (§14.5): that chat
+            // takes its turns, and a hosted row beside it, keyed by this
+            // request alone, split every phone turn into a chat of its own.
             let inboundRun: InboundSharedRun? = await {
-                guard isAuthenticatedRemote, let nonce = authedKeyNonce else { return nil }
+                guard isAuthenticatedRemote, continuedSessionId == nil, let nonce = authedKeyNonce else { return nil }
                 let context: WorkspaceSessionContext
                 if let record = workspaceKeyRecord {
                     let callerName = await WorkspaceCallerNameResolver.shared.displayName(
