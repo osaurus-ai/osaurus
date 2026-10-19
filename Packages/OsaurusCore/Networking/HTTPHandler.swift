@@ -11130,9 +11130,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } catch {
                 inboundOutcome.record(error: error, cancelled: disconnected.value)
                 await releaseHostFolder()
-                RemoteAgentRunLog.serverError(
-                    "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
-                )
+                // Stopped, or a send the user declined in a privacy review,
+                // is how a run is meant to end then: no error to log.
+                if error is CancellationError {
+                    RemoteAgentRunLog.server("run loop cancelled agent=\(agentId.uuidString) model=\(model)")
+                } else {
+                    RemoteAgentRunLog.serverError(
+                        "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
+                    )
+                }
                 // SSE response head was already written as 200 — the
                 // failure surfaces as an in-band SSE error chunk. Log
                 // the actual on-wire status (200) so dashboards don't
