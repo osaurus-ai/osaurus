@@ -5217,13 +5217,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    private struct PickerModelsResponse: Encodable {
-        /// In the Mac picker's tab order, and its order within each tab.
-        let models: [PickerModelDTO]
-        /// The Mac's favourite model keys, oldest first.
-        let favorites: [String]
-    }
-
     /// Whether the caller owns this Mac: loopback, or a master-scoped key
     /// (e.g. the Osaurus Connect phone). Agent-scoped / workspace keys don't.
     private func callerOwnsThisMac(_ context: ChannelHandlerContext) -> Bool {
@@ -5310,9 +5303,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     cloud: cloud
                 )
             }
-            let json =
-                (try? JSONEncoder.osaurusCanonical().encode(PickerModelsResponse(models: models, favorites: favorites)))
-                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"models":[]}"#
+            // One model at a time: one that can't be encoded (a NaN in its
+            // numbers, say) is left out, and said, rather than the whole list
+            // going out empty, which emptied the phone's picker.
+            let encoder = JSONEncoder.osaurusCanonical()
+            var encoded: [String] = []
+            for model in models {
+                do {
+                    encoded.append(String(decoding: try encoder.encode(model), as: UTF8.self))
+                } catch {
+                    MobileConnectLog.write("models/picker: left out \(model.id): \(error)")
+                }
+            }
+            let favoritesJSON = (try? encoder.encode(favorites)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+            let json = #"{"favorites":"# + favoritesJSON + #","models":["# + encoded.joined(separator: ",") + "]}"
+            let sentCount = encoded.count
+            MobileConnectLog.write("models/picker: sent \(sentCount) of \(models.count) models")
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
@@ -5322,7 +5328,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/models/picker",
                     userAgent: userAgent,
                     requestBody: nil,
-                    responseBody: "{\"models\":[\(models.count) items]}",
+                    responseBody: "{\"models\":[\(sentCount) of \(models.count) items]}",
                     responseStatus: 200,
                     startTime: startTime
                 )
