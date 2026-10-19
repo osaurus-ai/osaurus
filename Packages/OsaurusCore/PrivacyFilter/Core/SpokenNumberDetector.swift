@@ -198,7 +198,18 @@ enum SpokenEmails {
                 if match.numberOfRanges > 3, match.range(at: 3).location != NSNotFound {
                     domain += "." + nsText.substring(with: match.range(at: 3)).lowercased()
                 }
-                found.append(Spoken(range: range, address: "\(written(saidName))@\(domain)"))
+                // A name said plainly ("john smith at …") may be the address's
+                // or just the person's: only the domain is certain, so only it
+                // is the span, and the name is left to the name detection
+                // rather than overlapping it, which dropped the name.
+                let saidWithSeparators = saidName.contains(where: \.isWhitespace)
+                let domainStart = match.range(at: 2).location
+                let span =
+                    saidWithSeparators
+                    ? range
+                    : Range(NSRange(location: domainStart, length: NSMaxRange(match.range) - domainStart), in: text)
+                guard let span else { continue }
+                found.append(Spoken(range: span, address: "\(written(saidName))@\(domain)"))
             }
         }
         return found

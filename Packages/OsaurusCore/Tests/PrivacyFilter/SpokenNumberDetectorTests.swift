@@ -105,7 +105,8 @@ struct SpokenNumberDetectorTests {
     @Test func aGluedDomainInASentenceAboutEmailIsAnEmail() {
         let text = "Right a resignation email to john smith at examplecom"
         let emails = RegexEntityDetector.detect(in: text).filter { $0.category == .email }
-        #expect(emails.map(\.original) == ["smith at examplecom"])
+        // The domain only: "john smith" is left to the name detection, unoverlapped.
+        #expect(emails.map(\.original) == ["examplecom"])
         #expect(SpokenEmails.find(in: text).map(\.address) == ["smith@example.com"])
     }
 
@@ -113,7 +114,7 @@ struct SpokenNumberDetectorTests {
         // As the phone sends it, the glued domain given its dot back.
         let text = "Right a resignation email to john smith at example.com"
         #expect(RegexEntityDetector.detect(in: text).filter { $0.category == .email }.map(\.original) == [
-            "smith at example.com"
+            "example.com"
         ])
         // A name said with "dot" needs no email word to count.
         let spoken = SpokenEmails.find(in: "it's john dot smith at example.com")
