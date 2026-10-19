@@ -205,4 +205,24 @@ struct RegexEntityDetectorTests {
         #expect(phoneCount == 1)
         #expect(acctCount == 0)
     }
+
+    // MARK: - Bare digit runs that are no phone
+
+    /// A clock tool's result on a phone run (2026-10-19) asked the user to
+    /// approve "a phone number": its Unix time.
+    @Test func aUnixTimeIsNoPhone() {
+        let toolResult = #"{"ok":true,"result":{"unix_seconds":1792391692},"tool":"get_current_time"}"#
+        #expect(RegexEntityDetector.detect(in: toolResult).filter { $0.category == .phone }.isEmpty)
+    }
+
+    @Test func onlyBareRunsAreCheckedAgainstTheNumberingPlan() {
+        #expect(!RegexEntityDetector.isPlausiblePhone("1792391692"))  // area code 179
+        #expect(!RegexEntityDetector.isPlausiblePhone("4151234567"))  // exchange 123
+        #expect(!RegexEntityDetector.isPlausiblePhone("+11234567890"))
+        #expect(RegexEntityDetector.isPlausiblePhone("9492380232"))
+        #expect(RegexEntityDetector.isPlausiblePhone("+14155550123"))
+        // Written as a phone, it is one: not second-guessed.
+        #expect(RegexEntityDetector.isPlausiblePhone("555-123-4567"))
+        #expect(RegexEntityDetector.isPlausiblePhone("(123) 456-7890"))
+    }
 }
