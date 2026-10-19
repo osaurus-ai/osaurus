@@ -3455,9 +3455,14 @@ public actor ModelRuntime {
         // GDN/GLA linear-attention layers (qwen3_5, Bailing KDA) keep a
         // per-head (keyDim x valueDim) matmul state instead of mamba-style
         // SSM state; their config speaks `linear_*`, not `mamba_*`.
-        let linearVHeads = intValue(config["linear_num_value_heads"]) ?? 0
-        let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? 0
-        let linearValueDim = intValue(config["linear_value_head_dim"]) ?? 0
+        let modelType = stringValue(config["model_type"])?.lowercased() ?? ""
+        let qwenHybrid = Self.isQwenHybridDecoder(modelType)
+        // Qwen35Configuration supplies these defaults; Qwen3Next requires
+        // the dimensions explicitly and rejects incomplete configurations.
+        let qwen35Defaults = qwenHybrid && modelType != "qwen3_next"
+        let linearVHeads = intValue(config["linear_num_value_heads"]) ?? (qwen35Defaults ? 64 : 0)
+        let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? (qwen35Defaults ? 192 : 0)
+        let linearValueDim = intValue(config["linear_value_head_dim"]) ?? (qwen35Defaults ? 128 : 0)
         let linearStatePerLayer =
             Int64(max(0, linearVHeads))
             * Int64(max(0, linearKeyDim))
@@ -3467,13 +3472,11 @@ public actor ModelRuntime {
             * max(mambaStatePerLayer, linearStatePerLayer)
             * Int64(dtypeBytes)
 
-        let modelType = stringValue(config["model_type"])?.lowercased() ?? ""
-        let qwenHybrid = Self.isQwenHybridDecoder(modelType)
         var companionBytes: Int64 = 0
         if qwenHybrid {
             // GDN recurrence is float32 even when weights/KV are BF16. Its
             // convolution tail is stored in the activation dtype separately.
-            let keyHeads = max(0, intValue(config["linear_num_key_heads"]) ?? 0)
+            let keyHeads = max(0, intValue(config["linear_num_key_heads"]) ?? (qwen35Defaults ? 16 : 0))
             let convRows = max(0, (intValue(config["linear_conv_kernel_dim"]) ?? 4) - 1)
             let convWidth = 2 * keyHeads * linearKeyDim + linearVHeads * linearValueDim
             ssmBytes = Int64(max(0, mambaLayers)) * (
@@ -3487,9 +3490,18 @@ public actor ModelRuntime {
                 let ratio = max(1, intValue(config["indexer_compress_ratio"]) ?? 4)
                 companionBytes = Int64(layerMix.fullAttention) * Int64(indexDim)
                     * Int64(maxPositions + maxPositions / ratio) * Int64(dtypeBytes)
-                let pleWidth = max(0, intValue(config["ple_embed_dim"]) ?? 0)
-                let pleRows = max(0, (intValue(config["ple_conv_kernel_size"]) ?? 4) - 1)
-                companionBytes += Int64(hiddenLayers) * Int64(pleWidth) * Int64(pleRows) * Int64(dtypeBytes)
+                // PLE keeps normalized gated hyper-state, not its embedding.
+                // Layer IDs are one-based; each layer owns one PLE regardless
+                // of repeated IDs. Token history is int32, separate from the
+                // activation-dtype dilated convolution tail.
+                let pleIDs = (config["ple_layer_ids"] as? [Int]) ?? [2]
+                let pleLayers = Set(pleIDs.filter { $0 > 0 && $0 <= hiddenLayers }).count
+                let pleWidth = max(0, intValue(config["hidden_size"]) ?? 0)
+                    * max(0, intValue(config["hc_count"]) ?? 4)
+                let ngram = max(1, intValue(config["ngram_size"]) ?? 3)
+                let pleRows = max(0, (intValue(config["ple_conv_kernel_size"]) ?? 4) - 1) * ngram
+                companionBytes += Int64(pleLayers) * (
+                    Int64(pleWidth) * Int64(pleRows) * Int64(dtypeBytes) + Int64(ngram - 1) * 4)
             }
         }
 

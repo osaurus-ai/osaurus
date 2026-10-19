@@ -13,7 +13,8 @@ struct QwenHybridAdmissionTests {
          "linear_num_key_heads": 16, "linear_key_head_dim": 128,
          "linear_value_head_dim": 128, "linear_conv_kernel_dim": 4,
          "indexer_head_dim": 128, "indexer_compress_ratio": 4,
-         "ple_embed_dim": 2560, "ple_conv_kernel_size": 4]
+         "hidden_size": 2560, "hc_count": 4, "ngram_size": 3,
+         "ple_layer_ids": [2], "ple_embed_dim": 2560, "ple_conv_kernel_size": 4]
     }
 
     @Test("interval topology matches the engine without an explicit layer list")
@@ -44,7 +45,7 @@ struct QwenHybridAdmissionTests {
             let attention = Int64(12 * positions * 2 * 2 * 256 * 2)
             let recurrent = Int64(36 * (48 * 128 * 128 * 4 + 3 * (2 * 16 * 128 + 48 * 128) * 2))
             let indexer = Int64(12 * 128 * (positions + positions / 4) * 2)
-            let ple = Int64(48 * 2560 * 3 * 2)
+            let ple = Int64(1 * (2560 * 4 * 9 * 2 + 2 * 4))
             let state = attention + recurrent + indexer + ple
             let expected = max(512 << 20, state + state / 4)
             let actual = ModelRuntime.estimatedKVHeadroomBytes(
@@ -53,5 +54,28 @@ struct QwenHybridAdmissionTests {
             #expect(actual == expected)
             #expect(actual < 2 << 30)
         }
+    }
+
+    @Test("omitted Qwen dimensions match runtime defaults")
+    func defaultDimensions() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var explicit = decoder
+        explicit["linear_num_value_heads"] = 64
+        explicit["linear_key_head_dim"] = 192
+        func price(_ config: [String: Any]) throws -> Int64 {
+            try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("config.json"))
+            return ModelRuntime.estimatedKVHeadroomBytes(
+                forWeights: 28_840_000_000, modelDirectory: directory,
+                kvRetentionCap: nil, requestPositionLimit: 32768)
+        }
+        let expected = try price(explicit)
+        for key in ["linear_num_value_heads", "linear_num_key_heads", "linear_key_head_dim",
+                    "linear_value_head_dim", "linear_conv_kernel_dim", "hc_count", "ngram_size",
+                    "ple_layer_ids", "ple_conv_kernel_size"] {
+            explicit.removeValue(forKey: key)
+        }
+        #expect(try price(explicit) == expected)
     }
 }
