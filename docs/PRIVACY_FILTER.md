@@ -231,6 +231,10 @@ Open Settings… (`⌘ ,`) → **Insights** → pick a Cloud inference request �
 
 This is the verification surface for "did the redaction actually take?" — if you see `[EMAIL_3]` in the Server Request body and `alice@example.com` in your local message, the filter worked. The pre-scrub local copy lives in **Request → Local** for comparison.
 
+### Voice calls from the phone
+
+A paired phone starting a voice call on a cloud model the filter runs for asks the owner, for that call only, to keep reviewing, auto-accept every detection (redacted with no review, as in Computer Use) or turn the filter off (turns sent as written). The choice rides on each call turn as `osaurus_privacy` and is honoured only for the owner on the Secure Channel; nothing in the settings changes (`VoiceCallPrivacy`, docs/MOBILE_PROTOCOL.md §6.5).
+
 ---
 
 ## Settings Surface

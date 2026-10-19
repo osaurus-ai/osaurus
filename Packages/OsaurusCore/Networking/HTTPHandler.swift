@@ -5093,12 +5093,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// offers and its starting price, for the phone's controls and its
         /// spend confirmation (MOBILE_PROTOCOL.md §12.5).
         let cloud: PickerCloudImageDTO?
+        /// For a cloud chat model: how the Privacy Filter treats a run on it,
+        /// `review` (asks before sending) or `auto` (redacts unasked); absent
+        /// when it doesn't run, so a voice call can ask the user first
+        /// (MOBILE_PROTOCOL.md §6.5).
+        let privacy: String?
 
         enum CodingKeys: String, CodingKey {
             case id, name, provider, source, vision, thinking, params, quantization, available, description, tab
             case kind, edits
             case image
             case cloud
+            case privacy
             case tabTitle = "tab_title"
             case favoriteKey = "favorite_key"
             case contextLength = "context_length"
@@ -5268,6 +5274,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let items = allItems
                 .filter { $0.isLikelyChatCapable || $0.isPhoneImageModel || PickerCloudImageDTO($0) != nil }
             let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
+            let privacyConfig = PrivacyFilterStore.snapshot()
             // Grouped as the Mac picker groups them, so the phone shows the
             // same tabs in the same order.
             let tabbed = items.groupedByTab().flatMap { tab in tab.models.map { (tab: tab, item: $0) } }
@@ -5282,6 +5289,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 case .imageGeneration: source = "image"
                 }
                 let cloud = PickerCloudImageDTO(item)
+                var privacy: String?
+                if case .remote(_, let providerId) = item.source, privacyConfig.isEnabled(forProviderId: providerId) {
+                    privacy = privacyConfig.alwaysApproveByDefault ? "auto" : "review"
+                }
                 return PickerModelDTO(
                     id: item.id,
                     name: item.displayName,
@@ -5306,7 +5317,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // Cloud models can't edit over HTTP yet.
                     edits: cloud == nil && item.isImageEditDelegateCandidate,
                     image: PickerImageDTO(item),
-                    cloud: cloud
+                    cloud: cloud,
+                    privacy: privacy
                 )
             }
             // One model at a time: one that can't be encoded (a NaN in its
@@ -11118,7 +11130,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // the parallel batch executor inherit the task-locals.
                 // `currentFolderRoot` scopes the folder tools + undo +
                 // change checkpoints to THIS run's granted folder.
-                let runResult = try await ChatExecutionContext.$hasRemoteReviewer
+                // The owner's phone call may turn the Privacy Filter off, or
+                // its review to auto-accept, for its own turns (§6.5).
+                let callPrivacy =
+                    remoteReviewer && req.osaurus_voice_call == true
+                    ? req.osaurus_privacy.flatMap(VoiceCallPrivacy.init(rawValue:)) : nil
+                let runResult = try await ChatExecutionContext.$voiceCallPrivacy
+                    .withValue(callPrivacy) {
+                    try await ChatExecutionContext.$hasRemoteReviewer
                     .withValue(remoteReviewer) {
                     try await ChatExecutionContext.$workspaceBillingContext
                     .withValue(workspaceBilling) {
@@ -11138,6 +11157,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         )
                                     }
                             }
+                    }
                     }
                     }
                 exitState = runResult.exit

@@ -294,6 +294,16 @@ enum PrivacyReviewMode: Sendable, Equatable {
     case autoScrub
 }
 
+/// What the owner picked for the Privacy Filter as their phone's voice call
+/// started (docs/MOBILE_PROTOCOL.md §6.5): a review read out mid-call is
+/// slow to answer, so the call can do without one.
+enum VoiceCallPrivacy: String, Sendable {
+    /// The call's turns go out as written.
+    case off
+    /// Every detection is redacted, with no review.
+    case auto
+}
+
 enum PrivacyFilterPipeline {
     /// Outbound scrub. Returns the original messages + `nil` map when
     /// the filter is disabled, when the model isn't loaded, or when a
@@ -334,6 +344,13 @@ enum PrivacyFilterPipeline {
             )
             return (messages, nil)
         }
+        // The owner turned the filter off for their phone call.
+        if ChatExecutionContext.voiceCallPrivacy == .off {
+            print("[PrivacyFilter] Bypass: turned off for this voice call by the owner.")
+            return (messages, nil)
+        }
+        // Every detection redacted, unasked, when the call chose so.
+        let reviewMode = ChatExecutionContext.voiceCallPrivacy == .auto ? .autoScrub : reviewMode
         // Decouple the on-device AI model from the deterministic regex
         // layer. When the user has AI detection OFF we never load the
         // bundle and never fail-closed on a missing model — the regex

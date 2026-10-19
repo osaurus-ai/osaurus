@@ -394,6 +394,13 @@ public enum ChatExecutionContext {
     /// out-of-module callers cannot bind it.
     @TaskLocal static var hasRemoteReviewer: Bool = false
 
+    /// The owner's choice for the Privacy Filter on a turn of their phone's
+    /// voice call: sent as written, or every detection redacted without a
+    /// review. `nil` everywhere else. Bound by `handleAgentRunEndpoint` only
+    /// alongside `hasRemoteReviewer`, so no other caller can switch the
+    /// filter off.
+    @TaskLocal static var voiceCallPrivacy: VoiceCallPrivacy? = nil
+
     /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
     /// curator role against. A spawned worker keeps `currentAgentId` inherited
     /// from its launcher for the surrounding model run, admission, handoff, and
