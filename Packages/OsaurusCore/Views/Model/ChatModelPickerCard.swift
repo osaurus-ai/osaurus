@@ -443,6 +443,11 @@ struct ChatModelPickerCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    private struct ModelListIdentity: Hashable {
+        let providerID: String?
+        let search: String
+    }
+
     private var modelColumn: some View {
         VStack(alignment: .leading, spacing: 8) {
             heading(L("Model"))
@@ -509,8 +514,15 @@ struct ChatModelPickerCard: View {
                         }
                     }
                 }
+                // Filtering can remove the selected row far below the first match.
+                // Reset the scroll container so LazyVStack cannot retain an offset
+                // beyond the new result set and display an empty model column.
+                .id(ModelListIdentity(providerID: provider?.id, search: search))
                 .onAppear {
-                    if let selectedModel { proxy.scrollTo("model:\(selectedModel)", anchor: .center) }
+                    if search.isEmpty, let selectedModel,
+                        models.contains(where: { $0.id == selectedModel }) {
+                        proxy.scrollTo("model:\(selectedModel)", anchor: .center)
+                    }
                 }
                 .onChange(of: focus) { _, key in
                     if let key {
