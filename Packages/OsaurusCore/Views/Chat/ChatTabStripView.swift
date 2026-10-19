@@ -553,15 +553,18 @@ private struct ChatTabItemView: View {
         return session.source == .chat ? nil : session.source.iconName
     }
 
-    /// A chat from the paired iPhone: stored as a workspace row, but the
-    /// owner's own, so its tab reads as the iPhone's, not a teammate's.
+    /// A chat from the paired iPhone: one it started, or an older workspace
+    /// row that is the owner's own, so its tab reads as the iPhone's.
     private var isFromPairedPhone: Bool {
-        session.workspaceContext.map(RemoteSessionContinuation.isFromPairedPhone) ?? false
+        if session.source == .chat, session.externalSessionKey == RemoteSessionContinuation.phoneChatKey {
+            return true
+        }
+        return session.workspaceContext.map(RemoteSessionContinuation.isFromPairedPhone) ?? false
     }
 
     private var originLabel: String? {
-        guard session.source != .chat else { return nil }
         if isFromPairedPhone { return "via iPhone" }
+        guard session.source != .chat else { return nil }
         // A run hosted for a remote caller names them ("for Alice · Workspace").
         if session.source == .workspace, let context = session.workspaceContext, context.isServedForTeammate {
             return session.source.originLabel(workspace: context)

@@ -68,6 +68,11 @@ struct ImageGenerationRequestDTO: Decodable, Sendable {
     /// A Mac chat (docs/MOBILE_PROTOCOL.md §12.5) the owner's phone is
     /// generating in; the prompt and result are appended to it.
     let osaurus_session_id: String?
+    /// `osaurus_session_id` names a chat the phone starts with this image,
+    /// under `osaurus_agent_id`; the Mac creates it if it has no such chat
+    /// (docs/MOBILE_PROTOCOL.md §14.5). The owner's paired phone only.
+    var osaurus_create_session: Bool? = nil
+    var osaurus_agent_id: String? = nil
     /// The owner's phone names its job so it outlives the connection: a
     /// dropped phone comes back to `GET /images/jobs/{id}/events?after=N`
     /// (docs/MOBILE_PROTOCOL.md §12.5). Also the id `/images/cancel` takes.
@@ -101,6 +106,9 @@ struct ImageEditRequestDTO: Decodable, Sendable {
     let output_format: String?
     let stream: Bool?
     let osaurus_session_id: String?
+    /// As on `ImageGenerationRequestDTO`.
+    var osaurus_create_session: Bool? = nil
+    var osaurus_agent_id: String? = nil
     /// As on `ImageGenerationRequestDTO`.
     var osaurus_job_id: String? = nil
 }

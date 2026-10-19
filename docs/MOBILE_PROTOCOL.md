@@ -1345,8 +1345,17 @@ nothing twice. An existing chat is never replaced.
   `GET /agents`. A phone checks for it (from a roster read inside the
   channel) before starting chats this way; an older Mac would treat the
   unknown id as a stateless run and drop the history.
-- Image requests (§12.5) do not create chats yet: an image prompt as a new
-  chat's first message is not saved to the Mac until a chat run creates it.
+- An image request (§12.5) starts a chat the same way, with
+  `"osaurus_create_session": true` and `"osaurus_agent_id": "<agent uuid>"`
+  (the image routes name no agent). The chat is created with the exchange,
+  once the image is in; a job that fails creates nothing.
+- While a phone run is going in a chat, the Mac marks the chat as running
+  and its own composer holds a send for it (shown as queued) until the
+  run's turns are in, so the two never interleave. A phone run that starts
+  while the Mac is replying in the chat appends after that reply.
+- An older phone chat (a hosted row the Mac shows read-only) becomes an
+  ordinary chat the first time the phone continues it, unless a Mac tab
+  or window holds it then; the next run tries again.
 
 ### 14.6 `GET /projects`
 

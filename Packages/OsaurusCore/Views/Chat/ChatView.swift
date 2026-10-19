@@ -2568,6 +2568,12 @@ final class ChatSession: ObservableObject {
             return
         }
         guard !isStreaming else { return }
+        // The phone is replying in this chat: held until its turns are in
+        // (`sendHeldForPhone`), so the two never interleave.
+        if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
+            enqueueSend(input, attachments: pendingAttachments)
+            return
+        }
         // One local generation at a time across all windows: the shared
         // inference context can't run two, and loading a second would evict and
         // cancel the active one. Surface the alert and keep the draft intact.
@@ -4786,6 +4792,17 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// The phone's run in this chat ended and its turns are in: the send held
+    /// for it goes now (see `RemoteSessionContinuation.isPhoneReplying`).
+    func sendHeldForPhone() {
+        guard !isStreaming, activeRunId == nil, preSendHandshakeTask == nil, let pending = queuedSend else { return }
+        queuedSend = nil
+        if let skillId = pending.oneOffSkillId {
+            pendingOneOffSkillId = skillId
+        }
+        send(pending.text, attachments: pending.attachments)
+    }
+
     /// Dispatch any queued send when the run ended naturally (no `stop()`
     /// in-flight, no streaming error). Cancelled or errored runs leave the
     /// queue in place so the user can re-decide via the chip or Send Now.
@@ -6217,6 +6234,15 @@ final class ChatSession: ObservableObject {
             return
         }
         guard activeRunId == nil, !isStreaming else {
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
+        // Every other send path (queued flush, regeneration, voice) waits for
+        // the phone's run in this chat too; a message is held, not lost.
+        if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
+            if hasContent {
+                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId)
+            }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }

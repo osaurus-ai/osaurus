@@ -61,6 +61,13 @@ enum RemoteSessionContinuation {
         to sessionId: UUID,
         model: String
     ) async {
+        // A new phone chat whose first message is this image prompt.
+        if let agentId = pendingImageChats.removeValue(forKey: sessionId), !generated.isEmpty,
+            !isContinuable(sessionId)
+        {
+            let asked = [ChatMessage(role: "user", content: prompt)]
+            _ = await startPhoneChat(sessionId, agentId: agentId, messages: asked)
+        }
         guard !generated.isEmpty, isContinuable(sessionId) else { return }
         let now = Date()
         // The prompt as the link's alt text, minus the brackets and line
@@ -204,6 +211,60 @@ enum RemoteSessionContinuation {
     static func isPairedPhoneKey(_ keyNonce: String?) -> Bool {
         guard let keyNonce, let paired = MobilePairingService.shared.pairedKeyNonce else { return false }
         return keyNonce.lowercased() == paired.lowercased()
+    }
+
+    /// An older phone chat, a hosted row the Mac shows read-only, becomes an
+    /// ordinary chat when the phone continues it, so the Mac can continue it
+    /// too. Left for a later run while a tab or window holds it: its next
+    /// save would stamp the row back. A teammate's row is never touched.
+    static func adoptHostedPhoneChat(_ sessionId: UUID) async {
+        guard var session = await ChatSessionStore.loadAsync(id: sessionId),
+            session.source == .workspace, let workspace = session.workspace, isFromPairedPhone(workspace),
+            BackgroundTaskManager.shared.taskState(for: sessionId) == nil,
+            ChatWindowManager.shared.session(forSessionId: sessionId) == nil
+        else { return }
+        session.source = .chat
+        session.sourcePluginId = nil
+        session.workspace = nil
+        session.externalSessionKey = phoneChatKey
+        ChatSessionsManager.shared.save(session)
+        NotificationCenter.default.post(name: ChatHistoryWriter.didPersistExternallyNotification, object: nil)
+        MobileConnectLog.write("phone chat \(sessionId) is now an ordinary chat")
+    }
+
+    /// Phone runs under way, by chat: until their turns are in, the Mac's
+    /// own composer holds a send for that chat, so turns never interleave.
+    private static var phoneRuns: [UUID: Int] = [:]
+
+    static func isPhoneReplying(_ sessionId: UUID) -> Bool { phoneRuns[sessionId] != nil }
+
+    static func beginPhoneRun(_ sessionId: UUID) {
+        phoneRuns[sessionId, default: 0] += 1
+        // "Running…" on the chat in History, as for a reply the Mac makes.
+        SessionActivityMonitor.shared.reportSession(sessionId, status: .working)
+    }
+
+    /// The run's turns are in: a send the Mac held for this chat goes now.
+    static func endPhoneRun(_ sessionId: UUID) {
+        guard let count = phoneRuns[sessionId] else { return }
+        if count > 1 {
+            phoneRuns[sessionId] = count - 1
+            return
+        }
+        phoneRuns.removeValue(forKey: sessionId)
+        SessionActivityMonitor.shared.reportSession(sessionId, status: nil)
+        ChatWindowManager.shared.session(forSessionId: sessionId)?.sendHeldForPhone()
+    }
+
+    /// Image prompts starting a phone chat, by chat id, with the agent to
+    /// start it under. The chat is created once the image is in, with it.
+    private static var pendingImageChats: [UUID: UUID] = [:]
+
+    /// The phone starts chat `sessionId` with an image prompt (§14.5).
+    /// Honoured for the paired phone's key and an agent this Mac has.
+    static func notePhoneImageChat(_ sessionId: UUID, agentId: UUID, keyNonce: String?) {
+        guard isPairedPhoneKey(keyNonce), AgentManager.shared.agent(for: agentId) != nil else { return }
+        pendingImageChats[sessionId] = agentId
     }
 
     /// Starts the chat the phone named `sessionId` on its first run

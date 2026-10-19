@@ -10193,7 +10193,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let raw = req.osaurus_session_id,
                     let id = UUID(uuidString: raw)
                 else { return nil }
-                if await MainActor.run(body: { RemoteSessionContinuation.isContinuable(id) }) { return id }
+                if await MainActor.run(body: { RemoteSessionContinuation.isContinuable(id) }) {
+                    await RemoteSessionContinuation.adoptHostedPhoneChat(id)
+                    return id
+                }
                 // A chat the phone starts with this run: the Mac keeps it from
                 // the first message, so it stays one chat however the phone's
                 // copy and the Mac's differ (tool steps, an interrupted reply).
@@ -10218,8 +10221,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 messages.insert(contentsOf: history, at: systemCount)
                 persistFrom.value = systemCount + history.count
                 // The chat to bring forward when the user is back at the Mac.
+                // Its composer waits for this run (see `isPhoneReplying`).
                 await MainActor.run {
                     PhoneChatHandoff.shared.notePhoneRun(sessionId: continuedSessionId, keyNonce: callerKeyNonce)
+                    RemoteSessionContinuation.beginPhoneRun(continuedSessionId)
                 }
             }
             // A turn of the owner's phone call: ask for a short, spoken reply,
@@ -10236,8 +10241,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let saved = voiceCall ? VoiceCallReplies.removingNote(from: turns) : turns
                     let appended = saved.filter { $0.role != "system" }
                     let runModel = model
-                    if !appended.isEmpty {
-                        Task { @MainActor in
+                    Task { @MainActor in
+                        if !appended.isEmpty {
                             await RemoteSessionContinuation.append(
                                 appended,
                                 to: continuedSessionId,
@@ -10248,6 +10253,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 keyNonce: callerKeyNonce
                             )
                         }
+                        // After its turns are in, so a send the Mac held goes after them.
+                        RemoteSessionContinuation.endPhoneRun(continuedSessionId)
                     }
                 }
             }
@@ -12596,7 +12603,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             // Into the Mac chat the phone named, as local images are; the same
             // owner-and-Secure-Channel rule applies.
-            let remoteSession = phoneImageSession(req.osaurus_session_id, context: context)
+            let remoteSession = phoneImageSession(
+                req.osaurus_session_id,
+                startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+                context: context
+            )
             if remoteSession != nil,
                 requiresOwnerChannel(
                     head: head,
@@ -12630,7 +12641,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         let modelId = selectedTarget.modelID
-        let continuedSession = phoneImageSession(req.osaurus_session_id, context: context)
+        let continuedSession = phoneImageSession(
+            req.osaurus_session_id,
+            startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+            context: context
+        )
         if continuedSession != nil,
             requiresOwnerChannel(
                 head: head, context: context, path: "/images/generations", startTime: startTime, userAgent: userAgent)
@@ -12688,8 +12703,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     /// The Mac chat an owner's phone named with `osaurus_session_id` on an
     /// image request (docs/MOBILE_PROTOCOL.md §12.5); nil for anyone else.
-    private func phoneImageSession(_ raw: String?, context: ChannelHandlerContext) -> UUID? {
+    /// `startsUnder` is the agent of a chat the phone starts with this image
+    /// (§14.5): the exchange then creates it.
+    private func phoneImageSession(
+        _ raw: String?,
+        startsUnder agentRaw: String? = nil,
+        context: ChannelHandlerContext
+    ) -> UUID? {
         guard let raw, let id = UUID(uuidString: raw), callerOwnsThisMac(context) else { return nil }
+        if let agentRaw, let agentId = UUID(uuidString: agentRaw) {
+            let keyNonce = inboundConnectionInfo()?.accessKeyId
+            Task { @MainActor in
+                RemoteSessionContinuation.notePhoneImageChat(id, agentId: agentId, keyNonce: keyNonce)
+            }
+        }
         return id
     }
 
@@ -13333,7 +13360,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
-        let continuedSession = phoneImageSession(req.osaurus_session_id, context: context)
+        let continuedSession = phoneImageSession(
+            req.osaurus_session_id,
+            startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+            context: context
+        )
         if continuedSession != nil,
             requiresOwnerChannel(
                 head: head, context: context, path: "/images/edits", startTime: startTime, userAgent: userAgent)
