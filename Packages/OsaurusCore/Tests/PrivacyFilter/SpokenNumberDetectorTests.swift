@@ -1,0 +1,65 @@
+//
+//  SpokenNumberDetectorTests.swift
+//  osaurus / PrivacyFilter Tests
+//
+//  Numbers read out digit by digit, as dictation and voice transcripts write
+//  them, are flagged as the same numbers typed would be, and only those.
+//
+
+import Testing
+@testable import OsaurusCore
+
+@Suite("Spoken numbers")
+struct SpokenNumberDetectorTests {
+
+    @Test func aPhoneNumberReadOutIsAPhone() {
+        let text = "text my brother at four one five five five five zero one five five tonight"
+        let phones = RegexEntityDetector.detect(in: text).filter { $0.category == .phone }
+        #expect(phones.map(\.original) == ["four one five five five five zero one five five"])
+    }
+
+    @Test func pausesOhAndDoublesStayOneNumber() {
+        let text = "call four one five, five oh five, double two three four please"
+        let phones = RegexEntityDetector.detect(in: text).filter { $0.category == .phone }
+        #expect(phones.map(\.original) == ["four one five, five oh five, double two three four"])
+    }
+
+    @Test func aCardReadOutPassesLuhnOrNot() {
+        let card = Array(repeating: "four one one one", count: 1) + Array(repeating: "one one one one", count: 3)
+        let valid = "my card is " + card.joined(separator: " ")
+        #expect(RegexEntityDetector.detect(in: valid).contains { $0.category == .accountNumber })
+        // Sixteen digits that fail Luhn are no card, as typed digits would not be.
+        let invalid = "the code is " + Array(repeating: "one two three four", count: 4).joined(separator: " ")
+        #expect(!RegexEntityDetector.detect(in: invalid).contains { $0.category == .accountNumber })
+    }
+
+    @Test func ordinaryWordsAndShortRunsAreLeftAlone() {
+        for text in [
+            "one or two of us, maybe three",
+            "we need five six seven chairs",
+            "the score was one nine eight four",
+            "oh one two three four five six",
+        ] {
+            #expect(RegexEntityDetector.detect(in: text).isEmpty, "\(text)")
+        }
+    }
+
+    @Test func aSentenceEndBreaksTheRun() {
+        // Five digits, a full stop, then five more: two short runs, no phone.
+        let text = "it was four one five five five. zero one five five nine"
+        #expect(RegexEntityDetector.detect(in: text).filter { $0.category == .phone }.isEmpty)
+    }
+
+    @Test func runsAreFoundWhereTheyAre() {
+        let text = "Say Four One Five Five Five Five Zero One Five Five."
+        let runs = SpokenDigitRuns.find(in: text)
+        #expect(runs.map(\.digits) == ["4155550155"])
+        #expect(runs.first.map { String(text[$0.range]) } == "Four One Five Five Five Five Zero One Five Five")
+    }
+
+    @Test func turnedOffTheBuiltinsFlagNothing() {
+        let text = "four one five five five five zero one five five"
+        let none = RegexEntityDetector.EffectiveRuleSet(builtins: [], presets: [], customs: [])
+        #expect(RegexEntityDetector.detect(in: text, ruleset: none).isEmpty)
+    }
+}

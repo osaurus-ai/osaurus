@@ -180,6 +180,9 @@ enum RegexEntityDetector {
             }
         }
 
+        // The same numbers read out as words, judged by the rules above.
+        raw += spokenNumberMatches(in: text, ruleset: ruleset)
+
         return resolveOverlaps(raw)
     }
 

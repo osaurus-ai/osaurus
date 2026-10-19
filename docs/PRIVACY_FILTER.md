@@ -107,6 +107,8 @@ Deterministic patterns toggled per-category in **Privacy → Rules → Detection
 | `url`            | `http(s)://…` URLs with a scheme                     |
 | `accountNumber`  | US SSN + Luhn-valid credit card numbers              |
 
+**Numbers read out as words.** Dictation and voice transcripts write a number said aloud digit by digit ("four one five, five five five, zero one three two"). Runs of seven or more digit words (with "oh" for zero after a digit, "double"/"triple", and commas or dashes between groups; a full stop ends the run) are read as their digits and judged by the same phone and card built-ins, presets and custom rules, which must match the whole number. Anything they would flag typed is flagged spoken, under the same toggles and checks (Luhn included), and the spoken words are what get the placeholder (`SpokenNumberDetector.swift`). Amounts said as numbers ("four hundred and fifteen") are not read.
+
 ### 2. Preset rules (`PrivacyRulePresets`)
 
 Opt-in patterns for common secrets and IDs, shipped disabled. Enable individually under **Privacy → Rules → Preset Rules**. Current presets:
@@ -421,6 +423,7 @@ the limitation stays documented above and in the master-toggle copy.
 | `PrivacyFilter/Core/PrivacyFilterPipeline.swift`                       | Outbound scrub + inbound unscrub orchestration; typed errors                               |
 | `PrivacyFilter/Core/PrivacyFilterEngine.swift`                         | Detection ensemble (regex + classifier) over a message history                              |
 | `PrivacyFilter/Core/RegexEntityDetector.swift`                         | Built-in + preset + user regex detection                                                   |
+| `PrivacyFilter/Core/SpokenNumberDetector.swift`                        | Numbers read out as digit words, judged by the same rules                                  |
 | `PrivacyFilter/Core/PrivacyRulePresets.swift`                          | Ship-list of opt-in preset rules                                                           |
 | `PrivacyFilter/Core/Placeholder.swift`                                 | `EntityCategory` + `[CATEGORY_N]` wire format                                              |
 | `PrivacyFilter/Core/RedactionMap.swift`                                | Per-conversation intern of `original → placeholder`                                        |
