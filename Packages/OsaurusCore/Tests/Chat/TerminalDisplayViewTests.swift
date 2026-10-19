@@ -295,4 +295,61 @@ struct TerminalDisplayViewTests {
         // header + maxBodyHeight.
         #expect(h == TerminalDisplayView.headerHeight + TerminalDisplayView.maxBodyHeight)
     }
+
+    // MARK: - Hang regression (APPLE-MACOS-3AC)
+
+    @Test @MainActor func rebindingSameCompletedSnapshotSkipsRerender() {
+        let view = TerminalDisplayView()
+        let snapshot = TerminalSnapshot(
+            command: "echo hi",
+            output: Data("hi\n".utf8),
+            exitCode: 0
+        )
+        view.bind(.completed(snapshot), theme: LightTheme())
+        let before = view._test_textStorageString
+        // Mutate storage; an unchanged snapshot rebind must not reset it.
+        view._test_appendSentinel("SENTINEL")
+        view.bind(.completed(snapshot), theme: LightTheme())
+        #expect(view._test_textStorageString == before + "SENTINEL")
+    }
+
+    @Test @MainActor func rebindingChangedCompletedSnapshotRerenders() {
+        let view = TerminalDisplayView()
+        view.bind(
+            .completed(TerminalSnapshot(command: "a", output: Data("one\n".utf8), exitCode: 0)),
+            theme: LightTheme()
+        )
+        view.bind(
+            .completed(TerminalSnapshot(command: "a", output: Data("two\n".utf8), exitCode: 0)),
+            theme: LightTheme()
+        )
+        let body = view._test_textStorageString
+        #expect(body.contains("two"))
+        #expect(!body.contains("one"))
+    }
+
+    @Test @MainActor func oversizedCompletedSnapshotIsTruncatedWithMarker() {
+        let view = TerminalDisplayView()
+        let line = String(repeating: "x", count: 99) + "\n"
+        let big = String(repeating: line, count: 20_000) + "TAIL\n"  // ~2 MB
+        view.bind(
+            .completed(TerminalSnapshot(command: "cat big", output: Data(big.utf8), exitCode: 0)),
+            theme: LightTheme()
+        )
+        let body = view._test_textStorageString
+        #expect(view._test_truncationMarkerInserted)
+        #expect(body.contains("output truncated"))
+        #expect(body.contains("TAIL"))
+        #expect(view._test_textStorageLength <= TerminalStreamRenderer.textStorageCap + 1_000)
+        let maxHeight = TerminalDisplayView.headerHeight + TerminalDisplayView.maxBodyHeight
+        #expect(view._test_currentMeasuredHeight == maxHeight)
+    }
+
+    @Test @MainActor func boundedLineCountMatchesNewlineCountAndSaturates() {
+        #expect(TerminalDisplayView.boundedLineCount("") == 1)
+        #expect(TerminalDisplayView.boundedLineCount("a\nb") == 2)
+        #expect(TerminalDisplayView.boundedLineCount("a\nb\n") == 3)
+        let huge = String(repeating: "\n", count: 1_000_000)
+        #expect(TerminalDisplayView.boundedLineCount(huge) < 100)
+    }
 }

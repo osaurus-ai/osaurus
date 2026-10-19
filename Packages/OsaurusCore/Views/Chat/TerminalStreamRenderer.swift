@@ -147,12 +147,26 @@ final class TerminalStreamRenderer {
     /// header) — this method only appends.
     func renderSnapshot(_ data: Data) {
         guard !data.isEmpty,
-            let storage = textView.textStorage,
-            let raw = String(data: data, encoding: .utf8)
+            let storage = textView.textStorage
         else { return }
+        // Apply the same UI memory cap as the streaming path BEFORE the
+        // strip / track / layout pipeline: completed outputs can be many
+        // MB and all of this runs on the main thread. Keep the tail
+        // (most recent output), matching streaming head-drop semantics.
+        let truncated = data.count > Self.textStorageCap
+        let tail = truncated ? data.suffix(Self.textStorageCap) : data
+        // `String(decoding:)` repairs a code point split by the cut
+        // instead of failing the whole decode.
+        let raw = String(decoding: tail, as: UTF8.self)
         let stripped = ANSIStripper.strip(raw)
         let rendered = TerminalLineTracker.render(stripped)
         guard !rendered.isEmpty else { return }
+        if truncated && !truncationMarkerInserted {
+            storage.append(
+                NSAttributedString(string: Self.truncationMarker, attributes: markerAttrs)
+            )
+            truncationMarkerInserted = true
+        }
         storage.append(NSAttributedString(string: rendered, attributes: bodyAttrs))
         if let container = textView.textContainer {
             textView.layoutManager?.ensureLayout(for: container)

@@ -25,6 +25,7 @@
 import AppKit
 import Combine
 import Foundation
+import SwiftUI
 
 @MainActor
 final class TerminalDisplayView: NSView {
@@ -77,6 +78,25 @@ final class TerminalDisplayView: NSView {
     // MARK: State
 
     private var liveEntry: LiveExecRegistry.Entry?
+    /// Snapshot + theme type currently rendered in completed mode.
+    /// Lets `bindCompleted` skip redundant full re-renders.
+    private var boundCompletedSnapshot: TerminalSnapshot?
+    private var boundCompletedThemeKey: ThemeKey?
+
+    /// The theme inputs baked into already-rendered text attributes.
+    /// If these change we must fully re-render; otherwise `applyTheme`
+    /// (chrome only) is enough.
+    private struct ThemeKey: Equatable {
+        let type: ObjectIdentifier
+        let primaryText: Color
+        let tertiaryText: Color
+
+        init(_ theme: any ThemeProtocol) {
+            type = ObjectIdentifier(Swift.type(of: theme))
+            primaryText = theme.primaryText
+            tertiaryText = theme.tertiaryText
+        }
+    }
     private var cancellables = Set<AnyCancellable>()
     private var stickyToBottom = true
     private var currentTheme: (any ThemeProtocol)?
@@ -210,7 +230,24 @@ final class TerminalDisplayView: NSView {
         _ snap: TerminalSnapshot,
         theme: any ThemeProtocol
     ) {
+        // The owning row re-runs `bind` on every `LiveExecRegistry` /
+        // `SubagentFeedRegistry` emission — i.e. whenever ANY tool call
+        // starts or finishes. Re-rendering an unchanged snapshot means
+        // re-stripping, re-tracking and re-laying-out the whole output
+        // on the main thread, which hangs the app for large outputs.
+        // Short-circuit when nothing visible changed.
+        let themeKey = ThemeKey(theme)
+        if let bound = boundCompletedSnapshot,
+            boundCompletedThemeKey == themeKey,
+            Self.isSameSnapshot(bound, snap)
+        {
+            applyTheme(theme)
+            return
+        }
+
         prepareForRebind(theme: theme)
+        boundCompletedSnapshot = snap
+        boundCompletedThemeKey = themeKey
 
         terminateButton.isHidden = true
         appendPromptLine(for: snap.command)
@@ -229,8 +266,22 @@ final class TerminalDisplayView: NSView {
         elapsedTimer?.invalidate()
         elapsedTimer = nil
         liveEntry = nil
+        boundCompletedSnapshot = nil
+        boundCompletedThemeKey = nil
         renderer.reset()
         currentMeasuredHeight = Self.headerHeight + Self.maxBodyHeight
+    }
+
+    /// Field-wise comparison of two snapshots. `Data ==` is a memcmp
+    /// (after a length check), orders of magnitude cheaper than the
+    /// render pipeline it lets us skip.
+    private static func isSameSnapshot(_ a: TerminalSnapshot, _ b: TerminalSnapshot) -> Bool {
+        a.exitCode == b.exitCode
+            && a.killedByUser == b.killedByUser
+            && a.duration == b.duration
+            && a.command == b.command
+            && a.output.count == b.output.count
+            && a.output == b.output
     }
 
     /// Shared reset path for both binding modes. Tears down the
@@ -278,7 +329,11 @@ final class TerminalDisplayView: NSView {
         // `\n` boundary count (ignores visual wraps). Slight under-
         // estimate for very wide lines is fine because we cap at
         // maxBodyHeight anyway.
-        let lineCount = max(1, body.components(separatedBy: "\n").count)
+        // Count `
+` over the backing NSString's UTF-16 units without
+        // allocating per-line substrings, stopping once the count
+        // saturates the height cap.
+        let lineCount = max(1, Self.boundedLineCount(body))
         let estimatedBody =
             CGFloat(lineCount) * Self.approxLineHeight + Self.bodyVerticalPadding
         let bodyHeight = min(
@@ -286,6 +341,22 @@ final class TerminalDisplayView: NSView {
             max(Self.minCompletedBodyHeight, estimatedBody)
         )
         return Self.headerHeight + bodyHeight
+    }
+
+    /// Number of `
+`-delimited lines in `body` (newline count + 1),
+    /// capped at the smallest count that already saturates
+    /// `maxBodyHeight`. Anything above that maps to the same height,
+    /// so we never need to walk a multi-MB buffer to the end.
+    static func boundedLineCount(_ body: String) -> Int {
+        let saturating =
+            Int(((maxBodyHeight - bodyVerticalPadding) / approxLineHeight).rounded(.up)) + 1
+        var lines = 1
+        for unit in body.utf16 where unit == 0x0A {
+            lines += 1
+            if lines >= saturating { return lines }
+        }
+        return lines
     }
 
     // MARK: Status
@@ -597,6 +668,10 @@ extension TerminalDisplayView {
 
     func _test_enqueue(_ data: Data) { renderer.enqueue(data) }
     func _test_flushNow() { renderer.flushPendingChunks() }
+    /// Appends raw text so tests can detect whether a rebind reset storage.
+    func _test_appendSentinel(_ text: String) {
+        textView.textStorage?.append(NSAttributedString(string: text))
+    }
     /// Test-only minimal bind that skips the seed `Task` and the
     /// publisher subscriptions (which would otherwise need a live
     /// LiveExecRegistry.Entry). Sets up the body for direct enqueues.

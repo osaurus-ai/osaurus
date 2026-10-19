@@ -896,6 +896,11 @@ final class NativeToolCallRowView: NSView {
     /// Avoids re-subscribing on every layout-only `configure(item:)`
     /// pass for the same row.
     private var liveExecBoundCallId: String?
+    /// Memoized `TerminalSnapshot.from(...)` result keyed by tool-call
+    /// id + result string. `applyResultOrLiveState` runs on every
+    /// registry emission; re-parsing a multi-MB tool envelope each
+    /// time is wasted main-thread work when the result hasn't changed.
+    private var cachedTerminalSnapshot: (callId: String, result: String, snapshot: TerminalSnapshot?)?
     /// Fixed height for the subagent feed pane (header + a few visible rows;
     /// the list scrolls internally). Kept constant so the row's
     /// `measuredHeight` is predictable as events stream in.
@@ -1387,7 +1392,7 @@ final class NativeToolCallRowView: NSView {
         //    shell tools and error envelopes, which then fall through
         //    to the markdown path below.
         if let result = item.result,
-            let snapshot = TerminalSnapshot.from(toolResult: result, item: item)
+            let snapshot = terminalSnapshot(for: result, item: item)
         {
             tearDownResultSection()
             mountTerminalView(mode: .completed(snapshot), theme: theme)
@@ -1417,6 +1422,21 @@ final class NativeToolCallRowView: NSView {
         contentBottomToArgs?.isActive = false
         contentBottomToResult?.isActive = true
         applyHeight()
+    }
+
+    /// Memoized wrapper around `TerminalSnapshot.from(toolResult:item:)`.
+    /// String `==` short-circuits on identical storage, so an unchanged
+    /// result is a cheap hit.
+    private func terminalSnapshot(for result: String, item: ToolCallItem) -> TerminalSnapshot? {
+        if let cached = cachedTerminalSnapshot,
+            cached.callId == item.call.id,
+            cached.result == result
+        {
+            return cached.snapshot
+        }
+        let snapshot = TerminalSnapshot.from(toolResult: result, item: item)
+        cachedTerminalSnapshot = (item.call.id, result, snapshot)
+        return snapshot
     }
 
     /// Subscribe to `LiveExecRegistry` and re-run `applyResultOrLiveState`
