@@ -3462,16 +3462,43 @@ public actor ModelRuntime {
             Int64(max(0, linearVHeads))
             * Int64(max(0, linearKeyDim))
             * Int64(max(0, linearValueDim))
-        let ssmBytes =
+        var ssmBytes =
             Int64(max(0, mambaLayers))
             * max(mambaStatePerLayer, linearStatePerLayer)
             * Int64(dtypeBytes)
 
+        let modelType = stringValue(config["model_type"])?.lowercased() ?? ""
+        let qwenHybrid = Self.isQwenHybridDecoder(modelType)
+        var companionBytes: Int64 = 0
+        if qwenHybrid {
+            // GDN recurrence is float32 even when weights/KV are BF16. Its
+            // convolution tail is stored in the activation dtype separately.
+            let keyHeads = max(0, intValue(config["linear_num_key_heads"]) ?? 0)
+            let convRows = max(0, (intValue(config["linear_conv_kernel_dim"]) ?? 4) - 1)
+            let convWidth = 2 * keyHeads * linearKeyDim + linearVHeads * linearValueDim
+            ssmBytes = Int64(max(0, mambaLayers)) * (
+                linearStatePerLayer * 4 + Int64(convRows) * Int64(max(0, convWidth)) * Int64(dtypeBytes)
+            )
+            if modelType == "qwen4_exp" || modelType == "qwen4_exp_text" {
+                // QSA retains both raw index keys and derived pooled blocks.
+                // The pooled lane is omitted from SSD serialization but exists
+                // during execution; never price a child from disk size alone.
+                let indexDim = max(1, intValue(config["indexer_head_dim"]) ?? 128)
+                let ratio = max(1, intValue(config["indexer_compress_ratio"]) ?? 4)
+                companionBytes = Int64(layerMix.fullAttention) * Int64(indexDim)
+                    * Int64(maxPositions + maxPositions / ratio) * Int64(dtypeBytes)
+                let pleWidth = max(0, intValue(config["ple_embed_dim"]) ?? 0)
+                let pleRows = max(0, (intValue(config["ple_conv_kernel_size"]) ?? 4) - 1)
+                companionBytes += Int64(hiddenLayers) * Int64(pleWidth) * Int64(pleRows) * Int64(dtypeBytes)
+            }
+        }
+
         // Leave room for masks, logits, transient activation slices, and
         // allocator slack without scaling by total routed-expert disk size.
         let floor: Int64 = 512 * 1024 * 1024
-        let slack = Int64(Double(kvBytes + ssmBytes) * 0.25)
-        return max(floor, kvBytes + ssmBytes + slack)
+        let stateBytes = kvBytes + ssmBytes + companionBytes
+        let slack = Int64(Double(stateBytes) * 0.25)
+        return max(floor, stateBytes + slack)
     }
 
     /// Per-class layer counts for cache pricing. `declaredPerLayer` records
@@ -3483,6 +3510,11 @@ public actor ModelRuntime {
         var linearState: Int = 0
         var slidingWindow: Int? = nil
         var declaredPerLayer: Bool = false
+    }
+
+    private static func isQwenHybridDecoder(_ modelType: String) -> Bool {
+        ["qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text",
+         "qwen3_next", "qwen4_exp", "qwen4_exp_text"].contains(modelType)
     }
 
     /// Resolve the decoder-shaped config for VLM wrappers that nest it under
@@ -3567,6 +3599,20 @@ public actor ModelRuntime {
         }
 
         let hiddenLayers = intValue(config["num_hidden_layers"]) ?? 0
+
+        // Qwen hybrid runtimes synthesize their layer list from the interval
+        // when layer_types is absent. Count the same owners as newCache(),
+        // including trailing recurrent layers. Do not apply this convention
+        // to unrelated architectures that happen to use an interval field.
+        if Self.isQwenHybridDecoder(modelType), hiddenLayers > 0 {
+            let interval = intValue(config["full_attention_interval"]) ?? 4
+            if interval > 0 {
+                mix.declaredPerLayer = true
+                mix.fullAttention = hiddenLayers / interval
+                mix.linearState = hiddenLayers - mix.fullAttention
+                return mix
+            }
+        }
 
         // Bailing hybrids (Ling 3.0 / Raptor) declare no per-layer list; the
         // rule lives in code: every `layer_group_size`-th layer is global
