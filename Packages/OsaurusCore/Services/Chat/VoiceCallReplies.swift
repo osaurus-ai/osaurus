@@ -27,6 +27,8 @@ enum VoiceCallReplies {
         - Keep it short: usually one to three sentences. Lead with the answer itself.
         - Plain spoken sentences only. No markdown, headings, bullet or numbered lists, tables, \
         code blocks, links, or emoji. Say numbers, dates and symbols the way they are said aloud.
+        - Write shorthand out as words: "2x" as "2 times", "Mon–Sat" as "Monday to Saturday", \
+        "3.3/5" as "3.3 out of 5 stars", "%" as "percent", "St." as "Street" or "Saint".
         - Don't read out long details, lists or code. Give the gist, then offer to go into more \
         detail if the user wants it.
         - Ask at most one question at a time, and only when you need the answer.
