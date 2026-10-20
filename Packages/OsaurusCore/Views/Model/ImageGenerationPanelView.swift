@@ -351,7 +351,7 @@ struct ImageGenerationPanelView: View {
     private var sourcePicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             if sourceLimit > 1 {
-                Text("Source images (ordered, up to \(sourceLimit))").font(.system(size: 11))
+                Text(localized: "Source images (ordered, up to \(sourceLimit))").font(.system(size: 11))
             } else {
                 fieldLabel("Source image")
             }
