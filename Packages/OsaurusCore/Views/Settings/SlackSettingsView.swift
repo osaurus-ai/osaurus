@@ -168,6 +168,19 @@ struct SlackSettingsView: View {
         .onChange(of: currentDraft) { _, _ in
             scheduleAutosave()
         }
+        // Contained in the sheet itself: a `.window` alert goes to the settings
+        // window's host, which sits under this sheet, so it was invisible
+        // until the sheet closed and then dismissed with it.
+        .themedAlert(
+            L("Accept messages sent through apps?"),
+            isPresented: $pendingAcceptAppPostsConfirm,
+            message: L(
+                "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked."
+            ),
+            primaryButton: .primary(L("Turn On")) { acceptAppPostsFromAllowlistedSenders = true },
+            secondaryButton: .cancel(L("Cancel")),
+            presentationStyle: .contained
+        )
         .onDisappear {
             // Flush a pending debounce so a toggle made just before closing
             // the sheet isn't lost.
@@ -552,16 +565,6 @@ struct SlackSettingsView: View {
                             }
                         }
                     )
-                )
-                .themedAlert(
-                    L("Accept messages sent through apps?"),
-                    isPresented: $pendingAcceptAppPostsConfirm,
-                    message: L(
-                        "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked."
-                    ),
-                    primaryButton: .primary(L("Turn On")) { acceptAppPostsFromAllowlistedSenders = true },
-                    secondaryButton: .cancel(L("Cancel")),
-                    presentationStyle: .window
                 )
                 SettingsToggle(
                     title: L("Continue Participating Threads"),
