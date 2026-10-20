@@ -590,27 +590,9 @@ struct FloatingInputCard: View {
         // nothing sends until the lock clears.
         guard composerLock == nil else { return false }
 
-        // Hard token gate: when the NON-compactable prefix alone (system
-        // prompt + tools + memory + input + response reservation) can't
-        // fit the model window, the request would fail no matter how much
-        // history compaction trims. Block the send and let the context
-        // chip explain, instead of letting the model error mid-stream.
-        // History-driven growth is deliberately NOT gated — compaction
-        // handles that.
-        //
-        // But ONLY when the model is the ceiling. `contextLengthCap` is a
-        // preference — a smaller window for faster prefill — and the weights
-        // can still take more, so letting it kill the send turns a preference
-        // into a wall. Worse, it is a SILENT wall: the button simply stops
-        // working, with nothing naming the setting responsible. Measured
-        // live at cap 2048 against a 2.5k prefix — the send did nothing, and
-        // clearing the cap sent the identical text immediately.
-        //
-        // The chip still goes red, which is the advisory. A ceiling the user
-        // chose must never refuse; if the request really cannot run, the
-        // engine fails loudly and that is strictly better than a dead button.
-        let budget = contextBudget
-        guard !budget.hardOverflow || budget.isUserCapped else { return false }
+        // Context estimates drive the chip's warning, never send admission.
+        // Only the runtime's tokenizer/template can establish that a request
+        // exceeds a real limit, including when model metadata is available.
 
         // Configuration gate: the Default agent needs the configure tool
         // schema to do its job, but a too-small context window (e.g.
@@ -677,20 +659,13 @@ struct FloatingInputCard: View {
         /// Context tokens including what is currently being typed.
         var displayTokens: Int { breakdown.total }
 
-        /// The denominator the compactor and overflow gate actually use. The
+        /// The denominator the compactor and warning actually use. The
         /// model maximum remains visible in the popover, but showing it as
         /// the chip denominator made an 85%-budget warning look early and
         /// made the Chat metadata fallback look like a competing cap.
         var usableTokens: Int? {
             maxTokens.map { ContextBudgetManager(contextLength: $0).effectiveBudget }
         }
-
-        /// Whether the window in force came from the user's
-        /// `contextLengthCap` rather than from the model. The resolver
-        /// records this as `.userCap` precisely so surfaces can say WHY the
-        /// window is smaller than the bundle advertises; the send gate reads
-        /// it to keep a preference from behaving like a hardware limit.
-        var isUserCapped: Bool { resolution?.source == .userCap }
 
         /// Estimated fraction of the effective budget the next send occupies
         /// (typing included). nil when the window is unknown.
