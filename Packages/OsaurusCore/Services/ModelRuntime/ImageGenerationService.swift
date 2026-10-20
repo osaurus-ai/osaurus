@@ -387,6 +387,7 @@ public actor ImageGenerationService {
         let kind = local.kind ?? .imageGen
         let entry = local.canonicalName.flatMap { ModelRegistry.lookup(name: $0) }
         let limits = try? entry?.limits?(local.directory)
+        let flux3 = local.canonicalName == "flux3-image-klein" ? try? Flux3Bundle(modelPath: local.directory) : nil
         return ImageModelInfo(
             id: local.directoryName,
             canonicalName: local.canonicalName,
@@ -394,7 +395,7 @@ public actor ImageGenerationService {
             kind: kind.rawValue,
             ready: local.canEnterNativeLoadPath,
             quantizationBits: local.quantizationBits,
-            defaultSteps: entry?.defaultSteps,
+            defaultSteps: flux3?.stamp.defaults.steps ?? entry?.defaultSteps,
             defaultGuidance: entry?.defaultGuidance,
             capabilities: capabilities(kind: kind, canonical: local.canonicalName, entry: entry),
             blockedReasons: local.blockedReasons,
@@ -406,7 +407,9 @@ public actor ImageGenerationService {
                     maximumPixels: $0.maxPixels, maximumImages: $0.maximumImages,
                     maximumSourceImages: $0.maxSourceImages, formats: $0.supportedFormats.map(\.rawValue),
                     samplers: $0.samplers, schedulers: $0.schedulers)
-            }
+            },
+            defaultWidth: flux3?.stamp.defaults.width,
+            defaultHeight: flux3?.stamp.defaults.height
         )
     }
 
@@ -432,7 +435,8 @@ public actor ImageGenerationService {
             let target = try resolveLoadTarget(modelID)
             let params = try ImageHTTPParameterBuilder.generation(request, info: target.info)
             return ImageHTTPPreparedJob(stream: generate(params, jobID: jobID, resolvedTarget: target),
-                width: params.width ?? 1024, height: params.height ?? 1024)
+                width: params.width ?? target.info.defaultWidth ?? 1024,
+                height: params.height ?? target.info.defaultHeight ?? 1024)
         } catch {
             return .failure(Self.message(for: error))
         }
@@ -537,7 +541,7 @@ public actor ImageGenerationService {
         }
     }
 
-    private static func generationRequest(
+    static func generationRequest(
         _ params: ImageGenerationParameters, info: ImageModelInfo, index: Int, outputDir: URL, nativeBatch: Bool = false
     ) -> ImageGenRequest {
         // Older backends retain sequential requests. Native batches resolve the
@@ -546,8 +550,8 @@ public actor ImageGenerationService {
         return ImageGenRequest(
             prompt: params.prompt,
             negativePrompt: params.negativePrompt,
-            width: params.width ?? 1024,
-            height: params.height ?? 1024,
+            width: params.width ?? info.defaultWidth ?? 1024,
+            height: params.height ?? info.defaultHeight ?? 1024,
             steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
             guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
             seed: seed,
@@ -596,6 +600,9 @@ public actor ImageGenerationService {
 
     private static func validateEdit(_ params: ImageEditParameters, info: ImageModelInfo,
         limits: FluxModelLimits?) throws {
+        if info.canonicalName == "flux3-image-klein", let negative = params.negativePrompt, !negative.isEmpty {
+            print("[Flux3] edit negative_prompt ignored: no unconditional branch")
+        }
         if limits == nil {
             try ImageModelRequestPolicy(canonical: info.canonicalName).validate(
                 width: params.width, height: params.height, isEdit: true,
@@ -607,8 +614,11 @@ public actor ImageGenerationService {
         }
         try limits?.validatePreview(interval: params.previewInterval, maxPixel: params.previewMaxPixel)
         try limits?.validateSampling(sampler: params.sampler, scheduler: params.scheduler, shift: params.shift)
+        // A single-reference crop replay may have non-16-aligned fitted dimensions.
+        // The engine's EXIF-aware estimate/edit path validates the padded sampling canvas.
         try limits?.validateEdit(
-            width: params.width, height: params.height,
+            width: info.canonicalName == "flux3-image-klein" ? nil : params.width,
+            height: info.canonicalName == "flux3-image-klein" ? nil : params.height,
             steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
             guidance: params.guidance ?? info.defaultGuidance ?? Self.defaultGuidance(for: params.model),
             format: Self.engineFormat(params.outputFormat), sourceCount: params.sourceImages.count,
@@ -761,9 +771,9 @@ public actor ImageGenerationService {
                     var modelInfo: ImageModelInfo?
                     var modelLimits: FluxModelLimits?
                     if !cancelled {
-                        // All entry points honor the visible Memory Safety
-                        // mode/overrides. The delegation-only checkbox remains
-                        // an additional handoff check in its coordinator.
+                        // Resolve the shared memory estimate for every entry point.
+                        // FLUX 3 treats it as advice; declared bundle limits and
+                        // real runtime allocation failures remain authoritative.
                         if let estimatePeak {
                             let peak = try await estimatePeak()
                             let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
@@ -771,7 +781,12 @@ public actor ImageGenerationService {
                                 baseLoadConfiguration: .osaurusProduction,
                                 host: MemoryStatus.snapshot(),
                                 request: VMLXMemoryRequestEstimate(workingSetBytes: UInt64(peak)))
-                            if let issue = plan.blockingIssues.first {
+                            let target = try resolvedTarget ?? self.resolveLoadTarget(requestedModel)
+                            let advisory = ImageModelRequestPolicy(canonical: target.info.canonicalName).estimatesAreAdvisory
+                            if advisory, !plan.blockingIssues.isEmpty {
+                                print("[Flux3] advisory_memory_estimate_bytes=\(peak) issues=\(plan.blockingIssues.count); continuing within stamped limits")
+                            }
+                            if !advisory, let issue = plan.blockingIssues.first {
                                 throw ImageGenerationError.memoryAdmission(field: issue.field,
                                     estimatedBytes: peak, message: issue.message)
                             }

@@ -214,3 +214,12 @@ In **Images → Image Models**, open **Generate** or **Edit** for an installed l
 ### Keeping model weights resident
 
 Server → Memory Safety → **Keep Model in Memory** requests GPU residency while a local model is loaded. It is on by default when the model fits the GPU working-set ceiling and the OS reserve. Other apps may slow down because wired pages cannot be reclaimed. Turning it off permits the OS to evict model pages, which can slow replies under memory pressure. Saving changes reloads the model before its next request. This setting does not change **Keep Model Loaded** or the idle unload timer. A model that does not fit still loads in Safe Auto with an advisory; Strict retains its admission checks.
+
+
+In **Images → Image Models**, open **Generate** or **Edit** for a FLUX 3 Image Klein bundle.
+**Width** and **Height** in the Generate/Edit panel and chat size picker accept custom dimensions and snap on Return to multiples of 16 within the bundle's declared 64–4096 range. **Steps** in the panel or chat accepts a typed count; FLUX 3 has no fixed maximum. Choose **Default** in the chat size picker to restore unsized edits (the first prepared reference determines the canvas).
+The default is 1024×1024 and 16 steps. For edits, **Use source aspect ratio** leaves both dimensions
+unset so the runtime uses the first prepared reference (and crops a padded single reference back to its fitted box).
+Up to ten ordered references are supported. Negative prompt and Guidance controls are hidden because the
+distilled model has no unconditional pass; supplied API/tool negative prompts are accepted and ignored.
+Memory estimates are advisory for this family. The license is **FLUX Kommunity (non-commercial)**.

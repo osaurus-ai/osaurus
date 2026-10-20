@@ -5213,13 +5213,16 @@ extension FloatingInputCard {
                 HStack(spacing: 6) {
                     sizeSelector
                     stepsChip
-                    cfgChip
+                    if ImageModelRequestPolicy(canonical: selectedImagePickerItem?.imageCanonicalName).supportsGuidance {
+                        cfgChip
+                    }
                     seedChip
                     if imageComposerControls.strength {
                         strengthChip
                     }
                     if ImageComposerRequestBuilder.hasUnsupportedEditOverrides(
-                        controls: imageComposerControls, settings: imageComposerSettings
+                        controls: imageComposerControls, settings: imageComposerSettings,
+                        canonical: selectedImagePickerItem?.imageCanonicalName
                     ) {
                         Button {
                             if !imageComposerControls.strength {
@@ -5462,7 +5465,7 @@ extension FloatingInputCard {
     }
 
     private var selectedSizeLabel: String {
-        if ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName),
+        if ImageModelRequestPolicy.usesBundleParameters(selectedImagePickerItem?.imageCanonicalName),
             !imageComposerSettings.hasExplicitImageSize
         {
             return pendingAttachments.hasImages ? L("Use source aspect ratio") : "1024px"
@@ -5506,7 +5509,7 @@ extension FloatingInputCard {
                 .padding(.top, 12)
                 .padding(.bottom, 4)
 
-            if ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName) {
+            if ImageModelRequestPolicy.usesBundleParameters(selectedImagePickerItem?.imageCanonicalName) {
                 Button {
                     imageComposerSettings.imageSizeWasExplicitlySet = false
                     showImageSizePicker = false
@@ -5514,9 +5517,25 @@ extension FloatingInputCard {
                     Text(localized: "Default")
                 }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 8)
             }
+            if selectedImagePickerItem?.imageCanonicalName == "flux3-image-klein" {
+                HStack {
+                    Text(localized: "Width")
+                    TextField("", value: $imageComposerSettings.width, format: .number.grouping(.never))
+                        .onSubmit { snapFlux3ComposerSize() }
+                }
+                .settingsLandingAnchor("imageGeneration.width")
+                .padding(.horizontal, 12)
+                HStack {
+                    Text(localized: "Height")
+                    TextField("", value: $imageComposerSettings.height, format: .number.grouping(.never))
+                        .onSubmit { snapFlux3ComposerSize() }
+                }
+                .settingsLandingAnchor("imageGeneration.height")
+                .padding(.horizontal, 12)
+            }
             ForEach(imageSizeOptions) { option in
                 let isSelected =
-                    (!ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName)
+                    (!ImageModelRequestPolicy.usesBundleParameters(selectedImagePickerItem?.imageCanonicalName)
                         || imageComposerSettings.hasExplicitImageSize)
                     && imageComposerSettings.width == option.width
                     && imageComposerSettings.height == option.height
@@ -5575,6 +5594,13 @@ extension FloatingInputCard {
         .pointingHandCursor()
     }
 
+    private func snapFlux3ComposerSize() {
+        let policy = ImageModelRequestPolicy(canonical: "flux3-image-klein")
+        let limits = selectedImagePickerItem?.imageRequestLimits
+        imageComposerSettings.width = policy.snappedDimension(imageComposerSettings.width, limits: limits)
+        imageComposerSettings.height = policy.snappedDimension(imageComposerSettings.height, limits: limits)
+    }
+
     @ViewBuilder
     private var stepsChip: some View {
         if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1-turbo" {
@@ -5596,22 +5622,32 @@ extension FloatingInputCard {
                 imageComposerSettings.steps = max(1, imageComposerSettings.steps - 1)
             }
             HStack(spacing: 3) {
+                if selectedImagePickerItem?.imageCanonicalName == "flux3-image-klein" {
+                    TextField("", value: $imageComposerSettings.steps, format: .number.grouping(.never))
+                        .frame(width: 48)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .monospacedDigit()
+                } else {
                 Text("\(imageComposerSettings.steps)")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .monospacedDigit()
+                }
                 Text("steps", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
             }
             stepperButton("plus") {
-                imageComposerSettings.steps = min(50, imageComposerSettings.steps + 1)
+                imageComposerSettings.steps = selectedImagePickerItem?.imageCanonicalName == "flux3-image-klein"
+                    ? imageComposerSettings.steps + 1 : min(50, imageComposerSettings.steps + 1)
             }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(chipBackground)
         .localizedHelp("Denoising steps")
+        .settingsLandingAnchor("imageGeneration.steps")
     }
 
     private var cfgChip: some View {

@@ -249,6 +249,8 @@ struct ImageGenerationPanelView: View {
     @State private var stepsText = ""
     @State private var guidanceText = ""
     @State private var useSourceSize = true
+    @State private var customWidth = 1024
+    @State private var customHeight = 1024
     @State private var samplingCapabilities = ImageSamplingCapabilities()
     @State private var sampler = ""
     @State private var scheduler = ""
@@ -349,7 +351,7 @@ struct ImageGenerationPanelView: View {
     private var sourcePicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             if sourceLimit > 1 {
-                Text(localized: "Source images (ordered, up to 4)").font(.system(size: 11))
+                Text("Source images (ordered, up to \(sourceLimit))").font(.system(size: 11))
             } else {
                 fieldLabel("Source image")
             }
@@ -429,8 +431,11 @@ struct ImageGenerationPanelView: View {
                 Text(localized: "Steps").font(.system(size: 11))
                 TextField(String(modelInfo.defaultSteps ?? 20), text: $stepsText).frame(width: 70)
                     .disabled(modelInfo.canonicalName == "qwen-image-2.1-turbo")
+                    .settingsLandingAnchor("imageGeneration.steps")
+                if requestPolicy.supportsGuidance {
                 Text(localized: "Guidance").font(.system(size: 11))
                 TextField(String(modelInfo.defaultGuidance ?? 3.5), text: $guidanceText).frame(width: 70)
+                }
             }
             Toggle(isOn: $livePreviews) { Text(localized: "Live previews") }
                 .disabled(model.isBusy)
@@ -497,6 +502,22 @@ struct ImageGenerationPanelView: View {
                         Text("4×").tag(4)
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 150)
                 } else {
+                if requestPolicy.isFlux3 {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            fieldLabel("Width")
+                            TextField("", value: $customWidth, format: .number.grouping(.never))
+                                .frame(width: 76)
+                                .onSubmit { customWidth = requestPolicy.snappedDimension(customWidth, limits: modelInfo.requestLimits) }
+                        }.settingsLandingAnchor("imageGeneration.width")
+                        VStack(alignment: .leading) {
+                            fieldLabel("Height")
+                            TextField("", value: $customHeight, format: .number.grouping(.never))
+                                .frame(width: 76)
+                                .onSubmit { customHeight = requestPolicy.snappedDimension(customHeight, limits: modelInfo.requestLimits) }
+                        }.settingsLandingAnchor("imageGeneration.height")
+                    }.disabled(isEdit && useSourceSize)
+                } else {
                 fieldLabel("Size")
                 Picker("", selection: $sizeIndex) {
                     ForEach(sizes.indices, id: \.self) { i in
@@ -507,6 +528,7 @@ struct ImageGenerationPanelView: View {
                 .pickerStyle(.segmented)
                 .disabled(isEdit && useSourceSize)
                 .frame(width: 150)
+                }
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -616,9 +638,15 @@ struct ImageGenerationPanelView: View {
                     )
             }
             if let parameters = model.resultParameters {
+                if requestPolicy.isFlux3 {
+                Text("\(parameters.width) × \(parameters.height) · \(parameters.steps) steps")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+                } else {
                 Text("\(parameters.width) × \(parameters.height) · \(parameters.steps) steps · CFG \(parameters.guidance, specifier: "%g")")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
+                }
             }
             HStack(spacing: 12) {
                 if let seed = model.resultSeed {
@@ -701,6 +729,8 @@ struct ImageGenerationPanelView: View {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canRun, let input = parsedInput else { return }
         let size = sizes[sizeIndex]
+        let width = requestPolicy.isFlux3 ? requestPolicy.snappedDimension(customWidth, limits: modelInfo.requestLimits) : size
+        let height = requestPolicy.isFlux3 ? requestPolicy.snappedDimension(customHeight, limits: modelInfo.requestLimits) : size
         let seed = input.seed
         let negative = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -716,9 +746,9 @@ struct ImageGenerationPanelView: View {
                     prompt: trimmedPrompt,
                     sourceImages: sources,
                     negativePrompt: modelInfo.capabilities.editNegativePrompt && !negative.isEmpty ? negative : nil,
-                    width: useSourceSize ? nil : size,
-                    height: useSourceSize ? nil : size,
-                    steps: input.steps, guidance: input.guidance,
+                    width: useSourceSize ? nil : width,
+                    height: useSourceSize ? nil : height,
+                    steps: input.steps, guidance: requestPolicy.supportsGuidance ? input.guidance : nil,
                     seed: seed,
                     sampler: sampler.isEmpty ? nil : sampler, scheduler: scheduler.isEmpty ? nil : scheduler,
                     shift: shiftText.isEmpty ? nil : Float(shiftText),
@@ -730,10 +760,10 @@ struct ImageGenerationPanelView: View {
                 ImageGenerationParameters(
                     model: modelId,
                     prompt: trimmedPrompt,
-                    negativePrompt: negative.isEmpty ? nil : negative,
-                    width: size,
-                    height: size,
-                    steps: input.steps, guidance: input.guidance,
+                    negativePrompt: modelInfo.capabilities.negativePrompt && !negative.isEmpty ? negative : nil,
+                    width: width,
+                    height: height,
+                    steps: input.steps, guidance: requestPolicy.supportsGuidance ? input.guidance : nil,
                     seed: seed, numImages: imageCount,
                     sampler: sampler.isEmpty ? nil : sampler, scheduler: scheduler.isEmpty ? nil : scheduler,
                     shift: shiftText.isEmpty ? nil : Float(shiftText),

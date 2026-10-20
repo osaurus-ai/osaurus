@@ -626,18 +626,21 @@ actor NativeImageJobCoordinator {
                 available: models,
                 kind: kind
             )
+            let advisory = ImageModelRequestPolicy(canonical: models.first { $0.id == model }?.canonicalName).estimatesAreAdvisory
             let requiredPeakBytes = try await estimateMemory(model)
+            if advisory { print("[Flux3] advisory_handoff_estimate_bytes=\(requiredPeakBytes)") }
             let plan = try await SubagentResidency.planForLocalTarget(
                 modelName: model,
                 requiredBytes: requiredPeakBytes,
                 config: config,
                 idleWaitSeconds: config.budgets.maxElapsedSeconds,
                 deniedMessage: "Cannot hand off the invoking model for an image job.",
-                invokingParentModelName: context.invocation.parentModelName
+                invokingParentModelName: context.invocation.parentModelName,
+                memoryEstimateIsAdvisory: advisory
             )
             try await ChatResidencyHandoff.memoryPreflight(
                 requiredBytes: requiredPeakBytes,
-                enabled: config.ramSafetyPreflightEnabled,
+                enabled: config.ramSafetyPreflightEnabled && !advisory,
                 physicalCapacityOnly: true, estimateIncludesWorkspace: true
             )
             try checkInterrupt()
@@ -659,7 +662,7 @@ actor NativeImageJobCoordinator {
                     source: context.invocation.source?.inferenceSource
                 )
             }
-            if config.ramSafetyPreflightEnabled {
+            if config.ramSafetyPreflightEnabled && !advisory {
                 _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
                 try await Task.sleep(for: .milliseconds(1_100))
                 try await ChatResidencyHandoff.memoryPreflight(

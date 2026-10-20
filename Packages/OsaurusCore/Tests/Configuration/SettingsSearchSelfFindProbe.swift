@@ -12,6 +12,15 @@ import Testing
 @Suite("settings search self-findability")
 struct SettingsSearchSelfFindProbe {
 
+    @Test("FLUX 3 panel dimensions have searchable labels")
+    func flux3DimensionsAreCatalogued() throws {
+        for (id, title) in [("imageGeneration.steps", "Steps"), ("imageGeneration.width", "Width"), ("imageGeneration.height", "Height")] {
+            let entry = try #require(SettingsSearchIndex.entries.first { $0.id == id })
+            #expect(entry.title == title && entry.subTab == "Models")
+            #expect(SettingsSearchIndex.search(title).contains { $0.id == id })
+        }
+    }
+
     @Test("delegation RAM safety is shared config, not a UI-only control")
     func ramSafetyCatalogNamesWritableSection() throws {
         let entry = try #require(SettingsSearchIndex.entries.first {

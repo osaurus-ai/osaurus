@@ -1234,6 +1234,21 @@ public enum SettingsSearchIndex {
             title: "Live previews", keywords: ["image preview", "denoising preview", "progress image"], subTab: "Models"
         ),
         .init(
+            id: "imageGeneration.steps", tab: .imageGeneration, section: "Image Models",
+            title: "Steps", keywords: ["flux 3", "klein", "denoising steps", "sampling steps"], subTab: "Models",
+            disambiguation: "Denoising steps in the Generate/Edit panel and chat image controls. FLUX 3 accepts any positive count."
+        ),
+        .init(
+            id: "imageGeneration.width", tab: .imageGeneration, section: "Image Models",
+            title: "Width", keywords: ["flux 3", "klein", "image width", "image size", "pixels"], subTab: "Models",
+            disambiguation: "FLUX 3 local image dimensions in the Generate/Edit panel and chat size picker."
+        ),
+        .init(
+            id: "imageGeneration.height", tab: .imageGeneration, section: "Image Models",
+            title: "Height", keywords: ["flux 3", "klein", "image height", "image size", "pixels"], subTab: "Models",
+            disambiguation: "FLUX 3 local image dimensions in the Generate/Edit panel and chat size picker."
+        ),
+        .init(
             id: "imageGeneration.sampler",
             tab: .imageGeneration,
             section: "Image Models",

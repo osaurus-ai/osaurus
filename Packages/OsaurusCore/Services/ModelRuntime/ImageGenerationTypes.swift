@@ -110,6 +110,8 @@ public struct ImageModelInfo: Sendable, Equatable {
     public let quantizationBits: Int?
     public let defaultSteps: Int?
     public let defaultGuidance: Float?
+    public let defaultWidth: Int?
+    public let defaultHeight: Int?
     public let capabilities: ImageModelCapabilities
     /// Human-readable reasons the bundle is not ready (missing components,
     /// missing indexed shards). Surfaced to the UI as a "Download required" /
@@ -130,7 +132,9 @@ public struct ImageModelInfo: Sendable, Equatable {
         capabilities: ImageModelCapabilities,
         blockedReasons: [String],
         totalBytes: UInt64,
-        requestLimits: ImageRequestLimits? = nil
+        requestLimits: ImageRequestLimits? = nil,
+        defaultWidth: Int? = nil,
+        defaultHeight: Int? = nil
     ) {
         self.id = id
         self.canonicalName = canonicalName
@@ -140,6 +144,8 @@ public struct ImageModelInfo: Sendable, Equatable {
         self.quantizationBits = quantizationBits
         self.defaultSteps = defaultSteps
         self.defaultGuidance = defaultGuidance
+        self.defaultWidth = defaultWidth
+        self.defaultHeight = defaultHeight
         self.capabilities = capabilities
         self.blockedReasons = blockedReasons
         self.totalBytes = totalBytes
