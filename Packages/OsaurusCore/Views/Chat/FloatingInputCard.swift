@@ -958,8 +958,7 @@ struct FloatingInputCard: View {
             .animation(.easeOut(duration: 0.2), value: configContextTooSmall)
             .modifier(
                 MTPLayoutAdvisoryRearmModifier(
-                    rearm: rearmMTPLayoutAdvisory,
-                    refresh: refreshMTPLayoutAdvisory
+                    rearm: rearmMTPLayoutAdvisory
                 )
             )
             .onChange(of: selectedModel) { _, _ in
@@ -1312,13 +1311,9 @@ private struct RAMBannerShape: Shape {
 /// whatever context finished the filesystem work.
 private struct MTPLayoutAdvisoryRearmModifier: ViewModifier {
     let rearm: () -> Void
-    let refresh: () -> Void
 
     func body(content: Content) -> some View {
         content
-            // Retry cache-only discovery if the initial local catalog scan
-            // has not landed. The advisory memo avoids repeat bundle scans.
-            .onReceive(SystemMonitorService.shared.$memoryUsage) { _ in refresh() }
             .onReceive(
                 NotificationCenter.default.publisher(for: .localModelsChanged)
                     .receive(on: RunLoop.main)
