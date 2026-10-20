@@ -627,7 +627,12 @@ actor NativeImageJobCoordinator {
                 kind: kind
             )
             let advisory = ImageModelRequestPolicy(canonical: models.first { $0.id == model }?.canonicalName).estimatesAreAdvisory
-            let requiredPeakBytes = try await estimateMemory(model)
+            // An estimate that cannot be computed never refuses the job (advisory only).
+            let requiredPeakBytes: Int64
+            do { requiredPeakBytes = try await estimateMemory(model) } catch {
+                print("[Image] handoff memory estimate unavailable (\(error)); continuing")
+                requiredPeakBytes = 0
+            }
             if advisory { print("[Flux3] advisory_handoff_estimate_bytes=\(requiredPeakBytes)") }
             let plan = try await SubagentResidency.planForLocalTarget(
                 modelName: model,

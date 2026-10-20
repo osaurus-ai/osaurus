@@ -774,8 +774,15 @@ public actor ImageGenerationService {
                         // Resolve the shared memory estimate for every entry point.
                         // FLUX 3 treats it as advice; declared bundle limits and
                         // real runtime allocation failures remain authoritative.
+                        // An estimate that cannot be computed is a missing advisory, not a reason to
+                        // refuse: log it and generate.
+                        var estimatedPeak: Int64?
                         if let estimatePeak {
-                            let peak = try await estimatePeak()
+                            do { estimatedPeak = try await estimatePeak() } catch {
+                                print("[Image] memory estimate unavailable (\(error)); continuing")
+                            }
+                        }
+                        if let peak = estimatedPeak {
                             let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
                                 for: ServerRuntimeSettingsStore.snapshot(),
                                 baseLoadConfiguration: .osaurusProduction,
