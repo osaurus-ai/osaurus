@@ -134,7 +134,7 @@ final class CacheSectionWiringTests: XCTestCase {
             src.contains("ModelRuntime.diskCacheCap("),
             "the readout does not use the resolver the coordinator uses"
         )
-        XCTAssertTrue(src.contains("result.limitedByHost"))
+        XCTAssertTrue(src.contains("diskCacheResolution = resolution"))
     }
 
     /// Diagnostics must not report `null` for a cache that has a real cap.
@@ -176,7 +176,7 @@ final class CacheSectionWiringTests: XCTestCase {
                 "\(path) bypasses the shared quota resolver"
             )
             XCTAssertTrue(
-                src.contains("ModelRuntime.cacheDiskDirectoryOverride("),
+                src.contains("ModelRuntime.diskCacheDirectoryForDisplay("),
                 "\(path) does not resolve the selected cache volume"
             )
         }
