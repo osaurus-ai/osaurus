@@ -38,6 +38,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     private var _cachedContent: String?
     /// Cached content length - updated on append/set without joining
     private var _contentLength: Int = 0
+    /// O(1) render-cache key for replacements as well as streamed appends.
+    /// Equal-length status updates (e.g. 10/16 → 11/16) still change the text.
+    private(set) var contentRevision: UInt64 = 0
     /// Cached `visibleContent` — the display cleaners (leaked action JSON,
     /// Gemini metadata, channel label) are O(n·braces) and the property is
     /// read several times per block build on the main thread. Invalidated
@@ -59,6 +62,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             contentChunks = newValue.isEmpty ? [] : [newValue]
             _cachedContent = newValue
             _contentLength = newValue.count
+            contentRevision &+= 1
             _cachedEnvelope = nil
             _cachedVisibleContent = nil
             objectWillChange.send()
@@ -115,6 +119,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         finalizeThinkingDuration()
         contentChunks.append(s)
         _contentLength += s.count
+        contentRevision &+= 1
         _cachedContent = nil  // Invalidate cache
         _cachedEnvelope = nil
         _cachedVisibleContent = nil
@@ -139,6 +144,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         if cleanedContent != originalContent {
             contentChunks = cleanedContent.isEmpty ? [] : [cleanedContent]
             _contentLength = cleanedContent.count
+            contentRevision &+= 1
             _cachedContent = cleanedContent
             _cachedEnvelope = nil
             _cachedVisibleContent = nil
