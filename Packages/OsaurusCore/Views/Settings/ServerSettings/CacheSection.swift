@@ -12,6 +12,8 @@
 import SwiftUI
 
 struct CacheSection: View {
+    @Environment(\.theme) private var theme
+
     @Binding var draft: VMLXServerRuntimeSettings
     @Binding var metadataFallbackTokens: Int?
     @Binding var contextLengthCap: Int?
