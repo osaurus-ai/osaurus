@@ -5783,7 +5783,7 @@ final class ChatSession: ObservableObject {
     /// Honors the run lifecycle: cancelling `currentTask` cancels the consume
     /// loop, which soft-cancels the underlying job.
     func runImageGeneration(
-        prompt: String,
+        prompt promptText: String,
         attachments: [Attachment],
         settings: ImageComposerSettings,
         into turn: ChatTurn,
@@ -5791,6 +5791,14 @@ final class ChatSession: ObservableObject {
     ) async {
         guard let model = selectedModel, !model.isEmpty else {
             turn.content = L("Image generation failed: no model selected")
+            rebuildVisibleBlocks()
+            return
+        }
+        let prompt: String
+        do {
+            prompt = try ImageComposerRequestBuilder.prompt(text: promptText, attachments: attachments)
+        } catch {
+            turn.content = "\(L("Image generation failed:")) \(error.localizedDescription)"
             rebuildVisibleBlocks()
             return
         }
@@ -5874,7 +5882,7 @@ final class ChatSession: ObservableObject {
                     } else {
                         turn.content =
                             images
-                            .map { "![\(prompt)](\($0.url.absoluteString))" }
+                            .map { ImageComposerRequestBuilder.generatedImageMarkdown(url: $0.url) }
                             .joined(separator: "\n\n")
                     }
                     refresh(force: true)
@@ -6493,6 +6501,10 @@ final class ChatSession: ObservableObject {
         // streaming pipeline (e.g. from a sandbox plugin running on a
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
+        // Regenerate and edit retain the user turn but call send(""). Capture
+        // that turn before asynchronous work and before appending the assistant.
+        let imageInput = turns.last(where: { $0.role == .user }).map { (prompt: $0.content, attachments: $0.attachments) }
+            ?? (prompt: trimmed, attachments: attachments)
         let turnModelId = selectedModel
         let turnModelType = selectedPickerItem?.modelType
         let turnSupportsImages = selectedModelSupportsImages
@@ -6617,8 +6629,8 @@ final class ChatSession: ObservableObject {
                                     }
                 if self.isImageGenerationModel(turnModelId) {
                     await self.runImageGeneration(
-                        prompt: trimmed,
-                        attachments: attachments,
+                        prompt: imageInput.prompt,
+                        attachments: imageInput.attachments,
                         settings: imageSettings,
                         into: assistantTurn,
                         runId: runId

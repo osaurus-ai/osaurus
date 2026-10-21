@@ -4,6 +4,26 @@ import Foundation
 /// Reference presence selects edit for dual-capability models. Kind is only a
 /// fallback for older picker entries without capability metadata.
 enum ImageComposerRequestBuilder {
+    /// Large pastes are stored as document attachments by the shared composer.
+    /// Resolve those exact bytes without treating arbitrary documents as prompts.
+    static func prompt(text: String, attachments: [Attachment]) throws -> String {
+        var parts = [text]
+        for attachment in attachments where attachment.isPastedContent {
+            guard let content = attachment.loadDocumentContent() else {
+                throw CocoaError(.fileReadUnknown, userInfo: [NSFilePathErrorKey: Attachment.pastedContentFilename])
+            }
+            parts.append(content)
+        }
+        return parts.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Prompt text can contain paragraphs and Markdown delimiters. It belongs in
+    /// the user turn, not interpolated into an image's Markdown label.
+    static func generatedImageMarkdown(url: URL) -> String {
+        "![\(L("Generated image"))](\(url.absoluteString.replacingOccurrences(of: ")", with: "%29")))"
+    }
+
     enum Operation: Sendable, Equatable { case generate, edit }
     enum Request: Sendable {
         case generate(ImageGenerationParameters)

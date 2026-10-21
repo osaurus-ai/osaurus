@@ -5563,7 +5563,8 @@ extension FloatingInputCard {
             Image(systemName: systemName)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .bold))
                 .foregroundColor(theme.secondaryText)
-                .frame(width: 14, height: 14)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
@@ -5599,7 +5600,10 @@ extension FloatingInputCard {
             HStack(spacing: 3) {
                 if selectedImagePickerItem?.imageCanonicalName == "flux3-image-klein" {
                     TextField("", value: $imageComposerSettings.steps, format: .number.grouping(.never))
-                        .frame(width: 48)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 36)
+                        .accessibilityLabel(Text("Denoising steps", bundle: .module))
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .monospacedDigit()
@@ -5610,6 +5614,7 @@ extension FloatingInputCard {
                     .monospacedDigit()
                 }
                 Text("steps", bundle: .module)
+                    .fixedSize()
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
             }
