@@ -56,3 +56,6 @@ One preceding CPU-sampled run is excluded from speed qualification: sampling sta
 Private evidence: `ornith-dflash2-adaptive-20261020/connected-results.json`, `chooser-live/current-speed.json`, `chooser-live/gpu-current-day-identity.json`, `LEDGER.md`, `SPEED-TRANSFER-MAP.md`; raw app/footprint/UI receipts under `ornith122b-claude-20261019/turns/DF2-G04-image2` through `DF2-G16-recall`, and `DF4-chooser-prose-clean` / `DF5-prose-off`.
 
 Still open: JANGH2 app and 128k qualification, delegated/concurrent requests and Off propagation, cancellation, active-chat protection under full quota, cross-family checkpoint ownership, and prose/code performance. No release or all-family/always-faster claim.
+
+
+Latest pin: `78203b791cca6ef845b67c37220a6c7e79a774f3`. This adds the routed-bank lane classification correction discovered in the real JANGH2 app run: opaque experts are not lane-backed, so adaptive selection must retain its narrow candidate. The dense Qwen27B classification remains intact. Sixteen focused tests pass, with a captured pre-fix failure. Also corrects AR expected-token trace formatting; no sampler, seed, weight layout or kernel change. Rebuilt-app verification of this pin is pending; previous live receipts identify their older source explicitly.
