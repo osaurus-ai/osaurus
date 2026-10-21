@@ -28,6 +28,39 @@ enum PhoneContextUsage {
         let near_limit: Bool
         /// The prompt, tools and memory alone don't fit the window.
         let hard_overflow: Bool
+        /// Where the window came from (`AgentLoopBudget.ContextWindowSource`):
+        /// the popover's "Provider model maximum" and the like.
+        let window_source: String?
+        /// The popover's rows, as the Mac's chip lists them: prompt sections,
+        /// memory and tools, then the conversation, input, output and summary.
+        let context: [Entry]
+        let messages: [Entry]
+        /// Set when the model's window is too small for tools or memory, which
+        /// the composer then leaves out.
+        let auto_disabled: AutoDisabled?
+    }
+
+    struct Entry: Encodable, Equatable {
+        let id: String
+        let label: String
+        let tokens: Int
+        /// `ContextBreakdown.Tint`: purple, blue, orange, green, gray, cyan,
+        /// teal, indigo or pink.
+        let tint: String
+
+        init(_ entry: ContextBreakdown.Entry) {
+            id = entry.id
+            label = entry.label
+            tokens = entry.tokens
+            tint = entry.tint.rawValue
+        }
+    }
+
+    struct AutoDisabled: Encodable, Equatable {
+        let tools: Bool
+        let memory: Bool
+        let model: String?
+        let context_length: Int?
     }
 
     static func compute(sessionId: UUID?, agentId: UUID, model: String?) async -> Response {
@@ -58,6 +91,7 @@ enum PhoneContextUsage {
             conversationTokens: conversationTokens,
             outputTokens: outputTokens
         )
+        breakdown.disable = context.contextDisable
         if let summary {
             breakdown.setTokens(
                 for: "summary",
@@ -68,7 +102,17 @@ enum PhoneContextUsage {
             )
         }
 
-        let window = model.map { AgentLoopBudget.resolveContextWindowResolutionSync(modelId: $0).tokens }
+        let resolution = model.map { AgentLoopBudget.resolveContextWindowResolutionSync(modelId: $0) }
+        let window = resolution?.tokens
+        let disabled = breakdown.disable.flatMap { info -> AutoDisabled? in
+            guard info.disabledTools || info.disabledMemory else { return nil }
+            return AutoDisabled(
+                tools: info.disabledTools,
+                memory: info.disabledMemory,
+                model: info.modelId,
+                context_length: info.contextLength
+            )
+        }
         let assessment =
             window.map {
                 AgentLoopBudget.assess(
@@ -83,7 +127,11 @@ enum PhoneContextUsage {
             max_tokens: window,
             ratio: assessment.usageRatio,
             near_limit: assessment.nearLimit,
-            hard_overflow: assessment.hardOverflow
+            hard_overflow: assessment.hardOverflow,
+            window_source: resolution?.source.rawValue,
+            context: breakdown.context.map(Entry.init),
+            messages: breakdown.messages.map(Entry.init),
+            auto_disabled: disabled
         )
     }
 

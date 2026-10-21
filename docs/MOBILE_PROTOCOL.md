@@ -1473,7 +1473,11 @@ alone. `model` is the chat's picker model; without it, the agent's.
 
 ```json
 {"tokens":12400,"usable_tokens":98304,"max_tokens":131072,
- "ratio":0.126,"near_limit":false,"hard_overflow":false}
+ "ratio":0.126,"near_limit":false,"hard_overflow":false,
+ "window_source":"providerMetadata",
+ "context":[{"id":"persona","label":"Persona","tokens":820,"tint":"purple"},
+            {"id":"tools","label":"Tools","tokens":6100,"tint":"orange"}],
+ "messages":[{"id":"conversation","label":"Conversation","tokens":5480,"tint":"green"}]}
 ```
 
 `usable_tokens` is the budget the Mac trims history against (the window
@@ -1481,9 +1485,19 @@ less a safety margin) and the ring's denominator; `ratio` is `tokens` over
 it. Both, with `max_tokens`, are absent when the model's window is
 unknown. `near_limit` is set at 85% of the budget: older messages will be
 compacted. `hard_overflow` when the prompt, tools and memory alone don't
-fit. `400 bad_request` without a session id or `agent_id`. A Mac that
-serves it lists `"context_usage"` in `features` (§14.5). Owner-only, and
-over the Secure Channel only (426 otherwise), though it is a read.
+fit.
+
+`context` and `messages` are the rows of the Mac chip's breakdown, labels
+as the Mac shows them; the client groups every `context` row but
+`memory`, `screenContext` and `tools` under "System Prompt", as the Mac
+does. `window_source` says where the window came from (`foundationFixed`,
+`bundleMetadata`, `providerMetadata`, `metadataFallback`, `userCap`).
+`auto_disabled` (`tools`, `memory`, `model`, `context_length`) is set
+when the model's window was too small for tools or memory.
+
+`400 bad_request` without a session id or `agent_id`. A Mac that serves
+it lists `"context_usage"` in `features` (§14.5). Owner-only, and over the
+Secure Channel only (426 otherwise), though it is a read.
 
 ---
 
