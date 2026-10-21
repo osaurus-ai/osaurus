@@ -6729,7 +6729,8 @@ public actor ModelRuntime {
             base: .osaurusProduction,
             configData: configData,
             jangConfig: jangConfig,
-            status: status
+            status: status,
+            bundleDirectory: modelDirectory
         )
         // Resolve the loaded strategy WITHOUT the draft-token limit: the limit
         // is a per-request clamp (`requestDraftStrategy`), not a load input.

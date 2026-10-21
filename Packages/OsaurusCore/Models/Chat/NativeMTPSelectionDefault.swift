@@ -19,7 +19,7 @@ enum NativeMTPSelectionDefault {
     }
 
     /// Product controls expose only Off (AR) and On (Adaptive). Keep the
-    /// engine's legacy fields decodable, but never persist a native depth cap.
+    /// engine's legacy fields decodable, but never persist a fixed draft width.
     /// Keep external drafter selection stored; Off still disables its execution.
     static func adaptiveSelection(_ settings: VMLXServerMTPSettings) -> VMLXServerMTPSettings {
         var result = settings
@@ -27,6 +27,10 @@ enum NativeMTPSelectionDefault {
         result.mode = (settings.mode == .off || settings.mode == .familyDefault) ? settings.mode : .auto
         result.explicitDepth = nil
         result.draftTokenLimit = nil
+        // A legacy external block size disables the engine's adaptive chooser,
+        // even though the picker says On (Adaptive). Clear it on the same shared
+        // Settings/API/import path as the old native caps; retain the drafter.
+        result.dflash2BlockSize = nil
         return result
     }
 
