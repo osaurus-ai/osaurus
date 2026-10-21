@@ -104,12 +104,27 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
 }
 
 enum DiscordConnectionConfigurationStore {
-    nonisolated(unsafe) static var overrideDirectory: URL?
+    nonisolated(unsafe) static var overrideDirectory: URL? {
+        didSet { cache.reset() }
+    }
 
     private static let fileName = "discord.json"
 
+    /// In-memory copy of the last loaded/saved configuration. See
+    /// `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
+    private static let cache = ConnectionConfigurationCache<DiscordConnectionConfiguration>()
+
+    /// Drop the in-memory copy so the next `load()` reads from disk.
+    static func resetCache() {
+        cache.reset()
+    }
+
     static func load() -> DiscordConnectionConfiguration {
         let url = configurationFileURL()
+        return cache.value(for: url) { loadFromDisk(at: url) }
+    }
+
+    private static func loadFromDisk(at url: URL) -> DiscordConnectionConfiguration {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return DiscordConnectionConfiguration()
         }
@@ -128,7 +143,9 @@ enum DiscordConnectionConfigurationStore {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        let normalized = configuration.normalized
+        try encoder.encode(normalized).write(to: url, options: [.atomic])
+        cache.store(normalized, for: url)
     }
 
     static func configurationFileURL() -> URL {
