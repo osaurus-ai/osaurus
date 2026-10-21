@@ -12,14 +12,14 @@ struct ImageComposerFeedbackTests {
     }
 
     @Test func pastedPromptKeepsAttachmentOrderAndIgnoresNonPromptFiles() throws {
-        let attachments: [Attachment] = [.pastedContent("Scene"), .image(Data([1, 2])),
+        let attachments: [OsaurusCore.Attachment] = [.pastedContent("Scene"), .image(Data([1, 2])),
             .document(filename: "notes.txt", content: "not pasted", fileSize: 10), .pastedContent("Light")]
         #expect(try ImageComposerRequestBuilder.prompt(text: "", attachments: attachments) == "Scene\n\nLight")
         #expect(try ImageComposerRequestBuilder.prompt(text: " \n", attachments: [.image(Data())]).isEmpty)
     }
 
     @Test func missingSpilledPasteDoesNotGenerateFromPartialPrompt() {
-        let missing = Attachment(kind: .documentRef(filename: Attachment.pastedContentFilename,
+        let missing = OsaurusCore.Attachment(kind: .documentRef(filename: OsaurusCore.Attachment.pastedContentFilename,
             hash: String(repeating: "0", count: 64), fileSize: 123))
         #expect(throws: CocoaError.self) {
             try ImageComposerRequestBuilder.prompt(text: "A partial instruction", attachments: [missing])
