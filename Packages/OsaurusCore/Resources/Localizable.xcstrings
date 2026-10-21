@@ -1,6 +1,76 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size without a free-space cap. This is a maximum cache size, not reserved space. Saving updates loaded models without unloading them; a lower cap applies on the next cache write." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatisch nutzt 30% des freien Speicherplatzes plus der eigenen Cache-Daten. Ein expliziter Prozentsatz bezieht sich auf die gesamte Laufwerksgröße, ohne Begrenzung durch freien Speicher. Dies ist eine maximale Cache-Größe, keine Speicherreservierung. Speichern aktualisiert geladene Modelle ohne Entladen; eine kleinere Grenze gilt beim nächsten Cache-Schreibvorgang."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "자동은 여유 공간과 이 캐시 크기 합계의 30%를 사용합니다. 명시한 비율은 전체 디스크 크기를 기준으로 하며 여유 공간으로 제한되지 않습니다. 이는 최대 캐시 크기이며 공간을 예약하지 않습니다. 저장하면 모델을 내리지 않고 적용되며, 낮아진 한도는 다음 캐시 쓰기 때 적용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматический режим использует 30% суммы свободного места и объёма этого кэша. Явно заданный процент относится ко всему диску и не ограничивается свободным местом. Это максимальный размер кэша, а не резервирование места. Сохранение обновляет загруженные модели без выгрузки; уменьшенный лимит применяется при следующей записи кэша."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动模式使用可用空间与此缓存自身大小之和的30%。明确指定的百分比以磁盘总容量为基准，不受可用空间上限限制。这是缓存的最大大小，而不是预留空间。保存后会更新已加载的模型，无需卸载；降低的上限将在下次写入缓存时生效。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size without a free-space cap. This is a maximum cache size, not reserved space. Saving updates loaded models without unloading them; a lower cap applies on the next cache write."
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
+    "The cache limit exceeds currently available space. Other files may prevent the cache from reaching this size." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Cache-Limit übersteigt den derzeit verfügbaren Speicherplatz. Andere Dateien können verhindern, dass der Cache diese Größe erreicht."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "캐시 한도가 현재 사용 가능한 공간을 초과합니다. 다른 파일 때문에 캐시가 이 크기에 도달하지 못할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит кэша превышает доступное сейчас место. Другие файлы могут помешать кэшу достичь этого размера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缓存上限超过当前可用空间。其他文件可能导致缓存无法达到此大小。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The cache limit exceeds currently available space. Other files may prevent the cache from reaching this size."
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
     "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -39087,34 +39157,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自動回覆需要 Discord 傳送和可寫頻道。"
-          }
-        }
-      }
-    },
-    "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size, bounded by 25% of free space plus this cache. Saving a size change updates loaded models without unloading them; a lower cap is enforced on the next cache write." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatisch nutzt 30% des freien Speicherplatzes plus der Cache-Daten. Ein expliziter Prozentsatz bezieht sich auf die gesamte Laufwerksgröße und ist auf 25% des freien Speicherplatzes plus des Caches begrenzt. Größenänderungen gelten nach dem Speichern ohne Entladen der Modelle; eine kleinere Grenze wird beim nächsten Schreiben durchgesetzt."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "자동은 여유 공간과 이 캐시 크기 합계의 30%를 사용합니다. 명시한 비율은 전체 디스크 크기를 기준으로 하며, 여유 공간과 이 캐시 합계의 25%로 제한됩니다. 크기 변경을 저장하면 모델을 내리지 않고 적용하며, 낮아진 한도는 다음 캐시 쓰기 때 적용됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автоматический режим использует 30% свободного места и объёма этого кэша. Явный процент относится ко всему диску и ограничивается 25% свободного места и кэша. Сохранение размера обновляет загруженные модели без выгрузки; уменьшенный лимит применяется при следующей записи в кэш."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动模式使用可用空间加此缓存自身字节数的 30%。指定百分比基于磁盘总容量，并限制为可用空间加此缓存的 25%。保存大小更改会更新已加载模型而无需卸载；降低的上限在下次写入缓存时执行。"
           }
         }
       }
@@ -210876,34 +210918,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "請求超時（秒）"
-          }
-        }
-      }
-    },
-    "Requested %@; limited to 25%% of free space plus this cache." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Angefordert: %@; begrenzt auf 25%% des freien Speicherplatzes plus dieses Caches."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "요청한 크기 %@; 여유 공간과 이 캐시 합계의 25%%로 제한됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запрошено %@; ограничено 25%% свободного места и этого кэша."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请求 %@；限制为可用空间加此缓存的 25%%。"
           }
         }
       }
