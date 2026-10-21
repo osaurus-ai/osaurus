@@ -1427,19 +1427,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } else {
                     row["last_effective_generation"] = NSNull()
                 }
-                let mlxPress = summary.mlxPressStatus
-                var mlxPressStatus: [String: Any] = [
-                    "enabled": mlxPress.enabled,
-                    "backend": mlxPress.backend.rawValue,
-                    "tiles_under_management": mlxPress.tilesUnderManagement,
-                    "total_routed_bytes": mlxPress.totalRoutedBytes,
-                ]
-                if let coldFraction = mlxPress.coldFraction {
-                    mlxPressStatus["cold_fraction"] = coldFraction
-                } else {
-                    mlxPressStatus["cold_fraction"] = NSNull()
-                }
-                row["mlx_press"] = mlxPressStatus
                 if let active = summary.activeCachePolicy {
                     row["active_cache_policy"] =
                         [
@@ -2520,7 +2507,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "memory_limit": residentCapJSONObject(configuration.memoryLimit),
             "max_resident_bytes": residentCapJSONObject(configuration.maxResidentBytes),
             "use_mmap_safetensors": configuration.useMmapSafetensors,
-            "jang_press_policy": jangPressPolicyJSONObject(configuration.jangPress),
             "native_mtp": configuration.nativeMTP,
             "deepseek_v4_activation_qat":
                 configuration.deepseekV4ActivationQAT as Any? ?? NSNull(),
@@ -2630,17 +2616,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return ["kind": "fraction", "value": fraction]
         case .absolute(let bytes):
             return ["kind": "absolute", "value": bytes]
-        }
-    }
-
-    private static func jangPressPolicyJSONObject(_ policy: JangPressPolicy) -> [String: Any] {
-        switch policy {
-        case .disabled:
-            return ["kind": "disabled"]
-        case .enabled(let coldFraction):
-            return ["kind": "enabled", "cold_fraction": coldFraction]
-        case .auto(let envFallback):
-            return ["kind": "auto", "env_fallback": envFallback]
         }
     }
 

@@ -94,13 +94,6 @@ struct MemorySafetySection: View {
             SettingsSubsection(label: "Advanced Overrides") {
                 VStack(alignment: .leading, spacing: 12) {
                     SettingsToggle(
-                        title: L("Allow Experimental MLXPress"),
-                        description:
-                            "Only routed bundles with proven support should use this. It is never enabled by default.",
-                        isOn: $draft.memorySafety.allowExperimentalMLXPress
-                    )
-
-                    SettingsToggle(
                         title: L("Fail Closed When Estimate Is Unknown"),
                         description:
                             "Strict diagnostic behavior for environments that prefer refusal over unknown memory risk.",

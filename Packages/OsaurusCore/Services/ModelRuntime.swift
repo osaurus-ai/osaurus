@@ -242,7 +242,6 @@ public actor ModelRuntime {
         let dflash2BlockSize: Int?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
-        let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
         let cacheTopology: ModelCacheTopologySnapshot?
         /// Exact coordinator settings captured by this resident model. These
@@ -1503,7 +1502,6 @@ public actor ModelRuntime {
                 dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
                 nativeMTPReason: holder.nativeMTPReason,
-                mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
                 cacheTopology: holder.cacheTopology,
                 activeCachePolicy: activeConfig.map {
@@ -7757,7 +7755,7 @@ public actor ModelRuntime {
 
     /// Compute-weight accounting shared by load, UI projection, and child admission.
     ///
-    /// The production loader disables MLXPress/JangPress. Mapped routed pages
+    /// Mapped routed pages
     /// can be reclaimed by macOS, but that is not evidence that only 30% of
     /// their weights need a working-set budget. Count every compute weight,
     /// regardless of quantization name or mmap/materialized storage. Only

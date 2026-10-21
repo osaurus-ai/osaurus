@@ -820,7 +820,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "1e3a82ab5e8f453467103b0b23263ae719a9694a"
+        let expectedRuntimeHardenedRevision = "0e73bbcfc7f01def6cab2b522acabbfed8131dff"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -2547,7 +2547,7 @@ struct RuntimePolicySourceTests {
             !runtime.contains(
                 "loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"
             ),
-            "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.osaurusProduction, including load-time memory caps, mmap safetensors, and routed MLXPress auto policy"
+            "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.osaurusProduction, including load-time memory caps, mmap safetensors, and canonical model residency"
         )
     }
 
