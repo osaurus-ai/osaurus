@@ -1,6 +1,146 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default folgt der adaptiven Modellrichtlinie, einschließlich kompatibler mitgelieferter DFlash-2- oder DSpark-Drafter. Off deaktiviert spekulatives Decoding. On fordert einen kompatiblen Drafter oder unterstütztes adaptives natives MTP an. Die Geschwindigkeit hängt von Modell und Aufgabe ab."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认遵循模型的自适应策略，包括兼容的内置 DFlash 2 或 DSpark。关闭会禁用推测解码。开启会请求兼容的草稿模型或受支持的自适应原生 MTP。速度取决于模型和任务。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본값은 호환되는 번들 DFlash 2 또는 DSpark를 포함한 모델의 적응형 정책을 따릅니다. 끄기는 추측 디코딩을 비활성화합니다. 켜기는 호환되는 초안 모델 또는 지원되는 적응형 네이티브 MTP를 요청합니다. 속도는 모델과 작업에 따라 달라집니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По умолчанию используется адаптивная политика модели, включая совместимый встроенный DFlash 2 или DSpark. «Выкл.» отключает спекулятивное декодирование. «Вкл.» запрашивает совместимую черновую модель или поддерживаемый адаптивный нативный MTP. Скорость зависит от модели и задачи."
+          }
+        }
+      }
+    },
+    "The drafter must match the target model. A compatible selected or bundled DFlash 2 or DSpark drafter takes priority over native MTP. Incompatible folders are ignored; the resolved model state is shown below." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The drafter must match the target model. A compatible selected or bundled DFlash 2 or DSpark drafter takes priority over native MTP. Incompatible folders are ignored; the resolved model state is shown below."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Drafter muss zum Zielmodell passen. Ein kompatibler ausgewählter oder mitgelieferter DFlash-2- oder DSpark-Drafter hat Vorrang vor nativem MTP. Inkompatible Ordner werden ignoriert; der tatsächlich verwendete Modellstatus wird unten angezeigt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "草稿模型必须与目标模型匹配。兼容的已选或内置 DFlash 2 或 DSpark 草稿模型优先于原生 MTP。不兼容的文件夹会被忽略；实际模型状态显示在下方。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "초안 모델은 대상 모델과 일치해야 합니다. 호환되는 선택된 또는 번들 DFlash 2나 DSpark 초안 모델이 네이티브 MTP보다 우선합니다. 호환되지 않는 폴더는 무시되며 실제 모델 상태는 아래에 표시됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Черновая модель должна соответствовать целевой модели. Совместимый выбранный или встроенный DFlash 2 либо DSpark имеет приоритет перед нативным MTP. Несовместимые папки игнорируются; фактическое состояние модели показано ниже."
+          }
+        }
+      }
+    },
+    "No external folder selected. Compatible bundled drafters and the model’s native MTP policy still apply. Off (AR) disables speculation." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No external folder selected. Compatible bundled drafters and the model’s native MTP policy still apply. Off (AR) disables speculation."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein externer Ordner ausgewählt. Kompatible mitgelieferte Drafter und die native MTP-Richtlinie des Modells gelten weiterhin. Off (AR) deaktiviert spekulatives Decoding."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未选择外部文件夹。兼容的内置草稿模型和模型的原生 MTP 策略仍然适用。关闭（AR）会禁用推测解码。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "외부 폴더가 선택되지 않았습니다. 호환되는 번들 초안 모델과 모델의 네이티브 MTP 정책은 계속 적용됩니다. 끄기(AR)는 추측 디코딩을 비활성화합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Внешняя папка не выбрана. Совместимые встроенные черновые модели и политика нативного MTP по-прежнему применяются. «Выкл. (AR)» отключает спекулятивное декодирование."
+          }
+        }
+      }
+    },
+    "Qwen 27B drafter…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen 27B drafter…"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen-27B-Drafter…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen 27B 草稿模型…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen 27B 초안 모델…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Черновая модель Qwen 27B…"
+          }
+        }
+      }
+    },
     "FLUX Kommunity (non-commercial)" : {
       "localizations" : {
         "de" : {
