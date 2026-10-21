@@ -413,11 +413,16 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// holds it briefly and is cleared whenever the agent list changes, which
     /// is when an avatar is added or removed, so a newly set avatar still
     /// appears immediately.
+    ///
+    /// The filename component is appended with `isDirectory: false`. Without
+    /// it, Foundation probes the filesystem (`getattrlist`) on every call to
+    /// decide whether to add a trailing slash — an uncached, blocking syscall
+    /// that bypassed `AvatarExistenceCache` and hung the main thread.
     public var customAvatarURL: URL? {
         guard let name = customAvatarFilename, !name.isEmpty else { return nil }
         let url = OsaurusPaths.agents()
             .appendingPathComponent("avatars", isDirectory: true)
-            .appendingPathComponent(name)
+            .appendingPathComponent(name, isDirectory: false)
         return AvatarExistenceCache.shared.exists(atPath: url.path) ? url : nil
     }
 
