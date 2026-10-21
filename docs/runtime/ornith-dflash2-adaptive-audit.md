@@ -19,3 +19,5 @@ Pending: fresh app load, clean visible multi-turn answer, Off/Adaptive setting a
 Private artifacts and command/identity ledger: ~/vmlx-private-evidence/ornith-dflash2-adaptive-20261020/LEDGER.md.
 
 Engine pin updated to 260ad6187: same-path drafter load coalescing and eviction-safe publication; terminal aggregate adaptive timing diagnostics. The app diagnostic log now records resolved strategy and the constructed model's nativeMTPAvailable property, so selected strategy is not confused with a loaded unused head. Earlier c73225e9f app completed two visible adaptive turns with SSD restore and settled writes; exact new-head app proof remains pending.
+
+Engine c2b025e2f corrects routed Qwen tree target-verification arithmetic. Actual Ornith4M and JANGH2 each pass104/104 exact rows and six exact post-commit next-token checks at widths4/16/32 (chain and branching). Scope6/6 and kernel11/11 tests pass. This supersedes the earlier engine pin; earlier app speed numbers do not qualify this corrected path. Exact-head app build/live proof is next. See engine PR627 and its runtime audit for details and the explicit temporary branch-copy cost.
