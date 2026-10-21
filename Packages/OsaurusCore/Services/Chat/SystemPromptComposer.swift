@@ -3288,10 +3288,18 @@ public struct SystemPromptComposer: Sendable {
 
         // Previously loaded dynamic tools must not outlive the current grant.
         // Keep built-in and workspace policy in the dedicated gates above.
+        // Pre-compute the grant context once so the disk read in
+        // dynamicGrantContext (slack.json via SlackConnectionConfigurationStore)
+        // happens exactly once per resolveTools call rather than once per tool.
+        let dynamicGrantContext = ToolRegistry.shared.dynamicGrantContext(agentId: snapshot.agentId)
         byName = byName.filter {
-            ToolRegistry.shared.isDynamicToolGranted(
+            let registry = ToolRegistry.shared
+            // Non-dynamic (built-in) tools are always allowed through this gate;
+            // mirror the guard in the public isDynamicToolGranted(_:agentId:) overload.
+            guard registry.isDynamicRegisteredTool(named: $0.key) else { return true }
+            return registry.isDynamicToolGranted(
                 $0.key,
-                agentId: snapshot.agentId,
+                context: dynamicGrantContext,
                 capabilityGranted: ($0.key == "search_and_extract" && snapshot.webSearchEnabled)
                     || ($0.key == AgentChannelPublishTool.toolName && snapshot.hasChannelPublishDestinations)
             )

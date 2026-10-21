@@ -2040,7 +2040,7 @@ public final class ToolRegistry: ObservableObject {
         let nativeGrantedNames: Set<String>
     }
 
-    private func dynamicGrantContext(agentId: UUID?) -> DynamicGrantContext {
+    func dynamicGrantContext(agentId: UUID?) -> DynamicGrantContext {
         guard let agentId else {
             return .init(allowedNames: nil, capabilities: nil, nativeGrantedNames: [])
         }
@@ -2090,7 +2090,7 @@ public final class ToolRegistry: ObservableObject {
         )
     }
 
-    private func isDynamicToolGranted(
+    func isDynamicToolGranted(
         _ name: String,
         context: DynamicGrantContext,
         capabilityGranted: Bool = false
