@@ -5108,6 +5108,13 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
             )
+            let loadedNativeHead = await container.perform { context in
+                (context.model as? any NativeMTPModel)?.nativeMTPAvailable ?? false
+            }
+            PrefillDebugLog.shared.log(
+                "==LOAD SPECULATION model=\(name) strategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy)) "
+                    + "nativeHeadRequested=\(mtpPlan.loadConfiguration.nativeMTP) nativeHeadLoaded=\(loadedNativeHead)"
+            )
             // Same receipt on stderr, where support bundles and the 48 GB test plan read load time.
             FileHandle.standardError.write(Data(
                 "[ModelRuntime] model_loaded model=\(name) elapsedMs=\(elapsedMs)\n".utf8))
