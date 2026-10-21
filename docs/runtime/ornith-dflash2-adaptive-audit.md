@@ -29,3 +29,30 @@ Current qualification receipts are from engine c2b025e2f / app16e80d09. Default 
 This pin consumes that media-boundary fix and opt-in chooser decision-cost diagnostics. Settings help now describes compatible model-specific DFlash2/DSpark discovery instead of incorrectly restricting it to Qwen27B. The existing27B download link is labeled specifically. All four new strings have translations in every shipped locale; i18n check passes.
 
 A single sampled prose pair remains slower with Auto (24.61 vs26.86 app tokens/s, different sampled lengths). No universal speedup claim. Existing Qwen27B/Uno/fusion/clock research is indexed in the private SPEED-TRANSFER-MAP.md; no fixed depth or sampler change was made. Rebuilt media proof,128k, JANGH2 app performance and delegation remain open. PR stays draft.
+
+
+## Current Release app checkpoint: 130k and adaptive decision audit
+
+This section supersedes the earlier pending media/128k statements. Runtime source is engine `510e62774` / app `9962f6ec`; Release binary SHA256 is `06dd85a863a98f610fd0cefcac1a69df0fc2be2199d88d5ab0a6ae757a5f1880`. Later documentation-only commits do not change that binary.
+
+The connected JANG_4M chat reached 130,343 prompt tokens. It restored 128,867 tokens and prefixed only 1,476 new tokens at 419.8 tokens/s. Final recall answered all three requested facts correctly, with a visible final answer and normal stop. App TTFT was 8.541 s and app decode 18.84 tokens/s. This is a long-context correctness/cache result, not a speedup over AR.
+
+The new-head continuation scored 11/12 valid turns: seven ledger lookups, two calculator turns, real video and final recall passed. The second image OCR returned `HARBO` rather than `HARBOR 7`; it remains a failure. A video attempt without an actual attachment is recorded as an invalid harness row, not a model result. A separate background 256-token length-stop is retained in raw evidence and excluded from completed chat answers.
+
+The image turn now restored 14,562/14,769 tokens; the video turn restored 25,854/26,899. At 130k, physical footprint peaked at 13.21 GB and ended at 5.26 GB. The 3,356,934,920-byte checkpoint published in 578 ms, enqueue took 1.1 ms, and terminal lease wait was zero. No iterator checkpoints remained at decode end. These writer timings describe filesystem publication, not fsync-qualified device bandwidth. MLX active includes mapped allocations; neither it nor physical footprint alone proves small-Mac fit. The current app CI passed all required checks (run 39541476022).
+
+### Reusing earlier speed research
+
+- Qwen27B narrow-row weight sharing is a measured dense-model lead, not evidence that routed Ornith gains the same amount. Preserve row-exact logits, recurrent commits and no duplicate weight layouts when evaluating a port.
+- Existing matched Lithos GDN megakernel and Swift chain-prefetch experiments were neutral or slower in complete rounds. Do not rerun them solely because target-only or Python timings look better.
+- Uno clock tracking, context buckets and winning-probe behavior are useful designs to examine. Its causal acceptance replay is not valid for a bidirectional block-diffusion drafter, whose candidates change with width.
+- Ornith tree verification presently feeds path length and total tree rows into a shared chain-position acceptance estimator. Whether that misprices widths is an open model-fit question. Do not assume acceptance alone establishes throughput.
+- Keep per-request adaptive decisions, kernel time, host synchronization, app delivery time, GPU power/clock and SSD publication separate. Never normalize the whole result linearly by MHz.
+
+A clean diagnostic app pair on the current binary gave Default/Adaptive prose **30.93 tok/s** versus UI Off **33.40 tok/s** (832 vs 925 sampled output tokens). Decode GPU clock medians were 1,424 vs 1,425 MHz, with nominal thermals. Default spent 24.069 s in AR, 2.534 s in verification and 0.192 s drafting. It correctly falls back to AR, but exploration still costs time. This is not an always-faster-than-AR result. Per-cycle chooser tracing was enabled; no forced depth or sampler/seed change was used.
+
+One preceding CPU-sampled run is excluded from speed qualification: sampling stalled an AR burst and moved its cost estimate from 30.3 to 74.1 ms/token. The inherited harness also joined GPU samples by time-of-day across several days; those summary clock fields are invalid. The corrected private report selects the current day's ordered log segment, and new runs record byte-bounded per-turn GPU slices. Neither measurement defect was used to tune product policy.
+
+Private evidence: `ornith-dflash2-adaptive-20261020/connected-results.json`, `chooser-live/current-speed.json`, `chooser-live/gpu-current-day-identity.json`, `LEDGER.md`, `SPEED-TRANSFER-MAP.md`; raw app/footprint/UI receipts under `ornith122b-claude-20261019/turns/DF2-G04-image2` through `DF2-G16-recall`, and `DF4-chooser-prose-clean` / `DF5-prose-off`.
+
+Still open: JANGH2 app and 128k qualification, delegated/concurrent requests and Off propagation, cancellation, active-chat protection under full quota, cross-family checkpoint ownership, and prose/code performance. No release or all-family/always-faster claim.
