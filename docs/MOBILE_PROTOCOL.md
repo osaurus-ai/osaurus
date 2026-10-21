@@ -1462,6 +1462,29 @@ file, a missing one, a directory, or a name `share_artifact` would not have
 written. Owner-only, and over the Secure Channel only (426 otherwise),
 though it is a read.
 
+### 14.13 `GET /sessions/{id}/context?agent_id=…&model=…`
+
+The Mac composer's context ring for a chat: how much of the model's window
+the next send would take, from the chat's saved history (a compaction
+summary standing in for the turns it covers), the agent's system prompt,
+tools and memory. What the user is still typing isn't counted. A chat the
+Mac has no history for yet is priced from the prompt, tools and memory
+alone. `model` is the chat's picker model; without it, the agent's.
+
+```json
+{"tokens":12400,"usable_tokens":98304,"max_tokens":131072,
+ "ratio":0.126,"near_limit":false,"hard_overflow":false}
+```
+
+`usable_tokens` is the budget the Mac trims history against (the window
+less a safety margin) and the ring's denominator; `ratio` is `tokens` over
+it. Both, with `max_tokens`, are absent when the model's window is
+unknown. `near_limit` is set at 85% of the budget: older messages will be
+compacted. `hard_overflow` when the prompt, tools and memory alone don't
+fit. `400 bad_request` without a session id or `agent_id`. A Mac that
+serves it lists `"context_usage"` in `features` (§14.5). Owner-only, and
+over the Secure Channel only (426 otherwise), though it is a read.
+
 ---
 
 ## 15. Workspace agents

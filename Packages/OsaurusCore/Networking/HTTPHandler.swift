@@ -1120,6 +1120,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path.hasPrefix("/sessions/"), path.hasSuffix("/context") {
+                // Before the `/sessions/{id}` catch-all below.
+                handleSessionContextEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path.hasPrefix("/sessions/"), path.hasSuffix("/truncate") {
                 handleSessionTruncateEndpoint(
                     head: head,
@@ -4732,7 +4741,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// `session_create`: a run may start a chat with `osaurus_create_session`.
-    static let connectFeatures = ["session_create"]
+    /// `context_usage`: `GET /sessions/{id}/context` prices a chat's next send.
+    static let connectFeatures = ["session_create", "context_usage"]
 
     /// The Action Bar a client shows for `agent`: its own, else for the
     /// Orchestrator the configure-oriented defaults its Mac chat shows (a
@@ -7594,6 +7604,87 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
         }
+    }
+
+    /// GET /sessions/{id}/context?agent_id=…&model=… — the composer's context
+    /// ring for a phone chat (MOBILE_PROTOCOL §14.13). A session the Mac has
+    /// no history for yet is priced as empty: the prompt, tools and memory.
+    private func handleSessionContextEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        let query = Self.queryItems(from: head.uri)
+        guard components.count == 3, let sessionId = UUID(uuidString: String(components[1])),
+            let agentId = query["agent_id"].flatMap({ UUID(uuidString: $0) })
+        else {
+            sendSessionContextResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected /sessions/{id}/context?agent_id="}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+        let model = query["model"].flatMap { $0.isEmpty ? nil : $0 }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let usage = await PhoneContextUsage.compute(sessionId: sessionId, agentId: agentId, model: model)
+            let json =
+                (try? JSONEncoder().encode(usage)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":"encoding_failed"}"#
+            hop {
+                self.sendSessionContextResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: .ok,
+                    json: json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private func sendSessionContextResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: "GET",
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
     }
 
     private func sendTruncateResponse(

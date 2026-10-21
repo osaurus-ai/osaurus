@@ -303,7 +303,7 @@ struct SecureChannelE2ETests {
         let id = UUID().uuidString
         let reads = [
             "/sessions", "/sessions/\(id)", "/runs/\(id)/events", "/privacy/reviews", "/secrets/prompts",
-            "/approvals", "/agents/\(id)", "/models/picker",
+            "/approvals", "/agents/\(id)", "/models/picker", "/sessions/\(id)/context?agent_id=\(id)",
         ]
         for path in reads {
             let request = plaintextOwnerRequest(server: server, method: "GET", path: path)
