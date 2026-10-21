@@ -26,3 +26,11 @@ The process sampler and Activity Monitor agree on the small process ledger. Host
 - Label cache-effective prompt throughput separately from new-token prefill throughput. Logical prompt token count divided by incremental prefill time is not new-token kernel throughput.
 
 Private raw evidence: ssd-quota-20261021/turns/M01–M03, press-memory-ui, host-formula-baseline.json, MEMORY-LIFECYCLE-INVESTIGATION.md (M01–M18). Runtime proof comments are on #3156 and engine #632. No release or tag.
+
+## Executed app qualification
+
+The isolated Release app at 793059f7 (production gauge change ebbec8ac), pinned to engine 0e73bbcfc7f01def6cab2b522acabbfed8131dff, displayed 75 GB available on a 128 GB Mac. A near-simultaneous sample using the shared VM calculation gave 75.602 GiB. Binary SHA256: 594f35ed98e51e0435349e54200c102ed146190b42715e66a8cd5f34d6c7c034. The gauge is whole-host reclaimable capacity, not model ownership.
+
+Actual composer delegation from MiniCPM 35B JANG_4M to Helper using Ornith 122B JANGH2 completed with the shared swap setting toggled through Settings both ways. Swap On released the parent, loaded/released the child and restored the parent; Swap Off retained both leases during the child job. Both returned correct calculator results and correct prior-chat recall. The restored parent reused SSD state. Step decode rates and exact restore counts are in PR #3157's evidence comment.
+
+The co-resident run peaked at 81,581,850,624 bytes of whole-host wired memory versus 7,590,138,872 bytes of sampled process footprint. These overlapping counters must not be added or substituted for one another. No all-family or long-context duplicate-cache clearance follows from these short runs. Same-model concurrency and failure/cancellation lifecycle checks remain open in the investigation ledger.
