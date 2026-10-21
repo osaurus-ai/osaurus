@@ -16,6 +16,14 @@ struct ContentBlockDisplayTests {
     }
 
     @Test
+    func assistantVisibleContent_hidesCallEndMarker() {
+        let assistant = ChatTurn(role: .assistant, content: "Have a great day! [end call]")
+        #expect(assistant.visibleContent == "Have a great day!")
+        let user = ChatTurn(role: .user, content: "what does [end call] do?")
+        #expect(user.visibleContent == "what does [end call] do?")
+    }
+
+    @Test
     func assistantParagraphs_useVisibleContent() {
         let assistant = ChatTurn(
             role: .assistant,

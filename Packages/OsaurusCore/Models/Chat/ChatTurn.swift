@@ -626,9 +626,11 @@ final class ChatTurn: ObservableObject, Identifiable {
         // Channel-label strip runs first: the label arrives on the leading line
         // ahead of anything the other two cleaners look for, so removing it
         // early keeps their inputs shaped the way they expect.
-        let cleaned = StringCleaning.stripLeakedActionJSON(
-            StringCleaning.stripGeminiDisplayMetadata(
-                StringCleaning.stripLeakedChannelLabel(content)
+        let cleaned = StringCleaning.stripCallEndMarker(
+            StringCleaning.stripLeakedActionJSON(
+                StringCleaning.stripGeminiDisplayMetadata(
+                    StringCleaning.stripLeakedChannelLabel(content)
+                )
             )
         )
         _cachedVisibleContent = cleaned
