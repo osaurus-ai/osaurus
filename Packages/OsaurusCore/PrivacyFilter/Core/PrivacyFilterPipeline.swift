@@ -65,6 +65,7 @@
 //
 
 import Foundation
+import os
 
 /// Errors thrown by the privacy pipeline. Distinct error type so chat
 /// layer can distinguish a privacy cancel from a network failure and
@@ -347,7 +348,15 @@ enum PrivacyFilterPipeline {
         // The owner turned the filter off for their phone call.
         if ChatExecutionContext.voiceCallPrivacy == .off {
             print("[PrivacyFilter] Bypass: turned off for this voice call by the owner.")
+            Logger(subsystem: "ai.osaurus", category: "privacy.filter").notice(
+                "Privacy Filter bypassed: turned off for a paired phone call"
+            )
             return (messages, nil)
+        }
+        if ChatExecutionContext.voiceCallPrivacy == .auto {
+            Logger(subsystem: "ai.osaurus", category: "privacy.filter").notice(
+                "Privacy Filter review set to auto-accept for a paired phone call"
+            )
         }
         // Every detection redacted, unasked, when the call chose so.
         let reviewMode = ChatExecutionContext.voiceCallPrivacy == .auto ? .autoScrub : reviewMode

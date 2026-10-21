@@ -9806,8 +9806,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // always speaks. Only this caller gets cards relayed (privacy reviews,
         // tool approvals); a bare loopback script is still owner but has no
         // one polling for cards, so it keeps failing closed instead of
-        // waiting on an answer that never comes.
-        let remoteReviewer = ownerRun && stateRef.value.isSecureChannel
+        // waiting on an answer that never comes. The phone is identified by
+        // the master key it validates inside the channel, never by loopback:
+        // the Secure Channel handshake does not authenticate the client, so a
+        // local process can open its own session and must not gain the
+        // phone's powers (`osaurus_privacy`, run ids, model options).
+        let remoteReviewer = stateRef.value.authedScopeIsMaster && stateRef.value.isSecureChannel
         if !ownerRun,
             let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run")
         {
