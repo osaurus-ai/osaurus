@@ -70,6 +70,7 @@ extension HTTPHandler {
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return .badRequest
         }
@@ -93,6 +94,7 @@ extension HTTPHandler {
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return "invalid_request_error"
         }
@@ -142,6 +144,7 @@ extension HTTPHandler {
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return "invalid_request_error"
         }
@@ -162,6 +165,7 @@ extension HTTPHandler {
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return "invalid_request_error"
         }
@@ -182,6 +186,7 @@ extension HTTPHandler {
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return "invalid_request_error"
         }

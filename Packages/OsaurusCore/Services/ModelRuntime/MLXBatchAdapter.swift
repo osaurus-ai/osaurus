@@ -1309,8 +1309,8 @@ struct MLXBatchAdapter {
                     defaultLevel: defaultLevel
                 ) ?? requested
             case .modeKwargs:
-                // Mode bundles never receive `reasoning_effort`; their declared
-                // kwargs are applied below.
+                // Mode bundles receive their declared kwargs below, including
+                // a native reasoning_effort transport when the bundle uses it.
                 return nil
             case .fixedNativeEffort:
                 // The bundle exposes no picker, but its engine still owns a
@@ -1501,13 +1501,7 @@ struct MLXBatchAdapter {
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
-        guard let value else { return false }
-        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
-            return true
-        default:
-            return false
-        }
+        DeclaredReasoningEffort.isOffEffort(value)
     }
 
     /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
@@ -2369,6 +2363,7 @@ struct MLXBatchAdapter {
         cacheStableSystemPrefix: String?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
+        try DeclaredReasoningEffort.validateModeRequest(modelId: modelName, options: generation.modelOptions)
         // Heap-allocated outbox so the throwing closure can hand a value back
         // across the actor boundary.
         final class OutBox: @unchecked Sendable {

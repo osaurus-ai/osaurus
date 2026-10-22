@@ -281,6 +281,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 modelOptions["reasoningEffort"] = .string(requestReasoningEffort)
             }
         }
+        try DeclaredReasoningEffort.validateModeRequest(modelId: request.model, options: modelOptions)
         ComputerUseTraceLog.recordEffectiveDispatch(
             request: request,
             modelOptions: modelOptions
