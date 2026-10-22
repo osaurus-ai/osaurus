@@ -4742,7 +4742,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     /// `session_create`: a run may start a chat with `osaurus_create_session`.
     /// `context_usage`: `GET /sessions/{id}/context` prices a chat's next send.
-    static let connectFeatures = ["session_create", "context_usage"]
+    /// `voice_call_context`: `osaurus_voice_call` adds nothing to the messages (the phone sends
+    /// its own call instructions), keeps call turns lean and the model warm between them.
+    static let connectFeatures = ["session_create", "context_usage", "voice_call_context"]
 
     /// The Action Bar a client shows for `agent`: its own, else for the
     /// Orchestrator the configure-oriented defaults its Mac chat shows (a
@@ -10352,19 +10354,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     RemoteSessionContinuation.beginPhoneRun(continuedSessionId)
                 }
             }
-            // A turn of the owner's phone call: ask for a short, spoken reply,
-            // after the conversation so the prompt and history keep their cache
-            // (docs/MOBILE_PROTOCOL.md §6.5). Taken off again before saving.
+            // A turn of the owner's phone call (docs/MOBILE_PROTOCOL.md §6.5).
+            // The phone sends its own call instructions as a fixed system
+            // message, so nothing is added to the messages here: a note on the
+            // latest user message was gone when that message was replayed on
+            // the next turn, and a local model read the last exchange again.
+            // The flag keeps call turns lean (`isVoiceCall`) and the model
+            // warm between them.
             let voiceCall = includeToolDetail && req.osaurus_voice_call == true
-            if voiceCall { VoiceCallReplies.addNote(to: &messages) }
             // Append this run's turns to the continued chat when the request
             // ends, however it ends (finished, errored, client gone).
             defer {
                 if let continuedSessionId {
                     let start = min(persistFrom.value, messages.count)
                     let turns = Array(messages[start...])
-                    let saved = voiceCall ? VoiceCallReplies.removingNote(from: turns) : turns
-                    let appended = saved.filter { $0.role != "system" }
+                    let appended = turns.filter { $0.role != "system" }
                     let runModel = model
                     Task { @MainActor in
                         if !appended.isEmpty {
@@ -11228,7 +11232,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // The owner's phone call may turn the Privacy Filter off, or
                 // its review to auto-accept, for its own turns (§6.5).
                 let callPrivacy = remoteReviewer ? req.osaurus_privacy.flatMap(VoiceCallPrivacy.init(rawValue:)) : nil
-                let runResult = try await ChatExecutionContext.$voiceCallPrivacy
+                let runResult = try await ChatExecutionContext.$isVoiceCall
+                    .withValue(voiceCall) {
+                    try await ChatExecutionContext.$voiceCallPrivacy
                     .withValue(callPrivacy) {
                     try await ChatExecutionContext.$hasRemoteReviewer
                     .withValue(remoteReviewer) {
@@ -11250,6 +11256,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         )
                                     }
                             }
+                    }
                     }
                     }
                     }
