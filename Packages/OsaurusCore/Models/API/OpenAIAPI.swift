@@ -1241,10 +1241,21 @@ struct ChatCompletionChunk: Codable, Sendable {
     /// Osaurus extension chunk for determinate local prefill progress. Emitted
     /// with empty choices before the first token when the runtime reports it.
     var osaurus_prefill: PrefillProgressState? = nil
+    /// Osaurus extension chunk on `/agents/{id}/run`: a step that has to load
+    /// its local model first says so (`loading`), then `ready` once it is
+    /// in memory, so a client can say why the reply hasn't started.
+    var osaurus_model_load: ModelLoadState? = nil
     /// Osaurus extension chunk on a hosted `/agents/{id}/run`: the small
     /// files the agent shared with `share_artifact`, emitted once with empty
     /// choices right before the finish chunk (see `RemoteRunArtifacts`).
     var osaurus_artifacts: [RemoteRunArtifact]? = nil
+}
+
+/// `osaurus_model_load` on an agent run's stream (MOBILE_PROTOCOL §6.5).
+struct ModelLoadState: Codable, Sendable, Equatable {
+    /// `loading` or `ready`.
+    let state: String
+    let model: String
 }
 
 // MARK: - Error Response

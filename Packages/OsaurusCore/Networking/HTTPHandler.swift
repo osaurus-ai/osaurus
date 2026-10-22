@@ -10900,7 +10900,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var inboundStepMarkedWriting = false
 
                     do {
+                        // A local model not in memory loads before the stream
+                        // starts: say so, so the phone shows why it waits.
+                        let loadsModel = await ModelRuntime.shared.needsLoad(model)
+                        if loadsModel {
+                            hop {
+                                writerBound.value.writeModelLoad(
+                                    "loading",
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         let stream = try await chatEngine.streamChat(request: iterationReq)
+                        if loadsModel {
+                            hop {
+                                writerBound.value.writeModelLoad(
+                                    "ready",
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         if disconnected.value { throw CancellationError() }
                         for try await delta in stream {
                             if disconnected.value { throw CancellationError() }

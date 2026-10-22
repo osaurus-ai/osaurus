@@ -1279,6 +1279,13 @@ public actor ModelRuntime {
         }
     }
 
+    /// Whether a generation on `name` would load an installed local model
+    /// first: a phone run says so on its stream while it waits.
+    func needsLoad(_ name: String) -> Bool {
+        guard let found = ModelManager.findInstalledModel(named: name) else { return false }
+        return modelCache[found.name] == nil
+    }
+
     /// Loads a local model as the owner's phone call connects (`POST
     /// /agents/{id}/warm`, MOBILE_PROTOCOL §6.5), so the first turn doesn't
     /// wait on it, and keeps it as a call's turn does. Whether it was loaded
