@@ -371,11 +371,16 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
             // instead of executing it (or asking the user "shall I?" —
             // approval is a native one-tap card, never a chat question);
             // say the next move outright.
+            let sameInput =
+                basedOn == nil
+                ? "this same document"
+                : "the same `template` and `overrides` (not a hand-written `agents:` entry, "
+                    + "which would drop the template's settings)"
             result["next_step"] =
                 plan.isEmpty
                 ? "No changes — the current state already matches this document."
                 : "Dry run only — NOTHING was changed. If the plan is right, call action "
-                    + "`apply` with this same document NOW, in this same turn. The user "
+                    + "`apply` with \(sameInput) NOW, in this same turn. The user "
                     + "approves via a native one-tap card — do not ask for confirmation in chat."
             return ToolEnvelope.success(tool: name, result: result)
         } catch let issues as ConfigPlanIssues {

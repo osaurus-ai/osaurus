@@ -108,4 +108,25 @@ struct AgentTemplateOrchestratorHintTests {
         #expect(!rendered.contains("Sub Agent"))
         #expect(!rendered.contains("Cloud Agent"))
     }
+
+    // MARK: - Template plan
+
+    /// A template plan has no YAML document to repeat. Told to apply "this
+    /// same document", small models transcribed the plan into an `agents:`
+    /// entry instead, dropping the template's model and its lineage.
+    @Test
+    func templatePlan_nextStepRepeatsTheTemplateNotADocument() async throws {
+        let args: [String: Any] = [
+            "action": "plan",
+            "template": "Sub Agent",
+            "overrides": ["name": "zz-template-plan-probe-\(UUID().uuidString.prefix(8))"],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: args)
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await OsaurusConfigTool().execute(argumentsJSON: String(decoding: data, as: UTF8.self))
+        }
+        #expect(result.contains("dry_run_not_applied"), "plan did not run: \(result)")
+        #expect(result.contains("the same `template` and `overrides`"), "next_step: \(result)")
+        #expect(!result.contains("this same document"))
+    }
 }
