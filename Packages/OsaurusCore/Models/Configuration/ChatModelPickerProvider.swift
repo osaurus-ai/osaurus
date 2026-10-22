@@ -111,7 +111,7 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
         return builtIns.filter(\.isActive) + connected + builtIns.filter { !$0.isActive }
     }
 
-    private static func sorted(_ models: [ModelPickerItem]) -> [ModelPickerItem] {
+    private static nonisolated func sorted(_ models: [ModelPickerItem]) -> [ModelPickerItem] {
         models.sorted {
             if $0.displayName == $1.displayName { return $0.id < $1.id }
             return $0.displayName < $1.displayName
