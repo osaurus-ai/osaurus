@@ -3,7 +3,8 @@
 //  osaurus
 //
 //  Lightweight, append-only diagnostic log for prefill / KV-cache analysis.
-//  Writes timestamped lines to a single file in /tmp so a full request —
+//  Writes timestamped lines to a single file (the checkout's tmp/ in debug
+//  builds, /tmp otherwise) so a full request —
 //  prompt composition, per-step prefill token counts, and the cache
 //  hit/miss deltas around each model step — can be reconstructed offline.
 //
@@ -16,14 +17,25 @@
 
 import Foundation
 
-/// Append-only `/tmp` logger for prefill + KV-cache diagnostics.
+/// Append-only file logger for prefill + KV-cache diagnostics.
 final class PrefillDebugLog: @unchecked Sendable {
 
     static let shared = PrefillDebugLog()
 
     /// Destination file. Stable name so repeated runs accumulate into one
     /// file; each compose writes a `===` banner so turns are easy to find.
-    static let path = "/tmp/osaurus-prefill-debug.log"
+    /// Debug builds write it beside `osaurus.log` in the checkout's `tmp/`
+    /// (see `ConsoleLogFile`), where the other run logs are read; release
+    /// builds, which have no checkout, keep `/tmp`.
+    static let path: String = {
+        #if DEBUG
+            let folder = ConsoleLogFile.fileURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            return folder.appendingPathComponent("osaurus-prefill-debug.log").path
+        #else
+            return "/tmp/osaurus-prefill-debug.log"
+        #endif
+    }()
 
     /// Off-main serial queue: keeps file opens/writes off the inference and
     /// UI threads (see the no-main-thread-blocking project rule).
