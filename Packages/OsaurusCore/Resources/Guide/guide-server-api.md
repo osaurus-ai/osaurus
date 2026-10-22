@@ -53,3 +53,17 @@ The declarative configuration surface (see the Declarative Configuration topic) 
 - `POST /admin/config/apply` — same body; high-risk changes return `409` with the risk list until re-sent with `"confirm_high_risk": true`.
 
 Unlike other admin routes, these are strictly restricted to local (loopback) callers — an access key never admits a remote caller, even with network exposure on. The `osaurus config` CLI wraps these endpoints.
+
+## Model download endpoints (loopback only)
+
+`POST /admin/config/apply` starts downloads for listed models without waiting for them. These routes follow them, with the same loopback-only rule:
+
+- `GET /admin/downloads` — downloads that are in progress, paused, or failed. `state` is `downloading`, `paused`, `failed`, `completed`, or `not_started`; `progress` is 0–1; fields that aren't known yet are `null`:
+
+  ```json
+  {"downloads": [{"id": "mlx-community/Qwen3-4B-4bit", "state": "downloading", "progress": 0.42,
+    "bytes_received": 1063256064, "total_bytes": 2531584000, "bytes_per_second": 31457280,
+    "eta_seconds": 46.7, "error": null}]}
+  ```
+- `GET /admin/downloads?model=<repo id>` — that one model's entry in any state (for example `completed` once it finishes); an empty list if the model is unknown.
+- `POST /admin/downloads/cancel` — body `{"model": "<repo id>"}`; cancels an in-progress or paused download. Returns `409` if the model isn't downloading and `404` if it's unknown.
