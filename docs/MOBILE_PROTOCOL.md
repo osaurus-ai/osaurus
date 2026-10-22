@@ -449,7 +449,8 @@ the tunnel that authenticated that address. No client auth at the relay.
 Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch`, and every
 owner-only request that changes something (any method but `GET`: creating,
 editing or deleting an agent, its tools, answering an approval or a privacy
-review, editing or deleting a chat, stopping a run), that arrive in plaintext
+review, editing or deleting a chat, stopping a run, loading a call's model
+with `POST /agents/{id}/warm`), that arrive in plaintext
 are refused with `426`. So is every owner route, reads included, when a
 remote caller presents an owner (master-scoped) key outside the channel
 (`HTTPHandler.ownerChannelRoutes`; see SECURE_CHANNEL.md). Loopback callers
@@ -582,17 +583,44 @@ behaves as before.
 
 ### 6.5 Voice-call turns
 
-The phone speaks a reply aloud during a voice call, so a turn of a call
-**SHOULD** carry `"osaurus_voice_call": true` in the §6.3 body. The Mac then
-adds a note asking for a short, plain spoken answer (a few sentences, no
-markdown or lists) to the end of the latest user message, after the
-conversation, so the system prompt and history stay the same as the chat
-around the call and a local model's prompt cache keeps them. The note is
-never saved: a continued chat (§14.5) stores the turn without it.
+The phone speaks a reply aloud during a voice call. It asks for a short,
+plain spoken answer itself, with a fixed system message after the agent's
+own (the same every turn, so a local model's prompt cache keeps it and the
+history after it). A Mac that lists `"voice_call_context"` in `features`
+(§14.5) also takes `"osaurus_voice_call": true` in the §6.3 body, and a
+phone **SHOULD** send it on every turn of a call to such a Mac. It adds
+nothing to the messages; the Mac then:
+
+- **keeps the run's local model loaded** for at least 3.5 minutes after the
+  turn, instead of the usual 30 seconds (unless the user chose to unload at
+  once or never): the phone speaks each reply before the next turn comes,
+  and a reload cost every turn about 2 seconds;
+- **keeps searches small**: `web_search` returns at most 5 results and no
+  `next_action` pointing at `search_and_extract`; `search_and_extract`
+  returns 3 results, extracts 1 page by default (2 at most) and keeps 4,000
+  characters of each. A local model reads every token a tool returns before
+  it can answer, about 1,000 a second for a 9B model.
 
 Owner callers only (loopback or a master-scoped key); for anyone else the
-field is ignored. A Mac too old for it ignores the field, and the reply is
-as long as in the chat.
+field is ignored. Macs before `voice_call_context` added a note to the
+latest user message for this field instead, which cost a local model the
+last exchange again on the next turn: a phone sends the field only to a Mac
+that lists the feature.
+
+`POST /agents/{id}/warm` with `{"model": "…"}` (optional; the agent's own
+model without it) loads that local model as a call connects, so its first
+turn doesn't wait on the load, and keeps it loaded as a call's turn does. It
+answers once loaded: `{"loaded":true,"already":false}`, or `"already":true`
+when it was in memory. A cloud model has nothing to load:
+`{"loaded":false}`. `404 agent_not_found`, `500 load_failed`. Owner-only,
+and over the Secure Channel only (§6.2), as it changes what the Mac holds in
+memory.
+
+A run step that has to load its local model first says so on the stream, in
+a chunk with empty `choices`: `{"osaurus_model_load":{"state":"loading",
+"model":"…"}}`, then `"state":"ready"` once it is loaded, before the step's
+first token. A client can say why the reply hasn't started (the phone's
+call says "Loading Local Chat Model").
 
 A review read out mid-call is slow to answer, so when the call's model has
 `privacy` set (§12.1), the phone asks as the call starts whether to keep

@@ -136,7 +136,7 @@ These codes arrive outside the encryption (the handshake's answer, or `/secure/c
 ### Test coverage
 
 - `Tests/Identity/SecureChannelTests.swift` — handshake roundtrip, wrong-identity and tampered-transcript rejection, version negotiation, replay/reorder windows, cross-session and cross-call frame rejection, `fin` authentication, truncation detection.
-- `Tests/Networking/SecureChannelE2ETests.swift` — full NIO server: encrypted buffered and SSE calls, replay → `409`, unknown session → `401`, the `426` gate (plaintext remote refused, loopback allowed, encrypted relay-origin passes), inner auth still enforced, built-in-agent guard still fires inside the channel, per-agent scope enforced on `GET /agents/{id}` (a cross-agent scoped key is refused `403 agent_scope_denied` inside the ciphertext), no `/secure/*` nesting.
+- `Tests/Networking/SecureChannelE2ETests.swift` — full NIO server: encrypted buffered and SSE calls, replay → `409`, unknown session → `401`, the `426` gate (plaintext remote refused, loopback allowed, encrypted relay-origin passes; every owner write, `POST /agents/{id}/warm` included, and owner reads such as `GET /sessions/{id}/context`), inner auth still enforced, built-in-agent guard still fires inside the channel, per-agent scope enforced on `GET /agents/{id}` (a cross-agent scoped key is refused `403 agent_scope_denied` inside the ciphertext), no `/secure/*` nesting.
 - `Tests/Identity/MobilePairingTests.swift` — the connect identity: deterministic, device-scoped, never equal to an agent key at any index, and carried under the built-in agent in the pairing payload only when no custom agent has an address.
 
 ### Compatibility
