@@ -357,6 +357,15 @@ enum ModelProfileRegistry {
                 acc[def.id] = Set(segments.map(\.id))
             }
         }
+        // A bundle can declare native low as its Off rail. Preserve old saved
+        // selections when discovery replaces the native effort list with modes.
+        if let effort = persisted["reasoningEffort"]?.stringValue,
+            let mode = DeclaredReasoningEffort.mode(
+                forNativeEffort: effort, control: DeclaredReasoningEffort.control(forModelId: modelId)),
+            allowedSegmentValues["reasoningEffort"]?.contains(mode) == true
+        {
+            persisted["reasoningEffort"] = .string(mode)
+        }
         // An explicit Off from the older toggle remains Off when asynchronous
         // bundle discovery replaces it with an effort picker. Do not convert
         // an absent choice into a default or invent an unsupported direct rail.

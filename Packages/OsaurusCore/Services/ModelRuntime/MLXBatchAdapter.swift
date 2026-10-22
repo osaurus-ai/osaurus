@@ -1353,8 +1353,11 @@ struct MLXBatchAdapter {
             if disableThinking == true || directRailReasoningEffort {
                 level = "none"
             } else if let requested = normalizedReasoningEffort, hasPositiveReasoningEffort {
-                level = DeclaredReasoningEffort.snapped(
-                    requested, ontoLevels: levels, defaultLevel: defaultLevel)
+                level = DeclaredReasoningEffort.mode(
+                    forNativeEffort: requested,
+                    control: .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs))
+                    ?? DeclaredReasoningEffort.snapped(
+                        requested, ontoLevels: levels, defaultLevel: defaultLevel)
             } else {
                 level = defaultLevel ?? levels.last
             }

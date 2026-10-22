@@ -437,6 +437,71 @@ struct DeclaredReasoningEffortTests {
 // MARK: - Declared reasoning modes (Nemotron 3.5: on / medium / off)
 
 extension DeclaredReasoningEffortTests {
+    private static let nativeThinkingModeFixture = Data(#"""
+        {"chat": {"reasoning": {
+          "supported": true, "template_flag": "reasoning_effort",
+          "modes": ["think", "no_think"], "default_mode": "think",
+          "mode_kwargs": {"think": {"reasoning_effort": "high"},
+                          "no_think": {"reasoning_effort": "low"}},
+          "supported_reasoning_efforts": ["low", "high"],
+          "reasoning_effort_transport": "chat_template_kwarg"
+        }}}
+        """#.utf8)
+
+    @Test("native low Off and high On expose only semantic Off/High")
+    func nativeThinkingModesExposeDeclaredControls() throws {
+        let declaration = try #require(
+            DeclaredReasoningEffort.parseJangDeclaration(data: Self.nativeThinkingModeFixture))
+        #expect(declaration.control == .modeKwargs(
+            ["high"], defaultLevel: "high",
+            kwargs: ["high": ["reasoning_effort": .string("high")],
+                     "none": ["reasoning_effort": .string("low")]]))
+        let model = "proof/native-thinking-modes"
+        withOverride(declaration, forModelId: model) {
+            #expect(ModelProfileRegistry.reasoningCapabilities(for: model)?.levels.map(\.id)
+                == ["none", "high"])
+            #expect(ModelProfileRegistry.effectiveReasoningEffort(for: model, values: [:]) == "high")
+            #expect(ModelProfileRegistry.normalizedOptions(
+                for: model, persisted: ["reasoningEffort": .string("low")])["reasoningEffort"] == .string("none"))
+        }
+    }
+
+    @Test("native thinking modes send exact kwargs for UI, legacy toggle and native API values")
+    func nativeThinkingModesDispatchExactNativeKwargs() throws {
+        let declaration = try #require(
+            DeclaredReasoningEffort.parseJangDeclaration(data: Self.nativeThinkingModeFixture))
+        withOverride(declaration, forModelId: "proof/native-thinking-modes") {
+            for options: [String: ModelOptionValue] in [
+                ["reasoningEffort": .string("none")], ["reasoningEffort": .string("low")],
+                ["disableThinking": .bool(true)]
+            ] {
+                let context = MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(temperature: nil, maxTokens: 64, modelOptions: options),
+                    modelName: "proof/native-thinking-modes", toolChoice: .required)
+                #expect(context["reasoning_effort"] as? String == "low")
+                #expect(context["enable_thinking"] == nil)
+                #expect(context["tool_choice"] as? String == "required")
+            }
+            let on = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(temperature: nil, maxTokens: 64,
+                    modelOptions: ["reasoningEffort": .string("high")]),
+                modelName: "proof/native-thinking-modes")
+            #expect(on["reasoning_effort"] as? String == "high")
+            #expect(on["enable_thinking"] == nil)
+            let omitted = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(temperature: nil, maxTokens: 64),
+                modelName: "proof/native-thinking-modes")
+            #expect(omitted.isEmpty)
+        }
+    }
+
+    @Test("a bare native low/high list is not assumed to mean Off/On")
+    func nativeEffortListDoesNotInventThinkingModeSemantics() {
+        let data = Data(#"{"reasoning":{"supported_reasoning_efforts":["low","high"]}}"#.utf8)
+        #expect(DeclaredReasoningEffort.parseJangDeclaration(data: data)?.control
+            == .levels(["low", "high"], defaultLevel: nil))
+    }
+
     private static let nemotronJang = """
         {"capabilities": {"family": "nemotron_h", "reasoning_parser": "deepseek_r1",
           "reasoning_modes": {"on": {"enable_thinking": true},

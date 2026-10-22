@@ -190,9 +190,41 @@ enum DeclaredReasoningEffort {
             return nil
         }
         return Declaration(
-            control: fixedNativeEffort(root: root, reasoning: reasoning) ?? parseControl(reasoning),
+            control: fixedNativeEffort(root: root, reasoning: reasoning)
+                ?? nativeThinkingModes(reasoning) ?? parseControl(reasoning),
             preserveThinking: parsePreserveThinking(reasoning)
         )
+    }
+
+    /// Some bundles encode Off as a native effort, rather than reading
+    /// `enable_thinking`. Keep that explicit two-mode contract: for example,
+    /// think=high / no_think=low must offer Off/High and send low for Off.
+    /// A bare low/high effort list does not establish this mapping.
+    private static func nativeThinkingModes(_ reasoning: [String: Any]) -> Control? {
+        guard reasoning["template_flag"] as? String == "reasoning_effort",
+            transportIsChatTemplateKwarg(reasoning, key: "reasoning_effort_transport"),
+            let modes = reasoning["modes"] as? [String],
+            Set(modes) == ["think", "no_think"], modes.count == 2,
+            let declared = reasoning["supported_reasoning_efforts"] as? [String],
+            let modeKwargs = reasoning["mode_kwargs"] as? [String: Any],
+            let on = modeKwargs["think"] as? [String: String], on.count == 1,
+            let off = modeKwargs["no_think"] as? [String: String], off.count == 1,
+            let onEffort = on["reasoning_effort"], ladderRank(onEffort) != nil,
+            let offEffort = off["reasoning_effort"], offEffort != onEffort,
+            Set(declared) == Set([onEffort, offEffort]),
+            let defaultMode = reasoning["default_mode"] as? String, modes.contains(defaultMode)
+        else { return nil }
+        return .modeKwargs(
+            [onEffort], defaultLevel: defaultMode == "think" ? onEffort : "none",
+            kwargs: [onEffort: ["reasoning_effort": .string(onEffort)],
+                     "none": ["reasoning_effort": .string(offEffort)]])
+    }
+
+    /// Preserve a saved/native API effort when a declared mode uses it as
+    /// its transport. The picker id can differ from the native kwarg (Off).
+    static func mode(forNativeEffort effort: String, control: Control?) -> String? {
+        guard case .modeKwargs(_, _, let kwargs)? = control else { return nil }
+        return kwargs.first { $0.value["reasoning_effort"] == .string(effort) }?.key
     }
 
     /// `capabilities.reasoning_modes`: `{mode: {kwarg: bool|string}}`. Mode
