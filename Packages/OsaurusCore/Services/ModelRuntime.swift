@@ -7123,10 +7123,10 @@ public actor ModelRuntime {
             let videos = extractVideoSources(from: m)
             let audios = extractAudioSources(from: m, metrics: &audioMetrics)
             switch m.role {
-            case "system":
+            case "system", "developer":
                 out.append(
                     MLXLMCommon.Chat.Message(
-                        role: .system,
+                        role: m.role == "developer" ? .developer : .system,
                         content: m.content ?? "",
                         images: images,
                         videos: videos,
