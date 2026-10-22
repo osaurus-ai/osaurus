@@ -4598,7 +4598,7 @@ struct AgentDetailView: View {
             // Autonomy policy (same read/navigate/edit/consequential gate as
             // Computer Use), so there is no per-agent permission row here.
             subagentFootnote(
-                "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser."
+                "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser Use."
             )
         }
     }

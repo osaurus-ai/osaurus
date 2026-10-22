@@ -249,7 +249,7 @@ struct ComputerUseSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     stepRow(number: 1, text: "Open the Agents tab and select a custom agent.")
-                    stepRow(number: 2, text: "Go to Features and turn on Computer Use.")
+                    stepRow(number: 2, text: "Open Abilities → Subagents and turn on Computer Use.")
                     stepRow(
                         number: 3,
                         text: "Optionally set that agent's Autonomy ceiling to cap how far it can act."

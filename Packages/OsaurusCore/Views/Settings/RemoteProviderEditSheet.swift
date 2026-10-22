@@ -562,7 +562,7 @@ private struct AddProviderFlow: View {
                                 .frame(width: 40, height: 40)
                             Image(systemName: selectedPreset?.icon ?? "cloud")
                                 .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.white)
+                                .foregroundColor(selectedPreset == nil ? theme.secondaryText : .white)
                         }
 
                         Text("Connect \(selectedPreset?.name ?? "Provider")", bundle: .module)
