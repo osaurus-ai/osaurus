@@ -1178,6 +1178,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/warm") {
+                handleAgentWarmEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/tools/preset") {
                 handleAgentToolPresetEndpoint(
                     head: head,
@@ -6074,6 +6082,85 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
                     .map { String(decoding: $0, as: UTF8.self) } ?? #"{"tools":[]}"#
                 return (.ok, json)
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /agents/{id}/warm with `{"model": "…"}` (optional; the agent's
+    /// own model without it): loads that local model as the owner's phone
+    /// call connects, so its first turn doesn't wait on the load, and keeps
+    /// it loaded as a call's turn does (MOBILE_PROTOCOL §6.5). Answers once
+    /// loaded: `{"loaded":true,"already":false}`; a cloud model has nothing
+    /// to load, `{"loaded":false}`. Owner-only and over the Secure Channel
+    /// only, as it changes what the Mac holds in memory.
+    private func handleAgentWarmEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        struct WarmRequest: Decodable { let model: String? }
+        let requested = body.isEmpty ? nil : (try? JSONDecoder().decode(WarmRequest.self, from: body))?.model
+        guard components.count == 3, let agentId = UUID(uuidString: String(components[1])) else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected /agents/{id}/warm"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let model: String? = await MainActor.run {
+                guard AgentManager.shared.agent(for: agentId) != nil else { return nil }
+                return requested.flatMap { $0.isEmpty ? nil : $0 } ?? AgentManager.shared.effectiveModel(for: agentId)
+            }
+            let outcome: (status: HTTPResponseStatus, json: String)
+            if let model {
+                do {
+                    switch try await ModelRuntime.shared.warmForVoiceCall(name: model) {
+                    case nil: outcome = (.ok, #"{"loaded":false}"#)
+                    case let already?: outcome = (.ok, #"{"loaded":true,"already":\#(already)}"#)
+                    }
+                } catch {
+                    outcome = (.internalServerError, #"{"error":"load_failed"}"#)
+                }
+            } else {
+                outcome = (.notFound, #"{"error":"agent_not_found"}"#)
             }
             hop {
                 self.sendAgentEditResponse(

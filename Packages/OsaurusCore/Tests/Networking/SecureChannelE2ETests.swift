@@ -283,6 +283,7 @@ struct SecureChannelE2ETests {
             ("PATCH", "/agents/\(id)", #"{"autonomous_exec_enabled":true}"#),
             ("DELETE", "/agents/\(id)", nil),
             ("POST", "/agents/\(id)/tools/preset", #"{"preset":"all"}"#),
+            ("POST", "/agents/\(id)/warm", #"{"model":"x"}"#),
             ("PATCH", "/agents/\(id)/tools/shell", #"{"enabled":true}"#),
             ("PATCH", "/sessions/\(id)", #"{"title":"x"}"#),
             ("DELETE", "/sessions/\(id)", nil),

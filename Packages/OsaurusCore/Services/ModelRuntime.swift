@@ -1279,6 +1279,19 @@ public actor ModelRuntime {
         }
     }
 
+    /// Loads a local model as the owner's phone call connects (`POST
+    /// /agents/{id}/warm`, MOBILE_PROTOCOL §6.5), so the first turn doesn't
+    /// wait on it, and keeps it as a call's turn does. Whether it was loaded
+    /// already; nil for a name that is no installed local model (a cloud one).
+    func warmForVoiceCall(name: String) async throws -> Bool? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let found = ModelManager.findInstalledModel(named: trimmed) else { return nil }
+        let already = modelCache[found.name] != nil
+        voiceCallModels.insert(found.name)
+        try await preload(name: found.name)
+        return already
+    }
+
     /// Best-effort MLX freed-buffer pool trim under OS memory pressure.
     ///
     /// Skipped while any generation is in flight — the pool is being actively
