@@ -296727,6 +296727,12 @@
             "state" : "translated",
             "value" : "无法导出“%@”"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法匯出「%@」"
+          }
         }
       }
     },
@@ -296754,6 +296760,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "将模板作为 JSON 文件发送，或保留在你的资源库中供 Orchestrator 使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將範本以 JSON 檔案傳送，或保留在你的資源庫中，讓 Orchestrator 可以使用。"
           }
         }
       }
@@ -296789,6 +296801,12 @@
             "state" : "translated",
             "value" : "将“%1$@”从版本 %2$lld 更新到 %3$lld。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將「%@」從版本 %lld 更新到 %lld。"
+          }
         }
       }
     },
@@ -296816,6 +296834,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你的资源库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的資源庫"
           }
         }
       }
