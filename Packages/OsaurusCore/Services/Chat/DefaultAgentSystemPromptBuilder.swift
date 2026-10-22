@@ -463,14 +463,17 @@ public enum DefaultAgentSystemPromptBuilder {
         if exposure.spawnAvailable {
             return
                 "A fitting agent exists → call `spawn_agent` with the complete task. None fits → "
-                + "create one (apply an `agents:` entry with `osaurus_config`; it inherits "
-                + "your model unless you set one), then call `spawn_agent` in the SAME "
-                + "turn — a newly created agent is spawnable right away. "
+                + "create one (check `osaurus_config {action: 'templates'}` first and plan + apply a "
+                + "fitting agent template with `overrides`; apply an `agents:` entry only when no "
+                + "template fits; it inherits your model unless you set one), then call `spawn_agent` "
+                + "in the SAME turn — a newly created agent is spawnable right away. "
         }
         return
             "You have no agents yet, so `spawn_agent` is NOT in your tools until you create "
-            + "one: apply an `agents:` entry with `osaurus_config` (it inherits your model "
-            + "unless you set one); the apply result confirms the agent is spawnable and adds "
+            + "one with `osaurus_config`: check `{action: 'templates'}` first and plan + apply a "
+            + "fitting agent template with `overrides`; apply an `agents:` entry only when no "
+            + "template fits (it inherits your model unless you set one); the apply result "
+            + "confirms the agent is spawnable and adds "
             + "`spawn_agent` to your tools in the same turn — then call `spawn_agent` with the "
             + "complete task in that SAME turn. Never call `spawn_agent` before that apply. "
     }
@@ -480,15 +483,19 @@ public enum DefaultAgentSystemPromptBuilder {
         if exposure.spawnAvailable {
             return
                 "When a fitting agent exists, call `spawn_agent` with the complete, standalone "
-                + "task. When none fits, create one (apply an `agents:` entry with "
-                + "`osaurus_config`; it inherits your model unless you set one) and call "
+                + "task. When none fits, create one (check `osaurus_config {action: 'templates'}` "
+                + "first and plan + apply a fitting agent template with `overrides`, which gives it "
+                + "that template's model and tools; apply an `agents:` entry with `osaurus_config` "
+                + "only when no template fits; it inherits your model unless you set one) and call "
                 + "`spawn_agent` in the SAME turn — a newly created agent is spawnable "
                 + "immediately."
         }
         return
             "You have no agents yet, so `spawn_agent` is not in your tools until you create "
-            + "one: apply an `agents:` entry with `osaurus_config` (it inherits your model "
-            + "unless you set one). The apply result confirms the agent is spawnable and adds "
+            + "one with `osaurus_config`: check `{action: 'templates'}` first and plan + apply a "
+            + "fitting agent template with `overrides`; apply an `agents:` entry only when no "
+            + "template fits (it inherits your model unless you set one). The apply result "
+            + "confirms the agent is spawnable and adds "
             + "`spawn_agent` to your tools in the same turn; then call `spawn_agent` with the "
             + "complete, standalone task in that SAME turn. Never call `spawn_agent` before "
             + "that apply."

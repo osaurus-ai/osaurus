@@ -1,0 +1,50 @@
+{
+  "format": "osaurus.template",
+  "format_version": 1,
+  "id": "0f5c1a4e-6b7d-4c1a-9a01-000000000003",
+  "kind": "agent",
+  "version": 1,
+  "changelog": "Built-in template",
+  "name": "Sub Agent",
+  "summary": "Small, fast worker the orchestrator can hand narrow tasks to. Tools on, memory off, no subagents of its own.",
+  "author": {
+    "name": "Osaurus"
+  },
+  "created_at": "2026-09-16T00:00:00Z",
+  "available_to_orchestrator": true,
+  "requirements": {
+    "models": [
+      {
+        "slot": "main",
+        "preferred": "qwen3-coder-30b",
+        "strictness": "preferred"
+      }
+    ]
+  },
+  "agent": {
+    "name": "Sub Agent",
+    "description": "A focused worker for delegated tasks.",
+    "system_prompt": "You are a focused sub-agent. You receive one well-defined task at a time from an orchestrator. Do exactly that task, keep your answer short and structured, and report anything you could not do instead of guessing. Do not start side quests.",
+    "model": "qwen3-coder-30b",
+    "capabilities": {
+      "tools_enabled": true,
+      "memory_enabled": false,
+      "search_memory_enabled": false,
+      "web_search_enabled": false,
+      "knowledge_enabled": false
+    },
+    "tools": {
+      "mode": "auto"
+    },
+    "sandbox": {
+      "enabled": true,
+      "network_enabled": true,
+      "allowed_domains": []
+    },
+    "subagents": {
+      "enabled": false,
+      "agents": [],
+      "models": []
+    }
+  }
+}

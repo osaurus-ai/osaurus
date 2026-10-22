@@ -37,6 +37,17 @@ public struct PendingKnowledgeCreateRequest: Equatable, Sendable {
     }
 }
 
+/// A parked setup wizard, by what it sets up.
+enum PendingSetupSubject {
+    case agent(AgentSetupSubject)
+
+    var tab: ManagementTab {
+        switch self {
+        case .agent: return .agents
+        }
+    }
+}
+
 /// Manages the session state for the management interface.
 @MainActor
 public final class ManagementStateManager: ObservableObject {
@@ -172,6 +183,17 @@ public final class ManagementStateManager: ObservableObject {
     /// sidebar's New Agent button. `AgentsView` observes this and resets it
     /// to false after presenting.
     @Published public var pendingCreateAgent: Bool = false
+
+    /// One-shot request to open the Set Up Agent wizard for a local agent,
+    /// e.g. from the first-open checklist alert in chat. `AgentsView`
+    /// observes this and resets it to nil after presenting.
+    @Published public var pendingAgentSetupId: UUID?
+
+    /// A setup wizard that stepped aside so the user could visit another
+    /// tab (downloading a model, say). Carries the unsaved draft or
+    /// bindings with it, so nothing the user has filled in is lost.
+    /// `AgentsView` reopens the wizard from this and resets it to nil.
+    @Published var pendingSetupSubject: PendingSetupSubject?
 
     /// One-shot request to reveal a project's shared memory — the namespace
     /// key (`project-<uuid>`). `MemoryView` observes this, switches to its

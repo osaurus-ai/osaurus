@@ -14,6 +14,17 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - Or ask the default Osaurus assistant: "create a coding agent" — it can create, update, and switch agents for you.
 - Switch agents from the agent menu in the chat window.
 
+## Agent templates (Agents → Templates)
+
+- A template is one agent's configuration as portable JSON: prompt, model, tool selection (MCP servers and plugins by name), sandbox, subagent settings, and a `requires` list of what the author relied on (working folder, knowledge collections, plugins, MCP servers, permissions, model). Secrets, folder access grants, and knowledge files never travel.
+- Open the Templates page with the **Templates** button in the Agents header (**Agents** at the top returns). Built-in **Cloud Agent**, **Local Agent**, and **Sub Agent** templates are always there.
+- Save one from any agent card (**…** → **Save as Template**) or the agent page's Share menu (**Save as Template**). Import one with **Import Template** (choose a `.osaurustemplate` or `.json` file) or by dropping the file on the Templates page. The import review shows the author signature, the model and tools, what it needs on this Mac, and how to connect its MCP servers before anything is saved; the same version with different content asks **Keep both** or **Replace**.
+- A template card's **…** menu has **Use Template**, **Export File…** (a `.osaurustemplate` file, signed with your Osaurus identity when this Mac has one; saved answers, secret values, and absolute paths are left out), **Save to Library** for built-ins, and for your own templates **Show to Orchestrator** / **Hide from Orchestrator**, **Rename…**, and **Delete**.
+- **Use Template** opens **Create Agent from Template**: one step for each thing this Mac is missing (Model, Working Folder, Knowledge, Tools, Permissions) then Review. The agent is created only when nothing blocks it. Agents made this way show **From the … template** on their card and page.
+- An agent with unfinished setup shows **Needs setup** on its card; **Run Setup** in the card menu, or the **Finish setting up …** prompt when you first open it in chat, walks through the gaps. Delegating to it is refused while something it needs is still missing.
+- A template shown to the Orchestrator lets you say "make me an agent from the Cloud Agent template that does X"; the Orchestrator bases the new agent on the template instead of enabling every tool.
+- Templates live in `~/.osaurus/template-library/<template-id>/v<N>.json` (one file per version). Whole-config YAML templates saved by `osaurus_config export` stay in `~/.osaurus/templates/`.
+
 ## Per-agent features (agent → Abilities → Overview)
 
 - Tools (on by default) and Memory (on by default).

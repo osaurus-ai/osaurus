@@ -81,6 +81,7 @@ Two ways to wire credentials:
 - "Give my research agent web search and switch to it" — the assistant writes the minimal document, shows the plan, and applies after your approval.
 - "Export my setup" — saves a shareable snapshot; re-applying it later (or on another machine) recreates the configuration, prompting only for credentials.
 - Templates: `export` with a save-as name stores the document under `~/.osaurus/templates/`; later say "apply my research-setup template".
+- Agent templates: single-agent templates from Agents → Templates. `templates` lists the ones shown to the Orchestrator; `plan` / `apply` with `template: "<name>"` plus `overrides: {name, description, system_prompt, model}` creates an agent from one. The `agents[]` entity carries the portable keys (`tools`, `mcp_servers`, `plugins`, `plugin_instructions`, `sandbox`, `subagents`, `working_folder`) that make this work across machines.
 
 ## CLI
 

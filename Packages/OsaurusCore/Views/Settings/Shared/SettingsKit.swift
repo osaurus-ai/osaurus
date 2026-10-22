@@ -695,3 +695,45 @@ struct SettingsDestructiveRow: View {
         .settingsLandingAnchor(anchorId)
     }
 }
+
+// MARK: - Back Bar
+
+/// The slim bar above a pushed page: a back button naming where it returns
+/// to. Pushed pages keep their own title header below it.
+struct SettingsBackBar: View {
+    @Environment(\.theme) private var theme
+
+    let title: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack {
+            Button(action: action) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(LocalizedStringKey(title), bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isHovering ? theme.tertiaryBackground : Color.clear)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .onHover { isHovering = $0 }
+            .keyboardShortcut("[", modifiers: .command)
+            .accessibilityLabel(Text("Back to \(title)", bundle: .module))
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+    }
+}

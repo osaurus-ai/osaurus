@@ -1,0 +1,50 @@
+{
+  "format": "osaurus.template",
+  "format_version": 1,
+  "id": "0f5c1a4e-6b7d-4c1a-9a01-000000000001",
+  "kind": "agent",
+  "version": 1,
+  "changelog": "Built-in template",
+  "name": "Cloud Agent",
+  "summary": "General-purpose worker on a cloud model. Tools on, memory off, can delegate to subagents.",
+  "author": {
+    "name": "Osaurus"
+  },
+  "created_at": "2026-09-16T00:00:00Z",
+  "available_to_orchestrator": true,
+  "requirements": {
+    "models": [
+      {
+        "slot": "main",
+        "preferred": "sonnet-5",
+        "strictness": "preferred"
+      }
+    ]
+  },
+  "agent": {
+    "name": "Cloud Agent",
+    "description": "A capable general worker backed by a cloud model.",
+    "system_prompt": "You are a capable general-purpose assistant running on a cloud model. Think through the task, use your tools when they add real information, and delegate well-bounded subtasks to subagents when that is faster. Be clear and concise, and say plainly when something is outside what you can verify.",
+    "model": "sonnet-5",
+    "capabilities": {
+      "tools_enabled": true,
+      "memory_enabled": false,
+      "search_memory_enabled": false,
+      "web_search_enabled": true,
+      "knowledge_enabled": false
+    },
+    "tools": {
+      "mode": "auto"
+    },
+    "sandbox": {
+      "enabled": true,
+      "network_enabled": true,
+      "allowed_domains": []
+    },
+    "subagents": {
+      "enabled": true,
+      "agents": [],
+      "models": []
+    }
+  }
+}

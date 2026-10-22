@@ -1843,6 +1843,17 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.templates",
+            tab: .agents,
+            title: "Templates",
+            keywords: [
+                "agent templates", "import agent template", "agent starter", "share agent", "osaurustemplate",
+                "save as template", "export template", "import template",
+            ],
+            disambiguation:
+                "Agents header → Templates. Import Template takes a .osaurustemplate file; Save as Template is in an agent card's … menu and the agent page's Share menu."
+        ),
+        .init(
             id: "agents.configure",
             tab: .agents,
             title: "Configure Agent",
