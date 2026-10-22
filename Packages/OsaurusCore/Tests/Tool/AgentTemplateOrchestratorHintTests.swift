@@ -129,4 +129,21 @@ struct AgentTemplateOrchestratorHintTests {
         #expect(result.contains("the same `template` and `overrides`"), "next_step: \(result)")
         #expect(!result.contains("this same document"))
     }
+
+    @Test
+    func unknownTemplateWithOverrides_pointsAtAgentsEntryNotSaveAs() async throws {
+        let args: [String: Any] = [
+            "action": "plan",
+            "template": "zz-missing-\(UUID().uuidString.prefix(8))",
+            "overrides": ["name": "Researcher"],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: args)
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await OsaurusConfigTool().execute(argumentsJSON: String(decoding: data, as: UTF8.self))
+        }
+        #expect(result.contains("No agent template named"), "message: \(result)")
+        #expect(result.contains("Sub Agent"))
+        #expect(result.contains("`agents:` entry"))
+        #expect(!result.contains("save_as"))
+    }
 }
