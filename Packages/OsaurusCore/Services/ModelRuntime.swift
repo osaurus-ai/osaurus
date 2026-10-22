@@ -647,6 +647,11 @@ public actor ModelRuntime {
     /// chat window closes. `nil` (never generated — e.g. a warm preload) is
     /// treated as chat-sourced, since preloads are chat-driven.
     private var lastUseSource: [String: RequestSource] = [:]
+    /// Models whose latest generation was a turn of the owner's phone call
+    /// (`ChatExecutionContext.isVoiceCall`): kept loaded a while longer, as the
+    /// phone speaks each reply before the next turn comes (see
+    /// `voiceCallIdleResidency`).
+    private var voiceCallModels: Set<String> = []
 
     /// Grace period applied when the last chat window referencing a model
     /// closes. Zero: closing the chat evicts the model immediately — the
@@ -2826,6 +2831,26 @@ public actor ModelRuntime {
         return configured
     }
 
+    /// How long a model stays loaded after a phone call's turn: on a call the
+    /// phone speaks the reply for 15–20 s after the text is done, then the
+    /// user answers, so the default 30 s unloaded it before most next turns
+    /// and each paid a reload. 3.5 minutes from the turn's end, unless the
+    /// configured wait is longer. A user who chose to unload at once, or to
+    /// keep models loaded, keeps that choice.
+    static let voiceCallResidencySeconds = 210
+
+    nonisolated static func voiceCallIdleResidency(
+        _ policy: ModelIdleResidencyPolicy,
+        configured: ModelIdleResidencyPolicy
+    ) -> ModelIdleResidencyPolicy {
+        guard case .afterSeconds(let configuredSeconds) = configured else { return policy }
+        switch policy {
+        case .never: return .never
+        case .afterSeconds(let seconds): return .afterSeconds(max(seconds, voiceCallResidencySeconds))
+        case .immediately: return .afterSeconds(max(configuredSeconds, voiceCallResidencySeconds))
+        }
+    }
+
     private func scheduleIdleResidency(for modelName: String) async {
         let policyRevision = idleResidencyPolicyRevision
         guard !isClearingAllResidency,
@@ -2850,12 +2875,15 @@ public actor ModelRuntime {
         let hasHandoffOwner =
             residentMetadata[modelName]?.childOwnershipToken != nil
             || parentRetentions.holds(residentMetadata[modelName]?.identity)
-        let policy = Self.resolvedIdleResidencyPolicy(
+        let resolved = Self.resolvedIdleResidencyPolicy(
             configured: configured,
             source: lastUseSource[modelName],
             referencedByChat: referencedByChat,
             hasHandoffOwner: hasHandoffOwner
         )
+        let policy =
+            voiceCallModels.contains(modelName)
+            ? Self.voiceCallIdleResidency(resolved, configured: configured) : resolved
         genLog.info(
             "idleResidency: model=\(modelName, privacy: .public) policy=\(String(describing: policy), privacy: .public) handoffOwned=\(hasHandoffOwner, privacy: .public) chatReferenced=\(referencedByChat, privacy: .public)"
         )
@@ -5940,6 +5968,11 @@ public actor ModelRuntime {
             incoming: parameters.requestSource,
             preserveExisting: parameters.preserveExistingResidencyOwner
         )
+        if ChatExecutionContext.isVoiceCall {
+            voiceCallModels.insert(modelName)
+        } else {
+            voiceCallModels.remove(modelName)
+        }
 
         // Scoped start/finish around ONLY a cold container load. Hot
         // resident turns still call `loadContainer` to get the holder, but
