@@ -223,7 +223,6 @@ final class ModelDownloadService: ObservableObject {
     /// size matches the expected size) covers the cross-launch case.
     private var pausedDownloads: [String: PausedSnapshot] = [:]
     private var downloadRevisions: [String: String] = [:]
-    private var hasRunTopUp = false
 
     /// Snapshot captured at the moment the user paused, used by `resume(_:)`
     /// to feed each in-flight file's `cancelByProducingResumeData` blob back
@@ -1528,7 +1527,7 @@ final class ModelDownloadService: ObservableObject {
         )
     }
 
-    // MARK: - Background Top-Up
+    // MARK: - Explicit Completeness
 
     private static let sentinelFilename = ".topup_done"
 
@@ -1545,19 +1544,13 @@ final class ModelDownloadService: ObservableObject {
         /// The user pressed Repair. Restore the bundle to match the repo:
         /// weights included, and files whose size differs from the remote.
         case explicitRepair
-        /// A load or a launch-time sweep. May only fill in small metadata
-        /// that is ABSENT — never a weight shard, and never a file that
-        /// already exists locally at any size.
+        /// Installed bundles are read-only outside an explicit download or
+        /// repair. Even absent metadata may belong to a different revision.
         case automatic
     }
 
-    /// Extensions treated as model weights. Automatic top-up never fetches
-    /// these; only an explicit Repair does.
-    nonisolated static let weightFileExtensions: Set<String> = [
-        "safetensors", "bin", "gguf", "npz", "pt", "pth", "mlx",
-    ]
-
     /// Checks for missing files and downloads them if the sentinel is absent.
+    /// Automatic intent returns false without checking or modifying the bundle.
     /// Writes the sentinel only when the remote check succeeds. Passing
     /// `clearSentinel: true` forces a fresh remote check (used by Repair).
     @discardableResult
@@ -1565,14 +1558,18 @@ final class ModelDownloadService: ObservableObject {
         for model: MLXModel,
         directory: URL,
         clearSentinel: Bool = false,
-        intent: CompletenessIntent = .automatic
+        intent: CompletenessIntent = .automatic,
+        service: HuggingFaceService = .shared
     ) async -> Bool {
+        // A skipped automatic check is not a remote completeness verification.
+        // Guard before clearSentinel as well as all network and file writes.
+        guard intent != .automatic else { return false }
         let sentinel = directory.appendingPathComponent(sentinelFilename)
         if clearSentinel {
             try? FileManager.default.removeItem(at: sentinel)
         }
         guard !FileManager.default.fileExists(atPath: sentinel.path) else { return true }
-        let success = await downloadMissingFiles(for: model, to: directory, intent: intent)
+        let success = await downloadMissingFiles(for: model, to: directory, intent: intent, service: service)
         if success {
             FileManager.default.createFile(atPath: sentinel.path, contents: nil)
         }
@@ -1589,7 +1586,7 @@ final class ModelDownloadService: ObservableObject {
         under directory: URL,
         intent: CompletenessIntent
     ) -> [HuggingFaceService.MatchedFile] {
-        let fm = FileManager.default
+        guard intent != .automatic else { return [] }
         return remote.filter { file in
             guard
                 let local = HuggingFaceService.destinationURL(
@@ -1597,29 +1594,6 @@ final class ModelDownloadService: ObservableObject {
                     under: directory
                 )
             else { return true }
-
-            let exists = fm.fileExists(atPath: local.path)
-
-            if intent == .automatic {
-                // Never attach the latest publisher revision to unverified old
-                // weights. Only a complete explicit download/repair may stamp it.
-                if file.path == ModelManifest.filename { return false }
-                // Two things an automatic pass must never do, because both
-                // undo deliberate work:
-                //
-                //   - refetch a weight shard the user deleted on purpose. A
-                //     stripped bundle re-grew itself on the next load, which
-                //     is what the user actually saw and reported.
-                //   - overwrite a file that is present but differs from the
-                //     Hub. "Differs" is the signature of a hand-edited
-                //     config.json, not of damage.
-                //
-                // Both stay available behind the Repair button, which is the
-                // surface that says out loud what it is about to do.
-                let ext = (file.path as NSString).pathExtension.lowercased()
-                if weightFileExtensions.contains(ext) { return false }
-                return !exists
-            }
 
             return (try? ModelFileIntegrity.matches(local, size: file.size, digest: file.digest)) != true
         }
@@ -1632,9 +1606,11 @@ final class ModelDownloadService: ObservableObject {
     static func downloadMissingFiles(
         for model: MLXModel,
         to directory: URL,
-        intent: CompletenessIntent = .automatic
+        intent: CompletenessIntent = .automatic,
+        service: HuggingFaceService = .shared
     ) async -> Bool {
-        let remoteFiles = await HuggingFaceService.shared.fetchMatchingFiles(
+        guard intent != .automatic else { return false }
+        let remoteFiles = await service.fetchMatchingFiles(
             repoId: model.id,
             patterns: downloadFilePatterns,
             excludedFiles: downloadExcludedFiles
@@ -1642,12 +1618,6 @@ final class ModelDownloadService: ObservableObject {
         guard let remoteFiles else { return false }
 
         let missing = filesToFetch(remote: remoteFiles, under: directory, intent: intent)
-        let suppressed = remoteFiles.count - missing.count
-        if intent == .automatic, suppressed > 0 {
-            downloadLog.debug(
-                "top-up: \(suppressed) remote file(s) not fetched for \(model.id, privacy: .public) — already present, or weights that only Repair may restore"
-            )
-        }
         guard !missing.isEmpty else { return true }
 
         let downloader = DirectDownloader()
@@ -1679,37 +1649,6 @@ final class ModelDownloadService: ObservableObject {
             }
         }
         return allSucceeded
-    }
-
-    /// Silently downloads missing config/tokenizer files for models that are
-    /// already considered "downloaded". Runs sequentially to avoid hammering
-    /// the HF API. Does not mutate `downloadStates` so the UI stays stable.
-    /// Only runs once per app lifecycle.
-    func topUpCompletedModels(_ models: [MLXModel]) async {
-        guard !hasRunTopUp else { return }
-        hasRunTopUp = true
-        // `isDownloaded` walks each model's directory on a cache miss — a
-        // synchronous scan that, run inline on this @MainActor type, tripped
-        // the main-thread hang watchdog at launch with many models. Resolve
-        // the disk check off the main actor, then apply the main-actor
-        // `isActiveDownload` filter back here.
-        let downloaded = await Task.detached(priority: .utility) {
-            models.filter { $0.isDownloaded }
-        }.value
-        let candidates = downloaded.filter { !isActiveDownload($0.id) }
-        guard !candidates.isEmpty else { return }
-
-        for model in candidates {
-            // Stop the (best-effort, lifecycle-once) top-up sweep promptly if
-            // the surrounding task is cancelled (e.g. app teardown) instead of
-            // walking the full candidate list.
-            if Task.isCancelled { return }
-            await Self.downloadMissingFiles(
-                for: model,
-                to: model.localDirectory,
-                intent: .automatic
-            )
-        }
     }
 
     nonisolated static func directoryAllocatedSize(at url: URL) -> Int64? {
