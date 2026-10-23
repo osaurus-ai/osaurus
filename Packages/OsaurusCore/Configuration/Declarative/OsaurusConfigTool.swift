@@ -774,11 +774,19 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
                     : " Agent templates: \(agentNames.joined(separator: ", "))."
                 // `overrides` only applies to agent templates, so the caller is
                 // creating an agent; the saved-document hint would mislead it.
-                let fullMessage =
-                    overrides == nil
-                    ? message + hint
-                    : "No agent template named `\(templateName)`.\(hint) To create the agent "
+                let starterId = templateName.lowercased()
+                let fullMessage: String
+                if overrides == nil {
+                    fullMessage = message + hint
+                } else if AgentStarterTemplate.configTemplateIds.contains(starterId) {
+                    fullMessage =
+                        "`\(templateName)` is a starter prompt, not an agent template. Call this action "
+                        + "with `yaml` holding an `agents:` entry that sets `template: \(starterId)`.\(hint)"
+                } else {
+                    fullMessage =
+                        "No agent template named `\(templateName)`.\(hint) To create the agent "
                         + "without a template, call this action with an `agents:` entry in `yaml` instead."
+                }
                 return .failure(
                     ToolEnvelope.failure(
                         kind: .invalidArgs, message: fullMessage, field: "template", tool: name))

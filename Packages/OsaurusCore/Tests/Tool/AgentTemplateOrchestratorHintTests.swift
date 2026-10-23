@@ -146,4 +146,20 @@ struct AgentTemplateOrchestratorHintTests {
         #expect(result.contains("`agents:` entry"))
         #expect(!result.contains("save_as"))
     }
+
+    @Test
+    func starterPromptAsTemplate_pointsAtTheAgentsEntryTemplateKey() async throws {
+        let args: [String: Any] = [
+            "action": "plan",
+            "template": "Researcher",
+            "overrides": ["name": "Researcher"],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: args)
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await OsaurusConfigTool().execute(argumentsJSON: String(decoding: data, as: UTF8.self))
+        }
+        #expect(result.contains("is a starter prompt, not an agent template"), "message: \(result)")
+        #expect(result.contains("template: researcher"))
+        #expect(result.contains("Cloud Agent"))
+    }
 }
