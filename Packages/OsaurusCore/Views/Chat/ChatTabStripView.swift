@@ -141,6 +141,9 @@ struct ChatTabStripView: View {
                     }
             }
             .frame(height: Self.stripHeight)
+            // The strip fills the toolbar, so its empty space must still
+            // move the window the way the title bar it covers would.
+            .background(WindowDragArea())
             // Anchored to the strip's OUTER leading edge (the inset lies
             // inside the measured bounds, so the reading is the pre-inset
             // chrome edge — no feedback loop).
@@ -284,11 +287,14 @@ struct ChatTabStripView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .padding(Self.trackPadding)
             .frame(height: Self.trackHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(windowState.theme.secondaryBackground.opacity(windowState.theme.isDark ? 0.4 : 0.5))
-                    .opacity(showsTrack ? 1 : 0)
-            )
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(windowState.theme.secondaryBackground.opacity(windowState.theme.isDark ? 0.4 : 0.5))
+                        .opacity(showsTrack ? 1 : 0)
+                    WindowDragArea()
+                }
+            }
             // Tabs never draw outside the track, even for a frame mid-resize.
             // Only the track is clipped: clipping the whole row would cut
             // the "+" button's glass shadow into a hard-edged rectangle.
@@ -359,6 +365,12 @@ struct ChatTabStripView: View {
     @State private var swappedDistance: CGFloat = 0
 
     private func handleDragChanged(_ id: UUID, translation: CGFloat) {
+        // A lone tab stands in for the title bar it covers: dragging it
+        // moves the window (there is nothing to reorder).
+        if windowState.scopedTabs.count == 1 {
+            WindowDragArea.moveWindow(with: NSApp.currentEvent)
+            return
+        }
         if draggingTabId != id {
             // Pressing a tab selects it before it starts moving.
             draggingTabId = id
@@ -735,6 +747,7 @@ private struct ChatTabItemView: View {
         .contentShape(Rectangle())
         .offset(x: dragOffset)
         .zIndex(isDragging ? 1 : 0)
+        .modifier(LoneTabTitleBarDoubleClick(isLone: !hasSiblings))
         .onTapGesture(perform: onSelect)
         // A short travel threshold keeps plain clicks as taps; beyond it
         // the press becomes a reorder drag.
@@ -1022,6 +1035,62 @@ private struct ChatTabContextMenu {
             ),
             scope: scope
         )
+    }
+}
+
+/// A lone tab reads as the window title, so a double-click on it does what
+/// a title bar double-click does. Tabs with siblings get no double-tap
+/// recogniser, which would otherwise delay every single-click select.
+private struct LoneTabTitleBarDoubleClick: ViewModifier {
+    let isLone: Bool
+
+    func body(content: Content) -> some View {
+        if isLone {
+            content.onTapGesture(count: 2) {
+                WindowDragArea.titleBarDoubleClick(NSApp.currentEvent?.window)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Empty strip space behaves like the title bar under it: dragging moves
+/// the window, and a double-click does what System Settings says a title
+/// bar double-click does.
+private struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    /// Starts a window move from a mouse event already in flight (a
+    /// gesture's mouse-down or mouse-dragged); returns once the button is up.
+    static func moveWindow(with event: NSEvent?) {
+        guard let event, let window = event.window,
+            event.type == .leftMouseDown || event.type == .leftMouseDragged
+        else { return }
+        window.performDrag(with: event)
+    }
+
+    static func titleBarDoubleClick(_ window: NSWindow?) {
+        guard let window else { return }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window.miniaturize(nil)
+        case "None": break
+        default: window.zoom(nil)
+        }
+    }
+
+    private final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                WindowDragArea.titleBarDoubleClick(window)
+            } else {
+                window?.performDrag(with: event)
+            }
+        }
     }
 }
 
