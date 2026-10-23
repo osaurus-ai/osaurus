@@ -15,6 +15,58 @@ import Testing
 @Suite("ProviderPreset")
 struct ProviderPresetsTests {
 
+    @Test func cheaperInferencePreset_configurationMatchesOfficialAPI() throws {
+        let config = ProviderPreset.cheaperInference.configuration
+
+        #expect(config.name == "Cheaper Inference")
+        #expect(config.host == "api.cheaperinference.com")
+        #expect(config.providerProtocol == .https)
+        #expect(config.port == nil)
+        #expect(config.basePath == "/v1")
+        #expect(config.authType == .apiKey)
+        #expect(config.providerType == .openaiLegacy)
+    }
+
+    @Test func cheaperInferencePreset_includesSeedManualModels() throws {
+        let config = ProviderPreset.cheaperInference.configuration
+
+        #expect(config.defaultManualModelIds.contains("gpt-5.4-mini"))
+        #expect(config.defaultManualModelIds.contains("claude-sonnet-5"))
+        #expect(config.defaultManualModelIds.contains("gemini-3.1-pro"))
+        #expect(config.defaultManualModelIds.contains("glm-5.3"))
+    }
+
+    @Test func cheaperInferencePreset_isListedAsKnownPreset() throws {
+        #expect(ProviderPreset.knownPresets.contains(.cheaperInference))
+    }
+
+    @Test func matching_providerWithCheaperInferenceHost_resolvesToCheaperInferencePreset() throws {
+        let provider = RemoteProvider(
+            name: "My Cheaper Inference",
+            host: "api.cheaperinference.com",
+            basePath: "/v1",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+
+        #expect(ProviderPreset.matching(provider: provider) == .cheaperInference)
+    }
+
+    @Test func cheaperInferencePreset_chatEndpointResolvesToChatCompletions() throws {
+        let provider = RemoteProvider(
+            name: "Cheaper Inference",
+            host: ProviderPreset.cheaperInference.configuration.host,
+            basePath: ProviderPreset.cheaperInference.configuration.basePath,
+            authType: .apiKey,
+            providerType: ProviderPreset.cheaperInference.configuration.providerType
+        )
+
+        #expect(
+            provider.url(for: provider.providerType.chatEndpoint)?.absoluteString
+                == "https://api.cheaperinference.com/v1/chat/completions"
+        )
+    }
+
     @Test func atlasCloudPreset_configurationMatchesOfficialAPI() throws {
         let config = ProviderPreset.atlasCloud.configuration
 

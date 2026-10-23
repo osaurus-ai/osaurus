@@ -183,6 +183,7 @@ enum ProviderCatalog {
         ),
         ProviderCatalogEntry(.anthropic, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.atlasCloud, authMethods: [.apiKey], placement: .apiKey),
+        ProviderCatalogEntry(.cheaperInference, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.azureOpenAI, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.deepseek, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.fireworks, authMethods: [.apiKey], placement: .apiKey),
