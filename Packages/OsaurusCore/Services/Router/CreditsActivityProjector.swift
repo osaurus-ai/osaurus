@@ -100,14 +100,15 @@ struct CreditsActivityProjector {
     /// Shared formatters. Creating an `ISO8601DateFormatter` is expensive (ICU
     /// setup), and this is called per row from SwiftUI body evaluation, so
     /// allocating per call hung the main thread. `ISO8601DateFormatter` is
-    /// thread-safe, so sharing these instances is fine.
-    private static let fractionalSecondsFormatter: ISO8601DateFormatter = {
+    /// documented thread-safe and these are never mutated after init, so
+    /// `nonisolated(unsafe)` is sound (same pattern as AppleDateParsing).
+    nonisolated(unsafe) private static let fractionalSecondsFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
 
-    private static let plainFormatter = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let plainFormatter = ISO8601DateFormatter()
 
     static func date(fromRouterTimestamp raw: String) -> Date? {
         fractionalSecondsFormatter.date(from: raw) ?? plainFormatter.date(from: raw)
