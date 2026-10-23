@@ -86,7 +86,7 @@ Custom agents run an agent loop. Pick a working folder and the agent gets file, 
 
 ### Sandbox
 
-Agents execute code in an isolated Linux VM powered by Apple's [Containerization](https://developer.apple.com/documentation/containerization) framework. Full dev environment -- shell, Python, Node.js, compilers, package managers -- with zero risk to your Mac.
+Agents execute code in an isolated Linux VM powered by Apple's [Containerization](https://apple.github.io/containerization/documentation/containerization/) framework. Full dev environment -- shell, Python, Node.js, compilers, package managers -- with zero risk to your Mac.
 
 Each agent gets its own Linux user and home directory. The VM connects back to Osaurus (inference, memory, secrets) via a vsock bridge -- sandboxed but not disconnected. Extend with simple JSON plugin recipes, no Xcode or code signing required.
 
