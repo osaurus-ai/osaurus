@@ -33,6 +33,7 @@ public enum ClaudeCodeMode: String, Codable, Sendable, CaseIterable {
 /// `--model` aliases rather than pinned model ids, so the CLI keeps resolving
 /// them to whatever the current generation is without an Osaurus release.
 public enum ClaudeCodeModel: String, CaseIterable, Sendable {
+    case fable
     case sonnet
     case opus
     case haiku
@@ -43,6 +44,7 @@ public enum ClaudeCodeModel: String, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
+        case .fable: return "Claude Code (Fable)"
         case .sonnet: return "Claude Code (Sonnet)"
         case .opus: return "Claude Code (Opus)"
         case .haiku: return "Claude Code (Haiku)"
