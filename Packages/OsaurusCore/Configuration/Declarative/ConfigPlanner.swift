@@ -421,6 +421,14 @@ enum ConfigPlanner {
                                 + "`\(raw)` is not a UUID.")
                     }
                 }
+                if let mode = entry.tools?.mode, ToolSelectionMode(rawValue: mode) == nil {
+                    issues.append(
+                        "agents[\(entry.name)].tools.mode: must be `auto` or `manual` (got `\(mode)`).")
+                }
+                if let v = entry.sandbox?.maxCommandsPerTurn, !(1...500).contains(v) {
+                    issues.append(
+                        "agents[\(entry.name)].sandbox.max_commands_per_turn: must be in 1...500.")
+                }
                 if let apps = entry.capabilities?.appleApps {
                     for raw in apps where AppleApp.parse(raw) == nil {
                         issues.append(
@@ -705,6 +713,20 @@ enum ConfigPlanner {
                                     + "interactively — token_ref only fits bearer auth.")
                         }
                     }
+                    if let refs = entry.secretHeaderRefs {
+                        for (header, raw) in refs.sorted(by: { $0.key < $1.key }) {
+                            if header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                issues.append(
+                                    "mcp_servers[\(entry.name)].secret_header_refs: header names "
+                                        + "must be non-empty.")
+                                continue
+                            }
+                            validateSecretRef(
+                                raw,
+                                label: "mcp_servers[\(entry.name)].secret_header_refs[\(header)]",
+                                into: &issues)
+                        }
+                    }
                 case .stdio:
                     if current == nil,
                         (entry.command ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -719,10 +741,12 @@ enum ConfigPlanner {
                         issues.append(
                             "mcp_servers[\(entry.name)].execution_host: must be sandbox or host.")
                     }
-                    if entry.url != nil || entry.auth != nil || entry.tokenRef != nil {
+                    if entry.url != nil || entry.auth != nil || entry.tokenRef != nil
+                        || entry.secretHeaderRefs != nil
+                    {
                         issues.append(
-                            "mcp_servers[\(entry.name)]: url/auth/token_ref only apply to "
-                                + "transport: http.")
+                            "mcp_servers[\(entry.name)]: url/auth/token_ref/secret_header_refs only "
+                                + "apply to transport: http.")
                     }
                     if let refs = entry.secretEnvRefs {
                         for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
@@ -1141,6 +1165,152 @@ enum ConfigPlanner {
 
     // MARK: - Agents
 
+    /// Plan lines for the portable per-agent keys (tools, groups, sandbox,
+    /// subagents, working folder) on an existing agent. Group membership is
+    /// compared by NAME against the local registry, so a document written
+    /// on another machine reads as a change only when it would actually
+    /// alter this agent.
+    @MainActor
+    private static func diffPortableSettings(
+        _ entry: AgentEntry, agent: Agent, into changes: inout [String]
+    ) {
+        if let tools = entry.tools {
+            let currentMode = (agent.toolSelectionMode ?? .auto).rawValue
+            diff("tools.mode", desired: tools.mode, current: currentMode, into: &changes)
+            if let enabled = tools.enabled {
+                let groups = ToolRegistry.shared.portableToolGroups()
+                let current = AgentToolSelectionResolver.export(
+                    manualToolNames: agent.manualToolNames ?? [], groups: groups)
+                if Set(enabled) != Set(current.toolNames) {
+                    changes.append("tools.enabled: \(enabled.count) tool(s)")
+                }
+            }
+        }
+        if let mcp = entry.mcpServers {
+            let groups = ToolRegistry.shared.portableToolGroups()
+            let current = AgentToolSelectionResolver.export(
+                manualToolNames: agent.manualToolNames ?? [], groups: groups)
+            diffGroupList(
+                "mcp_servers", desired: mcp,
+                currentEnabled: current.enabledMCPServers, into: &changes)
+        }
+        if let plugins = entry.plugins {
+            let groups = ToolRegistry.shared.portableToolGroups()
+            let current = AgentToolSelectionResolver.export(
+                manualToolNames: agent.manualToolNames ?? [], groups: groups)
+            diffGroupList(
+                "plugins", desired: plugins,
+                currentEnabled: current.enabledPlugins, into: &changes)
+        }
+        switch entry.skills {
+        case .absent:
+            break
+        case .null:
+            if agent.skillNames != nil { changes.append("skills: every installed skill") }
+        case .value(let names):
+            let desired = Set(names.map { Skill.agentSkillsSlug(for: $0) })
+            let current = agent.skillNames.map { Set($0.map { Skill.agentSkillsSlug(for: $0) }) }
+            if current != desired {
+                changes.append("skills: \(names.isEmpty ? "none" : names.joined(separator: ", "))")
+            }
+        }
+        if let instructions = entry.pluginInstructions {
+            diffMap(
+                "plugin_instructions", desired: instructions,
+                current: agent.pluginInstructions, defaultValue: "", into: &changes)
+        }
+        if let sandbox = entry.sandbox {
+            let exec =
+                agent.autonomousExec
+                ?? AgentManager.shared.effectiveAutonomousExec(for: agent.id)
+                ?? AutonomousExecConfig.default
+            let effectiveOn = AgentManager.shared.effectiveAutonomousExec(for: agent.id)?.enabled ?? false
+            diff("sandbox.enabled", desired: sandbox.enabled, current: effectiveOn, into: &changes)
+            diff(
+                "sandbox.network_enabled", desired: sandbox.networkEnabled,
+                current: exec.sandboxNetworkEnabled, into: &changes)
+            if let domains = sandbox.allowedDomains,
+                Set(domains) != Set(exec.sandboxAllowedDomains ?? [])
+            {
+                changes.append("sandbox.allowed_domains: \(domains.count) domain(s)")
+            }
+            diff(
+                "sandbox.max_commands_per_turn", desired: sandbox.maxCommandsPerTurn,
+                current: exec.maxCommandsPerTurn, into: &changes)
+            diff(
+                "sandbox.background_process_enabled", desired: sandbox.backgroundProcessEnabled,
+                current: exec.backgroundProcessEnabled, into: &changes)
+            diff("sandbox.plugin_create", desired: sandbox.pluginCreate, current: exec.pluginCreate, into: &changes)
+        }
+        if let subagents = entry.subagents {
+            diff(
+                "subagents.enabled", desired: subagents.enabled,
+                current: agent.settings.spawnDelegationEnabled, into: &changes)
+            if let names = subagents.agents {
+                let currentNames = agent.settings.spawnableAgentIDs.compactMap { id in
+                    AgentManager.shared.agents.first { $0.id == id }?.name.lowercased()
+                }
+                if Set(names.map { $0.lowercased() }) != Set(currentNames) {
+                    changes.append("subagents.agents: \(names.count) agent(s)")
+                }
+            }
+        }
+        diff("source_template", desired: entry.sourceTemplate, current: agent.sourceTemplateName, into: &changes)
+        switch entry.workingFolder {
+        case .absent:
+            break
+        case .null:
+            if agent.workingFolderPath != nil || agent.workingFolderBookmark != nil {
+                changes.append("working_folder: \(display(agent.workingFolderPath)) -> null")
+            }
+        case .value(let raw):
+            let expanded = (raw as NSString).expandingTildeInPath
+            let current = agent.workingFolderPath.map { ($0 as NSString).expandingTildeInPath }
+            if current != expanded || agent.workingFolderBookmark == nil {
+                changes.append("working_folder: \(display(agent.workingFolderPath)) -> \(raw)")
+            }
+        }
+    }
+
+    private static func diffGroupList(
+        _ key: String, desired: AgentToolGroupsEntry, currentEnabled: [String],
+        into changes: inout [String]
+    ) {
+        let current = Set(currentEnabled.map { $0.lowercased() })
+        let turnOn = (desired.enabled ?? []).filter { !current.contains($0.lowercased()) }
+        let turnOff = (desired.disabled ?? []).filter { current.contains($0.lowercased()) }
+        if !turnOn.isEmpty { changes.append("\(key).enabled: +\(turnOn.joined(separator: ", "))") }
+        if !turnOff.isEmpty { changes.append("\(key).disabled: -\(turnOff.joined(separator: ", "))") }
+    }
+
+    /// Create-time summary of the portable keys, so the approval card shows
+    /// what the new agent will be able to reach.
+    private static func summarizePortableSettings(_ entry: AgentEntry, into changes: inout [String]) {
+        if let tools = entry.tools {
+            if let mode = tools.mode { changes.append("tools.mode: \(mode)") }
+            if let enabled = tools.enabled, !enabled.isEmpty {
+                changes.append("tools: \(enabled.joined(separator: ", "))")
+            }
+        }
+        if let on = entry.mcpServers?.enabled, !on.isEmpty {
+            changes.append("mcp_servers: \(on.joined(separator: ", "))")
+        }
+        if let on = entry.plugins?.enabled, !on.isEmpty {
+            changes.append("plugins: \(on.joined(separator: ", "))")
+        }
+        if let sandbox = entry.sandbox, let on = sandbox.enabled {
+            changes.append("sandbox: \(on ? "on" : "off")")
+        }
+        if let subagents = entry.subagents, subagents.enabled == true {
+            let targets = subagents.agents ?? []
+            changes.append(
+                "subagents: on" + (targets.isEmpty ? "" : " (\(targets.joined(separator: ", ")))"))
+        }
+        if let folder = entry.workingFolder.valueOrNil {
+            changes.append("working_folder: \(folder)")
+        }
+    }
+
     private static func planAgents(
         _ entries: [AgentEntry], prune: Bool,
         into actions: inout [ConfigPlanAction], notes: inout [String]
@@ -1172,6 +1342,7 @@ enum ConfigPlanner {
                 if let caps = entry.capabilities {
                     diffCapabilities(caps, agent: agent, into: &changes, risks: &risks)
                 }
+                diffPortableSettings(entry, agent: agent, into: &changes)
                 if changes.isEmpty {
                     unchanged += 1
                 } else {
@@ -1197,6 +1368,7 @@ enum ConfigPlanner {
                         risks.append(contentsOf: ConfigRisk.appleAppRisks(entry.name, current: [], desired: apps))
                     }
                 }
+                summarizePortableSettings(entry, into: &changes)
                 actions.append(
                     ConfigPlanAction(
                         section: "agents", target: entry.name, kind: .create,
@@ -1672,6 +1844,12 @@ enum ConfigPlanner {
                 {
                     changes.append("token: store from \(ref.display)")
                 }
+                if provider.transport == .http, let refs = entry.secretHeaderRefs {
+                    for (header, raw) in refs.sorted(by: { $0.key < $1.key }) {
+                        guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
+                        changes.append("secret header \(header): store from \(ref.display)")
+                    }
+                }
                 if provider.transport == .stdio, let refs = entry.secretEnvRefs {
                     for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
                         guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
@@ -1721,6 +1899,10 @@ enum ConfigPlanner {
                     changes.append(
                         "auth: \(ConfigMCPAuth.key(for: auth)) — finish sign-in in "
                             + "Settings → Tools & MCP → Services (secrets never travel through the document)")
+                }
+                for (header, raw) in (entry.secretHeaderRefs ?? [:]).sorted(by: { $0.key < $1.key }) {
+                    guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
+                    changes.append("secret header \(header): store from \(ref.display)")
                 }
                 actions.append(
                     ConfigPlanAction(

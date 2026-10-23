@@ -59,9 +59,8 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
                 local.append(item)
             case .remote(_, let providerID) where providerID == cloudID:
                 cloud.append(item)
-            case .claudeCode, .remote:
-                // Claude Code is network-backed, so it keeps its own provider
-                // row. Provider UUIDs keep same-named connections distinct.
+            case .remote:
+                // Provider UUIDs keep same-named connections distinct.
                 let key = item.source.uniqueKey
                 if connectedModels[key] == nil {
                     connectedOrder.append((key, item.source.displayName))
@@ -111,7 +110,7 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
         return builtIns.filter(\.isActive) + connected + builtIns.filter { !$0.isActive }
     }
 
-    private static func sorted(_ models: [ModelPickerItem]) -> [ModelPickerItem] {
+    private static nonisolated func sorted(_ models: [ModelPickerItem]) -> [ModelPickerItem] {
         models.sorted {
             if $0.displayName == $1.displayName { return $0.id < $1.id }
             return $0.displayName < $1.displayName

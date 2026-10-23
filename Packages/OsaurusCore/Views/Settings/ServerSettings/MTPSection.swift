@@ -64,7 +64,7 @@ struct MTPSection: View {
             SettingsField(
                 label: "Mode",
                 hint:
-                    "Default enables adaptive native MTP for supported Qwen3.8 Flash-Next bundles and compatible bundled DFlash 2 for Qwen 27B. Off uses autoregressive decoding everywhere. On requests a compatible bundled or selected DFlash 2 drafter, or adaptive native MTP where supported. See the resolved reason below. Speed depends on the model and workload."
+                    "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload."
             ) {
                 Picker("", selection: Binding(
                     get: {
@@ -103,7 +103,7 @@ struct MTPSection: View {
             SettingsField(
                 label: "DFlash 2 Drafter",
                 hint:
-                    "A downloaded block-diffusion drafter drafts a whole block per step instead of one token. Applies to Qwen 3.8 only — the drafter is trained against that target's hidden states, so a mismatched bundle is ignored and every other model keeps its own decode path. When it does fit, it REPLACES the native MTP head."
+                    "The drafter must match the target model. A compatible selected or bundled DFlash 2 or DSpark drafter takes priority over native MTP. Incompatible folders are ignored; the resolved model state is shown below."
             ) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
@@ -114,7 +114,7 @@ struct MTPSection: View {
 
                         if drafterInfo == nil {
                             Link(
-                                L("Download drafter…"),
+                                L("Qwen 27B drafter…"),
                                 destination: Self.drafterDownloadURL
                             )
                             .font(.system(size: 11))
@@ -151,7 +151,7 @@ struct MTPSection: View {
                     } else {
                         Text(
                             L(
-                                "No external folder selected — a compatible bundled DFlash 2 drafter is used first, otherwise the model's native MTP policy applies. Off (AR) disables both."
+                                "No external folder selected. Compatible bundled drafters and the model’s native MTP policy still apply. Off (AR) disables speculation."
                             )
                         )
                         .font(.system(size: 11))

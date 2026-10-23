@@ -53,6 +53,9 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     var apiAppId: String?
     var inboundDispatch: AgentChannelInboundDispatchConfiguration
     var workspaceAccounts: [SlackWorkspaceAccountConfiguration]
+    /// Accept messages an allowlisted person posted through a Slack app
+    /// with their own user token. Slack stamps those with the app's bot_id.
+    var acceptAppPostsFromAllowlistedSenders: Bool
 
     init(
         configuredTeamIds: [String] = [],
@@ -66,7 +69,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         botId: String? = nil,
         apiAppId: String? = nil,
         inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(),
-        workspaceAccounts: [SlackWorkspaceAccountConfiguration] = []
+        workspaceAccounts: [SlackWorkspaceAccountConfiguration] = [],
+        acceptAppPostsFromAllowlistedSenders: Bool = false
     ) {
         self.configuredTeamIds = Self.normalizedIds(configuredTeamIds)
         self.readableChannelIds = Self.normalizedIds(readableChannelIds)
@@ -83,6 +87,7 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         self.workspaceAccounts = workspaceAccounts.filter {
             !$0.teamId.isEmpty && seenTeams.insert($0.teamId).inserted
         }
+        self.acceptAppPostsFromAllowlistedSenders = acceptAppPostsFromAllowlistedSenders
     }
 
     var normalized: SlackConnectionConfiguration {
@@ -98,7 +103,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             botId: botId,
             apiAppId: apiAppId,
             inboundDispatch: inboundDispatch,
-            workspaceAccounts: workspaceAccounts
+            workspaceAccounts: workspaceAccounts,
+            acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders
         )
     }
 
@@ -143,6 +149,7 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         case apiAppId
         case inboundDispatch
         case workspaceAccounts
+        case acceptAppPostsFromAllowlistedSenders
     }
 
     init(from decoder: Decoder) throws {
@@ -168,7 +175,11 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             workspaceAccounts: try container.decodeIfPresent(
                 [SlackWorkspaceAccountConfiguration].self,
                 forKey: .workspaceAccounts
-            ) ?? []
+            ) ?? [],
+            acceptAppPostsFromAllowlistedSenders: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .acceptAppPostsFromAllowlistedSenders
+            ) ?? false
         )
     }
 
@@ -208,12 +219,27 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
 }
 
 enum SlackConnectionConfigurationStore {
-    nonisolated(unsafe) static var overrideDirectory: URL?
+    nonisolated(unsafe) static var overrideDirectory: URL? {
+        didSet { cache.reset() }
+    }
 
     private static let fileName = "slack.json"
 
+    /// In-memory copy of the last loaded/saved configuration. See
+    /// `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
+    private static let cache = ConnectionConfigurationCache<SlackConnectionConfiguration>()
+
+    /// Drop the in-memory copy so the next `load()` reads from disk.
+    static func resetCache() {
+        cache.reset()
+    }
+
     static func load() -> SlackConnectionConfiguration {
         let url = configurationFileURL()
+        return cache.value(for: url) { loadFromDisk(at: url) }
+    }
+
+    private static func loadFromDisk(at url: URL) -> SlackConnectionConfiguration {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return SlackConnectionConfiguration()
         }
@@ -232,7 +258,9 @@ enum SlackConnectionConfigurationStore {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        let normalized = configuration.normalized
+        try encoder.encode(normalized).write(to: url, options: [.atomic])
+        cache.store(normalized, for: url)
     }
 
     static func configurationFileURL() -> URL {

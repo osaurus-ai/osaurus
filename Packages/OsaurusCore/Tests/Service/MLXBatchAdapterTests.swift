@@ -1179,6 +1179,29 @@ struct MLXBatchAdapterTests {
         )
     }
 
+    @Test func weightsFingerprint_jangMetadataEditInvalidatesAtSameSizeAndTimestamp() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jang-fp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sidecar = dir.appendingPathComponent("jang_config.json")
+        try Data("weights".utf8).write(to: dir.appendingPathComponent("model.safetensors"))
+        let withoutSidecar = ModelRuntime.weightsFingerprint(for: dir)
+        let raw = #"{"runtime":{"norm_convention":"qwen3_5_raw_weight"}}"#
+        let changed = raw.replacingOccurrences(of: "raw", with: "new")
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        try Data(raw.utf8).write(to: sidecar)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: sidecar.path)
+        let before = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(before != withoutSidecar)
+        #expect(before == ModelRuntime.weightsFingerprint(for: dir))
+        try Data(changed.utf8).write(to: sidecar)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: sidecar.path)
+        let after = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(after != before, "storage metadata must invalidate cached activations")
+        #expect(after == ModelRuntime.weightsFingerprint(for: dir))
+    }
+
     /// An unreadable bundle must take a cold prefill rather than risk reusing some
     /// other pack's KV: fail toward a slow request, never toward a wrong one.
     @Test func weightsFingerprint_unreadableBundleNeverMatches() {

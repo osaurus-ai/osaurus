@@ -212,17 +212,17 @@ private struct ImageGenerationSettingsTab: View {
                         options: SubagentPermissionPolicy.allCases.map { .init($0, $0.displayName) }
                     )
                     SettingsPickerRow(
-                        title: "Video jobs (cloud)",
-                        description: "Ask before each quoted video job, always allow, or deny.",
+                        title: "Video jobs",
+                        description: "Ask before each local or cloud video job, always allow, or deny.",
                         anchorId: "imageGeneration.videoPermission",
                         selection: videoPermissionSelection,
                         options: SubagentPermissionPolicy.allCases.map { .init($0, $0.displayName) }
                     )
                 }
 
-                SettingsSection(title: "Video (cloud)", icon: "video", anchorId: "imageGeneration.video") {
+                SettingsSection(title: "Video", icon: "video", anchorId: "imageGeneration.video") {
                     sectionBlurb(
-                        "Video runs on connected cloud providers and is quoted before queueing. A queued paid job keeps being recovered after Stop or relaunch because providers do not offer upstream cancellation."
+                        "Video can run locally on this Mac or on connected cloud providers. Local jobs are free and stop when cancelled. Paid cloud jobs are quoted before queueing and keep being recovered after Stop or relaunch because providers do not offer upstream cancellation."
                     )
                     controlRow("Text-to-video model") {
                         targetDropdown(
@@ -238,7 +238,7 @@ private struct ImageGenerationSettingsTab: View {
                     }
                     if pickerItems.videoGenerationDelegateCandidates.isEmpty {
                         Text(
-                            "Connect a Venice API-key provider, or enable Osaurus Cloud when its media catalog is available.",
+                            "Add a native Wan bundle to your image models folder, connect a Venice API-key provider, or enable Osaurus Cloud when its media catalog is available.",
                             bundle: .module
                         )
                         .font(.system(size: 11))

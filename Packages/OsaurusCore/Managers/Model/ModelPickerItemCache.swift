@@ -157,6 +157,17 @@ final class ModelPickerItemCache: ObservableObject {
         return await task.value
     }
 
+    /// The items as they stand, for a reader that doesn't need a rebuild of
+    /// its own: every change (models, providers, the cloud catalog) already
+    /// rebuilds them as it happens. Waits only for a rebuild under way, or
+    /// for a first one. A full rebuild runs to seconds with cloud providers
+    /// connected, which the phone's picker waited out on every open.
+    func currentItems() async -> [ModelPickerItem] {
+        if let rebuildTask { return await rebuildTask.value }
+        if isLoaded { return items }
+        return await buildModelPickerItems()
+    }
+
     /// Kick off a rebuild without awaiting it. Safe to call at app launch for a
     /// fast first paint — when no remote providers are connected yet this
     /// naturally produces `[foundation + local + 0 remote]`, and a subsequent
@@ -210,14 +221,6 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.foundation())
         }
 
-        // Cheap `isExecutableFile` stat, so it stays on the main actor with
-        // the other synchronous gates rather than paying a detached hop.
-        if ClaudeCodeConfiguration.isAvailable() {
-            for model in ClaudeCodeModel.allCases {
-                options.append(.claudeCode(model))
-            }
-        }
-
         let localModels = await Task.detached(priority: .userInitiated) {
             // Exclude embedding/encoder-only bundles (e.g. potion-base-4M
             // pulled into the HF cache by the memory feature): they can't
@@ -246,9 +249,14 @@ final class ModelPickerItemCache: ObservableObject {
         // that are fully staged/loadable; incomplete ones stay hidden until
         // their weights are present.
         let imageModels = (try? await ImageGenerationService.shared.availableModels()) ?? []
-        for model in imageModels where model.ready {
+        for model in imageModels where model.ready && model.kind != "videoGen" {
             options.append(.fromImageModel(model))
         }
+        let videoModels = (try? await ImageGenerationService.shared.availableVideoModels()) ?? []
+        options.append(contentsOf: videoModels.map { model in
+            ModelPickerItem(id: model.id, displayName: model.displayName, source: .imageGeneration,
+                imageKind: "videoGen", imageReady: true, mediaModel: model)
+        })
 
         let manager = RemoteProviderManager.shared
         let remote = Self.remoteModelItems(
@@ -346,7 +354,13 @@ final class ModelPickerItemCache: ObservableObject {
                         contextLength: remoteContextLength(
                             providerInfo.providerId,
                             unprefixedRouterModelId(modelId)
-                        )
+                        ),
+                        // Gemini text models get their documented thinking
+                        // levels on routes that forward the effort intact.
+                        reasoningCapabilities: GeminiReasoningContract.routeHonorsContract(
+                            providerType: providerInfo.providerType,
+                            host: providerInfo.host
+                        ) ? GeminiReasoningContract.capabilities(forModelId: modelId) : nil
                     )
                 }
                 items.append(item)

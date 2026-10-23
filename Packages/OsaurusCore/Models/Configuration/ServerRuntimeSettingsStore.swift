@@ -367,7 +367,7 @@ public enum ServerRuntimeSettingsStore {
         let concurrency = plan.concurrency.maxConcurrentSequences.map(String.init) ?? "default"
         let kv = plan.cache.defaultMaxKVSize.map(String.init) ?? "unlimited"
         return
-            "mode=\(settings.memorySafety.mode.rawValue) slider=\(settings.memorySafety.slider) load_cap=\(residentCapSummary(plan.loadConfiguration.memoryLimit)) allocator_cap=\(residentCapSummary(plan.loadConfiguration.maxResidentBytes)) max_concurrent=\(concurrency) kv_cap=\(kv)"
+            "mode=\(settings.memorySafety.mode.rawValue) keep_model_in_memory=\(settings.memorySafety.keepModelInMemory) slider=\(settings.memorySafety.slider) load_cap=\(residentCapSummary(plan.loadConfiguration.memoryLimit)) allocator_cap=\(residentCapSummary(plan.loadConfiguration.maxResidentBytes)) max_concurrent=\(concurrency) kv_cap=\(kv)"
     }
 
     private nonisolated static func residentCapSummary(_ cap: ResidentCap) -> String {

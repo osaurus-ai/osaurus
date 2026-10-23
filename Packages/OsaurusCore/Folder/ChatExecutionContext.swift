@@ -126,6 +126,11 @@ public enum ChatExecutionContext {
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
 
+    /// The agent a verified harness agent token speaks for, bound only by
+    /// `/mcp/call` after the token resolved. Module-internal so nothing
+    /// outside the server can claim it.
+    @TaskLocal static var harnessTokenAgentId: UUID?
+
     /// Insights attribution: which surface owns the current unit of work.
     /// Bound by `HTTPHandler` around media / embedding / transcription
     /// handlers so the in-process emitters (`MediaActivityLogger`) skip
@@ -393,6 +398,13 @@ public enum ChatExecutionContext {
     /// loopback script still fails closed. Module-internal so
     /// out-of-module callers cannot bind it.
     @TaskLocal static var hasRemoteReviewer: Bool = false
+
+    /// The owner's choice for the Privacy Filter on a turn of their phone's
+    /// voice call: sent as written, or every detection redacted without a
+    /// review. `nil` everywhere else. Bound by `handleAgentRunEndpoint` only
+    /// alongside `hasRemoteReviewer`, so no other caller can switch the
+    /// filter off.
+    @TaskLocal static var voiceCallPrivacy: VoiceCallPrivacy? = nil
 
     /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
     /// curator role against. A spawned worker keeps `currentAgentId` inherited

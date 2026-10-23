@@ -19,6 +19,29 @@ public enum ImageOutputFormat: String, Sendable, Codable, CaseIterable {
     case webp
 }
 
+/// A local safetensor adapter. Kept independent of the engine module so API,
+/// tools and delegation carry exactly the same request contract.
+public struct ImageAdapterParameters: Sendable, Codable, Hashable {
+    public enum Target: String, Sendable, Codable { case transformer, textEncoder, both }
+    public var url: URL
+    public var scale: Float
+    public var target: Target
+    public init(url: URL, scale: Float = 1, target: Target = .transformer) {
+        self.url = url; self.scale = scale; self.target = target
+    }
+    enum CodingKeys: String, CodingKey { case url, scale, target }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(URL.self, forKey: .url)
+        scale = try c.decodeIfPresent(Float.self, forKey: .scale) ?? 1
+        target = try c.decodeIfPresent(Target.self, forKey: .target) ?? .transformer
+        guard url.isFileURL, scale.isFinite else {
+            throw DecodingError.dataCorruptedError(forKey: .url, in: c,
+                debugDescription: "Adapters require a local file URL and finite scale")
+        }
+    }
+}
+
 /// Capability flags the UI uses to show/hide controls for a given model.
 public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
     public var textToImage: Bool
@@ -61,6 +84,21 @@ public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
 /// the exact bundle directory name and is what callers must send back in a
 /// request (exact-name resolution preserves the `-4bit`/`-8bit`/`-qN` quant
 /// suffix so co-installed quants never collapse onto each other).
+public struct ImageRequestLimits: Sendable, Hashable {
+    public let minimumSteps: Int
+    public let maximumSteps: Int?
+    public let fixedSteps: Int?
+    public let dimensionMultiple: Int
+    public let minimumDimension: Int
+    public let maximumDimension: Int?
+    public let maximumPixels: Int?
+    public let maximumImages: Int
+    public let maximumSourceImages: Int
+    public let formats: [String]
+    public let samplers: [String]
+    public let schedulers: [String]
+}
+
 public struct ImageModelInfo: Sendable, Equatable {
     public let id: String
     public let canonicalName: String?
@@ -72,12 +110,15 @@ public struct ImageModelInfo: Sendable, Equatable {
     public let quantizationBits: Int?
     public let defaultSteps: Int?
     public let defaultGuidance: Float?
+    public let defaultWidth: Int?
+    public let defaultHeight: Int?
     public let capabilities: ImageModelCapabilities
     /// Human-readable reasons the bundle is not ready (missing components,
     /// missing indexed shards). Surfaced to the UI as a "Download required" /
     /// "incomplete" hint.
     public let blockedReasons: [String]
     public let totalBytes: UInt64
+    public let requestLimits: ImageRequestLimits?
 
     public init(
         id: String,
@@ -90,7 +131,10 @@ public struct ImageModelInfo: Sendable, Equatable {
         defaultGuidance: Float?,
         capabilities: ImageModelCapabilities,
         blockedReasons: [String],
-        totalBytes: UInt64
+        totalBytes: UInt64,
+        requestLimits: ImageRequestLimits? = nil,
+        defaultWidth: Int? = nil,
+        defaultHeight: Int? = nil
     ) {
         self.id = id
         self.canonicalName = canonicalName
@@ -100,9 +144,12 @@ public struct ImageModelInfo: Sendable, Equatable {
         self.quantizationBits = quantizationBits
         self.defaultSteps = defaultSteps
         self.defaultGuidance = defaultGuidance
+        self.defaultWidth = defaultWidth
+        self.defaultHeight = defaultHeight
         self.capabilities = capabilities
         self.blockedReasons = blockedReasons
         self.totalBytes = totalBytes
+        self.requestLimits = requestLimits
     }
 }
 
@@ -121,6 +168,12 @@ public struct ImageGenerationParameters: Sendable {
     public var seeds: [UInt64]?
     public var batchSize: Int
     public var outputFormat: ImageOutputFormat
+    public var sampler: String?
+    public var scheduler: String?
+    public var shift: Float?
+    public var previewInterval: Int?
+    public var previewMaxPixel: Int
+    public var adapters: [ImageAdapterParameters]
 
     public init(
         model: String,
@@ -134,7 +187,9 @@ public struct ImageGenerationParameters: Sendable {
         numImages: Int = 1,
         seeds: [UInt64]? = nil,
         batchSize: Int = 1,
-        outputFormat: ImageOutputFormat = .png
+        outputFormat: ImageOutputFormat = .png,
+        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
+        previewInterval: Int? = nil, previewMaxPixel: Int = 256, adapters: [ImageAdapterParameters] = []
     ) {
         self.model = model
         self.prompt = prompt
@@ -148,6 +203,12 @@ public struct ImageGenerationParameters: Sendable {
         self.seeds = seeds
         self.batchSize = batchSize
         self.outputFormat = outputFormat
+        self.sampler = sampler
+        self.scheduler = scheduler
+        self.shift = shift
+        self.previewInterval = previewInterval
+        self.previewMaxPixel = previewMaxPixel
+        self.adapters = adapters
     }
 }
 
@@ -168,6 +229,12 @@ public struct ImageEditParameters: Sendable {
     public var guidance: Float?
     public var seed: UInt64?
     public var outputFormat: ImageOutputFormat
+    public var sampler: String?
+    public var scheduler: String?
+    public var shift: Float?
+    public var previewInterval: Int?
+    public var previewMaxPixel: Int
+    public var adapters: [ImageAdapterParameters]
 
     public init(
         model: String,
@@ -181,7 +248,9 @@ public struct ImageEditParameters: Sendable {
         steps: Int? = nil,
         guidance: Float? = nil,
         seed: UInt64? = nil,
-        outputFormat: ImageOutputFormat = .png
+        outputFormat: ImageOutputFormat = .png,
+        sampler: String? = nil, scheduler: String? = nil, shift: Float? = nil,
+        previewInterval: Int? = nil, previewMaxPixel: Int = 256, adapters: [ImageAdapterParameters] = []
     ) {
         self.model = model
         self.prompt = prompt
@@ -195,6 +264,12 @@ public struct ImageEditParameters: Sendable {
         self.guidance = guidance
         self.seed = seed
         self.outputFormat = outputFormat
+        self.sampler = sampler
+        self.scheduler = scheduler
+        self.shift = shift
+        self.previewInterval = previewInterval
+        self.previewMaxPixel = previewMaxPixel
+        self.adapters = adapters
     }
 }
 
@@ -401,6 +476,7 @@ public enum ImageGenerationError: Error, CustomStringConvertible, LocalizedError
     case wrongModelKind(expected: String, actual: String)
     case invalidRequest(String)
     case engine(String)
+    case memoryAdmission(field: String, estimatedBytes: Int64, message: String)
 
     public var errorDescription: String? { description }
 
@@ -414,6 +490,16 @@ public enum ImageGenerationError: Error, CustomStringConvertible, LocalizedError
             return "wrong model kind: expected \(e), got \(a)"
         case .invalidRequest(let s): return "invalid request: \(s)"
         case .engine(let s): return s
+        case .memoryAdmission(let field, let bytes, let message):
+            return "Image memory admission refused by \(field) (estimated peak \(bytes) bytes): \(message)"
         }
     }
+}
+
+/// Sampling controls advertised by the installed bundle, without loading weights.
+struct ImageSamplingCapabilities: Sendable, Equatable {
+    var samplers: [String] = []
+    var schedulers: [String] = []
+    var supportsShift = false
+    var maxSourceImages = 1
 }

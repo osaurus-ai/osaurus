@@ -205,7 +205,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         if agentId == Agent.defaultId {
             return "Computer Use is not available to the built-in Default agent. "
                 + "Switch to a custom agent that has Computer Use enabled "
-                + "(Agents → Configure → Subagents → Computer Use)."
+                + "(Agents → the agent → Abilities → Subagents → Computer Use)."
         }
         guard let agent else {
             return "Computer Use is not enabled for this custom agent: the agent could not be "
@@ -217,7 +217,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         }
         if !agent.settings.computerUseEnabled {
             return "Computer Use is not enabled for this custom agent. Enable it under "
-                + "Agents → Configure → Subagents → Computer Use."
+                + "Agents → the agent → Abilities → Subagents → Computer Use."
         }
         return nil
     }

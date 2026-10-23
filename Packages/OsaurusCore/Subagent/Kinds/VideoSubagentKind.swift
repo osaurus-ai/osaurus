@@ -12,6 +12,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
     private let argumentsJSON: String
     private var selectedModel: MediaModelInfo?
     private var approvedQuote: MediaVideoQuote?
+    private var approvedSource: (Data, String)?
 
     init(params: VideoJobParams, argumentsJSON: String) {
         self.params = params
@@ -21,6 +22,10 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
     var feedTitle: String {
         let value = params.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         return "video: \(value.count > 72 ? String(value.prefix(72)) + "…" : value)"
+    }
+
+    func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
+        resolved.isLocal ? .localExclusive : .remote
     }
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
@@ -68,18 +73,19 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                     : "No configured text-to-video model is available."
             )
         }
-        try Self.validate(params: params, model: model)
+        try validate(model: model)
         selectedModel = model
-        return ResolvedModel(name: model.displayName, id: model.id, isLocal: false)
+        return ResolvedModel(name: model.displayName, id: model.id, isLocal: model.target.backend == .local)
     }
 
     func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision {
         guard let model = selectedModel else {
             return .denied("The selected video model is no longer available.")
         }
-        let request = makeRequest(model: model, source: nil)
         let quote: MediaVideoQuote
         do {
+            approvedSource = try params.sourcePath.map(Self.loadSourceImage)
+            let request = makeRequest(model: model, source: approvedSource)
             quote = try await MediaGenerationCoordinator.shared.quoteVideo(request)
             approvedQuote = quote
         } catch {
@@ -109,7 +115,8 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                 values: [
                     "resolved_model": model.displayName,
                     "quote_usd": quote.usd,
-                    "billing_notice": "This queues a billable remote video job.",
+                    "billing_notice": model.target.backend == .local
+                        ? "This runs a local video job on this Mac." : "This queues a billable remote video job.",
                 ]
             )
             let approved = await ToolPermissionPromptService.requestApproval(
@@ -133,13 +140,12 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                 retryable: true
             )
         }
-        let source: (Data, String)? = try params.sourcePath.map(Self.loadSourceImage)
-        let request = makeRequest(model: model, source: source)
+        let request = makeRequest(model: model, source: approvedSource)
         feed.emitPhase("quoted", detail: OsaurusRouter.formatUSDAsCredits(quote.usd))
         do {
             let media = try await MediaGenerationCoordinator.shared.generateVideo(
                 request,
-                approvedQuote: quote
+                approvedQuote: quote, interrupt: interrupt
             ) { event in
                 switch event {
                 case .queued(let id):
@@ -159,7 +165,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                     feed.emitPhase("cancelled")
                 }
             }
-            let payload: [String: Any] = [
+            var payload: [String: Any] = [
                 "kind": "generated_media_job",
                 "media_type": "video",
                 "job_id": media.url.deletingPathExtension().lastPathComponent,
@@ -175,6 +181,9 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                     "mime_type": media.mimeType,
                 ],
             ]
+            if let effective = media.effectiveVideo {
+                payload["effective_parameters"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(effective))
+            }
             return SubagentResult(payload: payload, summary: "Generated a video with \(resolved.name).")
         } catch let error as MediaGenerationError {
             let retryable: Bool
@@ -211,11 +220,19 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
             duration: params.duration,
             aspectRatio: params.aspectRatio,
             resolution: params.resolution,
-            audio: params.audio
+            audio: params.audio,
+            width: params.width, height: params.height, frameCount: params.frameCount,
+            fps: params.fps, steps: params.steps, guidance: params.guidance, seed: params.seed
         )
     }
 
-    private static func validate(params: VideoJobParams, model: MediaModelInfo) throws {
+    func validate(model: MediaModelInfo) throws {
+        if model.target.backend == .local {
+            // Catalog durations are presets. Native requests are constrained by
+            // the actual frame grid, including explicit frames/fps and audio=false.
+            _ = try LocalVideoRequestPolicy(makeRequest(model: model, source: nil))
+            return
+        }
         let c = model.constraints
         if !c.durations.isEmpty, !c.durations.contains(params.duration) {
             throw SubagentError.invalidArgs(

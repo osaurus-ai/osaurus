@@ -163,6 +163,7 @@ final class ChatSession: ObservableObject {
 
     @Published var turns: [ChatTurn] = [] {
         didSet {
+            invalidateTranscriptTokenTotals()
             _cachedRouterSpendMicro = turns.reduce(0) { sum, turn in
                 guard let raw = turn.routerBilling?.costMicro else { return sum }
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -179,6 +180,54 @@ final class ChatSession: ObservableObject {
     }
 
     private var _cachedRouterSpendMicro: Int = 0
+
+    /// Memoized conversation/output token totals for the model-visible
+    /// transcript, read by `estimatedContextBreakdown` from the chat view
+    /// body. Walking every turn on each SwiftUI render stalled the main
+    /// thread on long conversations (APPLE-MACOS-2NW). Keyed on the session's
+    /// transcript revision (bumped when `turns` or `conversationSummary`
+    /// change) plus `ChatTurn.tokenEstimateRevision` (bumped on in-place
+    /// turn edits), so it never serves stale numbers.
+    private struct TranscriptTokenTotals {
+        let sessionRevision: UInt64
+        let turnRevision: UInt64
+        let outputTokens: Int
+        let conversationTokens: Int
+    }
+    private var transcriptRevision: UInt64 = 0
+    private var cachedTranscriptTokenTotals: TranscriptTokenTotals?
+
+    private func invalidateTranscriptTokenTotals() {
+        transcriptRevision &+= 1
+        cachedTranscriptTokenTotals = nil
+    }
+
+    /// Output and conversation (non-output) token estimates for the turns
+    /// the model will actually see on the next send. O(1) on cache hit.
+    private func transcriptTokenTotals() -> (outputTokens: Int, conversationTokens: Int) {
+        let turnRevision = ChatTurn.tokenEstimateRevision
+        if let cached = cachedTranscriptTokenTotals,
+            cached.sessionRevision == transcriptRevision,
+            cached.turnRevision == turnRevision
+        {
+            return (cached.outputTokens, cached.conversationTokens)
+        }
+        // With an LLM compaction summary, the model sees the summary message
+        // instead of the covered turns.
+        let coveredIds = summaryCoveredTurnIds
+        let modelVisibleTurns =
+            coveredIds.isEmpty ? turns : turns.filter { !coveredIds.contains($0.id) }
+        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: modelVisibleTurns)
+        let conversationTokens =
+            ContextBudgetManager.estimateTokens(for: modelVisibleTurns) - outputTokens
+        cachedTranscriptTokenTotals = TranscriptTokenTotals(
+            sessionRevision: transcriptRevision,
+            turnRevision: turnRevision,
+            outputTokens: outputTokens,
+            conversationTokens: conversationTokens
+        )
+        return (outputTokens, conversationTokens)
+    }
     private var _cachedRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) = (0, 0)
 
     /// The model's OUTPUT for the in-flight run is complete (vmlx emitted its
@@ -377,7 +426,13 @@ final class ChatSession: ObservableObject {
     var remoteSteers: [String] = []
 
     // MARK: - Persistence Properties
-    @Published var sessionId: UUID?
+    @Published var sessionId: UUID? {
+        didSet {
+            // One harness process per open chat: the chat this session
+            // showed before is resumed on its next send.
+            if let oldValue, oldValue != sessionId { closeHarnessSession(for: oldValue) }
+        }
+    }
     @Published var title: String = "New Chat"
     /// One-shot latch for the AI-generated title. Set when a generation is
     /// kicked off for the current session so later runs in the same chat
@@ -463,7 +518,7 @@ final class ChatSession: ObservableObject {
     @Published var workspaceContext: WorkspaceSessionContext?
 
     /// Tracks if session has unsaved content changes
-    private var isDirty: Bool = false
+    var isDirty: Bool = false
     /// Session id whose first persisted turn belongs to the active send.
     /// Used to undo transient rows on privacy-review cancels, including
     /// pre-minted empty session ids.
@@ -598,7 +653,9 @@ final class ChatSession: ObservableObject {
     /// visible transcript is untouched). Persisted with the session;
     /// invalidated when covered turns are edited/regenerated away (see
     /// `validateConversationSummary`).
-    @Published var conversationSummary: ConversationSummary?
+    @Published var conversationSummary: ConversationSummary? {
+        didSet { invalidateTranscriptTokenTotals() }
+    }
 
     /// Live compaction progress, rendered by the Context Budget popover
     /// (inline) and the compaction dialog.
@@ -775,7 +832,9 @@ final class ChatSession: ObservableObject {
     /// Set to true at the start of `stop()` so `completeRunCleanup` knows the
     /// run was cancelled by the user (or by `sendNowInterrupting`) and must
     /// not auto-flush a queued send. Reset to false at the top of `send(...)`.
-    private var stopRequested: Bool = false
+    // Background-task observers read this before interpreting streaming=false:
+    // the child's own chat Stop must not look like successful completion.
+    private(set) var stopRequested: Bool = false
     /// Takes the session's own inference provenance. It used to hardcode
     /// `.chatUI` and ignore `source` entirely, so every headless run -- cron
     /// schedule, file watcher, agent self-wake -- reached the model claiming to
@@ -1895,7 +1954,9 @@ final class ChatSession: ObservableObject {
     /// don't contend. Resolved against the catalog so it doesn't depend on
     /// `pickerItems` being populated.
     var selectedModelIsLocal: Bool {
-        guard let model = selectedModel else { return false }
+        // A harness agent never generates on the local runtime, whatever
+        // model the picker last held.
+        guard let model = selectedModel, !isHarnessAgentActive else { return false }
         // Cache-only: this getter runs in main-actor/view contexts where the
         // blocking lookup can park on the cold-cache disk scan for seconds.
         return ModelManager.findInstalledModelFromCache(named: model) != nil
@@ -2212,18 +2273,15 @@ final class ChatSession: ObservableObject {
 
         // With an LLM compaction summary, the model sees the summary message
         // instead of the covered turns — price the next send accordingly and
-        // surface the summary's own cost as a dedicated row.
-        let coveredIds = summaryCoveredTurnIds
-        let modelVisibleTurns =
-            coveredIds.isEmpty ? turns : turns.filter { !coveredIds.contains($0.id) }
+        // surface the summary's own cost as a dedicated row. The per-turn
+        // walk is memoized (see `transcriptTokenTotals`) because this runs
+        // inside view-body evaluation.
         let summaryTokens =
             conversationSummary.map {
                 ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
             } ?? 0
 
-        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: modelVisibleTurns)
-        let conversationTokens =
-            ContextBudgetManager.estimateTokens(for: modelVisibleTurns) - outputTokens
+        let (outputTokens, conversationTokens) = transcriptTokenTotals()
         var inputTokens = 0
         if !input.isEmpty { inputTokens += ContextBudgetManager.estimateTokens(for: input) }
         for attachment in pendingAttachments { inputTokens += attachment.estimatedTokens }
@@ -2566,6 +2624,12 @@ final class ChatSession: ObservableObject {
             return
         }
         guard !isStreaming else { return }
+        // The phone is replying in this chat: held until its turns are in
+        // (`sendHeldForPhone`), so the two never interleave.
+        if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
+            enqueueSend(input, attachments: pendingAttachments)
+            return
+        }
         // One local generation at a time across all windows: the shared
         // inference context can't run two, and loading a second would evict and
         // cancel the active one. Surface the alert and keep the draft intact.
@@ -3263,7 +3327,9 @@ final class ChatSession: ObservableObject {
     /// at ≥85% of the usable budget (the same near-limit signal that turns
     /// the context chip amber) and there is an uncovered span to summarize.
     private var shouldAutoCompactBeforeSend: Bool {
-        guard !skipAutoCompactionForNextSend,
+        // A harness keeps (and compacts) its own context.
+        guard !isHarnessAgentActive,
+            !skipAutoCompactionForNextSend,
             compactionState == .idle,
             hasCompactableConversation,
             let fraction = contextUsageFractionEstimate
@@ -4168,7 +4234,7 @@ final class ChatSession: ObservableObject {
         let memoryProjectId: UUID?
     }
 
-    private func isRunActive(_ runId: UUID) -> Bool {
+    func isRunActive(_ runId: UUID) -> Bool {
         activeRunId == runId && !Task.isCancelled
     }
 
@@ -4183,7 +4249,7 @@ final class ChatSession: ObservableObject {
     /// the cell shows nothing until the steady-state read is meaningful —
     /// avoids the prior "shows 12 tok/s for the first half-second then
     /// jumps to 60 tok/s" jitter users complained about.
-    private func refreshLiveRate(
+    func refreshLiveRate(
         rolling: inout RollingTokenRate,
         lastRefreshAt: inout Date,
         now: Date,
@@ -4381,29 +4447,6 @@ final class ChatSession: ObservableObject {
         folderState.context
     }
 
-    /// Per-run options for the Claude Code subprocess backend.
-    ///
-    /// The working directory starts Claude Code in the folder the user picked
-    /// for this chat. It is not an Osaurus sandbox; enabled Claude Code tools
-    /// retain the macOS user's normal filesystem access. `agentId` travels
-    /// with the run because the
-    /// subprocess is out of process: the `@TaskLocal` chat identity cannot
-    /// follow it, so the MCP bridge mints a grant naming this agent instead.
-    private func claudeCodeRunOptions(for agentId: UUID) -> ClaudeCodeRunOptions {
-        let config = AgentManager.shared.effectiveClaudeCodeConfig(for: agentId)
-        let root = activeFolderContext(for: agentId)?.rootPath
-        return ClaudeCodeRunOptions(
-            mode: config.mode,
-            allowWrites: config.allowWrites,
-            allowShell: config.allowShell,
-            allowOsaurusTools: config.allowOsaurusTools,
-            allowOsaurusConfigWrites: config.allowOsaurusConfigWrites,
-            osaurusCLIPath: ClaudeCodeConfiguration.embeddedCLIPath(),
-            workingDirectory: root,
-            agentId: agentId
-        )
-    }
-
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
         let folder = activeFolderContext(for: agentId)
         let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
@@ -4555,7 +4598,7 @@ final class ChatSession: ObservableObject {
             autoTitleGenerationStarted = true
         case .generate(let userText, let assistantText, let previewTitle):
             autoTitleGenerationStarted = true
-            let fallbackModel = selectedModel
+            let fallbackModel = isHarnessAgentActive ? nil : selectedModel
             Task { [weak self] in
                 guard
                     let generated = await ChatTitleService.shared.generateTitle(
@@ -4642,7 +4685,7 @@ final class ChatSession: ObservableObject {
         followUpGenerationStarted = true
         let userText = userTurn.content
         let assistantText = assistantTurn.content
-        let fallbackModel = selectedModel
+        let fallbackModel = isHarnessAgentActive ? nil : selectedModel
         // Per-agent model override (the only follow-up config). The Default
         // agent carries none, so it falls back to `.empty` → shared core model.
         let followUpModelOverride =
@@ -4782,6 +4825,17 @@ final class ChatSession: ObservableObject {
                 )
             }
         }
+    }
+
+    /// The phone's run in this chat ended and its turns are in: the send held
+    /// for it goes now (see `RemoteSessionContinuation.isPhoneReplying`).
+    func sendHeldForPhone() {
+        guard !isStreaming, activeRunId == nil, preSendHandshakeTask == nil, let pending = queuedSend else { return }
+        queuedSend = nil
+        if let skillId = pending.oneOffSkillId {
+            pendingOneOffSkillId = skillId
+        }
+        send(pending.text, attachments: pending.attachments)
     }
 
     /// Dispatch any queued send when the run ended naturally (no `stop()`
@@ -5764,7 +5818,7 @@ final class ChatSession: ObservableObject {
     /// Honors the run lifecycle: cancelling `currentTask` cancels the consume
     /// loop, which soft-cancels the underlying job.
     func runImageGeneration(
-        prompt: String,
+        prompt promptText: String,
         attachments: [Attachment],
         settings: ImageComposerSettings,
         into turn: ChatTurn,
@@ -5772,6 +5826,14 @@ final class ChatSession: ObservableObject {
     ) async {
         guard let model = selectedModel, !model.isEmpty else {
             turn.content = L("Image generation failed: no model selected")
+            rebuildVisibleBlocks()
+            return
+        }
+        let prompt: String
+        do {
+            prompt = try ImageComposerRequestBuilder.prompt(text: promptText, attachments: attachments)
+        } catch {
+            turn.content = "\(L("Image generation failed:")) \(error.localizedDescription)"
             rebuildVisibleBlocks()
             return
         }
@@ -5855,7 +5917,7 @@ final class ChatSession: ObservableObject {
                     } else {
                         turn.content =
                             images
-                            .map { "![\(prompt)](\($0.url.absoluteString))" }
+                            .map { ImageComposerRequestBuilder.generatedImageMarkdown(url: $0.url) }
                             .joined(separator: "\n\n")
                     }
                     refresh(force: true)
@@ -6055,7 +6117,9 @@ final class ChatSession: ObservableObject {
                 "resolved_model": model.displayName,
                 "duration": duration,
                 "quote_usd": quote.usd,
-                "billing_notice": "Approving queues a billable remote job that cannot be cancelled upstream.",
+                "billing_notice": model.target.backend == .local
+                    ? "Approving runs this video locally on your Mac."
+                    : "Approving queues a billable remote job that cannot be cancelled upstream.",
             ]
             approvalValues["resolution"] = settings.resolution
             approvalValues["aspect_ratio"] = settings.aspectRatio
@@ -6213,6 +6277,15 @@ final class ChatSession: ObservableObject {
             return
         }
         guard activeRunId == nil, !isStreaming else {
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
+        // Every other send path (queued flush, regeneration, voice) waits for
+        // the phone's run in this chat too; a message is held, not lost.
+        if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
+            if hasContent {
+                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId)
+            }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
@@ -6463,7 +6536,12 @@ final class ChatSession: ObservableObject {
         // streaming pipeline (e.g. from a sandbox plugin running on a
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
+        // Regenerate and edit retain the user turn but call send(""). Capture
+        // that turn before asynchronous work and before appending the assistant.
+        let imageInput = turns.last(where: { $0.role == .user }).map { (prompt: $0.content, attachments: $0.attachments) }
+            ?? (prompt: trimmed, attachments: attachments)
         let turnModelId = selectedModel
+        let turnHarness = harnessSelection
         let turnModelType = selectedPickerItem?.modelType
         let turnSupportsImages = selectedModelSupportsImages
         let turnSupportsAudio = selectedModelSupportsAudio
@@ -6502,7 +6580,7 @@ final class ChatSession: ObservableObject {
             // turn composes WITH the folder instead of silently folder-less.
             // Instant when no restore is pending. Default agent skips — it
             // is folder-less by policy and must not wait on a restore.
-            if turnAgentId != Agent.defaultId {
+            if turnAgentId != Agent.defaultId || turnHarness != nil {
                 _ = await self.folderState.contextWaitingForRestore()
             }
             guard self.isRunActive(runId) else { return }
@@ -6571,6 +6649,21 @@ final class ChatSession: ObservableObject {
                 // user-only while isStreaming is true and the table early-returns without assistant rows.
                 rebuildVisibleBlocks()
 
+                // A harness agent's turn runs in its own process with its own
+                // history; none of the built-in loop below applies.
+                if let turnHarness {
+                    await self.runHarnessTurn(
+                        turnHarness,
+                        prompt: imageInput.prompt,
+                        attachments: imageInput.attachments,
+                        agentId: turnAgentId,
+                        folderRoot: self.folderState.context?.rootPath,
+                        into: assistantTurn,
+                        runId: runId
+                    )
+                    return
+                }
+
                 // Image-generation models route through ImageGenerationService
                 // (a second MLX graph, gated exclusive to LLM eval) instead of
                 // the chat engine. The same run lifecycle (defer finalizeRun,
@@ -6587,8 +6680,8 @@ final class ChatSession: ObservableObject {
                                     }
                 if self.isImageGenerationModel(turnModelId) {
                     await self.runImageGeneration(
-                        prompt: trimmed,
-                        attachments: attachments,
+                        prompt: imageInput.prompt,
+                        attachments: imageInput.attachments,
                         settings: imageSettings,
                         into: assistantTurn,
                         runId: runId
@@ -7976,7 +8069,6 @@ final class ChatSession: ObservableObject {
                             req.admissionPositionLimit = self.delegationBudget?.contextPositions
                             req.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
                             req.samplingParametersAreImplicit = true
-                            req.claudeCodeOptions = self.claudeCodeRunOptions(for: turnAgentId)
                             // Mode 2 routing signal: tells `RemoteProviderService`
                             // to target the peer's `/agents/{address}/run`
                             // endpoint (remote agent runs fully server-side). The
@@ -8542,7 +8634,6 @@ final class ChatSession: ObservableObject {
                                 finalReq.admissionPositionLimit = self.delegationBudget?.contextPositions
                                 finalReq.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
                                 finalReq.samplingParametersAreImplicit = true
-                                finalReq.claudeCodeOptions = claudeCodeRunOptions(for: turnAgentId)
                                 finalReq.runAsRemoteAgent = isRemoteAgentTarget
                                 finalReq.cacheStableSystemPrefix =
                                     isRemoteAgentTarget ? nil : context.staticPrefix
@@ -9957,7 +10048,7 @@ struct ChatView: View {
                         chatHeader
 
                         // Content area (show immediately, model discovery is async)
-                        if session.hasAnyModel || session.isDiscoveringModels {
+                        if session.hasAnyModel || session.isDiscoveringModels || session.isHarnessAgentActive {
                             if !session.hasVisibleThreadMessages {
                                 if session.isHydratingTranscript {
                                     // A hibernated tab being woken: its

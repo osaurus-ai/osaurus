@@ -1049,7 +1049,18 @@ struct ModelDownloadView: View {
                             automaticUpdatesCard
                                 .settingsLandingAnchor("models.automaticUpdates")
 
-                            if lists.displayed.isEmpty {
+                            if let repoId = modelManager.imageSearchRepoId, selectedTab == .all {
+                                modelsLinkRow(
+                                    icon: "photo.on.rectangle.angled",
+                                    title: repoId,
+                                    subtitle: L("Image generation and editing models live in Images settings."),
+                                    cta: L("Open Images")
+                                ) {
+                                    ImageModelDownloadService.shared.offer(repoId: repoId)
+                                    managementState.imageGenerationSubTabRequest = ImageGenerationTab.models.rawValue
+                                    managementState.selectedTab = .imageGeneration
+                                }
+                            } else if lists.displayed.isEmpty {
                                 emptyState
                             } else {
                                 switch selectedTab {
@@ -1991,7 +2002,10 @@ struct ModelDownloadView: View {
         managementState.pendingDeepLinkRetryModelId = nil
         Task { @MainActor in
             let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: repoId)
-            if case .model(let model) = resolution {
+            if case .image = resolution {
+                managementState.imageGenerationSubTabRequest = ImageGenerationTab.models.rawValue
+                managementState.selectedTab = .imageGeneration
+            } else if case .model(let model) = resolution {
                 // The token sheet is still dismissing when `onSaved` runs.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                     presentDetailSheet(for: model)

@@ -37,6 +37,474 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "鑰匙圈尚未回應 %@ 的請求。請過幾分鐘後再試一次儲存。" } }
       }
     },
+    "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size without a free-space cap. This is a maximum cache size, not reserved space. Saving updates loaded models without unloading them; a lower cap applies on the next cache write." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatisch nutzt 30% des freien Speicherplatzes plus der eigenen Cache-Daten. Ein expliziter Prozentsatz bezieht sich auf die gesamte Laufwerksgröße, ohne Begrenzung durch freien Speicher. Dies ist eine maximale Cache-Größe, keine Speicherreservierung. Speichern aktualisiert geladene Modelle ohne Entladen; eine kleinere Grenze gilt beim nächsten Cache-Schreibvorgang."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "자동은 여유 공간과 이 캐시 크기 합계의 30%를 사용합니다. 명시한 비율은 전체 디스크 크기를 기준으로 하며 여유 공간으로 제한되지 않습니다. 이는 최대 캐시 크기이며 공간을 예약하지 않습니다. 저장하면 모델을 내리지 않고 적용되며, 낮아진 한도는 다음 캐시 쓰기 때 적용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматический режим использует 30% суммы свободного места и объёма этого кэша. Явно заданный процент относится ко всему диску и не ограничивается свободным местом. Это максимальный размер кэша, а не резервирование места. Сохранение обновляет загруженные модели без выгрузки; уменьшенный лимит применяется при следующей записи кэша."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动模式使用可用空间与此缓存自身大小之和的30%。明确指定的百分比以磁盘总容量为基准，不受可用空间上限限制。这是缓存的最大大小，而不是预留空间。保存后会更新已加载的模型，无需卸载；降低的上限将在下次写入缓存时生效。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size without a free-space cap. This is a maximum cache size, not reserved space. Saving updates loaded models without unloading them; a lower cap applies on the next cache write."
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
+    "The cache limit exceeds currently available space. Other files may prevent the cache from reaching this size." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Cache-Limit übersteigt den derzeit verfügbaren Speicherplatz. Andere Dateien können verhindern, dass der Cache diese Größe erreicht."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "캐시 한도가 현재 사용 가능한 공간을 초과합니다. 다른 파일 때문에 캐시가 이 크기에 도달하지 못할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит кэша превышает доступное сейчас место. Другие файлы могут помешать кэшу достичь этого размера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缓存上限超过当前可用空间。其他文件可能导致缓存无法达到此大小。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The cache limit exceeds currently available space. Other files may prevent the cache from reaching this size."
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
+    "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default folgt der adaptiven Modellrichtlinie, einschließlich kompatibler mitgelieferter DFlash-2- oder DSpark-Drafter. Off deaktiviert spekulatives Decoding. On fordert einen kompatiblen Drafter oder unterstütztes adaptives natives MTP an. Die Geschwindigkeit hängt von Modell und Aufgabe ab."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认遵循模型的自适应策略，包括兼容的内置 DFlash 2 或 DSpark。关闭会禁用推测解码。开启会请求兼容的草稿模型或受支持的自适应原生 MTP。速度取决于模型和任务。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본값은 호환되는 번들 DFlash 2 또는 DSpark를 포함한 모델의 적응형 정책을 따릅니다. 끄기는 추측 디코딩을 비활성화합니다. 켜기는 호환되는 초안 모델 또는 지원되는 적응형 네이티브 MTP를 요청합니다. 속도는 모델과 작업에 따라 달라집니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По умолчанию используется адаптивная политика модели, включая совместимый встроенный DFlash 2 или DSpark. «Выкл.» отключает спекулятивное декодирование. «Вкл.» запрашивает совместимую черновую модель или поддерживаемый адаптивный нативный MTP. Скорость зависит от модели и задачи."
+          }
+        }
+      }
+    },
+    "The drafter must match the target model. A compatible selected or bundled DFlash 2 or DSpark drafter takes priority over native MTP. Incompatible folders are ignored; the resolved model state is shown below." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The drafter must match the target model. A compatible selected or bundled DFlash 2 or DSpark drafter takes priority over native MTP. Incompatible folders are ignored; the resolved model state is shown below."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Drafter muss zum Zielmodell passen. Ein kompatibler ausgewählter oder mitgelieferter DFlash-2- oder DSpark-Drafter hat Vorrang vor nativem MTP. Inkompatible Ordner werden ignoriert; der tatsächlich verwendete Modellstatus wird unten angezeigt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "草稿模型必须与目标模型匹配。兼容的已选或内置 DFlash 2 或 DSpark 草稿模型优先于原生 MTP。不兼容的文件夹会被忽略；实际模型状态显示在下方。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "초안 모델은 대상 모델과 일치해야 합니다. 호환되는 선택된 또는 번들 DFlash 2나 DSpark 초안 모델이 네이티브 MTP보다 우선합니다. 호환되지 않는 폴더는 무시되며 실제 모델 상태는 아래에 표시됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Черновая модель должна соответствовать целевой модели. Совместимый выбранный или встроенный DFlash 2 либо DSpark имеет приоритет перед нативным MTP. Несовместимые папки игнорируются; фактическое состояние модели показано ниже."
+          }
+        }
+      }
+    },
+    "No external folder selected. Compatible bundled drafters and the model’s native MTP policy still apply. Off (AR) disables speculation." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No external folder selected. Compatible bundled drafters and the model’s native MTP policy still apply. Off (AR) disables speculation."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein externer Ordner ausgewählt. Kompatible mitgelieferte Drafter und die native MTP-Richtlinie des Modells gelten weiterhin. Off (AR) deaktiviert spekulatives Decoding."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未选择外部文件夹。兼容的内置草稿模型和模型的原生 MTP 策略仍然适用。关闭（AR）会禁用推测解码。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "외부 폴더가 선택되지 않았습니다. 호환되는 번들 초안 모델과 모델의 네이티브 MTP 정책은 계속 적용됩니다. 끄기(AR)는 추측 디코딩을 비활성화합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Внешняя папка не выбрана. Совместимые встроенные черновые модели и политика нативного MTP по-прежнему применяются. «Выкл. (AR)» отключает спекулятивное декодирование."
+          }
+        }
+      }
+    },
+    "Qwen 27B drafter…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen 27B drafter…"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen-27B-Drafter…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen 27B 草稿模型…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qwen 27B 초안 모델…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Черновая модель Qwen 27B…"
+          }
+        }
+      }
+    },
+    "FLUX Kommunity (non-commercial)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FLUX Kommunity (nicht kommerziell)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FLUX Kommunity (비상업용)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FLUX Kommunity (некоммерческая)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FLUX Kommunity（非商业）"
+          }
+        }
+      }
+    },
+    "Height" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Höhe"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "높이"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Высота"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高度"
+          }
+        }
+      }
+    },
+    "Live previews" : {
+      "comment": "Optional image denoising progress previews.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live-Vorschau"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实时预览"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실시간 미리보기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Предпросмотр в реальном времени"
+          }
+        }
+      }
+    },
+    "Bundle default" : {
+      "comment": "Local image generation sampling control.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bundle-Standard"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型包默认值"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "번들 기본값"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По умолчанию из пакета"
+          }
+        }
+      }
+    },
+    "Sampler" : {
+      "comment": "Local image generation sampling control.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sampler"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "采样器"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "샘플러"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сэмплер"
+          }
+        }
+      }
+    },
+    "Scheduler" : {
+      "comment": "Local image generation sampling control.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scheduler"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "调度器"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "스케줄러"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Планировщик"
+          }
+        }
+      }
+    },
+    "Source images (ordered, up to %lld)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quellbilder (geordnet, bis zu %lld)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "소스 이미지 (순서대로, 최대 %lld개)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исходные изображения (по порядку, до %lld)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "源图像（按顺序，最多 %lld 张）"
+          }
+        }
+      }
+    },
+    "Timestep shift" : {
+      "comment": "Local image generation sampling control.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeitschrittverschiebung"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时间步偏移"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "타임스텝 시프트"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сдвиг временного шага"
+          }
+        }
+      }
+    },
+    "Timestep shift must be a finite number." : {
+      "comment": "Local image generation sampling control.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Zeitschrittverschiebung muss eine endliche Zahl sein."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时间步偏移必须为有限数值。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "타임스텝 시프트는 유한한 숫자여야 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сдвиг временного шага должен быть конечным числом."
+          }
+        }
+      }
+    },
     "The voice model stopped Osaurus while it was loading last time. Load it again from here." : {
       "comment" : "Voice settings recovery message after the process exits during an automatic Core ML model load."
     },
@@ -188,6 +656,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Бюджет контекста"
+          }
+        }
+      }
+    },
+    "Width" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Breite"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "너비"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ширина"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "宽度"
           }
         }
       }
@@ -28897,6 +29393,51 @@
         }
       }
     },
+    "Accept messages sent through apps?" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept messages sent through apps?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "接受通过应用发送的消息？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "接受透過應用程式傳送的訊息？" } }
+      }
+    },
+    "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Any Slack app an allowlisted person has authorized to post as them, such as Zapier or a workflow, will be able to message this agent. Other bots stay blocked." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许列表中的成员授权以其身份发布的任何 Slack 应用（例如 Zapier 或工作流）都将能够向此代理发送消息。其他机器人仍会被阻止。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許清單中的成員授權以其身分發布的任何 Slack 應用程式（例如 Zapier 或工作流程）都將能夠傳送訊息給此代理。其他機器人仍會被封鎖。" } }
+      }
+    },
+    "Turn On" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Turn On" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "开启" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟" } }
+      }
+    },
+    "Accept Messages Sent Through Apps" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Accept Messages Sent Through Apps" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "接受通过应用发送的消息" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "接受透過應用程式傳送的訊息" } }
+      }
+    },
+    "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Answer messages an allowlisted person posts through a Slack app or API with their own token, such as a phone shortcut. Slack marks these as app messages, so they are ignored by default." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复允许列表中的成员使用自己的令牌通过 Slack 应用或 API 发布的消息，例如手机快捷操作。Slack 会将这些标记为应用消息，因此默认会被忽略。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "回覆允許清單中的成員使用自己的權杖透過 Slack 應用程式或 API 發布的訊息，例如手機捷徑。Slack 會將這些標記為應用程式訊息，因此預設會被忽略。" } }
+      }
+    },
     "Allow Broadcast Mentions" : {
       "localizations" : {
         "de" : {
@@ -38652,34 +39193,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自動回覆需要 Discord 傳送和可寫頻道。"
-          }
-        }
-      }
-    },
-    "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size, bounded by 25% of free space plus this cache. Saving a size change updates loaded models without unloading them; a lower cap is enforced on the next cache write." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatisch nutzt 30% des freien Speicherplatzes plus der Cache-Daten. Ein expliziter Prozentsatz bezieht sich auf die gesamte Laufwerksgröße und ist auf 25% des freien Speicherplatzes plus des Caches begrenzt. Größenänderungen gelten nach dem Speichern ohne Entladen der Modelle; eine kleinere Grenze wird beim nächsten Schreiben durchgesetzt."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "자동은 여유 공간과 이 캐시 크기 합계의 30%를 사용합니다. 명시한 비율은 전체 디스크 크기를 기준으로 하며, 여유 공간과 이 캐시 합계의 25%로 제한됩니다. 크기 변경을 저장하면 모델을 내리지 않고 적용하며, 낮아진 한도는 다음 캐시 쓰기 때 적용됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автоматический режим использует 30% свободного места и объёма этого кэша. Явный процент относится ко всему диску и ограничивается 25% свободного места и кэша. Сохранение размера обновляет загруженные модели без выгрузки; уменьшенный лимит применяется при следующей записи в кэш."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动模式使用可用空间加此缓存自身字节数的 30%。指定百分比基于磁盘总容量，并限制为可用空间加此缓存的 25%。保存大小更改会更新已加载模型而无需卸载；降低的上限在下次写入缓存时执行。"
           }
         }
       }
@@ -110388,37 +110901,37 @@
         }
       }
     },
-    "Go to Features and turn on Computer Use." : {
+    "Open Abilities → Subagents and turn on Computer Use." : {
       "extractionState" : "manual",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Gehen Sie zu Funktionen und aktivieren Sie die Computernutzung."
+            "value" : "Öffne Fähigkeiten → Subagenten und aktiviere die Computernutzung."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기능으로 이동하여 컴퓨터 제어를 켜세요."
+            "value" : "능력 → 하위 에이전트를 열고 컴퓨터 제어를 켜세요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Перейдите в «Функции» и включите «Использование компьютера»."
+            "value" : "Откройте «Способности → Субагенты» и включите «Использование компьютера»."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "前往功能并开启电脑操控。"
+            "value" : "打开能力 → 子智能体并开启电脑操控。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "前往功能並開啓電腦使用。"
+            "value" : "打開能力 → 子智能體並開啟電腦使用。"
           }
         }
       }
@@ -110451,36 +110964,36 @@
         }
       }
     },
-    "Go to Subagents and turn on Browser Use." : {
+    "Open Abilities → Subagents and turn on Browser Use." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Go to Subagents and turn on Browser Use."
+            "state" : "translated",
+            "value" : "Öffne Fähigkeiten → Subagenten und aktiviere die Browser-Nutzung."
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Go to Subagents and turn on Browser Use."
+            "state" : "translated",
+            "value" : "능력 → 하위 에이전트를 열고 브라우저 사용을 켜세요."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Go to Subagents and turn on Browser Use."
+            "state" : "translated",
+            "value" : "Откройте «Способности → Субагенты» и включите «Использование браузера»."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "前往子智能体并开启浏览器使用。"
+            "value" : "打开能力 → 子智能体并开启浏览器使用。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "前往子智能體並開啟瀏覽器使用。"
+            "value" : "打開能力 → 子智能體並開啟瀏覽器使用。"
           }
         }
       }
@@ -126821,6 +127334,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智能體運行時保持 Mac 喚醒"
+          }
+        }
+      }
+    },
+    "Keep Model in Memory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modell im Arbeitsspeicher halten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모델을 메모리에 유지"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Держать модель в памяти"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "将模型保留在内存中"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "將模型保留在記憶體中"
           }
         }
       }
@@ -210411,34 +210958,6 @@
         }
       }
     },
-    "Requested %@; limited to 25%% of free space plus this cache." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Angefordert: %@; begrenzt auf 25%% des freien Speicherplatzes plus dieses Caches."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "요청한 크기 %@; 여유 공간과 이 캐시 합계의 25%%로 제한됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запрошено %@; ограничено 25%% свободного места и этого кэша."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请求 %@；限制为可用空间加此缓存的 25%%。"
-          }
-        }
-      }
-    },
     "Requests" : {
       "comment" : "A label describing the number of requests made by a user.",
       "isCommentAutoGenerated" : true,
@@ -256030,7 +256549,7 @@
         }
       }
     },
-    "The browser is now a native feature. This plugin's tools and skill are no longer loaded — enable Browser Use on a custom agent's Subagents tab, and manage sessions in Settings → Browser. You can uninstall this plugin." : {
+    "The browser is now a native feature. This plugin's tools and skill are no longer loaded — enable Browser Use on a custom agent under Abilities → Subagents, and manage sessions in Settings → Browser Use. You can uninstall this plugin." : {
       "comment" : "A message that explains that the browser is now a native feature, and that the plugin is no longer needed.",
       "isCommentAutoGenerated" : true
     },
@@ -262127,38 +262646,38 @@
         }
       }
     },
-    "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser." : {
+    "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser Use." : {
       "comment" : "A footnote explaining the purpose of the browser-use capability.",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser."
+            "value" : "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser Use."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser."
+            "value" : "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser Use."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser."
+            "value" : "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser Use."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此智能体拥有自己的隔离浏览器配置文件。在「设置」→「浏览器」中查看会话和登录状态。"
+            "value" : "此智能体拥有自己的隔离浏览器配置文件。在「设置」→「浏览器使用」中查看会话和登录状态。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理擁有其自己的隔離瀏覽器設定檔。在「設定」→「瀏覽器」中查看會話和登入狀態。"
+            "value" : "此代理擁有其自己的隔離瀏覽器設定檔。在「設定」→「瀏覽器使用」中查看會話和登入狀態。"
           }
         }
       }
@@ -295832,6 +296351,812 @@
           }
         }
       }
+    },
+    "\"Make me an agent from the Cloud Agent template\"" : {},
+    "%@ is not installed or its provider is not connected. Install it or choose another model." : {
+      "comment" : "A model name that is not installed or its provider is not connected.",
+      "isCommentAutoGenerated" : true
+    },
+    "%@ is not installed. This template requires it." : {},
+    "%@ is not installed. Your default model will be used." : {},
+    "%@ is ready" : {},
+    "%lld plugins" : {},
+    "%lld quick actions" : {},
+    "%lld to set up" : {},
+    "1 plugin" : {
+      "comment" : "Plural form of \"plugin\".",
+      "isCommentAutoGenerated" : true
+    },
+    "1 quick action" : {
+      "comment" : "Text describing a single quick action.",
+      "isCommentAutoGenerated" : true
+    },
+    "A few things are worth confirming before you rely on this agent." : {},
+    "A portable copy of how an agent is set up, ready to share or reuse." : {
+      "comment" : "A description of what a template is.",
+      "isCommentAutoGenerated" : true
+    },
+    "A template named \"%@\" already exists. Saving adds version %lld; earlier versions stay in its history." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A template named \"%1$@\" already exists. Saving adds version %2$lld; earlier versions stay in its history."
+          }
+        }
+      }
+    },
+    "Another Mac" : {},
+    "Another template already uses this name." : {
+      "comment" : "A warning message that appears when a user tries to rename a template to a name that is already in use.",
+      "isCommentAutoGenerated" : true
+    },
+    "Anyone can turn it back into an agent. Osaurus asks only for what their Mac is missing." : {},
+    "AppleScript will ask for Automation permission the first time it controls an app." : {},
+    "Auto tools" : {},
+    "Available to the Orchestrator" : {},
+    "Back to %@" : {},
+    "Based on the %@ template" : {},
+    "Built-in templates cannot be changed. Save a copy to your library first." : {},
+    "Can use subagents" : {},
+    "Check Again" : {},
+    "Choose a Knowledge Folder" : {},
+    "Choose a template file or drop it here" : {},
+    "Choose a template file or drop one here" : {},
+    "Collection names only, never the files" : {},
+    "Collection names only, never the files: %@" : {},
+    "Computer Use needs the Accessibility permission. Grant it in System Settings." : {},
+    "Copied from %@ v%lld" : {
+      "comment" : "Template name for a forked template.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Copied from %1$@ v%2$lld"
+          }
+        }
+      }
+    },
+    "Could not read %@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Could not read %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "Could not read the template: %@" : {
+      "comment" : "A description of a template error. The argument is a description of the error.",
+      "isCommentAutoGenerated" : true
+    },
+    "Could not save template: %@" : {},
+    "Create Agent from Template" : {},
+    "Create From Folder…" : {},
+    "Create an agent from this template" : {},
+    "Created from the %@ template" : {},
+    "Delete Template" : {},
+    "Delete the template \"%@\"? Agents already created from it are not affected." : {},
+    "Drop a .osaurustemplate file here" : {},
+    "Enable Knowledge" : {},
+    "Enable Sandbox" : {},
+    "Every permission this agent needs is granted." : {},
+    "Every tool this agent lists is available here." : {},
+    "Everything checks out. The agent is ready to use." : {},
+    "Everything this template needs is in place. Create the agent when you are ready." : {},
+    "Expected a %@ template, got a %@ template." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Expected a %1$@ template, got a %2$@ template."
+          }
+        }
+      }
+    },
+    "Export File…" : {
+      "comment" : "A label for a menu item that exports a template.",
+      "isCommentAutoGenerated" : true
+    },
+    "Export Template" : {},
+    "Export a file from any template card" : {},
+    "Files, keys, and chats stay on your Mac" : {},
+    "Finish setting up %@" : {},
+    "From the %@ template" : {},
+    "Give the agent a name before creating it." : {},
+    "Grant Collections" : {},
+    "Grant the permission, then come back to this window. It re-checks on its own." : {},
+    "Hidden from the Orchestrator" : {},
+    "Hide from Orchestrator" : {},
+    "Hide this explainer" : {},
+    "Hint from the agent's author: %@" : {},
+    "How to connect its MCP servers" : {},
+    "Import Copy" : {},
+    "Import Template" : {},
+    "Import Update" : {},
+    "Import a File" : {},
+    "Imported copy" : {
+      "comment" : "Text describing the action of keeping both a local and an imported template.",
+      "isCommentAutoGenerated" : true
+    },
+    "Include in Template" : {},
+    "Invoice Bot" : {},
+    "It's unsigned because signing didn't finish." : {},
+    "JSON file" : {},
+    "Keep both" : {},
+    "Knowledge is on but no collection is granted. Grant or create one so the agent has something to search." : {},
+    "Lets the Orchestrator base new agents on this template when you ask for it by name." : {},
+    "MCP Server" : {},
+    "Memory on" : {},
+    "Name for the copy" : {},
+    "Needs on this Mac" : {},
+    "New Name" : {},
+    "No knowledge collections exist on this Mac yet." : {},
+    "No models are set up yet" : {},
+    "No template %@." : {},
+    "Not available on this Mac: %@. Add the MCP server or plugin that provides them, or remove them from the agent." : {},
+    "Nothing blocks this agent. The notes below are worth a look but do not stop it from running." : {},
+    "Nothing to import. Choose a template file." : {},
+    "One line about what this agent is for" : {},
+    "Open Agent Settings" : {},
+    "Open MCP Servers" : {},
+    "Open Plugins" : {},
+    "Osaurus can read and write %@." : {},
+    "Plugin Instructions" : {},
+    "Refresh templates" : {},
+    "Remove Missing Tools" : {},
+    "Remove Working Folder" : {},
+    "Rename Template" : {},
+    "Renamed to %@" : {},
+    "Reorder agents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agenten neu anordnen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 순서 변경"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменить порядок агентов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新排序智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新排序智能體"
+          }
+        }
+      }
+    },
+    "Replaced from import of v%lld" : {},
+    "Replacing saves the incoming content as the next version. History is kept." : {},
+    "Restored version %lld" : {},
+    "Run Setup" : {},
+    "Run Setup from the card menu to finish configuring this agent" : {},
+    "Runs %@" : {},
+    "Sandbox on" : {},
+    "Save New Version" : {},
+    "Save Template" : {},
+    "Save an agent as a template, or import a template file someone shared with you." : {},
+    "Save as Template" : {},
+    "Save it as a template. Only the setup travels. Your files, keys, and chats stay on your Mac." : {},
+    "Save the setup" : {},
+    "Save to Library" : {},
+    "Saved \"%@\"" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ gespeichert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" 저장됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранено «%@»"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已保存“%@”"
+          }
+        }
+      }
+    },
+    "Saved \"%@\" to your library" : {},
+    "Saved answers, secret values, bindings, run history, and absolute paths are left out." : {},
+    "Saved from %@" : {},
+    "Saved from the built-in template" : {},
+    "Secrets, folder access and knowledge files never travel. Only the configuration does." : {},
+    "Send to a Friend" : {},
+    "Set Up Agent" : {},
+    "Set Up Now" : {},
+    "Setup needed for %@" : {},
+    "Setup offers these when a server isn't on this Mac. Nothing connects or runs until you save it, and keys are never included." : {},
+    "Share Agents as Templates" : {},
+    "Show to Orchestrator" : {},
+    "Signature does not match" : {},
+    "Signed by %@" : {},
+    "Signed by an agent on this Mac" : {},
+    "Signed with your Osaurus ID. Saved answers, secret values, bindings, run history, and absolute paths are left out." : {},
+    "Some items still block this agent. Go back to fix them before creating it." : {},
+    "Some items still block this agent. Go back to fix them, or choose Later to keep the agent as is." : {},
+    "Start a new agent from a ready-made setup, or share yours as a file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starte einen neuen Agenten aus einer fertigen Vorlage oder teile deinen als Datei"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "준비된 구성으로 새 에이전트를 시작하거나 내 에이전트를 파일로 공유하세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создайте агента из готовой настройки или поделитесь своим в виде файла"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从现成配置创建新智能体，或将你的智能体作为文件分享"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從現成設定建立新智能體，或將你的智能體作為檔案分享"
+          }
+        }
+      }
+    },
+    "Start with an agent you have set up the way you like: prompt, model, tools, and folder." : {},
+    "Tell the Orchestrator" : {},
+    "Template Name" : {},
+    "Template file is too large." : {
+      "comment" : "Error when a template file is too large.",
+      "isCommentAutoGenerated" : true
+    },
+    "Template format %lld is newer than this Osaurus understands. Update Osaurus to import it." : {},
+    "Templates explainer diagram" : {},
+    "The %@ template uses the %@ MCP server, which is not set up on this Mac. Add it in MCP Servers to give the agent its tools." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The %1$@ template uses the %2$@ MCP server, which is not set up on this Mac. Add it in MCP Servers to give the agent its tools."
+          }
+        }
+      }
+    },
+    "The %@ template uses the %@ plugin, which is not installed on this Mac. Install it in Plugins to give the agent its tools." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The %1$@ template uses the %2$@ plugin, which is not installed on this Mac. Install it in Plugins to give the agent its tools."
+          }
+        }
+      }
+    },
+    "The agent has knowledge to search." : {},
+    "The agent points at %@ but Osaurus has no access to it. Pick the folder to grant access." : {},
+    "The document declares %lld agents. A template holds exactly one." : {},
+    "The document declares no agents." : {},
+    "The template prefers %@, which is not installed here. Create will use your default model unless you pick one." : {},
+    "The template's agent is invalid:" : {},
+    "The template's signature does not match its content. The file was changed after it was signed, so it was not imported." : {},
+    "This agent has a model it can run." : {},
+    "This agent was created with settings this Mac cannot honour yet. It will not work as intended until these are fixed." : {},
+    "This exact version is already in your library." : {},
+    "This is not an Osaurus template. %@" : {},
+    "This version is already here with different content. Choose Keep both or Replace." : {},
+    "Travels With the Template" : {},
+    "Turn Knowledge Off" : {},
+    "Unsigned" : {},
+    "Use Template" : {},
+    "Use it anywhere" : {},
+    "Version %lld of this template is already here with different content." : {},
+    "Visible to the Orchestrator" : {
+      "comment" : "A badge that indicates that the template is visible to the Orchestrator.",
+      "isCommentAutoGenerated" : true
+    },
+    "What Will Be Created" : {},
+    "What is a template?" : {
+      "comment" : "Title of a section that explains what a template is.",
+      "isCommentAutoGenerated" : true
+    },
+    "Whoever imports this will be asked to set these up on their Mac." : {},
+    "Working folder" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arbeitsordner"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업 폴더"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рабочая папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作文件夹"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作資料夾"
+          }
+        }
+      }
+    },
+    "You already have version %lld. This older version is added to its history." : {},
+    "Your copy of this template is signed by %@ and this file is not. Import it as a copy under a new name instead." : {},
+    "Your copy of this template is signed by %@ and this file is not. It can only be imported as a copy." : {},
+    "e.g., Cloud Agent" : {},
+    "e.g., Invoice Bot" : {},
+    "v%lld" : {},
+    "· named %@" : {},
+    "Could not export \"%@\"" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ konnte nicht exportiert werden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\"을(를) 내보낼 수 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось экспортировать «%@»"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法导出“%@”"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法匯出「%@」"
+          }
+        }
+      }
+    },
+    "Send the template as a JSON file, or keep it in your library so the Orchestrator can use it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sende die Vorlage als JSON-Datei oder behalte sie in deiner Bibliothek, damit der Orchestrator sie nutzen kann."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "템플릿을 JSON 파일로 보내거나, 라이브러리에 보관해 Orchestrator가 사용할 수 있게 하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправьте шаблон JSON-файлом или оставьте его в библиотеке, чтобы им мог пользоваться Orchestrator."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将模板作为 JSON 文件发送，或保留在你的资源库中供 Orchestrator 使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將範本以 JSON 檔案傳送，或保留在你的資源庫中，讓 Orchestrator 可以使用。"
+          }
+        }
+      }
+    },
+    "Updates \"%@\" from version %lld to %lld." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updates \"%1$@\" from version %2$lld to %3$lld."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktualisiert „%1$@“ von Version %2$lld auf %3$lld."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%1$@\"을(를) 버전 %2$lld에서 %3$lld(으)로 업데이트합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновляет «%1$@» с версии %2$lld до %3$lld."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将“%1$@”从版本 %2$lld 更新到 %3$lld。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將「%@」從版本 %lld 更新到 %lld。"
+          }
+        }
+      }
+    },
+    "Your Library" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Bibliothek"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "내 라이브러리"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваша библиотека"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的资源库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的資源庫"
+          }
+        }
+      }
+    },
+    "%@ — not installed" : {
+      "comment" : "A button to remove a skill from the agent's skill allow list.",
+      "isCommentAutoGenerated" : true
+    },
+    "%@ could not be installed" : {
+      "comment" : "A warning message that appears in the app's main view when a bundle import has failed.",
+      "isCommentAutoGenerated" : true
+    },
+    "%@ need setup" : {
+      "comment" : "A list of items that need setup.",
+      "isCommentAutoGenerated" : true
+    },
+    "%lld not installed." : {
+      "comment" : "Pluralization key.",
+      "isCommentAutoGenerated" : true
+    },
+    "%lld of %lld skills." : {
+      "comment" : "A summary of the agent's skill list. The first argument is the number of skills the agent can use. The second argument is the total number of installed skills.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld skills."
+          }
+        }
+      }
+    },
+    "Agent ready" : {
+      "comment" : "Text displayed in a toast when an agent is ready to use.",
+      "isCommentAutoGenerated" : true
+    },
+    "Agents ready" : {
+      "comment" : "Text displayed in a toast when a group of agents have been successfully installed.",
+      "isCommentAutoGenerated" : true
+    },
+    "Bundle import finished with issues" : {
+      "comment" : "Title of a warning banner when a bundle import has failed.",
+      "isCommentAutoGenerated" : true
+    },
+    "Choose Skills…" : {
+      "comment" : "A button label that opens a list of skills.",
+      "isCommentAutoGenerated" : true
+    },
+    "Limit to selected skills" : {
+      "comment" : "A label displayed above a toggle that lets the user limit the skills of an agent to a pre-defined list",
+      "isCommentAutoGenerated" : true
+    },
+    "No skills: the agent cannot load any." : {},
+    "Off: the agent can use every installed skill." : {},
+    "or" : {
+      "comment" : "A word that can be used in a row of two options.",
+      "isCommentAutoGenerated" : true
+    },
+    "Remove from the list" : {
+      "comment" : "Button label to remove an entry from the agent's skill allow list.",
+      "isCommentAutoGenerated" : true
+    },
+    "Skill" : {
+      "comment" : "The title of a skill requirement.",
+      "isCommentAutoGenerated" : true
+    },
+    "Skills this agent can use" : {
+      "comment" : "A label for the skills that an agent can use.",
+      "isCommentAutoGenerated" : true
+    },
+    "Not installed on this Mac: %@. Install them in Skills, or remove them from the agent's skill list." : {
+      "comment" : "A list of skills that are not installed on the user's machine.",
+      "isCommentAutoGenerated" : true
+    },
+    "Pick which tools this agent can use. Skills come from the shared library; limit them below." : {
+      "comment" : "A tooltip for the \"Pick which tools this agent can use\" section.",
+      "isCommentAutoGenerated" : true
+    },
+    "\"%@\" isn't KEY=value." : {
+
+    },
+    "\"%@\" isn't a valid variable name." : {
+
+    },
+    "%@ couldn't complete the turn: %@" : {
+
+    },
+    "%@ exited with code %d." : {
+
+    },
+    "%@ exited with code %d: %@" : {
+
+    },
+    "%@ hit a rate limit: %@" : {
+
+    },
+    "%@ is set by Osaurus and can't be overridden." : {
+
+    },
+    "%@ isn't signed in. Sign in to it, then try again." : {
+
+    },
+    "%@ isn't signed in: %@" : {
+
+    },
+    "%@ rejected the message: %@" : {
+
+    },
+    "%@ will be removed." : {
+
+    },
+    "%@ will be removed. %@ will stop working until you pick another runtime for them." : {
+
+    },
+    "A command on your PATH, or a full path. ~ is allowed." : {
+
+    },
+    "A reply is still in progress." : {
+
+    },
+    "Agent Runtimes" : {
+
+    },
+    "An extension failed." : {
+
+    },
+    "Change the working folder?" : {
+
+    },
+    "Check or start Claude Code's sign-in" : {
+
+    },
+    "Claude Code %@ doesn't report its sign-in status. Run claude in Terminal to check it." : {
+
+    },
+    "Claude Code Options" : {
+
+    },
+    "Claude Code isn't signed in." : {
+
+    },
+    "Claude model" : {
+
+    },
+    "Claude subscription usage at %d%%" : {
+
+    },
+    "Compacting the conversation…" : {
+
+    },
+    "Compaction failed: %@" : {
+
+    },
+    "Connected. Model: %@." : {
+
+    },
+    "Couldn't find \"%@\"." : {
+
+    },
+    "Couldn't find `%@`. Install it, or set the runtime's executable to its full path." : {
+
+    },
+    "Couldn't start %@: %@" : {
+
+    },
+    "Couldn't write a temporary file." : {
+
+    },
+    "Delete runtime" : {
+
+    },
+    "Delete this runtime?" : {
+
+    },
+    "Edit runtime" : {
+
+    },
+    "Enter the command to run." : {
+
+    },
+    "Executable" : {
+
+    },
+    "External agent harnesses, like Claude Code or Pi, that can run an agent's chats" : {
+
+    },
+    "Give the runtime a name." : {
+
+    },
+    "It started but didn't answer an RPC get_state request. Check that the arguments include --mode rpc." : {
+
+    },
+    "Not used by any agent" : {
+
+    },
+    "Osaurus can't confine this runtime's tools. Narrow them with --tools in the runtime's arguments." : {
+
+    },
+    "Osaurus runs this agent itself, on its model, with its tools, memory, and sandbox." : {
+
+    },
+    "Pi (RPC)" : {
+
+    },
+    "Pi, or any harness built on Pi, driven over its RPC mode." : {
+
+    },
+    "Placeholders: {chat_id}, {agent_id}, {cwd}, {system_prompt_file}." : {
+
+    },
+    "Retrying (attempt %d of %d)…" : {
+
+    },
+    "Runs on" : {
+
+    },
+    "Runtime missing" : {
+
+    },
+    "Runtimes" : {
+
+    },
+    "Signed in as %@." : {
+
+    },
+    "Signed in." : {
+
+    },
+    "Start this runtime once to check that a chat can launch it" : {
+
+    },
+    "The arguments don't include --mode rpc. That's fine only if this command starts in RPC mode on its own." : {
+
+    },
+    "The get_state request was rejected." : {
+
+    },
+    "The harness" : {
+
+    },
+    "The model returned an error." : {
+
+    },
+    "The prompt was rejected." : {
+
+    },
+    "The runtime this agent used was deleted, so its chats can't start. Pick another runtime or switch back to built-in." : {
+
+    },
+    "The system prompt below reaches it only when the runtime's arguments include {system_prompt_file}." : {
+
+    },
+    "This agent" : {
+
+    },
+    "This agent runs on %@, which chooses its own model and tools. Click to manage runtimes." : {
+
+    },
+    "This agent's runtime was deleted. Pick another one in the agent's settings." : {
+
+    },
+    "This chat has no id yet." : {
+
+    },
+    "Used by %@" : {
+
+    },
+    "Used by %d agents" : {
+
+    },
+    "Working folder changed to %@. Restarted %@." : {
+
+    },
+    "Your signed-in Claude Code CLI, driven over stream-json." : {
+
+    },
+    "e.g. Spotlight" : {
+
+    },
+    "this chat's scratch folder" : {
+
     }
   },
   "version" : "1.1"

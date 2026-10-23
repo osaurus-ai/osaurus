@@ -167,7 +167,6 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.mtp.mode == .familyDefault)
             #expect(migrated.memorySafety.mode == .safeAuto)
             #expect(migrated.memorySafety.slider == 2)
-            #expect(migrated.memorySafety.allowExperimentalMLXPress == false)
             #expect(migrated.concurrency.smeltMode == .disabled)
 
             // File should now exist.
@@ -206,7 +205,6 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.mtp.mode == .familyDefault)
             #expect(snapshot.memorySafety.mode == .safeAuto)
             #expect(snapshot.memorySafety.slider == 2)
-            #expect(snapshot.memorySafety.allowExperimentalMLXPress == false)
             #expect(snapshot.concurrency.smeltMode == .disabled)
         }
     }

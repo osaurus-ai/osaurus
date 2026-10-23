@@ -140,6 +140,13 @@ struct ConfigSecretRefPlannerTests {
             stdio.transport = "stdio"
             stdio.command = "/usr/bin/true"
             stdio.tokenRef = "env:GOOD_KEY"
+            var stdioHeaders = MCPServerEntry(name: "Stdio Header Ref Probe")
+            stdioHeaders.transport = "stdio"
+            stdioHeaders.command = "/usr/bin/true"
+            stdioHeaders.secretHeaderRefs = ["X-API-Key": "env:GOOD_KEY"]
+            var badHeader = MCPServerEntry(name: "HTTP Header Ref Probe")
+            badHeader.url = "https://mcp.example.test/headers"
+            badHeader.secretHeaderRefs = ["X-API-Key": "sk-live-not-a-ref"]
             var http = MCPServerEntry(name: "HTTP Ref Probe")
             http.url = "https://mcp.example.test"
             http.secretEnvRefs = ["API_TOKEN": "env:GOOD_KEY"]
@@ -147,9 +154,14 @@ struct ConfigSecretRefPlannerTests {
             oauth.url = "https://mcp.example.test/oauth"
             oauth.auth = "oauth"
             oauth.tokenRef = "env:GOOD_KEY"
-            document.mcpServers = [stdio, http, oauth]
+            document.mcpServers = [stdio, stdioHeaders, badHeader, http, oauth]
         }
-        #expect(issues.contains { $0.contains("url/auth/token_ref only apply") })
+        #expect(issues.contains { $0.contains("[Stdio Ref Probe]: url/auth/token_ref/secret_header_refs only apply") })
+        #expect(
+            issues.contains {
+                $0.contains("[Stdio Header Ref Probe]: url/auth/token_ref/secret_header_refs only apply")
+            })
+        #expect(issues.contains { $0.contains("secret_header_refs[X-API-Key]") })
         #expect(issues.contains { $0.contains("secret_env_refs only apply to transport: stdio") })
         #expect(issues.contains { $0.contains("token_ref only fits bearer auth") })
     }
@@ -206,11 +218,17 @@ struct ConfigSecretRefPlannerTests {
 struct ConfigSecretRefApplyTests {
 
     private static func apply(
-        prune: Bool = false, _ mutate: (inout OsaurusConfigDocument) -> Void
+        prune: Bool = false, options: ConfigApplyOptions = .default,
+        _ mutate: (inout OsaurusConfigDocument) -> Void
     ) async -> [ConfigApplyResult] {
         var document = OsaurusConfigDocument()
         mutate(&document)
-        return await ConfigApplier.apply(document: document, prune: prune)
+        return await ConfigApplier.apply(document: document, prune: prune, options: options)
+    }
+
+    private static func removeMCPServer(named name: String) async {
+        let others = (ConfigExporter.export().mcpServers ?? []).filter { $0.name != name }
+        _ = await apply(prune: true) { $0.mcpServers = others }
     }
 
     @Test
@@ -332,7 +350,66 @@ struct ConfigSecretRefApplyTests {
 
         let result = results.first { $0.section == "mcp_servers" && $0.target == name }
         #expect(result?.status == .failed)
+        #expect(result?.unresolvedSecretRefs == ["env:NOT_SET"])
         let exported = (ConfigExporter.export().mcpServers ?? []).first { $0.name == name }
         #expect(exported == nil, "server must not be registered on an unresolvable ref")
+    }
+
+    @Test
+    func unresolvableMCPHeaderRef_doesNotCreateTheServer() async throws {
+        mergeSecretRefTestEnv([:])
+
+        let name = "HTTP Header Probe \(UUID().uuidString.prefix(6))"
+        var entry = MCPServerEntry(name: name)
+        entry.url = "https://mcp.example.test"
+        entry.secretHeaderRefs = ["X-API-Key": "env:NOT_SET_HEADER"]
+        let results = await Self.apply { $0.mcpServers = [entry] }
+
+        let result = results.first { $0.section == "mcp_servers" && $0.target == name }
+        #expect(result?.status == .failed)
+        #expect(result?.message?.contains("secret_header_refs") == true)
+        #expect((ConfigExporter.export().mcpServers ?? []).first { $0.name == name } == nil)
+    }
+
+    /// `osaurus import` registers servers whose secrets are not provisioned
+    /// yet, with the secret slots pending, and reports exactly which refs
+    /// are missing so the installer can fix them and import again.
+    @Test
+    func bundleImportOptions_registerWithPendingSecrets() async throws {
+        mergeSecretRefTestEnv([:])
+
+        let httpName = "Pending HTTP Probe \(UUID().uuidString.prefix(6))"
+        var http = MCPServerEntry(name: httpName)
+        http.url = "https://mcp.example.test"
+        http.enabled = false
+        http.tokenRef = "env:NOT_SET_TOKEN"
+        http.secretHeaderRefs = ["X-API-Key": "env:NOT_SET_HEADER"]
+        let stdioName = "Pending Stdio Probe \(UUID().uuidString.prefix(6))"
+        var stdio = MCPServerEntry(name: stdioName)
+        stdio.transport = "stdio"
+        stdio.command = "/usr/bin/true"
+        stdio.enabled = false
+        stdio.env = ["GITHUB_TOKEN": "placeholder", "LOG_LEVEL": "info"]
+        stdio.secretEnvRefs = ["GITHUB_TOKEN": "env:NOT_SET_GITHUB"]
+
+        let results = await Self.apply(options: .bundleImport) { $0.mcpServers = [http, stdio] }
+
+        let httpRow = results.first { $0.target == httpName }
+        #expect(httpRow?.status == .needsUserAction, "\(results)")
+        #expect(Set(httpRow?.unresolvedSecretRefs ?? []) == ["env:NOT_SET_TOKEN", "env:NOT_SET_HEADER"])
+        let stdioRow = results.first { $0.target == stdioName }
+        #expect(stdioRow?.status == .needsUserAction, "\(results)")
+        #expect(stdioRow?.unresolvedSecretRefs == ["env:NOT_SET_GITHUB"])
+
+        let providers = MCPProviderManager.shared.configuration.providers
+        let httpProvider = providers.first { $0.name == httpName }
+        #expect(httpProvider?.authType == .bearerToken)
+        #expect(httpProvider?.secretHeaderKeys == ["X-API-Key"])
+        let stdioProvider = providers.first { $0.name == stdioName }
+        #expect(stdioProvider?.secretEnvKeys == ["GITHUB_TOKEN"])
+        #expect(stdioProvider?.env == ["LOG_LEVEL": "info"])
+
+        await Self.removeMCPServer(named: httpName)
+        await Self.removeMCPServer(named: stdioName)
     }
 }

@@ -775,6 +775,95 @@ struct SecureChannelE2ETests {
             #expect(String(decoding: data, as: UTF8.self).contains("secure_malformed"), "\(path)")
         }
     }
+
+    // MARK: - Call Privacy (osaurus_privacy)
+
+    /// `osaurus_privacy` is honoured only for the owner's paired phone: a
+    /// master-scoped key validated inside the Secure Channel. A local process
+    /// can open its own session (the handshake does not authenticate the
+    /// client) and reaches us over loopback, which skips the Bearer check;
+    /// that must not let it turn the Privacy Filter off for its runs.
+    @Test func secureRun_loopbackOwnSession_ignoresPrivacyOff() async throws {
+        let recorder = CallPrivacyRecorder()
+        let server = try await startSecureTestServer(
+            engine: CallPrivacyRecordingEngine(recorder: recorder),
+            trustLoopback: true
+        )
+        defer { Task { await server.shutdown() } }
+        AgentIdentityRegistry.shared.update(
+            addresses: [agentAddress],
+            indices: [0],
+            addressByAgentId: [UUID(): agentAddress]
+        )
+        let session = try establishSession()
+
+        // No Bearer and no relay-origin header: a plain local caller.
+        let (data, status) = try await sendPrivacyOffRun(
+            server: server,
+            session: session,
+            authorization: nil,
+            relayOrigin: false
+        )
+        #expect(status == 200, "\(String(decoding: data, as: UTF8.self))")
+        #expect(!recorder.sawPrivacy.isEmpty)
+        #expect(recorder.sawPrivacy.allSatisfy { $0 == nil })
+    }
+
+    /// Control for the test above: the paired phone (master key, relayed)
+    /// still turns the filter off for its own call, so the negative case
+    /// cannot pass just because the value never reaches the engine.
+    @Test func secureRun_pairedPhoneMasterKey_honoursPrivacyOff() async throws {
+        let recorder = CallPrivacyRecorder()
+        let server = try await startSecureTestServer(
+            engine: CallPrivacyRecordingEngine(recorder: recorder),
+            trustLoopback: true
+        )
+        defer { Task { await server.shutdown() } }
+        AgentIdentityRegistry.shared.update(
+            addresses: [agentAddress],
+            indices: [0],
+            addressByAgentId: [UUID(): agentAddress]
+        )
+        let session = try establishSession()
+
+        let (data, status) = try await sendPrivacyOffRun(
+            server: server,
+            session: session,
+            authorization: "Bearer \(TestAuth.bearerToken)",
+            relayOrigin: true
+        )
+        #expect(status == 200, "\(String(decoding: data, as: UTF8.self))")
+        #expect(!recorder.sawPrivacy.isEmpty)
+        #expect(recorder.sawPrivacy.allSatisfy { $0 == .off })
+    }
+
+    private func sendPrivacyOffRun(
+        server: SecureTestServer,
+        session: SecureChannelSession,
+        authorization: String?,
+        relayOrigin: Bool
+    ) async throws -> (Data, Int?) {
+        let chatBody = Data(
+            #"{"model":"fake","stream":true,"osaurus_privacy":"off","messages":[{"role":"user","content":"hi"}]}"#
+                .utf8
+        )
+        let inner = SecureChannel.InnerRequest(
+            method: "POST",
+            path: "/agents/\(agentAddress)/run",
+            authorization: authorization,
+            accept: "text/event-stream",
+            contentType: "application/json",
+            headers: ["X-Persist": "false"],
+            body: chatBody.base64urlEncoded
+        )
+        let (call, _) = try session.sealCall(innerRequest: JSONEncoder().encode(inner))
+        var request = try secureCallRequest(server: server, call: call, accept: "text/event-stream")
+        if relayOrigin {
+            request.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+        }
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        return (data, (resp as? HTTPURLResponse)?.statusCode)
+    }
 }
 
 // MARK: - Test Server Bootstrap
@@ -838,5 +927,39 @@ private func startSecureTestServer(
         }
         await lease.release()
         throw error
+    }
+}
+
+/// Records the call privacy the run's turns see, read where the Privacy
+/// Filter reads it: the task-local around `AgentToolLoop`.
+private final class CallPrivacyRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [VoiceCallPrivacy?] = []
+
+    func record(_ privacy: VoiceCallPrivacy?) {
+        lock.lock()
+        defer { lock.unlock() }
+        seen.append(privacy)
+    }
+
+    /// One entry per model call the run made, in order.
+    var sawPrivacy: [VoiceCallPrivacy?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return seen
+    }
+}
+
+private struct CallPrivacyRecordingEngine: ChatEngineProtocol {
+    let recorder: CallPrivacyRecorder
+
+    func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        recorder.record(ChatExecutionContext.voiceCallPrivacy)
+        return try await MockChatEngine(deltas: ["ok"], model: "fake").streamChat(request: request)
+    }
+
+    func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        recorder.record(ChatExecutionContext.voiceCallPrivacy)
+        return try await MockChatEngine(completeText: "ok", model: "fake").completeChat(request: request)
     }
 }

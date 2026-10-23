@@ -120,6 +120,7 @@ public enum SettingsSearchIndex {
         "sandbox.overview",
         "insights.overview",
         "agents.overview",
+        "agentRuntimes.overview",
         "agents.configure",
         "agents.description",
         "agents.database",
@@ -797,6 +798,14 @@ public enum SettingsSearchIndex {
             subTab: "cache"
         ),
         .init(
+            id: "server.memorySafety.keepModelInMemory",
+            tab: .server,
+            section: "Memory Safety",
+            title: "Keep Model in Memory",
+            keywords: ["pin weights", "wired memory", "gpu residency", "page eviction"],
+            subTab: "memorySafety"
+        ),
+        .init(
             id: "server.memorySafety",
             tab: .server,
             section: "Memory Safety",
@@ -983,6 +992,8 @@ public enum SettingsSearchIndex {
             keywords: [
                 "slack bot token", "slack signing secret", "socket mode",
                 "slack workspace ids", "slack channel allowlist",
+                "accept messages sent through apps", "slack api", "chat.postmessage",
+                "user token", "bot_message_denied", "phone shortcut",
             ]
         ),
         .init(
@@ -1197,7 +1208,7 @@ public enum SettingsSearchIndex {
             id: "imageGeneration.videoPermission",
             tab: .imageGeneration,
             section: "Permissions",
-            title: "Video jobs (cloud)",
+            title: "Video jobs",
             keywords: ["video permission", "video jobs", "quoted video", "ask", "deny"],
             subTab: "Settings"
         ),
@@ -1205,7 +1216,7 @@ public enum SettingsSearchIndex {
             id: "imageGeneration.video",
             tab: .imageGeneration,
             section: "Defaults",
-            title: "Video (cloud)",
+            title: "Video",
             keywords: [
                 "video", "text to video", "image to video", "video model", "venice", "video jobs",
             ],
@@ -1218,6 +1229,49 @@ public enum SettingsSearchIndex {
             title: "Image model load policy",
             keywords: ["load policy", "image jobs", "unload", "residency", "gpu"],
             subTab: "Settings"
+        ),
+        .init(
+            id: "imageGeneration.previews", tab: .imageGeneration, section: "Image Models",
+            title: "Live previews", keywords: ["image preview", "denoising preview", "progress image"], subTab: "Models"
+        ),
+        .init(
+            id: "imageGeneration.steps", tab: .imageGeneration, section: "Image Models",
+            title: "Steps", keywords: ["flux 3", "klein", "denoising steps", "sampling steps"], subTab: "Models",
+            disambiguation: "Denoising steps in the Generate/Edit panel and chat image controls. FLUX 3 accepts any positive count."
+        ),
+        .init(
+            id: "imageGeneration.width", tab: .imageGeneration, section: "Image Models",
+            title: "Width", keywords: ["flux 3", "klein", "image width", "image size", "pixels"], subTab: "Models",
+            disambiguation: "FLUX 3 local image dimensions in the Generate/Edit panel and chat size picker."
+        ),
+        .init(
+            id: "imageGeneration.height", tab: .imageGeneration, section: "Image Models",
+            title: "Height", keywords: ["flux 3", "klein", "image height", "image size", "pixels"], subTab: "Models",
+            disambiguation: "FLUX 3 local image dimensions in the Generate/Edit panel and chat size picker."
+        ),
+        .init(
+            id: "imageGeneration.sampler",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Sampler",
+            keywords: ["image sampling", "heun", "euler"],
+            subTab: "Models"
+        ),
+        .init(
+            id: "imageGeneration.scheduler",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Scheduler",
+            keywords: ["image schedule", "sigma", "linear"],
+            subTab: "Models"
+        ),
+        .init(
+            id: "imageGeneration.shift",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Timestep shift",
+            keywords: ["image shift", "flow matching", "sigma shift"],
+            subTab: "Models"
         ),
         .init(
             id: "imageGeneration.upscale",
@@ -1790,6 +1844,17 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.templates",
+            tab: .agents,
+            title: "Templates",
+            keywords: [
+                "agent templates", "import agent template", "agent starter", "share agent", "osaurustemplate",
+                "save as template", "export template", "import template",
+            ],
+            disambiguation:
+                "Agents header → Templates. Import Template takes a .osaurustemplate file; Save as Template is in an agent card's … menu and the agent page's Share menu."
+        ),
+        .init(
             id: "agents.configure",
             tab: .agents,
             title: "Configure Agent",
@@ -1808,6 +1873,74 @@ public enum SettingsSearchIndex {
             keywords: ["agent description", "purpose", "routing", "delegation", "auto-generated description", "generated description"],
             disambiguation: "Optional one-line summary shown to the orchestrator when it chooses a delegation target. Left blank, Osaurus generates one in the background from the agent's system prompt; typing your own overrides it.",
             declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.runtime",
+            tab: .agents,
+            section: "Runtime",
+            title: "Runs on",
+            keywords: [
+                "runtime", "agent runtime", "harness", "external harness", "claude code", "pi", "pi rpc",
+                "built-in loop", "osaurus built-in", "run agent on claude code", "spotlight", "splash",
+                "manage runtimes",
+            ],
+            disambiguation:
+                "Per-agent choice between Osaurus's own loop and a registered harness (Configure tab → Runtime). Register or test harnesses under Agents → Runtimes."
+        ),
+        .init(
+            id: "agents.claudeCode.model",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Claude model",
+            keywords: ["claude code model", "sonnet", "opus", "haiku", "model alias"],
+            disambiguation: "Shown only when the agent's runtime is Claude Code. Not the Osaurus model picker."
+        ),
+        .init(
+            id: "agents.claudeCode",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Allow file changes",
+            keywords: [
+                "execution mode", "text only", "allow shell commands", "bash", "allow osaurus read tools",
+                "allow osaurus configuration changes", "claude code permissions", "claude code tools", "mcp bridge",
+            ],
+            disambiguation:
+                "Claude Code permission switches on an agent whose runtime is Claude Code. File changes are scoped to the chat folder; shell commands can't be confined."
+        ),
+        // MARK: Agent Runtimes
+        .init(
+            id: "agentRuntimes.overview",
+            tab: .agentRuntimes,
+            title: "Agent Runtimes",
+            keywords: [
+                "runtimes", "harness", "harnesses", "external agent", "claude code", "pi", "pi rpc", "rpc mode",
+                "spotlight", "splash", "agent backend", "pluggable",
+            ]
+        ),
+        .init(
+            id: "agentRuntimes.add",
+            tab: .agentRuntimes,
+            title: "Add Runtime",
+            keywords: [
+                "new runtime", "register harness", "executable", "arguments", "environment", "protocol",
+                "session id", "chat id placeholder", "system prompt file",
+            ]
+        ),
+        .init(
+            id: "agentRuntimes.list",
+            tab: .agentRuntimes,
+            title: "Test",
+            keywords: [
+                "test runtime", "check harness", "get_state", "sign in", "claude code sign in", "claude login",
+                "edit runtime", "delete runtime",
+            ],
+            disambiguation: "Per-runtime Test, Sign In (Claude Code), Edit, and Delete buttons in Agents → Runtimes."
+        ),
+        .init(
+            id: "agentRuntimes.safety",
+            tab: .agentRuntimes,
+            title: "How runtimes work",
+            keywords: ["harness permissions", "confine", "harness sandbox", "harness folder", "osaurus_agent_token"]
         ),
         .init(
             id: "agents.database",
@@ -1836,6 +1969,24 @@ public enum SettingsSearchIndex {
             subTab: "capabilities",
             disambiguation:
                 "Per-custom-agent groups in Abilities → Tools for the built-in Apple app tools (off by default, toggled per app). The Orchestrator never uses them directly; it enables them on a custom agent via osaurus_config capabilities.apple_apps.",
+            declarativeSection: "agents"
+        ),
+
+        // Agents → (custom agent) → Abilities → Tools: the per-agent skill
+        // allow-list card above the picker. Also writable via
+        // `agents[].skills`.
+        .init(
+            id: "agents.skills",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Limit to selected skills",
+            keywords: [
+                "skills", "skill allow-list", "allowed skills", "allow list", "allowlist",
+                "restrict skills", "choose skills", "agent skills", "skill access",
+            ],
+            subTab: "capabilities",
+            disambiguation:
+                "Per-custom-agent switch in Abilities → Tools. Off: the agent sees every installed skill. On: only the ticked skills appear in its prompt, capabilities_load and slash commands. Installing skill content is Skills in the sidebar, not this card. Declarative: agents[].skills (omit = unchanged, null = all skills, list = only these).",
             declarativeSection: "agents"
         ),
 

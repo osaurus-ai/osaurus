@@ -66,8 +66,11 @@ actor MediaGenerationCoordinator {
                     steps: request.steps,
                     guidance: request.guidance.map(Float.init),
                     seed: request.seed.flatMap { $0 >= 0 ? UInt64($0) : nil },
-                    numImages: request.count,
+                    numImages: request.count, seeds: request.seeds, batchSize: request.batchSize,
                     outputFormat: request.format,
+                    sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
+                    previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel,
+                    adapters: request.adapters,
                     context: .current()
                 )
             )
@@ -159,7 +162,8 @@ actor MediaGenerationCoordinator {
         try await validateVideoRequest(request)
         switch request.target.backend {
         case .local:
-            throw MediaGenerationError.unsupported("Local video generation is not available.")
+            _ = try await ImageGenerationService.shared.validateVideo(request)
+            return MediaVideoQuote(usd: 0)
         case .remoteProvider(let providerID):
             let provider = await MainActor.run {
                 RemoteProviderManager.shared.configuredProvider(id: providerID)
@@ -191,10 +195,16 @@ actor MediaGenerationCoordinator {
     func generateVideo(
         _ request: MediaVideoGenerationRequest,
         approvedQuote: MediaVideoQuote,
+        interrupt: InterruptToken? = nil,
         progress: @escaping @Sendable (MediaGenerationEvent) -> Void
     ) async throws -> GeneratedMedia {
         try await validateVideoRequest(request)
         try Task.checkCancellation()
+
+        if request.target.backend == .local {
+            return try await NativeImageJobCoordinator.shared.generateVideo(request,
+                context: .current(), interrupt: interrupt, progress: progress)
+        }
 
         var durableID: UUID?
         do {
@@ -244,6 +254,30 @@ actor MediaGenerationCoordinator {
         _ request: MediaVideoGenerationRequest,
         approvedQuote: MediaVideoQuote
     ) async throws -> DurableMediaJob {
+        if request.target.backend == .local {
+            try await validateVideoRequest(request)
+            _ = try await ImageGenerationService.shared.validateVideo(request)
+            let id = UUID()
+            let job = DurableMediaJob(id: id, backend: .local, providerID: nil,
+                modelID: request.target.modelID, kind: request.sourceImage == nil ? .textToVideo : .imageToVideo,
+                queueID: id.uuidString, downloadURL: nil, quoteUSD: 0, state: .queued, outputURL: nil,
+                errorMessage: nil, cleanupPending: false, createdAt: Date(), updatedAt: Date())
+            try await jobs.upsert(job)
+            let context = NativeImageJobContext.current()
+            recoveryTasks[id] = Task {
+                do {
+                    let media = try await NativeImageJobCoordinator.shared.generateVideo(request,
+                        context: context, interrupt: nil, progress: { _ in })
+                    try await self.jobs.update(id: id, state: .completed, outputURL: media.url,
+                        effectiveVideo: media.effectiveVideo)
+                } catch {
+                    try? await self.jobs.update(id: id, state: .failed, errorMessage: error.localizedDescription)
+                }
+                await self.recoveryFinished(id)
+            }
+            await notifyJobChanged()
+            return job
+        }
         let job = try await submitVideo(request, approvedQuote: approvedQuote)
         await notifyJobChanged()
         scheduleRecovery(job)
@@ -402,7 +436,7 @@ actor MediaGenerationCoordinator {
                 case .osaurusCloud:
                     _ = try await self.retrieveCloud(job: job, progress: { _ in })
                 case .local:
-                    throw MediaGenerationError.unsupported("Local jobs are not durable.")
+                    throw MediaGenerationError.unsupported("Local video generation was interrupted by an app restart. Submit the job again.")
                 }
             } catch {
                 try? await self.jobs.update(
@@ -547,10 +581,16 @@ actor MediaGenerationCoordinator {
         guard !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw MediaGenerationError.invalidRequest("A prompt is required.")
         }
-        guard (1 ... 4).contains(request.count) else {
-            throw MediaGenerationError.invalidRequest("Image count must be between 1 and 4.")
+        let maximumCount = request.target.backend == .local ? 8 : 4
+        guard (1 ... maximumCount).contains(request.count) else {
+            throw MediaGenerationError.invalidRequest("Image count must be between 1 and \(maximumCount).")
         }
         guard request.target.backend != .local else { return }
+        guard request.sampler == nil, request.scheduler == nil, request.shift == nil,
+            request.seeds == nil, request.batchSize == 1,
+            request.previewInterval == nil, request.previewMaxPixel == 256, request.adapters.isEmpty else {
+            throw MediaGenerationError.invalidRequest("Sampling, batching, adapters and previews require a local image model.")
+        }
         let model = try await requiredMediaModel(for: request.target)
         guard model.kind == .image else {
             throw MediaGenerationError.invalidRequest(
@@ -595,7 +635,24 @@ actor MediaGenerationCoordinator {
         guard !request.duration.isEmpty else {
             throw MediaGenerationError.invalidRequest("A duration is required.")
         }
-        guard request.target.backend != .local else { return }
+        if let source = request.sourceImage, source.count > 25 * 1_024 * 1_024 {
+            throw MediaGenerationError.invalidRequest("The source image must not exceed 25 MB.")
+        }
+        if request.sourceImage != nil,
+            !["image/png", "image/jpeg", "image/webp"].contains(request.sourceImageMIMEType ?? "")
+        {
+            throw MediaGenerationError.invalidRequest(
+                "The source image must be PNG, JPEG, or WebP."
+            )
+        }
+        if request.target.backend == .local {
+            _ = try LocalVideoRequestPolicy(request)
+            return
+        }
+        guard request.width == nil, request.height == nil, request.frameCount == nil,
+            request.fps == nil, request.steps == nil, request.guidance == nil, request.seed == nil else {
+            throw MediaGenerationError.invalidRequest("Explicit dimensions, frames, fps, steps, guidance and seed require a local video model.")
+        }
         let model = try await requiredMediaModel(for: request.target)
         let expectedKind: MediaGenerationKind =
             request.sourceImage == nil ? .textToVideo : .imageToVideo
@@ -625,16 +682,6 @@ actor MediaGenerationCoordinator {
         if request.audio != nil, !model.constraints.audioConfigurable {
             throw MediaGenerationError.invalidRequest(
                 "Audio cannot be configured for the selected model."
-            )
-        }
-        if let source = request.sourceImage, source.count > 25 * 1_024 * 1_024 {
-            throw MediaGenerationError.invalidRequest("The source image must not exceed 25 MB.")
-        }
-        if request.sourceImage != nil,
-            !["image/png", "image/jpeg", "image/webp"].contains(request.sourceImageMIMEType ?? "")
-        {
-            throw MediaGenerationError.invalidRequest(
-                "The source image must be PNG, JPEG, or WebP."
             )
         }
     }

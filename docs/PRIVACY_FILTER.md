@@ -107,6 +107,8 @@ Deterministic patterns toggled per-category in **Privacy → Rules → Detection
 | `url`            | `http(s)://…` URLs with a scheme                     |
 | `accountNumber`  | US SSN + Luhn-valid credit card numbers              |
 
+**Numbers read out as words.** Dictation and voice transcripts write a number said aloud digit by digit ("four one five, five five five, zero one three two"). Runs of seven or more digit words (with "oh" for zero after a digit, "double"/"triple", and commas or dashes between groups; a full stop ends the run) are read as their digits and judged by the same phone and card built-ins, presets and custom rules, which must match the whole number. Anything they would flag typed is flagged spoken, under the same toggles and checks (Luhn included), and the spoken words are what get the placeholder (`SpokenNumberDetector.swift`). Amounts said as numbers ("four hundred and fifteen") are not read. Email addresses said aloud ("john dot smith at example dot com", with "underscore" and "dash"/"hyphen") are read the same way when they end in "dot" and a known ending (com, org, a country code…), and judged by the `email` built-in. The speech recogniser often drops "dot" altogether ("john smith at examplecom"): in a sentence about email (email, mail, address, send, write, reach, contact) a word after "at" ending in com, org, net, edu or gov, or an already written domain, counts as the address too. When the name before "at" was said plainly ("john smith at …"), only the domain is redacted as the email: whether the name is part of the address cannot be told, and it is left to name detection (the AI model) rather than overlapping it.
+
 ### 2. Preset rules (`PrivacyRulePresets`)
 
 Opt-in patterns for common secrets and IDs, shipped disabled. Enable individually under **Privacy → Rules → Preset Rules**. Current presets:
@@ -228,6 +230,10 @@ The hover tooltip's `Direction` enum is the single signal that lets the same com
 Open Settings… (`⌘ ,`) → **Insights** → pick a Cloud inference request → **Request** / **Response** tabs. Each tab has a sub-section labelled **Server Request** / **Server Response** showing the bytes captured by `WireTransportProbe` — i.e. the exact JSON sent to OpenAI / Anthropic / etc., and the exact stream that came back BEFORE the unscrubber ran.
 
 This is the verification surface for "did the redaction actually take?" — if you see `[EMAIL_3]` in the Server Request body and `alice@example.com` in your local message, the filter worked. The pre-scrub local copy lives in **Request → Local** for comparison.
+
+### Voice calls from the phone
+
+A paired phone starting a voice call on a cloud model the filter runs for asks the owner, for that call only, to keep reviewing, auto-accept every detection (redacted with no review, as in Computer Use) or turn the filter off (turns sent as written). The choice rides on each call turn as `osaurus_privacy` and is honoured only for the owner on the Secure Channel; nothing in the settings changes (`VoiceCallPrivacy`, docs/MOBILE_PROTOCOL.md §6.5).
 
 ---
 
@@ -421,6 +427,7 @@ the limitation stays documented above and in the master-toggle copy.
 | `PrivacyFilter/Core/PrivacyFilterPipeline.swift`                       | Outbound scrub + inbound unscrub orchestration; typed errors                               |
 | `PrivacyFilter/Core/PrivacyFilterEngine.swift`                         | Detection ensemble (regex + classifier) over a message history                              |
 | `PrivacyFilter/Core/RegexEntityDetector.swift`                         | Built-in + preset + user regex detection                                                   |
+| `PrivacyFilter/Core/SpokenNumberDetector.swift`                        | Numbers read out as digit words, judged by the same rules                                  |
 | `PrivacyFilter/Core/PrivacyRulePresets.swift`                          | Ship-list of opt-in preset rules                                                           |
 | `PrivacyFilter/Core/Placeholder.swift`                                 | `EntityCategory` + `[CATEGORY_N]` wire format                                              |
 | `PrivacyFilter/Core/RedactionMap.swift`                                | Per-conversation intern of `original → placeholder`                                        |

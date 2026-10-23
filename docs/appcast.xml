@@ -3,6 +3,104 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.25</title>
+            <pubDate>Thu, 22 Oct 2026 14:03:50 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.25</sparkle:version>
+            <sparkle:shortVersionString>0.25.25</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.25/Osaurus-0.25.25.dmg" length="83536687" type="application/octet-stream" sparkle:edSignature="+/tCU7cI7EFMQ77U+uk/kcB6GL9ojt6kVODfAQJAEpxnatFK9g+tbpgziHFvyQhiq1yMMmwdWYmJjph3qIK6Dw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- feat: integrate Flint runtime, owned weights and SSD reuse fixes (#3161) by @jjang-ai
+- Remove retired cold-weight tier setting and status APIs (#3156) by @jjang-ai
+- Align adaptive drafter loading and remove legacy fixed widths (#3150) by @jjang-ai
+- Pin hybrid cache checkpoint RAM improvements (#3147) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Pin lower batch checkpoint memory and shared SSD writer reservations (#3168) by @jjang-ai
+- Resolve declared reasoning tiers across bundle metadata formats (#3167) by @jjang-ai
+- Honor declared native Off/On reasoning efforts (#3166) by @jjang-ai
+- fix: retain durable SSD seed reuse across model reloads (#3165) by @jjang-ai
+- Qualify allocator-owned model loading in Osaurus (#3162) by @jjang-ai
+- Pin edited-chat SSD resume protection (#3158) by @jjang-ai
+- Align RAM gauge with load and delegation capacity accounting (#3157) by @jjang-ai
+- Pin prompt snapshot ownership correction (#3155) by @jjang-ai
+- Honor explicit SSD cache quotas and show space advisories (#3154) by @jjang-ai
+- tie paired phone features to the phone's access key (#3152) by @RaajeevChandran
+- Refresh image progress on equal-length status updates (#3151) by @jjang-ai
+- Fix image composer pasted prompts, regeneration, and rendering (#3149) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.24...0.25.25
+]]></description>
+        </item>
+        <item>
+            <title>0.25.24</title>
+            <pubDate>Tue, 20 Oct 2026 15:44:27 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.24</sparkle:version>
+            <sparkle:shortVersionString>0.25.24</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.24/Osaurus-0.25.24.dmg" length="83702185" type="application/octet-stream" sparkle:edSignature="bG3AFPVkfq+kr6o2waJTdneRhw+rDfTqj7Fh096XYxcXXSRhOSSHLpALybeuJwA68y8+dYLrDzeXBU5BNuPMBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- FLUX 3 Image Klein: generate, edit, references, delegated jobs (#3145) by @jjang-ai
+- Pin vmlx-swift #623: Ornith 122B Adaptive MTP by default, colour parity, router tail (#3142) by @jjang-ai
+- Ornith 122B: architecture prefill step, pin vmlx-swift#621 cache reuse (#3140) by @jjang-ai
+- make phone runs own their mac chat, catch spoken pii and let a phone call set the privacy filter (#3135) by @RaajeevChandran
+- Allosaurus 0.2 on 48 GB Macs: pin vmlx-swift adaptive-MTP lookahead, 48 GB test plan (#3129) by @jjang-ai
+- Allosaurus 0.2 JANGHT on 48 GB Macs: pin vmlx-swift exact native MTP and decode speedups (#3125) by @jjang-ai
+
+## 🚀 Features
+
+- add gpt-6.1-sol to the chatgpt model list (#3141) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix slack app messages confirm opening behind the settings sheet (#3146) by @RaajeevChandran
+- Never refuse a chat turn from an estimated context overflow (#3143) by @jjang-ai
+- Fix blank model search after selecting a lower list entry (#3133) by @jjang-ai
+- Correct Qwen hybrid child memory estimates and preserve model residency (#3132) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.23...0.25.24
+]]></description>
+        </item>
+        <item>
+            <title>0.25.23</title>
+            <pubDate>Sat, 17 Oct 2026 01:49:49 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.23</sparkle:version>
+            <sparkle:shortVersionString>0.25.23</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.23/Osaurus-0.25.23.dmg" length="83415402" type="application/octet-stream" sparkle:edSignature="KjEabfJ+cHSwG38s6adbeAVFqX2Tocs1Erq7ET8VdXkUrLcAO9LCeptGUas3l90XxNF8Bpqn1q3ccXoNrsGHDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Integrate native workflow media controls, video and memory admission (#3104) by @jjang-ai
+- Nemotron 3.5 Super-VL and Bolt runtime: vmlx-swift pin and declared reasoning modes (#3119) by @jjang-ai
+- ask for a short spoken reply on a phone's voice-call turns, as a note after the conversation that is never saved (#3106) by @RaajeevChandran
+- Consume native image batches across API tools and galleries (#3098) by @jjang-ai
+- Expose SeedVR2 upscaling and cooperative job cancellation (#3096) by @jjang-ai
+- Preserve effective image workflow parameters in app and API results (#3095) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Fix image bundles entering the language-model download path (#3118) by @jjang-ai
+- Wire Nemotron Super-VL runtime and bundle media capabilities (#3114) by @jjang-ai
+- accept slack messages posted through apps from allowlisted senders (#3113) by @RaajeevChandran
+- add reasoning effort control for gemini text models (#3115) by @RaajeevChandran
+- fix agent working folder getting cleared when saving the agent editor (#3116) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.22...0.25.23
+]]></description>
+        </item>
+        <item>
             <title>0.25.22</title>
             <pubDate>Wed, 14 Oct 2026 14:58:16 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

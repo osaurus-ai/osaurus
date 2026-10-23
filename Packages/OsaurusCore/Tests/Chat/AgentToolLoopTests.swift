@@ -23,7 +23,7 @@ private final class ScriptedLoopSurface {
     /// Result envelope per tool name; defaults to a generic success.
     var toolResults: [String: AgentLoopToolExecution] = [:]
     var cancelled = false
-    /// When true, `buildMessages` reports a hard context overflow.
+    /// When true, `buildMessages` reports an advisory context estimate.
     var overBudget = false
     /// When non-nil, hooks expose `pendingTodoCount` returning this value
     /// (the chat surface's session-todo plumb).
@@ -3151,26 +3151,66 @@ struct AgentToolLoopParallelBatchTests {
 @MainActor
 struct AgentLoopOverBudgetTests {
 
-    @Test func overBudgetEndsRunBeforeModelStep() async throws {
-        // `buildMessages` reporting a hard overflow must end the run with
-        // the distinct `.overBudget` exit WITHOUT a model step or any
-        // tool execution — the request is doomed, don't send it.
+    @Test("second chat turn reaches runtime when protected history exceeds an estimated window")
+    func secondTurnEstimateDoesNotRefuse() async throws {
+        // Same shared builder/driver as ChatView, without model or network I/O.
+        // A small fallback/provider window permits question 1, then the first
+        // answer pushes question 2 over the heuristic history allowance.
+        let manager = AgentLoopBudget.makeBudgetManager(
+            contextWindow: 4_096, systemPromptChars: 800,
+            toolTokens: 0, maxResponseTokens: nil)
+        let first = [
+            ChatMessage(role: "system", content: String(repeating: "s", count: 800)),
+            ChatMessage(role: "user", content: "Hello"),
+        ]
+        let second = first + [
+            ChatMessage(role: "assistant", content: String(repeating: "answer ", count: 1_500)),
+            ChatMessage(role: "user", content: "Explain that further"),
+        ]
+        for (index, messages) in [first, second].enumerated() {
+            let surface = ScriptedLoopSurface(steps: [.finalResponse])
+            var hooks = surface.makeHooks()
+            hooks.buildMessages = { notices in
+                let input = AgentLoopBudget.composeIterationMessages(
+                    messages, notices: notices, manager: manager,
+                    watermark: CompactionWatermark())
+                #expect(input.overBudget == (index == 1))
+                #expect(input.messages.count == messages.count)
+                return input
+            }
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+            #expect(result.exit == .finalResponse)
+            #expect(surface.steps.isEmpty, "turn \(index + 1) must reach the runtime")
+        }
+    }
+
+    @Test func overBudgetEstimateStillRunsModelAndTools() async throws {
         let surface = ScriptedLoopSurface(steps: [
-            .toolCalls([inv("never_runs")])
+            .toolCalls([inv("runs")]), .finalResponse,
         ])
         surface.overBudget = true
-
         let result = try await AgentToolLoop.run(
-            policy: chatPolicy(),
-            state: AgentTaskState(),
-            hooks: surface.makeHooks()
-        )
+            policy: chatPolicy(), state: AgentTaskState(), hooks: surface.makeHooks())
+        #expect(result.exit == .finalResponse)
+        #expect(result.iterations == 2)
+        #expect(surface.executedCalls.count == 1)
+        #expect(surface.steps.isEmpty)
+    }
 
-        #expect(result.exit == .overBudget)
-        #expect(result.iterations == 0)
-        #expect(surface.executedCalls.isEmpty)
-        // The scripted model step was never consumed.
-        #expect(surface.steps.count == 1)
+    @Test func runtimeContextErrorPropagatesDespiteEstimate() async throws {
+        enum RuntimeError: Error { case contextLimit }
+        let surface = ScriptedLoopSurface(steps: [])
+        surface.overBudget = true
+        var hooks = surface.makeHooks()
+        hooks.modelStep = { _, _ in throw RuntimeError.contextLimit }
+        do {
+            _ = try await AgentToolLoop.run(
+                policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+            Issue.record("runtime context error must propagate")
+        } catch RuntimeError.contextLimit {
+            // Real backend errors remain authoritative.
+        }
     }
 
     @Test func composeIterationMessagesReportsHardOverflow() {

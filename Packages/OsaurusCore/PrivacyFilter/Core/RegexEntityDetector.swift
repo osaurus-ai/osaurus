@@ -180,7 +180,27 @@ enum RegexEntityDetector {
             }
         }
 
+        // The same numbers read out as words, and addresses said aloud,
+        // judged by the rules above.
+        raw += spokenNumberMatches(in: text, ruleset: ruleset)
+        raw += spokenEmailMatches(in: text, ruleset: ruleset)
+
         return resolveOverlaps(raw)
+    }
+
+    /// Whether a phone match could be a North American number. Only a bare
+    /// run of digits is checked: ten (or eleven after a 1) with nothing
+    /// between them is as often a Unix time (`"unix_seconds":1792391692`
+    /// from a clock tool) or an id, and a real area code or exchange never
+    /// starts with 0 or 1. A number written with spaces, dashes or brackets
+    /// was written as a phone and is not second-guessed ("555-123-4567").
+    static func isPlausiblePhone(_ captured: String) -> Bool {
+        let trimmed = captured.hasPrefix("+") ? String(captured.dropFirst()) : captured
+        guard !trimmed.isEmpty, trimmed.allSatisfy(\.isNumber) else { return true }
+        var digits = Array(trimmed)
+        if digits.count == 11, digits.first == "1" { digits.removeFirst() }
+        guard digits.count == 10 else { return true }
+        return digits[0] >= "2" && digits[3] >= "2"
     }
 
     /// Convenience for callers that want every built-in active and no
@@ -350,7 +370,7 @@ extension RegexEntityDetector {
                     // (XXX-XX-XXXX, now the `us.ssn` preset) and
                     // over-long runs that belong to the card pattern.
                     let digitCount = captured.filter { $0.isNumber }.count
-                    return (10 ... 12).contains(digitCount)
+                    return (10 ... 12).contains(digitCount) && RegexEntityDetector.isPlausiblePhone(captured)
                 }
             ),
             // Phone (international, E.164 / `00` dial prefix) —

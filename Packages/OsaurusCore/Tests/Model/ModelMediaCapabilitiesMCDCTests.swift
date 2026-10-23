@@ -4,6 +4,32 @@ import Testing
 
 @Suite("ModelMediaCapabilities — config and weight evidence")
 struct ModelMediaCapabilitiesMCDCTests {
+    @Test(arguments: [true, false], [true, false])
+    func nemotronVideoRequiresBundleTokenAndTemporalWeights(hasToken: Bool, hasTemporalWeights: Bool) throws {
+        let root = try VisionBundleFixture.make(type: "nemotron_h_omni")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON([
+            "model_type": "nemotron_h_omni",
+            "vision_config": ["patch_size": 16, "video_temporal_patch_size": 2],
+            "sound_config": NSNull(),
+            "video_context_token_id": hasToken ? 131081 : NSNull(),
+        ], to: root.appendingPathComponent("config_omni.json"))
+        try VisionBundleFixture.writeJSON(["processor_class": "NemotronHOmniProcessor"],
+            to: root.appendingPathComponent("processor_config.json"))
+        var names = ["vision_model.radio_model.model.patch_generator.embedder.weight",
+                     "vision_model.radio_model.model.blocks.0.attn.qkv.weight"]
+        if hasTemporalWeights {
+            names.append("vision_model.radio_model.model.patch_generator.video_embedder.weight")
+        }
+        try VisionBundleFixture.writeWeights(names, to: root.appendingPathComponent("model.safetensors"))
+        for alias in ["neutral", "Nemotron-3-Nano-Omni", "Nemotron-3.5-Super-VL"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(caps.supportsVideo == (hasToken && hasTemporalWeights))
+            #expect(!caps.supportsAudio)
+        }
+    }
+
     @Test func mimoNativeProcessorAndComponentEvidenceSurviveAliases() throws {
         let root = try VisionBundleFixture.makeMiMo()
         defer { try? FileManager.default.removeItem(at: root) }

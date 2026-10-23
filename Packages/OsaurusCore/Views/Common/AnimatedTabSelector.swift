@@ -119,7 +119,7 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(
                         isSelected
-                            ? theme.cardBackground
+                            ? selectedFill
                             : (isHovering ? theme.secondaryBackground.opacity(0.5) : Color.clear)
                     )
                     .shadow(
@@ -140,6 +140,12 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
                 isHovering = hovering
             }
         }
+    }
+
+    /// Dark card colors sit at or below the track's, so the dark pill is a
+    /// lift of the text color instead.
+    private var selectedFill: Color {
+        theme.isDark ? theme.primaryText.opacity(0.12) : theme.cardBackground
     }
 }
 

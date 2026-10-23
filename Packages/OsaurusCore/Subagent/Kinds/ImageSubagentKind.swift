@@ -49,6 +49,12 @@ struct ImageJobParams: Sendable {
     var numImages: Int?
     var seeds: [UInt64]? = nil
     var batchSize: Int? = nil
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
+    var previewInterval: Int? = nil
+    var previewMaxPixel: Int? = nil
+    var adapters: [ImageAdapterParameters] = []
 
     /// `source_paths` present → edit an existing image; otherwise generate.
     var isEdit: Bool { !sourcePaths.isEmpty }
@@ -58,7 +64,6 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     let capability = SubagentCapabilityRegistry.image
 
     private var params: ImageJobParams
-    private var usesQwen21Parameters = false
     private let argumentsJSON: String
     private var resolvedTarget: MediaModelTarget?
     private var selectedMediaModel: MediaModelInfo?
@@ -135,8 +140,10 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             let target =
                 selected.mediaModel?.target
                 ?? MediaModelTarget(backend: .local, modelID: selected.id)
-            if target.backend != .local, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1 {
-                throw SubagentError.unavailable("Explicit image batches are supported by local image generation only.")
+            if target.backend != .local, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1
+                || params.sampler != nil || params.scheduler != nil || params.shift != nil
+                || params.previewInterval != nil || params.previewMaxPixel != nil || !params.adapters.isEmpty {
+                throw SubagentError.unavailable("Explicit batches and sampling controls require a local image model.")
             }
             if target.backend == .local {
                 // Canonical identity is from installed ImageModelInfo, copied
@@ -183,17 +190,17 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         if params.isEdit, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1 {
             throw ImageGenerationError.invalidRequest("Image batch parameters are generation-only")
         }
-        usesQwen21Parameters = ImageModelRequestPolicy.isQwen21Family(canonical)
     }
 
     func localGenerateRequest(_ resolved: ResolvedModel,
         context: NativeImageJobContext) -> NativeImageGenerateJobRequest
     {
-        NativeImageGenerateJobRequest(prompt: params.prompt, model: usesQwen21Parameters ? (resolved.id ?? resolved.name) : resolved.name,
+        NativeImageGenerateJobRequest(prompt: params.prompt, model: resolved.id ?? resolved.name,
             negativePrompt: params.negativePrompt, width: params.width, height: params.height,
             steps: params.steps, guidance: params.guidance, seed: params.seed,
             numImages: params.numImages ?? 1, seeds: params.seeds, batchSize: params.batchSize ?? 1,
-            outputFormat: .png, context: context)
+            outputFormat: .png, sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
+            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel ?? 256, adapters: params.adapters, context: context)
     }
 
     /// Every local image run owns one producer and may swap the parent under
@@ -403,10 +410,10 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         do {
             if params.isEdit {
                 let sources = try Self.loadSourceImages(paths: params.sourcePaths)
-                if usesQwen21Parameters { try ImageHTTPParameterBuilder.validateSourceImages(sources) }
+                try ImageHTTPParameterBuilder.validateSourceImages(sources)
                 let request = NativeImageEditJobRequest(
                     prompt: params.prompt,
-                    model: usesQwen21Parameters ? (resolved.id ?? resolved.name) : resolved.name,
+                    model: resolved.id ?? resolved.name,
                     sourceImages: sources,
                     negativePrompt: params.negativePrompt,
                     width: params.width,
@@ -416,6 +423,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                     strength: params.strength,
                     seed: params.seed,
                     outputFormat: .png,
+                    sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
+                    previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel ?? 256, adapters: params.adapters,
                     context: NativeImageJobContext.current()
                 )
                 finalResult = try await Self.consumeEdit(request, interrupt: interrupt)

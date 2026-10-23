@@ -430,6 +430,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
+        // Agents, skills and MCP servers an installer queued with
+        // `osaurus import` while the app was closed. Applied after the
+        // server binds so a large bundle never delays `/health`.
+        Task { @MainActor [shouldLoadPluginsAtStartup] in
+            await serverStartupTask.value
+            await PendingImportProcessor.shared.processAtLaunch(waitForPlugins: shouldLoadPluginsAtStartup)
+        }
+
         // Only warm the storage key when the user opted in to encryption.
         // The default plaintext posture needs no key, so launch never touches
         // the Keychain in that case.
@@ -1546,7 +1554,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await LiveExecRegistry.shared.terminateAll()
             }
             await runWithDeadline(seconds: 2) {
-                await ClaudeCodeProcessRegistry.shared.terminateAll()
+                await HarnessProcessRegistry.shared.terminateAll()
             }
             await runWithDeadline(seconds: 2) {
                 await MCPProviderManager.shared.shutdownAllStdioRunners()
@@ -2355,6 +2363,11 @@ extension AppDelegate {
         // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
         Task { @MainActor in
             let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: modelId)
+            if case .image = resolution {
+                ManagementStateManager.shared.imageGenerationSubTabRequest = ImageGenerationTab.models.rawValue
+                showManagementWindow(initialTab: .imageGeneration)
+                return
+            }
             // The Models tab is reached through shared state, never through
             // `showManagementWindow(deeplinkModelId:)`: that path rebuilds the
             // window's hosting controller when the window already exists, and

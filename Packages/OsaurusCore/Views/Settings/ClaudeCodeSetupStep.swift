@@ -2,13 +2,10 @@
 //  ClaudeCodeSetupStep.swift
 //  osaurus
 //
-//  Sign-in surface for the Claude Code backend.
-//
-//  Unlike every other row in the provider picker, this one does not build a
-//  `RemoteProvider`: Claude Code is a local `ToolCapableService` that shells out
-//  to the user's own `claude` binary. There is no host, no port, no API key, and
-//  nothing to put in the Keychain — so this step only *reports* the CLI's state
-//  and offers to start its sign-in.
+//  Sign-in surface for a Claude Code harness runtime (onboarding and
+//  Settings → Runtimes). Claude Code runs the user's own `claude` binary, so
+//  there is no host, no API key, and nothing to put in the Keychain — this
+//  step only *reports* the CLI's state and offers to start its sign-in.
 //
 //  Authentication is delegated to the CLI itself (`claude auth login`), which is
 //  the licensed first-party client for a Claude subscription. Osaurus never sees
@@ -30,10 +27,17 @@ struct ClaudeCodeSetupStep: View {
     let onDone: () -> Void
     var completionTitle: LocalizedStringKey = "Done"
     var requiresUsableCLI = false
+    /// The runtime whose executable and environment are checked; nil means
+    /// the `claude` on PATH.
+    var runtime: HarnessRuntime? = nil
 
     @Environment(\.theme) private var theme
     @State private var phase: Phase = .probing
-    @State private var isSigningIn = false
+    @State private var signInTask: Task<Void, Never>?
+
+    private var isSigningIn: Bool { signInTask != nil }
+    private var command: String { runtime?.executable ?? ClaudeCodeConfiguration.executableName }
+    private var overlay: [String: String] { runtime?.environment ?? [:] }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,6 +65,7 @@ struct ClaudeCodeSetupStep: View {
             footer
         }
         .task { await probe() }
+        .onDisappear { signInTask?.cancel() }
     }
 
     // MARK: - Header
@@ -184,7 +189,7 @@ struct ClaudeCodeSetupStep: View {
                 )
             }
 
-            Button(action: { Task { await signIn() } }) {
+            Button(action: signIn) {
                 HStack(spacing: 8) {
                     if isSigningIn {
                         ProgressView().controlSize(.small)
@@ -206,8 +211,25 @@ struct ClaudeCodeSetupStep: View {
             .buttonStyle(.plain)
             .disabled(isSigningIn)
 
+            HStack(spacing: 14) {
+                if isSigningIn {
+                    Button(action: cancelSignIn) {
+                        Text("Cancel Sign-In", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Button(action: openTerminalSignIn) {
+                    Text("Sign In from Terminal Instead", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
+
             Text(
-                "This opens Claude Code's own sign-in in your browser. Osaurus never sees your credentials.",
+                "This opens Claude Code's own sign-in in your browser. Osaurus never sees your credentials. If the browser flow stalls, sign in from Terminal, then choose Re-check.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -249,7 +271,7 @@ struct ClaudeCodeSetupStep: View {
             }
 
             Text(
-                "You can use the Claude Code models after signing in. Updating Claude Code enables status checks and browser sign-in from this screen.",
+                "Agents on Claude Code can chat once it's signed in. Updating Claude Code enables status checks and browser sign-in from this screen.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -294,7 +316,7 @@ struct ClaudeCodeSetupStep: View {
 
             if status.usesSubscription {
                 Text(
-                    "Claude Code models are in your model picker now. Requests draw on your subscription's limits, shared with your terminal sessions.",
+                    "Agents on Claude Code can chat now. Requests draw on your subscription's limits, shared with your terminal sessions.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -305,7 +327,7 @@ struct ClaudeCodeSetupStep: View {
                 // models still work, they just aren't subscription-billed. Say so
                 // rather than implying a subscription is active.
                 Text(
-                    "This sign-in isn't a Pro or Max subscription, so requests bill through whatever credential Claude Code is configured with.",
+                    "This sign-in isn't a Pro or Max subscription, so requests bill through whatever credential Claude Code is configured with. Osaurus removes ANTHROPIC_API_KEY from the environment it starts Claude Code with.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -419,35 +441,38 @@ struct ClaudeCodeSetupStep: View {
 
     private func probe() async {
         phase = .probing
-        let state = await ClaudeCodeConfiguration.setupState()
-        if case .notInstalled = state {
-            // No Claude rows to add.
-        } else {
-            // Covers install/sign-in completed outside Osaurus as well as the
-            // in-sheet browser flow.
-            await ModelPickerItemCache.shared.prewarmModelCache()
-        }
-        phase = .resolved(state)
+        phase = .resolved(await ClaudeCodeConfiguration.setupState(command: command, overlay: overlay))
     }
 
-    /// Run the CLI's sign-in and refresh in place.
-    ///
-    /// `claude auth login` blocks until the browser round trip finishes, so this
-    /// can sit for a while; the button shows a spinner rather than appearing
-    /// hung. Refreshing the picker on success is what makes the new models show
-    /// up without reopening Settings.
-    private func signIn() async {
-        isSigningIn = true
-        defer { isSigningIn = false }
-
-        let status = await ClaudeCodeConfiguration.login()
-        if let status, status.loggedIn {
-            phase = .resolved(.signedIn(status))
-            await ModelPickerItemCache.shared.prewarmModelCache()
-        } else {
-            // Cancelled or failed — re-probe so the UI reflects reality instead
-            // of asserting a failure we can't actually distinguish.
-            await probe()
+    /// Run the CLI's sign-in and refresh in place. `claude auth login` blocks
+    /// until the browser round trip finishes, so the button shows a spinner
+    /// and Cancel stops the child.
+    private func signIn() {
+        guard signInTask == nil else { return }
+        let command = command
+        let overlay = overlay
+        signInTask = Task {
+            let status = await ClaudeCodeConfiguration.login(command: command, overlay: overlay)
+            guard !Task.isCancelled else { return }
+            signInTask = nil
+            if let status, status.loggedIn {
+                phase = .resolved(.signedIn(status))
+            } else {
+                // Cancelled or failed — re-probe so the UI reflects reality instead
+                // of asserting a failure we can't actually distinguish.
+                await probe()
+            }
         }
+    }
+
+    private func cancelSignIn() {
+        signInTask?.cancel()
+        signInTask = nil
+        Task { await probe() }
+    }
+
+    private func openTerminalSignIn() {
+        cancelSignIn()
+        Task { await ClaudeCodeConfiguration.openTerminalLogin(command: command, overlay: overlay) }
     }
 }

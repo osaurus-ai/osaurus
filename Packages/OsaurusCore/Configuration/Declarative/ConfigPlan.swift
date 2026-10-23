@@ -160,12 +160,19 @@ public struct ConfigApplyResult: Equatable, Sendable {
     public var target: String
     public var status: Status
     public var message: String?
+    /// Secret references (`keychain:SERVICE/ACCOUNT` displays) that did not
+    /// resolve, so the item still needs its secret.
+    public var unresolvedSecretRefs: [String]
 
-    public init(section: String, target: String, status: Status, message: String? = nil) {
+    public init(
+        section: String, target: String, status: Status, message: String? = nil,
+        unresolvedSecretRefs: [String] = []
+    ) {
         self.section = section
         self.target = target
         self.status = status
         self.message = message
+        self.unresolvedSecretRefs = unresolvedSecretRefs
     }
 
     public var payload: [String: Any] {
@@ -175,6 +182,7 @@ public struct ConfigApplyResult: Equatable, Sendable {
             "status": status.rawValue,
         ]
         if let message { row["message"] = message }
+        if !unresolvedSecretRefs.isEmpty { row["unresolved_secret_refs"] = unresolvedSecretRefs }
         return row
     }
 }

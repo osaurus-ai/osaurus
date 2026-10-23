@@ -11,7 +11,7 @@ Osaurus can create and edit images entirely on your Mac using local image models
 ## Setup
 
 - Settings… (⌘,) → Images → Image Models: browse and download on-device image model bundles, or import one from Hugging Face.
-- Settings… (⌘,) → Images → Defaults: choose the default generation model and (separately) the default edit model, the permission for image jobs and cloud video jobs, and the cloud video defaults. The **Image model load policy** is under Advanced.
+- Settings… (⌘,) → Images → Defaults: choose the default generation model and (separately) the default edit model, the permission for image jobs and local and cloud video jobs, and the video defaults. The **Image model load policy** is under Advanced.
 - Image models are large; they load on demand and can temporarily displace the resident chat model while a job runs.
 
 ## Using it in chat

@@ -115,12 +115,14 @@ struct AgentLoopPolicy: Sendable {
 
 /// The composed message array for one model step, plus whether even a
 /// fully-compacted transcript exceeds the history budget. Returned by the
-/// `buildMessages` hook so the driver can end the run with `.overBudget`
-/// instead of sending a doomed request.
+/// `buildMessages` hook for diagnostics only. Estimates must never refuse
+/// a request; only the runtime can determine whether it actually fits.
 struct AgentLoopIterationInput {
     var messages: [ChatMessage]
     /// True when the protected first message + recent tail ALONE exceed
-    /// the history budget after every compaction lever was exhausted.
+    /// estimated history budget after every compaction lever was exhausted.
+    /// Advisory only, including when the window comes from model metadata:
+    /// message costs and the safety margin are still heuristic.
     var overBudget: Bool = false
 }
 
@@ -496,8 +498,8 @@ struct AgentLoopHooks {
     /// for this iteration; the surface decides placement and persistence
     /// (chat appends transiently, HTTP/plugin persist into their arrays).
     /// Set `overBudget` on the returned input when even fully-compacted
-    /// history cannot fit — the driver ends the run with `.overBudget`
-    /// instead of sending a doomed request.
+    /// history exceeds the estimate. This is advisory: the runtime must
+    /// receive the request and report any real context-limit error.
     var buildMessages: (_ notices: [String]) async -> AgentLoopIterationInput
 
     /// Perform one model step (request build + stream/complete + delta
@@ -864,8 +866,8 @@ enum AgentLoopBudget {
         /// The NON-compactable prefix (system prompt, tools, memory,
         /// input — everything except conversation history and generated
         /// output, which compaction can trim) plus the response
-        /// reservation exceeds the effective budget. Such a request fails
-        /// no matter how much history is compacted.
+        /// reservation exceeds the estimated effective budget. Advisory
+        /// only: this estimate cannot establish that a request will fail.
         var hardOverflow: Bool
 
         static let empty = Assessment(usageRatio: nil, nearLimit: false, hardOverflow: false)
@@ -987,10 +989,9 @@ enum AgentLoopBudget {
     /// Chat follows the same contract inline (it interleaves compaction
     /// telemetry and the mid-run token notice between the two steps).
     ///
-    /// The returned input carries `overBudget` (trimmed transcript still
-    /// exceeds the history budget after every compaction lever) so the
-    /// driver can end the run with `.overBudget` instead of sending a
-    /// doomed request.
+    /// The returned input carries an advisory `overBudget` estimate after
+    /// trimming. It does not authorize refusal, even for a known window;
+    /// the actual tokenizer, template, and runtime decide whether it fits.
     static func composeIterationMessages(
         _ messages: [ChatMessage],
         notices: [String],
@@ -1132,10 +1133,8 @@ enum AgentToolLoop {
         case iterationCapReached
         /// `isCancelled` returned true.
         case cancelled
-        /// `buildMessages` reported that even fully-compacted history
-        /// cannot fit the budget. The run ends WITHOUT a model step; the
-        /// surface emits a distinct "context cannot fit" envelope instead
-        /// of sending a doomed request.
+        /// Legacy surface error classification. The driver never returns
+        /// this from heuristic budget estimates; runtime errors propagate.
         case overBudget
         /// Empty-turn recovery exhausted after at least one tool result had
         /// already landed, so the task may be truncated rather than merely blank.
@@ -2533,12 +2532,11 @@ enum AgentToolLoop {
                 pendingTodoNotice = nil
             }
             let input = await hooks.buildMessages(notices)
-            if input.overBudget {
-                // Even fully-compacted history can't fit — the request is
-                // doomed. End cleanly before the model step; the failed
-                // build doesn't charge the iteration budget.
-                return RunResult(exit: .overBudget, iterations: iteration - 1)
-            }
+            // Budget estimates advise compaction and diagnostics, never
+            // admission. Even a metadata-sourced window is compared against
+            // heuristic token counts, reservations, and a safety margin.
+            // Unknown windows must also reach the runtime; its real context
+            // error propagates through modelStep's normal error path.
 
             let step = try await hooks.modelStep(input.messages, iteration)
             // `modelStep` may return because the user pressed Stop and the

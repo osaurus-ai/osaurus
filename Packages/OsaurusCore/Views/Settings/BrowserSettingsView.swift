@@ -122,7 +122,7 @@ struct BrowserSettingsView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: L("Browser"),
+            title: L("Browser Use"),
             subtitle: L("Let agents browse the web in their own persistent sessions")
         ) {
             HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
@@ -187,7 +187,7 @@ struct BrowserSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     stepRow(number: 1, text: "Open the Agents tab and select a custom agent.")
-                    stepRow(number: 2, text: "Go to Subagents and turn on Browser Use.")
+                    stepRow(number: 2, text: "Open Abilities → Subagents and turn on Browser Use.")
                     stepRow(
                         number: 3,
                         text: "Optionally pick a different model for the browsing subagent."

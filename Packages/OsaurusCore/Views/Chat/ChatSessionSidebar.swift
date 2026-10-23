@@ -786,6 +786,13 @@ struct ChatSessionSidebar: View {
     @ViewBuilder
     private var workspaceSections: some View {
         let routerOn = remoteProviderManager.isOsaurusRouterEnabled
+        // Snapshot once per body pass: the getter regroups every remote
+        // agent, so re-reading it per workspace stalls the main thread.
+        let orphaned = orphanedWorkspacePairings
+        let workspaceNames = Dictionary(
+            workspacesService.workspaces.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
         ForEach(rosterStore.rosters) { roster in
             // While searching, a workspace with no matching member has no
             // reason to show its header.
@@ -795,9 +802,9 @@ struct ChatSessionSidebar: View {
         }
         // Orphaned workspace pairings (no loaded roster): one section each,
         // named after the workspace when Settings knows it.
-        ForEach(orphanedWorkspacePairings.keys.sorted(), id: \.self) { workspaceId in
-            let pairings = orphanedWorkspacePairings[workspaceId] ?? []
-            let name = workspacesService.workspaces.first { $0.id == workspaceId }?.name
+        ForEach(orphaned.keys.sorted(), id: \.self) { workspaceId in
+            let pairings = orphaned[workspaceId] ?? []
+            let name = workspaceNames[workspaceId]
             VStack(alignment: .leading, spacing: 2) {
                 sidebarSectionHeader(
                     icon: "rectangle.3.group.fill",
@@ -833,10 +840,10 @@ struct ChatSessionSidebar: View {
         if isFilteringNavigator {
             EmptyView()
         } else if rosterStore.rosters.isEmpty {
-            if !routerOn, !workspacesService.workspaces.isEmpty || !orphanedWorkspacePairings.isEmpty {
+            if !routerOn, !workspacesService.workspaces.isEmpty || !orphaned.isEmpty {
                 // Router off but Settings knows workspaces: explain once
                 // (orphan sections above already carry the row).
-                if orphanedWorkspacePairings.isEmpty {
+                if orphaned.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
                         sidebarSectionHeader(
                             icon: "rectangle.3.group.fill", title: L("Workspaces"), help: L("Workspaces")
@@ -2346,7 +2353,7 @@ private struct SessionRow: View {
                             // early while empty space sat after the badges.
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        if session.source != .chat {
+                        if session.source != .chat || isFromPairedPhone {
                             sourceBadge
                         }
 
@@ -2762,9 +2769,9 @@ private struct SessionRow: View {
 
     /// Compact icon-only badge that surfaces the session's `SessionSource`
     /// (plugin / http / schedule / watcher). Chat-source rows hide it.
-    /// A chat from the paired iPhone. Stored as a `.workspace` row (it runs
-    /// through the shared-agent path), but it is the owner's own chat, not a
-    /// teammate's, and is shown as the iPhone's.
+    /// A chat from the paired iPhone: an ordinary chat the phone started, or
+    /// an older `.workspace` row (from the shared-agent path), which is the
+    /// owner's own chat, not a teammate's. Either is shown as the iPhone's.
     private var isFromPairedPhone: Bool {
         RemoteSessionContinuation.isFromPairedPhone(session)
     }
@@ -2824,6 +2831,9 @@ private struct SessionRow: View {
     private var sourceBadgeHelp: Text {
         switch session.source {
         case .chat:
+            if isFromPairedPhone {
+                return Text("Mobile", bundle: .module)
+            }
             return Text("Chat", bundle: .module)
         case .plugin:
             if let pid = session.sourcePluginId {

@@ -1308,6 +1308,10 @@ struct MLXBatchAdapter {
                     ontoLevels: levels,
                     defaultLevel: defaultLevel
                 ) ?? requested
+            case .modeKwargs:
+                // Mode bundles receive their declared kwargs below, including
+                // a native reasoning_effort transport when the bundle uses it.
+                return nil
             case .fixedNativeEffort:
                 // The bundle exposes no picker, but its engine still owns a
                 // strict native effort contract. Preserve explicit input so
@@ -1334,6 +1338,34 @@ struct MLXBatchAdapter {
         // Omission means the bundle/template default, including on required
         // tool turns. Do not close reasoning to compensate for a failed run.
         guard normalizedReasoningEffort != nil || disableThinking != nil else {
+            return context
+        }
+
+        // Declared reasoning modes (Nemotron 3.5): send exactly the kwargs the
+        // bundle declares for the selected mode. Off = the declared `off` mode
+        // (else `enable_thinking: false`); an effort snaps onto the declared
+        // levels (high = on, medium = medium); the plain toggle selects the
+        // declared default when thinking is on.
+        if case .modeKwargs(let levels, let defaultLevel, let kwargs)? =
+            DeclaredReasoningEffort.control(forModelId: modelName)
+        {
+            let level: String?
+            if disableThinking == true || directRailReasoningEffort {
+                level = "none"
+            } else if let requested = normalizedReasoningEffort, hasPositiveReasoningEffort {
+                level = DeclaredReasoningEffort.mode(
+                    forNativeEffort: requested,
+                    control: .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs))
+                    ?? DeclaredReasoningEffort.snapped(
+                        requested, ontoLevels: levels, defaultLevel: defaultLevel)
+            } else {
+                level = defaultLevel ?? levels.last
+            }
+            if let level, let declared = kwargs[level] {
+                for (key, value) in declared { context[key] = value.sendable }
+            } else if level == "none" {
+                context["enable_thinking"] = false
+            }
             return context
         }
 
@@ -1469,13 +1501,7 @@ struct MLXBatchAdapter {
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
-        guard let value else { return false }
-        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
-            return true
-        default:
-            return false
-        }
+        DeclaredReasoningEffort.isOffEffort(value)
     }
 
     /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
@@ -1746,9 +1772,11 @@ struct MLXBatchAdapter {
             // 4× spread was measured between a small dense model and a 35B
             // MoE on the same machine), so a per-model measured value from
             // `osaurus bench --tune-prefill` beats the server-wide setting;
-            // the setting remains the fallback, then vmlx's default.
+            // the setting remains the fallback, then the architecture's own
+            // measured recommendation, then vmlx's default.
             prefillStepSize: ModelPrefillTuningStore.tunedStepSize(for: modelName)
-                ?? runtime.concurrency.prefillStepSize,
+                ?? runtime.concurrency.prefillStepSize
+                ?? container.recommendedPrefillStepSize,
             modelName: modelName
         )
         mlxParams.nativeMTPDepthPolicy = Self.nativeMTPDepthPolicy(runtime.mtp)
@@ -1831,7 +1859,7 @@ struct MLXBatchAdapter {
                     + "tokenizedPrompt=\(prepared.promptTokens.count) "
                     + "lcpVsPrev=\(lcp)/\(prevCount) "
                     + "toolsInSpec=\(toolsCount) toolChoice=\(String(describing: toolChoice)) "
-                    + "lastMsgRole=\(lastRole) \(cacheStr)"
+                    + "lastMsgRole=\(lastRole) prefillStep=\(mlxParams.prefillStepSize) \(cacheStr)"
             )
         }
 
@@ -2335,6 +2363,7 @@ struct MLXBatchAdapter {
         cacheStableSystemPrefix: String?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
+        try DeclaredReasoningEffort.validateModeRequest(modelId: modelName, options: generation.modelOptions)
         // Heap-allocated outbox so the throwing closure can hand a value back
         // across the actor boundary.
         final class OutBox: @unchecked Sendable {
@@ -2531,6 +2560,7 @@ struct MLXBatchAdapter {
             guard
                 key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice"
                     || key == "tool_choice_name" || key == "preserve_thinking"
+                    || key == "medium_effort"
             else {
                 return nil
             }

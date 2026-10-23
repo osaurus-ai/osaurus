@@ -264,9 +264,6 @@ final class TerminalDisplayView: NSView {
                 attributes: promptAttrs
             )
         )
-        if let container = textView.textContainer {
-            textView.layoutManager?.ensureLayout(for: container)
-        }
         textView.needsDisplay = true
     }
 

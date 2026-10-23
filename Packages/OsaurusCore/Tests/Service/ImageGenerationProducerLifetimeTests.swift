@@ -199,7 +199,8 @@ struct ImageProducerFixture: Sendable {
                 newLog.record("resolve:\(name)")
                 guard let target = resolved[name] else { throw ImageGenerationError.modelNotFound(name) }
                 return target
-            }, streamCheckpoint: { await newCheckpoints.reached($0) },
+            }, peakEstimate: { 0 }, // Tensor-free fixture owns no model/workspace buffers.
+            streamCheckpoint: { await newCheckpoints.reached($0) },
             errorSince: { _ in newError.message })
         log = newLog; probe = newProbe; checkpoints = newCheckpoints; error = newError
         first = nameA; second = nameB

@@ -61,6 +61,18 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("prefill step: tuning record, then server setting, then the architecture's recommendation")
+    func prefillStepFallsBackToArchitectureRecommendation() throws {
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        #expect(
+            adapter.contains(
+                """
+                prefillStepSize: ModelPrefillTuningStore.tunedStepSize(for: modelName)
+                                ?? runtime.concurrency.prefillStepSize
+                                ?? container.recommendedPrefillStepSize,
+                """))
+    }
+
     @Test("HTTP max tokens does not invent a hidden reasoning budget")
     func httpMaxTokensDoesNotInventReasoningBudget() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
@@ -805,7 +817,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "3adcadacd643f7caffff5270c3789c2884d610e6"
+        let expectedRuntimeHardenedRevision = "c9bf346b72a42c00e0b30d280c23fdd9756c86f9"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -2532,7 +2544,7 @@ struct RuntimePolicySourceTests {
             !runtime.contains(
                 "loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"
             ),
-            "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.osaurusProduction, including load-time memory caps, mmap safetensors, and routed MLXPress auto policy"
+            "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.osaurusProduction, including load-time memory caps, mmap safetensors, and canonical model residency"
         )
     }
 
@@ -2802,7 +2814,7 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"native_mtp_depth\""))
         #expect(httpHandler.contains("\"native_mtp_status\""))
         #expect(httpHandler.contains("\"native_mtp_reason\""))
-        #expect(httpHandler.contains("\"mlx_press\""))
+        #expect(!httpHandler.contains("\"mlx_press\""))
         #expect(httpHandler.contains("\"generation_defaults\""))
         #expect(httpHandler.contains("\"last_effective_generation\""))
         #expect(httpHandler.contains("\"stage\": settings.stage"))
@@ -2847,9 +2859,9 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("lastMemorySafetyLoadDecisionSnapshot()"))
         #expect(httpHandler.contains("\"last_load_decision\""))
         #expect(httpHandler.contains("\"estimated_working_set_bytes\""))
-        #expect(httpHandler.contains("case .disabled:"))
-        #expect(httpHandler.contains("case .enabled(let coldFraction):"))
-        #expect(httpHandler.contains("case .auto(let envFallback):"))
+        #expect(!httpHandler.contains("jangPressPolicyJSONObject"))
+        #expect(!httpHandler.contains("JangPressPolicy"))
+        #expect(!httpHandler.contains("\"cold_fraction\""))
         #expect(!httpHandler.contains("throw LoadRefusedError("))
 
         #expect(runtimeSettingsTests.contains("memorySafety.mode == .safeAuto"))
@@ -3164,7 +3176,18 @@ struct RuntimePolicySourceTests {
             "public func cancelTask(",
             in: tasks
         )
-        #expect(cancelBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
+        #expect(cancelBody.contains("finishChatCancellation(state, stopSession: true)"))
+        let streamingBody = try Self.functionBody(
+            "private func handleChatStreamingChange(",
+            in: tasks
+        )
+        #expect(streamingBody.contains("state.chatSession?.stopRequested == true"))
+        #expect(streamingBody.contains("finishChatCancellation(state, stopSession: false)"))
+        let cancellationBody = try Self.functionBody(
+            "private func finishChatCancellation(",
+            in: tasks
+        )
+        #expect(cancellationBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
 
         let releaseBody = try Self.functionBody(
             "private func releaseResidencyAndRearmChatWarmup(",

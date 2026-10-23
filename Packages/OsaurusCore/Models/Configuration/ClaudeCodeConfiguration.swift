@@ -2,8 +2,8 @@
 //  ClaudeCodeConfiguration.swift
 //  osaurus
 //
-//  Static configuration for the Claude Code provider: locating the user's
-//  `claude` binary, the model catalog, and the argument vector.
+//  Static configuration for the Claude Code harness: locating the user's
+//  `claude` binary, the model aliases, tool rules, and sign-in.
 //
 //  Osaurus drives the user's own locally-authenticated Claude Code install as
 //  a subprocess. There are no credentials here by design — the user runs
@@ -37,10 +37,6 @@ public enum ClaudeCodeModel: String, CaseIterable, Sendable {
     case opus
     case haiku
 
-    /// Routing id surfaced to the model picker and matched by
-    /// `ClaudeCodeService.handles(requestedModel:)`.
-    public var pickerId: String { "\(ClaudeCodeConfiguration.modelPrefix)\(rawValue)" }
-
     public var displayName: String {
         switch self {
         case .sonnet: return "Claude Code (Sonnet)"
@@ -49,43 +45,12 @@ public enum ClaudeCodeModel: String, CaseIterable, Sendable {
         }
     }
 
-    /// Parse a routing id such as `claude-code/sonnet` back into an alias.
+    /// Parse a legacy `claude-code/sonnet` model id back into an alias.
     public static func fromPickerId(_ id: String) -> ClaudeCodeModel? {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix(ClaudeCodeConfiguration.modelPrefix) else { return nil }
         let alias = String(trimmed.dropFirst(ClaudeCodeConfiguration.modelPrefix.count))
         return ClaudeCodeModel(rawValue: alias.lowercased())
-    }
-}
-
-public enum ClaudeCodeError: LocalizedError, Sendable, Equatable {
-    case binaryNotFound(searchedPath: String)
-    case notAuthenticated(detail: String)
-    case launchFailed(String)
-    case turnFailed(String)
-    case exited(code: Int32, stderrTail: String)
-    case rateLimited(detail: String)
-
-    public var errorDescription: String? {
-        switch self {
-        case .binaryNotFound:
-            return L(
-                "Claude Code isn't installed, or its `claude` command isn't on this app's PATH. Install it, then restart Osaurus."
-            )
-        case .notAuthenticated:
-            return L("Claude Code isn't signed in. Open `claude` in a terminal, sign in, then try again.")
-        case .launchFailed(let detail):
-            return String(format: L("Couldn't start Claude Code: %@"), detail)
-        case .turnFailed(let detail):
-            return String(format: L("Claude Code couldn't complete the turn: %@"), detail)
-        case .exited(let code, let tail):
-            if tail.isEmpty {
-                return String(format: L("Claude Code exited with code %d."), Int(code))
-            }
-            return String(format: L("Claude Code exited with code %d: %@"), Int(code), tail)
-        case .rateLimited(let detail):
-            return String(format: L("Claude Code hit a subscription rate limit: %@"), detail)
-        }
     }
 }
 
@@ -145,8 +110,8 @@ public enum ClaudeCodeSetupState: Sendable, Equatable {
 }
 
 public enum ClaudeCodeConfiguration {
-    /// Routing prefix. Chosen so it can't collide with an MLX bundle id or a
-    /// remote provider's `<provider-name>/` prefix.
+    /// Prefix of the model ids Claude Code used before it became a harness
+    /// runtime. Only read to migrate agents and to refuse those ids.
     public static let modelPrefix = "claude-code/"
 
     /// Claude's brand gradient, from Anthropic's published accent orange
@@ -171,8 +136,23 @@ public enum ClaudeCodeConfiguration {
     /// tool is denied rather than silently approved.
     public static let defaultAllowedTools = ["Read", "Grep", "Glob"]
 
-    /// Tools added when the agent opts into writes.
-    public static let writeTools = ["Edit", "Write", "NotebookEdit"]
+    /// The only way writes are granted. Claude Code's `Edit(...)` rules govern
+    /// every built-in that edits files (Edit, Write, NotebookEdit). `//` anchors
+    /// the gitignore-style pattern
+    /// at the filesystem root; the path goes through `realpath` because Claude
+    /// matches against real paths (`/tmp` is `/private/tmp`), and Foundation's
+    /// `resolvingSymlinksInPath` strips `/private` instead of adding it.
+    public static func scopedWriteRule(root: URL) -> String {
+        let standardized = root.standardizedFileURL.path
+        let resolved =
+            standardized.withCString { pointer -> String? in
+                guard let real = realpath(pointer, nil) else { return nil }
+                defer { free(real) }
+                return String(cString: real)
+            } ?? standardized
+        let trimmed = resolved.hasSuffix("/") ? String(resolved.dropLast()) : resolved
+        return "Edit(/\(trimmed)/**)"
+    }
 
     /// Tools added when the agent opts into shell access.
     public static let shellTools = ["Bash"]
@@ -186,22 +166,11 @@ public enum ClaudeCodeConfiguration {
 
     /// Osaurus config tools that only read. Safe to grant whenever the user
     /// turns Osaurus tools on.
-    public static let osaurusReadOnlyTools = [
-        "osaurus_status", "osaurus_list", "osaurus_describe", "osaurus_search",
-    ]
+    public static let osaurusReadOnlyTools = ["osaurus_inspect", "osaurus_help"]
 
-    /// Osaurus config tools that mutate app state. Behind their own opt-in:
-    /// granting these lets a run silently rewrite agents, providers, and
-    /// installed plugins.
-    public static let osaurusConfigWriteTools = [
-        "osaurus_agent", "osaurus_provider", "osaurus_model", "osaurus_plugin", "osaurus_mcp",
-    ]
-
-    /// Deliberately never exposed. `osaurus_schedule` can queue agent runs, so
-    /// a Claude Code subprocess could schedule work that starts another Claude
-    /// Code subprocess. `AGENTS.md` forbids recursive agent workers, and this
-    /// is the path that would create them.
-    public static let osaurusExcludedTools = ["osaurus_schedule"]
+    /// The Osaurus tool that mutates app state — agents, providers, models,
+    /// plugins, and schedules. Behind its own opt-in.
+    public static let osaurusConfigWriteTools = [HarnessGrantStore.configWriteToolName]
 
     /// The `--tools` value handed to `osaurus mcp`, so the proxy hides
     /// everything else at the source rather than trusting the client to skip it.
@@ -228,12 +197,10 @@ public enum ClaudeCodeConfiguration {
     /// A note appended to the system prompt describing which Osaurus tools this
     /// run actually has.
     ///
-    /// Osaurus agents are prompted to "read current state with `osaurus_status`"
-    /// and similar. That prompt reaches Claude Code verbatim, but the tools only
-    /// arrive when the MCP bridge is attached — so without this note the model
-    /// is told to use tools it cannot see, and spends the turn guessing at
-    /// permission errors instead of answering. Stating the real capability is
-    /// the fix; suppressing the agent's prompt would break every other backend.
+    /// An agent's own instructions may tell it to "check `osaurus_inspect`".
+    /// The tools only arrive when the MCP bridge is attached, so without this
+    /// note the model is told to use tools it cannot see and spends the turn
+    /// guessing at permission errors instead of answering.
     public static func osaurusToolsSystemNote(
         available: Bool,
         allowConfigWrites: Bool = false,
@@ -250,12 +217,12 @@ public enum ClaudeCodeConfiguration {
                 cause = L("this agent runs Claude Code in text-only mode, which disables all tools")
             case .notEnabled, nil:
                 cause = L(
-                    "they are switched off for this agent — tell the user to enable \"Give It Osaurus's Own Tools\" in Osaurus settings"
+                    "they are switched off for this agent — tell the user to turn on \"Allow Osaurus read tools\" in this agent's Claude Code Options"
                 )
             }
             return String(
                 format: L(
-                    "You do NOT have Osaurus's configuration tools (osaurus_status, osaurus_list, and similar) on this run, because %@. Do not try to call them and do not speculate about permission errors. If the user asks about Osaurus's configuration, say plainly that you can't read it right now, explain why, and offer what they can check themselves."
+                    "You do NOT have Osaurus's configuration tools (osaurus_inspect, osaurus_help, osaurus_config) on this run, because %@. Do not try to call them and do not speculate about permission errors. If the user asks about Osaurus's configuration, say plainly that you can't read it right now, explain why, and offer what they can check themselves."
                 ),
                 cause
             )
@@ -300,8 +267,8 @@ public enum ClaudeCodeConfiguration {
     ///
     /// `osaurus mcp` proxies to `127.0.0.1:<port>` and relies on loopback trust
     /// when network exposure is off, so no credential is embedded here.
-    /// - Parameter bridgeGrant: Per-turn grant proving which agent's chat this
-    ///   subprocess serves. Delivered through the server block's `env` rather
+    /// - Parameter bridgeGrant: The process's agent token, proving which
+    ///   agent's chat this subprocess serves. Delivered through the server block's `env` rather
     ///   than `args`, so it never appears in `ps` output for other processes on
     ///   the machine. Nil omits it, which leaves the child unattributed — fine
     ///   for a custom agent, but the Default agent's tools will refuse.
@@ -317,7 +284,7 @@ public enum ClaudeCodeConfiguration {
             "args": ["mcp", "--tools", patterns.joined(separator: ",")],
         ]
         if let bridgeGrant, !bridgeGrant.isEmpty {
-            server["env"] = [ClaudeCodeBridgeGrantStore.environmentKey: bridgeGrant]
+            server["env"] = [HarnessGrantStore.environmentKey: bridgeGrant]
         }
         let payload: [String: Any] = ["mcpServers": [mcpServerName: server]]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
@@ -344,94 +311,11 @@ public enum ClaudeCodeConfiguration {
     /// Cheap availability probe: does the binary exist and is it executable?
     ///
     /// Deliberately does *not* spawn `claude --version` — this is called during
-    /// model-picker layout, and paying a process spawn there would stall the UI.
-    /// Authentication state is discovered on the first real run instead, where
-    /// it surfaces as a typed `notAuthenticated` error.
+    /// layout, and paying a process spawn there would stall the UI.
     public static func isAvailable(
         env: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
         resolveExecutable(env: env) != nil
-    }
-
-    // MARK: - Argument vector
-
-    /// Build the `claude` argument vector for one non-interactive turn.
-    ///
-    /// - Parameters:
-    ///   - model: alias passed straight through to `--model`.
-    ///   - mode: agent vs text-only.
-    ///   - allowedTools: auto-approved tools in agent mode. Ignored in
-    ///     text-only mode, where all built-ins are disabled.
-    ///   - systemPrompt: appended to Claude Code's own system prompt rather
-    ///     than replacing it, so its tool contract stays intact.
-    /// - Parameter mcpConfigPath: when non-nil, an `--mcp-config` file exposing
-    ///   Osaurus's own tools. Only meaningful in agent mode — text-only mode
-    ///   disables every tool, MCP included.
-    public static func arguments(
-        model: ClaudeCodeModel,
-        mode: ClaudeCodeMode,
-        allowedTools: [String],
-        systemPrompt: String?,
-        mcpConfigPath: String? = nil
-    ) -> [String] {
-        var args = [
-            "--print",
-            "--output-format", "stream-json",
-            "--verbose",
-            // Without this the CLI emits only whole messages, so the chat
-            // would sit blank and then paint the full answer at once.
-            "--include-partial-messages",
-            // One Osaurus turn is one CLI invocation; nothing should be
-            // written to the user's ~/.claude session history.
-            "--no-session-persistence",
-            // Only MCP servers Osaurus passes explicitly (currently none) may
-            // load. Without this the CLI would silently inherit whatever the
-            // user configured for their terminal sessions.
-            "--strict-mcp-config",
-            "--model", model.rawValue,
-        ]
-
-        switch mode {
-        case .textOnly:
-            // The CLI's documented "disable every built-in" form.
-            args += ["--tools", ""]
-        case .agent:
-            // Fail-closed: un-allowlisted tools are denied, not prompted for.
-            args += ["--permission-mode", "dontAsk"]
-            if !allowedTools.isEmpty {
-                args += ["--allowedTools", allowedTools.joined(separator: ",")]
-            }
-            // Ordering matters only for readability; `--strict-mcp-config`
-            // above already guarantees nothing else loads.
-            if let mcpConfigPath {
-                args += ["--mcp-config", mcpConfigPath]
-            }
-        }
-
-        if let systemPrompt, !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            args += ["--append-system-prompt", systemPrompt]
-        }
-
-        return args
-    }
-
-    /// Tools to auto-approve given an agent's opt-ins.
-    ///
-    /// `allowOsaurusTools` adds the namespaced MCP names; without them the
-    /// server would be attached but every call denied by `dontAsk`.
-    public static func allowedTools(
-        allowWrites: Bool,
-        allowShell: Bool,
-        allowOsaurusTools: Bool = false,
-        allowOsaurusConfigWrites: Bool = false
-    ) -> [String] {
-        var tools = defaultAllowedTools
-        if allowWrites { tools += writeTools }
-        if allowShell { tools += shellTools }
-        if allowOsaurusTools {
-            tools += osaurusAllowedToolNames(allowConfigWrites: allowOsaurusConfigWrites)
-        }
-        return tools
     }
 
     // MARK: - Authentication
@@ -455,15 +339,30 @@ public enum ClaudeCodeConfiguration {
             .first(where: { !$0.isEmpty })
     }
 
+    /// Control commands run with the environment a chat process gets (login
+    /// shell PATH, the interpreter beside an npm `claude`, `ANTHROPIC_API_KEY`
+    /// removed), so the status shown is the status a chat will see.
+    static func controlCommand(
+        _ command: String,
+        overlay: [String: String]
+    ) async -> HarnessControlCommand.Resolved? {
+        await HarnessControlCommand.resolve(
+            command,
+            overlay: overlay,
+            removing: HarnessEnvironment.alwaysRemoved.union(ClaudeCodeHarnessAdapter.removedEnvironment)
+        )
+    }
+
     public static func cliVersion(
-        env: [String: String] = ProcessInfo.processInfo.environment,
+        command: String = executableName,
+        overlay: [String: String] = [:],
         timeout: TimeInterval = 5
     ) async -> String? {
-        guard let executable = resolveExecutable(env: env),
+        guard let resolved = await controlCommand(command, overlay: overlay),
             let result = await ClaudeCodeProcessRunner.capture(
-                executable: executable,
+                executable: resolved.executable,
                 arguments: ["--version"],
-                environment: env,
+                environment: resolved.environment,
                 timeout: timeout
             ),
             result.exitCode == 0,
@@ -472,19 +371,18 @@ public enum ClaudeCodeConfiguration {
         return decodeVersion(result.stdout)
     }
 
-    /// Ask the CLI who is signed in.
-    ///
-    /// Unlike `isAvailable()` this *does* spawn a process, so it is only called
-    /// from the settings sheet — never from model-picker layout.
+    /// Ask the CLI who is signed in. Spawns a process, so it is only called
+    /// from settings and onboarding, never from layout.
     public static func authStatus(
-        env: [String: String] = ProcessInfo.processInfo.environment,
+        command: String = executableName,
+        overlay: [String: String] = [:],
         timeout: TimeInterval = 10
     ) async -> ClaudeCodeAuthStatus? {
-        guard let executable = resolveExecutable(env: env) else { return nil }
-        guard let result = await ClaudeCodeProcessRunner.capture(
-                executable: executable,
+        guard let resolved = await controlCommand(command, overlay: overlay),
+            let result = await ClaudeCodeProcessRunner.capture(
+                executable: resolved.executable,
                 arguments: ["auth", "status", "--json"],
-                environment: env,
+                environment: resolved.environment,
                 timeout: timeout
             ),
             !result.timedOut
@@ -496,13 +394,14 @@ public enum ClaudeCodeConfiguration {
 
     /// Resolve what the setup UI should show.
     public static func setupState(
-        env: [String: String] = ProcessInfo.processInfo.environment
+        command: String = executableName,
+        overlay: [String: String] = [:]
     ) async -> ClaudeCodeSetupState {
-        guard resolveExecutable(env: env) != nil else {
-            return .notInstalled(searchedPath: searchedPath(env: env))
+        guard await controlCommand(command, overlay: overlay) != nil else {
+            return .notInstalled(searchedPath: await HarnessControlCommand.searchedPath())
         }
-        let version = await cliVersion(env: env)
-        guard let status = await authStatus(env: env) else {
+        let version = await cliVersion(command: command, overlay: overlay)
+        guard let status = await authStatus(command: command, overlay: overlay) else {
             // Older CLIs accept unknown subcommands by printing general help
             // with exit code zero. A missing JSON payload, not the exit code,
             // is therefore the reliable capability signal.
@@ -518,21 +417,51 @@ public enum ClaudeCodeConfiguration {
     ///
     /// `claude auth login` opens the system browser and blocks until the round
     /// trip finishes, so this returns only once the user has completed (or
-    /// abandoned) the flow. Osaurus never sees the credential — the CLI writes
-    /// it to its own store, exactly as it would from a terminal.
+    /// abandoned) the flow, or the calling task is cancelled. Osaurus never
+    /// sees the credential — the CLI writes it to its own store, exactly as it
+    /// would from a terminal.
     ///
     /// Returns the post-login status so the caller can update in place.
     public static func login(
-        env: [String: String] = ProcessInfo.processInfo.environment,
+        command: String = executableName,
+        overlay: [String: String] = [:],
         timeout: TimeInterval = 300
     ) async -> ClaudeCodeAuthStatus? {
-        guard let executable = resolveExecutable(env: env) else { return nil }
+        guard let resolved = await controlCommand(command, overlay: overlay) else { return nil }
         _ = await ClaudeCodeProcessRunner.capture(
-            executable: executable,
+            executable: resolved.executable,
             arguments: ["auth", "login"],
-            environment: env,
+            environment: resolved.environment,
             timeout: timeout
         )
-        return await authStatus(env: env)
+        guard !Task.isCancelled else { return nil }
+        return await authStatus(command: command, overlay: overlay)
+    }
+
+    /// Sign in from Terminal instead, for logins the headless flow can't
+    /// finish (a CLI that asks a question, SSO that needs a TTY). Writes a
+    /// one-line `.command` script and opens it, which needs no Automation
+    /// permission.
+    @MainActor
+    public static func openTerminalLogin(command: String = executableName, overlay: [String: String] = [:]) async {
+        let resolved = await controlCommand(command, overlay: overlay)
+        let executable = resolved?.executable ?? command
+        let path = resolved?.environment["PATH"]
+        var script = "#!/bin/zsh -l\n"
+        if let path { script += "export PATH=\(shellQuoted(path))\n" }
+        script += "\(shellQuoted(executable)) auth login\n"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-claude-login-\(UUID().uuidString).command")
+        do {
+            try script.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        } catch {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

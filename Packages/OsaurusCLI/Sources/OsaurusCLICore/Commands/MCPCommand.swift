@@ -244,7 +244,7 @@ public struct MCPCommand: Command {
         return request
     }
 
-    /// Kept in sync with `ClaudeCodeBridgeGrantStore` in OsaurusCore. The CLI
+    /// Kept in sync with `HarnessGrantStore` in OsaurusCore. The CLI
     /// does not depend on Core, so the two constants are duplicated rather than
     /// shared; `MCPBridgeGrantTests` pins the literals on both sides.
     static let bridgeGrantEnvironmentKey = "OSAURUS_MCP_BRIDGE_GRANT"
@@ -318,7 +318,7 @@ public struct MCPCommand: Command {
             proxied — which is 170+ definitions once plugins are loaded, so
             clients with a narrow purpose should scope this down:
 
-              osaurus mcp --tools "osaurus_status,osaurus_list,osaurus_describe"
+              osaurus mcp --tools "osaurus_inspect,osaurus_help"
               osaurus mcp --tools "osaurus_*"
 
             Excluded tools are hidden from tools/list and refused on call.

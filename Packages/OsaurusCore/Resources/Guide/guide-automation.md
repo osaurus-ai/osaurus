@@ -11,7 +11,7 @@ Three ways agents can act beyond chat — each isolated, gated, and off by defau
 ## Computer Use (experimental)
 
 - An agent drives real macOS apps through accessibility APIs. Custom agents only (never the default agent); off by default.
-- Enable per agent: Agents → Configure → Subagents → Computer Use. Global policy in Settings → Computer Use: autonomy preset (default balanced), per-app overrides, app allowlist.
+- Enable per agent: Agents → Abilities → Subagents → Computer Use. Global policy in Settings → Computer Use: autonomy preset (default balanced), per-app overrides, app allowlist.
 - Needs Accessibility permission (and Screen Recording for visual grounding). Dangerous apps — Terminal, System Settings, Keychain, password managers — always require per-action confirmation.
 - Live steps stream into chat; consequential actions show a confirm overlay; Stop cancels at any point. Limits: ~24 steps / ~5 minutes per goal.
 - Cloud vision is off by default; if enabled, screenshots are scrubbed (text masked) before any cloud model sees them.
@@ -19,7 +19,7 @@ Three ways agents can act beyond chat — each isolated, gated, and off by defau
 ## Browser Use
 
 - A persistent, isolated in-app browser per agent (WebKit) — sign-ins and cookies persist across chats but are never shared with other agents or Safari.
-- Custom agents only; enable in the agent's Subagents tab. Sessions are managed in Settings → Browser (open / close / reset; idle-close after 15 minutes).
+- Custom agents only; enable per agent: Agents → Abilities → Subagents → Browser Use. Sessions are managed in Settings → Browser Use (open / close / reset; idle-close after 15 minutes).
 - The agent never types credentials: a sign-in opens a visible window for you, then the run resumes. Only http/https; no downloads or file uploads.
 - Edits and consequential actions confirm first; ~15 minute budget per goal; Stop always works.
 

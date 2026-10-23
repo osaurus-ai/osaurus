@@ -36,7 +36,7 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openSearchSettings
     /// Open Management → Knowledge (collections list + curation inbox).
     case openKnowledgeSettings
-    /// Open Settings → Browser (Browser Use sessions + guidance).
+    /// Open Settings → Browser Use (sessions + guidance).
     case openBrowserSettings
     /// Open Management → Channels.
     case openChannelsSettings
@@ -126,7 +126,7 @@ public enum WhatsNewContent {
     /// First-launch announcement for native Browser Use in 0.22.9.
     /// Two pages: what it does plus the persistent per-agent sessions, and
     /// the safe-by-default consent gate plus how to turn it on per custom
-    /// agent. The final CTA deep-links to Settings → Browser.
+    /// agent. The final CTA deep-links to Settings → Browser Use.
     private static let browserUse_0_22_9 = WhatsNewRelease(
         version: "0.22.9",
         pages: [
@@ -143,7 +143,7 @@ public enum WhatsNewContent {
                 title: "Safe by default, on per agent",
                 eyebrow: "Introducing Browser Use",
                 description:
-                    "Reading and navigation run automatically; typing pauses for approval, and submitting, purchasing, or sending always asks first. Turn it on for a custom agent under Abilities → Subagents, and review each agent's session in Settings → Browser.",
+                    "Reading and navigation run automatically; typing pauses for approval, and submitting, purchasing, or sending always asks first. Turn it on for a custom agent under Abilities → Subagents, and review each agent's session in Settings → Browser Use.",
                 systemImage: "checkmark.shield.fill",
                 actionLabel: "Open Browser settings",
                 action: .openBrowserSettings

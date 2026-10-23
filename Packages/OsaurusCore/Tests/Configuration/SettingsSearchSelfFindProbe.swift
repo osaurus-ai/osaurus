@@ -12,6 +12,15 @@ import Testing
 @Suite("settings search self-findability")
 struct SettingsSearchSelfFindProbe {
 
+    @Test("FLUX 3 panel dimensions have searchable labels")
+    func flux3DimensionsAreCatalogued() throws {
+        for (id, title) in [("imageGeneration.steps", "Steps"), ("imageGeneration.width", "Width"), ("imageGeneration.height", "Height")] {
+            let entry = try #require(SettingsSearchIndex.entries.first { $0.id == id })
+            #expect(entry.title == title && entry.subTab == "Models")
+            #expect(SettingsSearchIndex.search(title).contains { $0.id == id })
+        }
+    }
+
     @Test("delegation RAM safety is shared config, not a UI-only control")
     func ramSafetyCatalogNamesWritableSection() throws {
         let entry = try #require(SettingsSearchIndex.entries.first {
@@ -73,6 +82,19 @@ struct SettingsSearchSelfFindProbe {
             ("Prompt Prefill Chunk Size", "settings.server.prefillChunkSize"),
             ("Automatically Check Model Updates", "models.automaticUpdates"),
             ("Brief description (optional)", "agents.description"),
+            ("Runs on", "agents.runtime"),
+            ("Manage Runtimes", "agents.runtime"),
+            ("Claude model", "agents.claudeCode.model"),
+            ("Allow file changes", "agents.claudeCode"),
+            ("Allow shell commands", "agents.claudeCode"),
+            ("Allow Osaurus read tools", "agents.claudeCode"),
+            ("Agent Runtimes", "agentRuntimes.overview"),
+            ("Add Runtime", "agentRuntimes.add"),
+            ("Sign In", "agentRuntimes.list"),
+            ("How runtimes work", "agentRuntimes.safety"),
+            ("Import Template", "agents.templates"),
+            ("Save as Template", "agents.templates"),
+            ("agent templates", "agents.templates"),
             ("agent description", "agents.description"),
             ("Swap local models for subagents", "settings.orchestrator.delegation.swapModels"),
             ("native mtp", "server.speculative"),
@@ -81,6 +103,7 @@ struct SettingsSearchSelfFindProbe {
             ("speculative depth", "server.speculative"),
             ("On Adaptive", "server.speculative"),
             ("Off AR", "server.speculative"),
+            ("Keep Model in Memory", "server.memorySafety.keepModelInMemory"),
             ("keep model loaded", "server.residency"),
             ("unload after", "server.residency"),
             ("eviction policy", "server.residency"),
@@ -115,6 +138,7 @@ struct SettingsSearchSelfFindProbe {
             // The control that makes every tool always allowed. It had no
             // entry at all, and "tool calls" matched Max Tool Attempts —
             // a wrong-destination hit, which is worse than no hit.
+            ("Accept Messages Sent Through Apps", "agentChannels.slack"),
             ("auto allow", "tools.autoAllowAll"),
             ("allow all tools", "tools.autoAllowAll"),
             ("always allow", "tools.autoAllowAll"),
@@ -193,11 +217,15 @@ struct SettingsSearchSelfFindProbe {
             ("audit log", "insights.overview"),
             ("export activity", "insights.overview"),
             // Images: Defaults / Image Models.
+            ("Live previews", "imageGeneration.previews"),
+            ("Sampler", "imageGeneration.sampler"),
+            ("Scheduler", "imageGeneration.scheduler"),
+            ("Timestep shift", "imageGeneration.shift"),
             ("Upscale", "imageGeneration.upscale"),
             ("Default Models", "imageGeneration.models"),
             ("Image jobs", "imageGeneration.permission"),
-            ("Video jobs (cloud)", "imageGeneration.videoPermission"),
-            ("Video (cloud)", "imageGeneration.video"),
+            ("Video jobs", "imageGeneration.videoPermission"),
+            ("Video", "imageGeneration.video"),
             ("Load policy", "imageGeneration.loadPolicy"),
             ("Image model load policy", "imageGeneration.loadPolicy"),
             ("enable memory", "memory.settings.enabled"),
@@ -275,6 +303,9 @@ struct SettingsSearchSelfFindProbe {
             ("Shortcuts", "agents.appleApps.shortcuts"),
             ("imessage", "agents.appleApps.messages"),
             ("apple_apps", "agents.appleApps"),
+            // Agents → Abilities → Tools: the per-agent skill allow-list card.
+            ("Limit to selected skills", "agents.skills"),
+            ("skill allow-list", "agents.skills"),
             ("Keep File History", "storage.fileHistory.retention"),
             ("file history retention", "storage.fileHistory.retention"),
             ("File History Size Limit", "storage.fileHistory.sizeLimit"),

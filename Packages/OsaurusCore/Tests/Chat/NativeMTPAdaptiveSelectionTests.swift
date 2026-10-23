@@ -29,13 +29,13 @@ import Testing
         }
     }
 
-    @Test func migrationDoesNotTouchExternalDrafterOrSafetyInvariants() {
+    @Test func migrationPreservesExternalDrafterButRemovesFixedWidth() {
         var old = VMLXServerMTPSettings(mode: .forceOn, explicitDepth: 3)
         old.dflash2DrafterPath = "/fixture/external-drafter"
         old.dflash2BlockSize = 8
         let next = NativeMTPSelectionDefault.adaptiveSelection(old)
         #expect(next.dflash2DrafterPath == old.dflash2DrafterPath)
-        #expect(next.dflash2BlockSize == old.dflash2BlockSize)
+        #expect(next.dflash2BlockSize == nil)
         #expect(next.keepDraftCacheSeparate == old.keepDraftCacheSeparate)
         #expect(next.acceptedTokensOnlyEnterBaseCache == old.acceptedTokensOnlyEnterBaseCache)
     }
@@ -74,7 +74,7 @@ import Testing
         try file.write(to: directory.appendingPathComponent("model.safetensors"))
     }
 
-    @Test func selectedExternalDrafterEffectiveWidthIsUnchanged() throws {
+    @Test func selectedExternalDrafterBecomesAdaptiveWithoutLosingPrecedence() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -90,16 +90,16 @@ import Testing
                 before.mtp.dflash2BlockSize = block
                 var after = before
                 after.mtp = NativeMTPSelectionDefault.adaptiveSelection(before.mtp)
-                for settings in [before, after] {
+                for (settings, expectedWidth) in [(before, block), (after, nil)] {
                     let strategy = settings.resolvedMTPDraftStrategy(configData: target, jangConfig: nil, status: nil)
                     guard case .dflash2(let path, let width)? = strategy else {
                         Issue.record("Selected external drafter must retain precedence")
                         continue
                     }
                     #expect(path == directory)
-                    #expect(width == block)
+                    #expect(width == expectedWidth)
                     let info = try #require(settings.resolvedDFlash2Selection(configData: target))
-                    #expect((width ?? info.blockSize) == (block ?? 8))
+                    #expect(info.blockSize == 8)
                 }
             }
         }

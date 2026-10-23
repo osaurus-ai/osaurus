@@ -46,7 +46,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "Optional one to four local source image paths from prior results or attachments. "
+                    "Optional ordered local source image paths from prior results or attachments, within the selected model’s reference limit. "
                         + "Providing this switches the tool into EDIT mode; omit it to generate a new image."
                 ),
             ]),
@@ -62,6 +62,18 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             "height": .object(["type": .string("integer"), "description": .string("Optional height in pixels.")]),
             "steps": .object(["type": .string("integer"), "description": .string("Optional denoise step count.")]),
             "guidance": .object(["type": .string("number"), "description": .string("Optional guidance scale.")]),
+            "sampler": .object(["type": .string("string"), "description": .string("Local model sampler; omit for the bundle default.")]),
+            "scheduler": .object(["type": .string("string"), "description": .string("Local model timestep schedule; omit for the bundle default.")]),
+            "shift": .object(["type": .string("number"), "description": .string("Local model timestep shift, where supported.")]),
+            "adapters": .object([
+                "type": .string("array"), "description": .string("Local LoRA safetensor adapters; omit to use base weights."),
+                "items": .object(["type": .string("object"), "required": .array([.string("url")]),
+                    "properties": .object([
+                        "url": .object(["type": .string("string"), "description": .string("Local file:// URL of a safetensors adapter")]),
+                        "scale": .object(["type": .string("number"), "description": .string("Adapter strength, default 1; zero disables it")]),
+                        "target": .object(["type": .string("string"), "enum": .array([.string("transformer"), .string("textEncoder"), .string("both")])])])])]),
+            "preview_interval": .object(["type": .string("integer"), "description": .string("Local generation/edit: optional positive step interval for progress previews.")]),
+            "preview_max_pixel": .object(["type": .string("integer"), "description": .string("Maximum preview side in pixels, 16...1024; default 256.")]),
             "strength": .object([
                 "type": .string("number"),
                 "description": .string("Optional edit strength, 0...1 (edit mode only)."),
@@ -109,6 +121,18 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             "height": .object(["type": .string("integer"), "description": .string("Optional height in pixels.")]),
             "steps": .object(["type": .string("integer"), "description": .string("Optional denoise step count.")]),
             "guidance": .object(["type": .string("number"), "description": .string("Optional guidance scale.")]),
+            "sampler": .object(["type": .string("string"), "description": .string("Local model sampler; omit for the bundle default.")]),
+            "scheduler": .object(["type": .string("string"), "description": .string("Local model timestep schedule; omit for the bundle default.")]),
+            "shift": .object(["type": .string("number"), "description": .string("Local model timestep shift, where supported.")]),
+            "adapters": .object([
+                "type": .string("array"), "description": .string("Local LoRA safetensor adapters; omit to use base weights."),
+                "items": .object(["type": .string("object"), "required": .array([.string("url")]),
+                    "properties": .object([
+                        "url": .object(["type": .string("string"), "description": .string("Local file:// URL of a safetensors adapter")]),
+                        "scale": .object(["type": .string("number"), "description": .string("Adapter strength, default 1; zero disables it")]),
+                        "target": .object(["type": .string("string"), "enum": .array([.string("transformer"), .string("textEncoder"), .string("both")])])])])]),
+            "preview_interval": .object(["type": .string("integer"), "description": .string("Local generation/edit: optional positive step interval for progress previews.")]),
+            "preview_max_pixel": .object(["type": .string("integer"), "description": .string("Maximum preview side in pixels, 16...1024; default 256.")]),
             "seed": .object(["type": .string("integer"), "description": .string("Optional deterministic seed.")]),
             "seeds": .object([
                 "type": .string("array"), "items": .object(["type": .string("integer")]),
@@ -154,17 +178,23 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let prompt) = promptReq else { return promptReq.failureEnvelope ?? "" }
 
         var params = Self.buildParams(args: args, prompt: prompt)
-        struct BatchArguments: Decodable { let seeds: [UInt64]?; let batch_size: Int?; let num_images: Int? }
+        struct BatchArguments: Decodable { let seeds: [UInt64]?; let batch_size: Int?; let num_images: Int?; let sampler: String?; let scheduler: String?; let shift: Float?; let preview_interval: Int?; let preview_max_pixel: Int?; let adapters: [ImageAdapterParameters]? }
         let batch: BatchArguments
         do { batch = try JSONDecoder().decode(BatchArguments.self, from: Data(argumentsJSON.utf8)) }
         catch {
             return ToolEnvelope.failure(kind: .invalidArgs,
-                message: "Invalid image batch: seeds must be unsigned integers, and num_images and batch_size must be integers.",
+                message: "Invalid image parameters: seeds must be unsigned integers; counts must be integers; sampler/scheduler must be strings and shift a number.",
                 tool: name)
         }
         params.seeds = batch.seeds
         params.batchSize = batch.batch_size
         params.numImages = batch.num_images
+        params.sampler = batch.sampler
+        params.scheduler = batch.scheduler
+        params.shift = batch.shift
+        params.previewInterval = batch.preview_interval
+        params.previewMaxPixel = batch.preview_max_pixel
+        params.adapters = batch.adapters ?? []
         return await SubagentSession.run(
             ImageSubagentKind(params: params, argumentsJSON: argumentsJSON),
             tool: name
@@ -194,7 +224,11 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             seed: optionalUInt64(args["seed"]),
             numImages: ArgumentCoercion.int(args["num_images"]),
             seeds: (args["seeds"] as? [Any])?.compactMap(optionalUInt64),
-            batchSize: ArgumentCoercion.int(args["batch_size"])
+            batchSize: ArgumentCoercion.int(args["batch_size"]),
+            sampler: optionalString(args["sampler"]), scheduler: optionalString(args["scheduler"]),
+            shift: optionalFloat(args["shift"]),
+            previewInterval: ArgumentCoercion.int(args["preview_interval"]),
+            previewMaxPixel: ArgumentCoercion.int(args["preview_max_pixel"])
         )
     }
 
@@ -204,33 +238,28 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
     static func paramsForResolvedLocalModel(_ legacy: ImageJobParams, argumentsJSON: String,
         canonical: String?, defaultGuidance: Float?) throws -> ImageJobParams
     {
-        guard ImageModelRequestPolicy.isQwen21Family(canonical) else { return legacy }
         let raw: Qwen21Arguments
         do { raw = try JSONDecoder().decode(Qwen21Arguments.self, from: Data(argumentsJSON.utf8)) }
         catch { throw ImageGenerationError.invalidRequest("invalid explicit image tool parameter: \(error)") }
         if let format = raw.output_format, format.lowercased() != "png" {
-            throw ImageGenerationError.invalidRequest("Qwen-Image-2.1 supports PNG output only")
+            throw ImageGenerationError.invalidRequest("Local image models support PNG output only")
         }
         let paths = raw.source_paths?.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? []
-        if raw.source_paths != nil, (!(1...4).contains(paths.count) || paths.contains(where: \.isEmpty)) {
-            throw ImageGenerationError.invalidRequest("source_paths must contain one to four non-empty paths")
+        if raw.source_paths != nil, (paths.isEmpty || paths.contains(where: \.isEmpty)) {
+            throw ImageGenerationError.invalidRequest("source_paths must contain non-empty paths")
         }
-        try ImageModelRequestPolicy.validateQwen21Steps(raw.steps)
         if raw.strength != nil, paths.isEmpty {
             throw ImageGenerationError.invalidRequest("strength is an edit-only parameter")
         }
-        try ImageModelRequestPolicy(canonical: canonical).validate(
-            width: raw.width, height: raw.height, isEdit: !paths.isEmpty,
-            guidance: raw.guidance ?? defaultGuidance ?? 1,
-            negativePrompt: raw.negative_prompt, strength: raw.strength,
-            hasMask: raw.mask != nil, sourceCount: paths.count)
         if raw.mask != nil {
             throw ImageGenerationError.invalidRequest("the image tool does not support masks")
         }
         return ImageJobParams(prompt: legacy.prompt, sourcePaths: paths, model: legacy.model,
             negativePrompt: raw.negative_prompt, width: raw.width, height: raw.height,
             steps: raw.steps, guidance: raw.guidance, strength: raw.strength,
-            seed: raw.seed, numImages: raw.num_images, seeds: raw.seeds, batchSize: raw.batch_size)
+            seed: raw.seed, numImages: raw.num_images, seeds: raw.seeds, batchSize: raw.batch_size,
+            sampler: raw.sampler, scheduler: raw.scheduler, shift: raw.shift,
+            previewInterval: raw.preview_interval, previewMaxPixel: raw.preview_max_pixel, adapters: raw.adapters ?? [])
     }
 
     private struct Qwen21Arguments: Decodable {
@@ -245,11 +274,17 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         let num_images: Int?
         let seeds: [UInt64]?
         let batch_size: Int?
+        let sampler: String?
+        let scheduler: String?
+        let shift: Float?
+        let preview_interval: Int?
+        let preview_max_pixel: Int?
+        let adapters: [ImageAdapterParameters]?
         let mask: String?
         let output_format: String?
 
         enum CodingKeys: String, CodingKey {
-            case source_paths, negative_prompt, width, height, steps, guidance, strength, seed, num_images, seeds, batch_size, mask, output_format
+            case source_paths, negative_prompt, width, height, steps, guidance, strength, seed, num_images, seeds, batch_size, sampler, scheduler, shift, preview_interval, preview_max_pixel, adapters, mask, output_format
         }
 
         init(from decoder: Decoder) throws {
@@ -264,6 +299,12 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             num_images = try c.decodeIfPresent(Int.self, forKey: .num_images)
             seeds = try c.decodeIfPresent([UInt64].self, forKey: .seeds)
             batch_size = try c.decodeIfPresent(Int.self, forKey: .batch_size)
+            sampler = try c.decodeIfPresent(String.self, forKey: .sampler)
+            scheduler = try c.decodeIfPresent(String.self, forKey: .scheduler)
+            shift = try c.decodeIfPresent(Float.self, forKey: .shift)
+            preview_interval = try c.decodeIfPresent(Int.self, forKey: .preview_interval)
+            preview_max_pixel = try c.decodeIfPresent(Int.self, forKey: .preview_max_pixel)
+            adapters = try c.decodeIfPresent([ImageAdapterParameters].self, forKey: .adapters)
             mask = try c.decodeIfPresent(String.self, forKey: .mask)
             output_format = try c.decodeIfPresent(String.self, forKey: .output_format)
             if !c.contains(.seed) {

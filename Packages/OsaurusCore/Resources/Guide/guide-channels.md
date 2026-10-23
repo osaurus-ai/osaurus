@@ -34,6 +34,7 @@ Channels (Beta) connect agents to your messaging platforms: Discord, Slack, Tele
 ## Safety model
 
 - Inbound is deny-by-default: only allowlisted spaces/rooms/senders reach an agent; bots and self are ignored unless explicitly allowed.
+- Slack stamps messages posted through an app or the API with that app's bot id, even when you post with your own user token, so they are ignored as bot messages. Settings → Channels → Slack → Reply to incoming messages → **Accept Messages Sent Through Apps** (off by default) lets those through when the author is on the sender allowlist, for example a phone shortcut that calls `chat.postMessage`. Any app you authorized to post as you can then reach the agent; other bots stay blocked.
 - Writes require the agent to pass `confirm_send: true` and the room to be on a write allowlist; broadcast mentions (@channel and similar) are blocked unless you allow them.
 - Channel tools work only inside the app — external HTTP/MCP callers are denied.
 

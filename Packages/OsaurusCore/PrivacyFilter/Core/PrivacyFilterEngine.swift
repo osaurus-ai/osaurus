@@ -269,7 +269,13 @@ public final class PrivacyFilterEngine {
 
         var pending: [PendingMatch] = []
         pending.reserveCapacity(modelPending.count + regexMatches.count)
-        pending.append(contentsOf: modelPending)
+        // The model's phones pass the same check the regex's do: a bare
+        // Unix time or id is no phone, whichever detector saw it.
+        pending.append(
+            contentsOf: modelPending.filter { match in
+                match.category != .phone || RegexEntityDetector.isPlausiblePhone(match.original)
+            }
+        )
         for match in regexMatches {
             pending.append(
                 PendingMatch(

@@ -8,8 +8,29 @@
 
 import Combine
 import Foundation
+import os
 
 final class ChatTurn: ObservableObject, Identifiable {
+    // MARK: - Token-estimate revision
+
+    /// Process-wide counter bumped whenever any turn mutates a field that
+    /// feeds `ContextBudgetManager`'s token estimates (content, thinking,
+    /// tool calls/results, attachments). `ChatSession` keys its cached
+    /// transcript token totals on this value so the context-budget readout
+    /// rendered from the chat view body doesn't re-walk every turn per render
+    /// — while still picking up in-place turn edits that never reassign the
+    /// session's `turns` array.
+    private static let _tokenEstimateRevision = OSAllocatedUnfairLock<UInt64>(initialState: 0)
+
+    /// Current value of the process-wide token-estimate revision.
+    static var tokenEstimateRevision: UInt64 {
+        _tokenEstimateRevision.withLock { $0 }
+    }
+
+    private static func bumpTokenEstimateRevision() {
+        _tokenEstimateRevision.withLock { $0 &+= 1 }
+    }
+
     let id: UUID
     let role: MessageRole
     /// Wall-clock when the turn was created. Used by the chat-export
@@ -38,6 +59,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     private var _cachedContent: String?
     /// Cached content length - updated on append/set without joining
     private var _contentLength: Int = 0
+    /// O(1) render-cache key for replacements as well as streamed appends.
+    /// Equal-length status updates (e.g. 10/16 → 11/16) still change the text.
+    private(set) var contentRevision: UInt64 = 0
     /// Cached `visibleContent` — the display cleaners (leaked action JSON,
     /// Gemini metadata, channel label) are O(n·braces) and the property is
     /// read several times per block build on the main thread. Invalidated
@@ -59,8 +83,10 @@ final class ChatTurn: ObservableObject, Identifiable {
             contentChunks = newValue.isEmpty ? [] : [newValue]
             _cachedContent = newValue
             _contentLength = newValue.count
+            contentRevision &+= 1
             _cachedEnvelope = nil
             _cachedVisibleContent = nil
+            Self.bumpTokenEstimateRevision()
             objectWillChange.send()
         }
     }
@@ -115,9 +141,11 @@ final class ChatTurn: ObservableObject, Identifiable {
         finalizeThinkingDuration()
         contentChunks.append(s)
         _contentLength += s.count
+        contentRevision &+= 1
         _cachedContent = nil  // Invalidate cache
         _cachedEnvelope = nil
         _cachedVisibleContent = nil
+        Self.bumpTokenEstimateRevision()
     }
 
     /// Append content and immediately notify observers (triggers UI update)
@@ -139,9 +167,11 @@ final class ChatTurn: ObservableObject, Identifiable {
         if cleanedContent != originalContent {
             contentChunks = cleanedContent.isEmpty ? [] : [cleanedContent]
             _contentLength = cleanedContent.count
+            contentRevision &+= 1
             _cachedContent = cleanedContent
             _cachedEnvelope = nil
             _cachedVisibleContent = nil
+            Self.bumpTokenEstimateRevision()
         }
     }
 
@@ -168,6 +198,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             thinkingChunks = newValue.isEmpty ? [] : [newValue]
             _cachedThinking = newValue
             _thinkingLength = newValue.count
+            Self.bumpTokenEstimateRevision()
             objectWillChange.send()
         }
     }
@@ -221,6 +252,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         thinkingChunks.append(s)
         _thinkingLength += s.count
         _cachedThinking = nil  // Invalidate cache
+        Self.bumpTokenEstimateRevision()
     }
 
     /// Append thinking and immediately notify observers (triggers UI update)
@@ -253,12 +285,16 @@ final class ChatTurn: ObservableObject, Identifiable {
     // MARK: - Other Published Properties
 
     /// File attachments (images and documents) for this turn
-    @Published var attachments: [Attachment] = []
+    @Published var attachments: [Attachment] = [] {
+        didSet { Self.bumpTokenEstimateRevision() }
+    }
     /// Chat-local artifacts rendered in the transcript without being sent as
     /// model-visible tool calls.
     @Published var sharedArtifacts: [SharedArtifact] = []
     /// Assistant-issued tool calls attached to this turn (OpenAI compatible)
-    @Published var toolCalls: [ToolCall]? = nil
+    @Published var toolCalls: [ToolCall]? = nil {
+        didSet { Self.bumpTokenEstimateRevision() }
+    }
     /// OpenAI Responses reasoning item captured for this assistant turn: the
     /// opaque `id` and `encrypted_content`. Re-emitted before the turn's
     /// function_call(s) next request so a reasoning model resumes its chain.
@@ -304,7 +340,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// this field existed.
     var injectedContextPrefix: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
-    @Published var toolResults: [String: String] = [:]
+    @Published var toolResults: [String: String] = [:] {
+        didSet { Self.bumpTokenEstimateRevision() }
+    }
     /// Wall-clock duration (seconds) each tool call took to finish, keyed by call
     /// id. Recorded by `setToolResult(_:for:)` and persisted so a reloaded chat
     /// still shows "· 1.2s" next to the tool title.

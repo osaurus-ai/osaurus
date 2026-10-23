@@ -1203,8 +1203,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
             if !method.skillsUsed.isEmpty {
                 let skills: [(String, String)] = await MainActor.run {
-                    method.skillsUsed.compactMap { name in
-                        SkillManager.shared.skill(named: name).map { (name, $0.instructions) }
+                    let owner = ChatExecutionContext.currentAgentId.flatMap { AgentManager.shared.agent(for: $0) }
+                    return method.skillsUsed.compactMap { name in
+                        guard let skill = SkillManager.shared.skill(named: name),
+                            owner?.allowsSkill(skill) ?? true
+                        else { return nil }
+                        return (name, skill.instructions)
                     }
                 }
                 for (name, instructions) in skills {
@@ -1545,15 +1549,25 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        let (skill, sameNamed) = await MainActor.run {
+        let (skill, sameNamed, owner) = await MainActor.run {
             (
                 SkillManager.shared.skill(named: skillName),
-                SkillManager.shared.skills(named: skillName)
+                SkillManager.shared.skills(named: skillName),
+                ChatExecutionContext.currentAgentId.flatMap { AgentManager.shared.agent(for: $0) }
             )
         }
         guard let skill = skill else {
             return .failure(
                 LoadFailure(kind: .notFound, message: "Skill '\(skillName)' not found.")
+            )
+        }
+        if let owner, !owner.allowsSkill(skill) {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message: "Skill '\(skill.name)' is not enabled for this agent. "
+                        + "Use only the skills listed in your capabilities."
+                )
             )
         }
         var output = "## Skill: \(skill.name)\n"

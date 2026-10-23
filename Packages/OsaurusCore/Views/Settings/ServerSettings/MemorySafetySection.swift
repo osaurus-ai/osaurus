@@ -57,6 +57,15 @@ struct MemorySafetySection: View {
                 }
             }
 
+            SettingsToggle(
+                title: L("Keep Model in Memory"),
+                description:
+                    "Keeps model weights resident while loaded when they fit the GPU ceiling and OS reserve. Other apps may slow down. Takes effect after reload; the idle unload timer is unchanged.",
+                isOn: $draft.memorySafety.keepModelInMemory
+            )
+            .accessibilityIdentifier("server.memorySafety.keepModelInMemory")
+            .settingsLandingAnchor("server.memorySafety.keepModelInMemory")
+
             SettingsDivider()
 
             SettingsSubsection(label: "Resolved Plan") {
@@ -84,13 +93,6 @@ struct MemorySafetySection: View {
 
             SettingsSubsection(label: "Advanced Overrides") {
                 VStack(alignment: .leading, spacing: 12) {
-                    SettingsToggle(
-                        title: L("Allow Experimental MLXPress"),
-                        description:
-                            "Only routed bundles with proven support should use this. It is never enabled by default.",
-                        isOn: $draft.memorySafety.allowExperimentalMLXPress
-                    )
-
                     SettingsToggle(
                         title: L("Fail Closed When Estimate Is Unknown"),
                         description:

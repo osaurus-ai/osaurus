@@ -40,7 +40,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         case .general:
             [.settings, .chat, .voice, .themes, .credits, .workspaces, .connect, .identity, .permissions, .privacy]
         case .models: [.models, .providers, .imageGeneration]
-        case .agents: [.orchestrator, .agents, .agentChannels]
+        case .agents: [.orchestrator, .agents, .agentRuntimes, .agentChannels]
         case .capabilities: [.search, .knowledge, .memory, .tools, .skills, .commands]
         case .automation: [.schedules, .watchers, .computerUse, .browser]
         case .developers: [.server, .sandbox, .insights]
@@ -62,6 +62,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case imageGeneration
     case agents
     case agentChannels
+    case agentRuntimes
     case memory
     case knowledge
     case tools
@@ -95,7 +96,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .settings, .chat, .voice, .themes, .credits, .workspaces, .connect, .identity, .permissions, .privacy:
             .general
         case .models, .providers, .imageGeneration: .models
-        case .orchestrator, .agents, .agentChannels: .agents
+        case .orchestrator, .agents, .agentRuntimes, .agentChannels: .agents
         case .search, .knowledge, .memory, .tools, .skills, .commands: .capabilities
         case .schedules, .watchers, .computerUse, .browser: .automation
         case .server, .sandbox, .insights: .developers
@@ -110,6 +111,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch rawValue {
         case "dashboard": .credits
         case "channels", "integrations", "agent-channels": .agentChannels
+        case "runtimes", "agent-runtimes", "harnesses": .agentRuntimes
         case "storage": .settings
         // Pre-rename tab id (Teams → Workspaces); keep old settings links working.
         case "teams": .workspaces
@@ -126,6 +128,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
         case .agentChannels: "bubble.left.and.bubble.right.fill"
+        case .agentRuntimes: "terminal.fill"
         case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .search: "globe"
@@ -160,6 +163,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .providers: L("Providers")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
+        case .agentRuntimes: L("Runtimes")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools & MCP")
         case .search: L("Web Search")

@@ -289,6 +289,9 @@ struct FloatingInputCard: View {
 
     // Observe managers for reactive updates
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var harnessRuntimeStore = HarnessRuntimeStore.shared
+    @State private var showHarnessFolderWarning = false
+    @State private var pendingHarnessFolderChange: (() -> Void)?
     @ObservedObject private var recentFolders = RecentFoldersStore.shared
     // Deliberately NOT `@ObservedObject`: sandbox provisioning publishes
     // per-progress-tick during runtime downloads and the clipboard service
@@ -368,7 +371,7 @@ struct FloatingInputCard: View {
 
     private var slashFilteredCommands: [SlashCommand] {
         guard let query = activeSlashQuery else { return [] }
-        return slashRegistry.filtered(query: query)
+        return slashRegistry.filtered(query: query, agentId: effectiveAgentId)
     }
 
     private var showSlashPopup: Bool {
@@ -590,27 +593,9 @@ struct FloatingInputCard: View {
         // nothing sends until the lock clears.
         guard composerLock == nil else { return false }
 
-        // Hard token gate: when the NON-compactable prefix alone (system
-        // prompt + tools + memory + input + response reservation) can't
-        // fit the model window, the request would fail no matter how much
-        // history compaction trims. Block the send and let the context
-        // chip explain, instead of letting the model error mid-stream.
-        // History-driven growth is deliberately NOT gated — compaction
-        // handles that.
-        //
-        // But ONLY when the model is the ceiling. `contextLengthCap` is a
-        // preference — a smaller window for faster prefill — and the weights
-        // can still take more, so letting it kill the send turns a preference
-        // into a wall. Worse, it is a SILENT wall: the button simply stops
-        // working, with nothing naming the setting responsible. Measured
-        // live at cap 2048 against a 2.5k prefix — the send did nothing, and
-        // clearing the cap sent the identical text immediately.
-        //
-        // The chip still goes red, which is the advisory. A ceiling the user
-        // chose must never refuse; if the request really cannot run, the
-        // engine fails loudly and that is strictly better than a dead button.
-        let budget = contextBudget
-        guard !budget.hardOverflow || budget.isUserCapped else { return false }
+        // Context estimates drive the chip's warning, never send admission.
+        // Only the runtime's tokenizer/template can establish that a request
+        // exceeds a real limit, including when model metadata is available.
 
         // Configuration gate: the Default agent needs the configure tool
         // schema to do its job, but a too-small context window (e.g.
@@ -677,20 +662,13 @@ struct FloatingInputCard: View {
         /// Context tokens including what is currently being typed.
         var displayTokens: Int { breakdown.total }
 
-        /// The denominator the compactor and overflow gate actually use. The
+        /// The denominator the compactor and warning actually use. The
         /// model maximum remains visible in the popover, but showing it as
         /// the chip denominator made an 85%-budget warning look early and
         /// made the Chat metadata fallback look like a competing cap.
         var usableTokens: Int? {
             maxTokens.map { ContextBudgetManager(contextLength: $0).effectiveBudget }
         }
-
-        /// Whether the window in force came from the user's
-        /// `contextLengthCap` rather than from the model. The resolver
-        /// records this as `.userCap` precisely so surfaces can say WHY the
-        /// window is smaller than the bundle advertises; the send gate reads
-        /// it to keep a preference from behaving like a hardware limit.
-        var isUserCapped: Bool { resolution?.source == .userCap }
 
         /// Estimated fraction of the effective budget the next send occupies
         /// (typing included). nil when the window is unknown.
@@ -983,8 +961,7 @@ struct FloatingInputCard: View {
             .animation(.easeOut(duration: 0.2), value: configContextTooSmall)
             .modifier(
                 MTPLayoutAdvisoryRearmModifier(
-                    rearm: rearmMTPLayoutAdvisory,
-                    refresh: refreshMTPLayoutAdvisory
+                    rearm: rearmMTPLayoutAdvisory
                 )
             )
             .onChange(of: selectedModel) { _, _ in
@@ -1011,7 +988,7 @@ struct FloatingInputCard: View {
 
                 if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
                     && !speechService.isLoadingModel
-                    && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                    && speechService.microphonePermissionGranted
                 {
                     if let model = SpeechModelManager.shared.selectedModel {
                         print("[VoiceDebug] Kicking off model load for: \(model.id)")
@@ -1068,7 +1045,7 @@ struct FloatingInputCard: View {
 
                 if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
                     && !speechService.isLoadingModel
-                    && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                    && speechService.microphonePermissionGranted
                 {
                     if let model = SpeechModelManager.shared.selectedModel {
                         Task { try? await speechService.loadModelAutomatically(model.id) }
@@ -1191,6 +1168,24 @@ struct FloatingInputCard: View {
                     }
                 },
                 secondaryButton: .cancel("Cancel")
+            )
+            .themedAlert(
+                L("Change the working folder?"),
+                isPresented: $showHarnessFolderWarning,
+                message: String(
+                    format: L(
+                        "%@ restarts in the new folder without its earlier context, because this runtime's arguments don't resume sessions (add --session-id {chat_id}). The Osaurus transcript is kept."
+                    ),
+                    harnessRuntime?.displayName ?? L("The harness")
+                ),
+                buttons: [
+                    .cancel(L("Cancel")) { pendingHarnessFolderChange = nil },
+                    .primary(L("Change Folder")) {
+                        let change = pendingHarnessFolderChange
+                        pendingHarnessFolderChange = nil
+                        change?()
+                    },
+                ]
             )
             .themedAlert(
                 "Negative prompt",
@@ -1337,13 +1332,9 @@ private struct RAMBannerShape: Shape {
 /// whatever context finished the filesystem work.
 private struct MTPLayoutAdvisoryRearmModifier: ViewModifier {
     let rearm: () -> Void
-    let refresh: () -> Void
 
     func body(content: Content) -> some View {
         content
-            // Retry cache-only discovery if the initial local catalog scan
-            // has not landed. The advisory memo avoids repeat bundle scans.
-            .onReceive(SystemMonitorService.shared.$memoryUsage) { _ in refresh() }
             .onReceive(
                 NotificationCenter.default.publisher(for: .localModelsChanged)
                     .receive(on: RunLoop.main)
@@ -2698,7 +2689,9 @@ extension FloatingInputCard {
 
     private var selectorRow: some View {
         HStack(spacing: 6) {
-            if !pickerItems.isEmpty || isModelPinned {
+            if isHarnessAgent {
+                harnessRuntimeChip
+            } else if !pickerItems.isEmpty || isModelPinned {
                 modelSelectorChip
             }
 
@@ -2706,7 +2699,7 @@ extension FloatingInputCard {
             // token-budget semantics — those chips would all be inert. Swap
             // the whole row for the image config controls instead so they sit
             // right beside the model that owns them.
-            if isMediaComposerActive {
+            if isMediaComposerActive && !isHarnessAgent {
                 // Scroll the config chips horizontally so a narrow (minimum-size)
                 // window can't compress them below their ideal width — that
                 // compression is what made the labels wrap character-by-character.
@@ -2886,7 +2879,7 @@ extension FloatingInputCard {
         // Bound once: every field below comes from this single pass, so the
         // chip costs one window resolution and one breakdown per render.
         let budget = contextBudget
-        if budget.displayTokens > 0 && !isRemoteAgentRun {
+        if budget.displayTokens > 0 && !isRemoteAgentRun && !isHarnessAgent {
             FloatingContextChip(
                 displayTokens: budget.displayTokens,
                 usableTokens: budget.usableTokens,
@@ -3041,6 +3034,39 @@ extension FloatingInputCard {
         } else {
             interactiveModelSelectorChip
         }
+    }
+
+    /// Stands in for the model picker when the agent runs on an external
+    /// harness, which picks its own model.
+    private var harnessRuntimeChip: some View {
+        let missing = harnessRuntime == nil
+        return Button {
+            AppDelegate.shared?.showManagementWindow(initialTab: .agentRuntimes)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: missing ? "exclamationmark.triangle.fill" : "terminal.fill")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                    .foregroundColor(missing ? theme.warningColor : theme.tertiaryText)
+                Text(harnessRuntime?.displayName ?? L("Runtime missing"))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(missing ? theme.warningColor : theme.secondaryText)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(theme.secondaryBackground.opacity(0.8)))
+            .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(
+            missing
+                ? L("This agent's runtime was deleted. Pick another one in the agent's settings.")
+                : String(
+                    format: L("This agent runs on %@, which chooses its own model and tools. Click to manage runtimes."),
+                    harnessRuntime?.displayName ?? ""
+                )
+        )
     }
 
     /// Non-interactive model label for Mode 2 (remote agent run). The model is
@@ -3566,13 +3592,18 @@ extension FloatingInputCard {
         // Defensive: the menu row is disabled for remote runs, but no folder
         // context can reach a host-executed agent, so never open the picker.
         guard !isRemoteAgentRun else { return }
+        confirmingHarnessFolderChange { performSelectFolder() }
+    }
+
+    private func performSelectFolder() {
         let window = windowId.flatMap { ChatWindowManager.shared.getNSWindow(id: $0) }
         let agentId = effectiveAgentId
         let manager = agentManager
+        let usesSandbox = !isHarnessAgent
         Task {
             guard await folderState.selectFolder(from: window) != nil else { return }
             do {
-                try await manager.disableSandboxForHostFolder(agentId: agentId)
+                if usesSandbox { try await manager.disableSandboxForHostFolder(agentId: agentId) }
                 // Sticky: the chip is the source of truth for the agent's
                 // working folder, so a successful pick is remembered on the
                 // agent and seeds every fresh chat / folder-less dispatch.
@@ -3614,8 +3645,13 @@ extension FloatingInputCard {
     /// longer resolves is dropped from the list and reported.
     private func applyRecentFolder(_ entry: RecentFoldersStore.Entry) {
         guard !isRemoteAgentRun else { return }
+        confirmingHarnessFolderChange { performApplyRecentFolder(entry) }
+    }
+
+    private func performApplyRecentFolder(_ entry: RecentFoldersStore.Entry) {
         let agentId = effectiveAgentId
         let manager = agentManager
+        let usesSandbox = !isHarnessAgent
         Task {
             guard let url = await RecentFoldersStore.resolveURL(for: entry) else {
                 recentFolders.remove(path: entry.path)
@@ -3630,7 +3666,7 @@ extension FloatingInputCard {
                 return
             }
             do {
-                try await manager.disableSandboxForHostFolder(agentId: agentId)
+                if usesSandbox { try await manager.disableSandboxForHostFolder(agentId: agentId) }
                 persistWorkingFolderToAgent()
             } catch {
                 folderState.clearFolder()
@@ -3673,8 +3709,41 @@ extension FloatingInputCard {
     /// sandbox-on invariants and restores call `folderState.clearFolder()`
     /// directly and leave the agent's remembered folder alone.
     private func clearFolderFromChip() {
-        folderState.clearFolder()
-        forgetAgentWorkingFolder()
+        confirmingHarnessFolderChange {
+            folderState.clearFolder()
+            forgetAgentWorkingFolder()
+        }
+    }
+
+    // MARK: - Harness Folder Rules
+
+    /// The harness this composer's agent runs on, when it resolves.
+    private var harnessRuntime: HarnessRuntime? {
+        guard !isRemoteAgentRun, case .resolved(let runtime)? = agentManager.effectiveHarness(for: effectiveAgentId)
+        else { return nil }
+        return runtime
+    }
+
+    private var isHarnessAgent: Bool {
+        !isRemoteAgentRun && agentManager.effectiveHarness(for: effectiveAgentId) != nil
+    }
+
+    /// A harness's working directory is fixed when its process starts, and a
+    /// running turn is never interrupted to move it.
+    private var folderLockedByHarnessTurn: Bool {
+        isHarnessAgent && isStreaming
+    }
+
+    /// Run a folder change, first confirming it when the harness would
+    /// restart without its earlier context.
+    private func confirmingHarnessFolderChange(_ change: @escaping () -> Void) {
+        guard !folderLockedByHarnessTurn else { return }
+        if let runtime = harnessRuntime, !runtime.resumesSessions, !isEmptyChat {
+            pendingHarnessFolderChange = change
+            showHarnessFolderWarning = true
+        } else {
+            change()
+        }
     }
 
     /// Folder chip tooltip makes the active execution boundary explicit.
@@ -4634,7 +4703,12 @@ extension FloatingInputCard {
             }
             .buttonStyle(.plain)
             .pointingHandCursor()
-            .help(folderChipHelp(hasFolder: hasFolder))
+            .disabled(folderLockedByHarnessTurn)
+            .help(
+                folderLockedByHarnessTurn
+                    ? Text("The folder can change after this reply finishes.", bundle: .module)
+                    : folderChipHelp(hasFolder: hasFolder)
+            )
             // The chip is icon-only in the compact state and its text is
             // decorative otherwise, so assistive tech (and the AX-driven
             // harness) saw an unnamed button. Name it and keep the folder
@@ -5213,13 +5287,16 @@ extension FloatingInputCard {
                 HStack(spacing: 6) {
                     sizeSelector
                     stepsChip
-                    cfgChip
+                    if ImageModelRequestPolicy(canonical: selectedImagePickerItem?.imageCanonicalName).supportsGuidance {
+                        cfgChip
+                    }
                     seedChip
                     if imageComposerControls.strength {
                         strengthChip
                     }
                     if ImageComposerRequestBuilder.hasUnsupportedEditOverrides(
-                        controls: imageComposerControls, settings: imageComposerSettings
+                        controls: imageComposerControls, settings: imageComposerSettings,
+                        canonical: selectedImagePickerItem?.imageCanonicalName
                     ) {
                         Button {
                             if !imageComposerControls.strength {
@@ -5462,7 +5539,7 @@ extension FloatingInputCard {
     }
 
     private var selectedSizeLabel: String {
-        if ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName),
+        if ImageModelRequestPolicy.usesBundleParameters(selectedImagePickerItem?.imageCanonicalName),
             !imageComposerSettings.hasExplicitImageSize
         {
             return pendingAttachments.hasImages ? L("Use source aspect ratio") : "1024px"
@@ -5506,7 +5583,7 @@ extension FloatingInputCard {
                 .padding(.top, 12)
                 .padding(.bottom, 4)
 
-            if ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName) {
+            if ImageModelRequestPolicy.usesBundleParameters(selectedImagePickerItem?.imageCanonicalName) {
                 Button {
                     imageComposerSettings.imageSizeWasExplicitlySet = false
                     showImageSizePicker = false
@@ -5514,9 +5591,25 @@ extension FloatingInputCard {
                     Text(localized: "Default")
                 }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 8)
             }
+            if selectedImagePickerItem?.imageCanonicalName == "flux3-image-klein" {
+                HStack {
+                    Text(localized: "Width")
+                    TextField("", value: $imageComposerSettings.width, format: .number.grouping(.never))
+                        .onSubmit { snapFlux3ComposerSize() }
+                }
+                .settingsLandingAnchor("imageGeneration.width")
+                .padding(.horizontal, 12)
+                HStack {
+                    Text(localized: "Height")
+                    TextField("", value: $imageComposerSettings.height, format: .number.grouping(.never))
+                        .onSubmit { snapFlux3ComposerSize() }
+                }
+                .settingsLandingAnchor("imageGeneration.height")
+                .padding(.horizontal, 12)
+            }
             ForEach(imageSizeOptions) { option in
                 let isSelected =
-                    (!ImageModelRequestPolicy.isQwen21Family(selectedImagePickerItem?.imageCanonicalName)
+                    (!ImageModelRequestPolicy.usesBundleParameters(selectedImagePickerItem?.imageCanonicalName)
                         || imageComposerSettings.hasExplicitImageSize)
                     && imageComposerSettings.width == option.width
                     && imageComposerSettings.height == option.height
@@ -5569,10 +5662,18 @@ extension FloatingInputCard {
             Image(systemName: systemName)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .bold))
                 .foregroundColor(theme.secondaryText)
-                .frame(width: 14, height: 14)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
+    }
+
+    private func snapFlux3ComposerSize() {
+        let policy = ImageModelRequestPolicy(canonical: "flux3-image-klein")
+        let limits = selectedImagePickerItem?.imageRequestLimits
+        imageComposerSettings.width = policy.snappedDimension(imageComposerSettings.width, limits: limits)
+        imageComposerSettings.height = policy.snappedDimension(imageComposerSettings.height, limits: limits)
     }
 
     @ViewBuilder
@@ -5596,22 +5697,36 @@ extension FloatingInputCard {
                 imageComposerSettings.steps = max(1, imageComposerSettings.steps - 1)
             }
             HStack(spacing: 3) {
+                if selectedImagePickerItem?.imageCanonicalName == "flux3-image-klein" {
+                    TextField("", value: $imageComposerSettings.steps, format: .number.grouping(.never))
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 36)
+                        .accessibilityLabel(Text("Denoising steps", bundle: .module))
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .monospacedDigit()
+                } else {
                 Text("\(imageComposerSettings.steps)")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .monospacedDigit()
+                }
                 Text("steps", bundle: .module)
+                    .fixedSize()
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
             }
             stepperButton("plus") {
-                imageComposerSettings.steps = min(50, imageComposerSettings.steps + 1)
+                imageComposerSettings.steps = selectedImagePickerItem?.imageCanonicalName == "flux3-image-klein"
+                    ? imageComposerSettings.steps + 1 : min(50, imageComposerSettings.steps + 1)
             }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(chipBackground)
         .localizedHelp("Denoising steps")
+        .settingsLandingAnchor("imageGeneration.steps")
     }
 
     private var cfgChip: some View {
@@ -5939,7 +6054,9 @@ extension FloatingInputCard {
                     title: Text("Add Folder", bundle: .module),
                     disabledReason: isRemoteAgentRun
                         ? Text("Shared agents can't use folders on this Mac.", bundle: .module)
-                        : nil
+                        : folderLockedByHarnessTurn
+                            ? Text("The folder can change after this reply finishes.", bundle: .module)
+                            : nil
                 ) {
                     selectFolder()
                 },

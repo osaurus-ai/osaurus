@@ -53,6 +53,27 @@ enum DeclaredReasoningEffort {
         /// One native effort with no UI control. Explicit values must reach
         /// the engine contract validator, not be silently dropped or snapped.
         case fixedNativeEffort(String)
+        /// Named modes, each a declared set of chat-template kwargs
+        /// (`jang_config.capabilities.reasoning_modes`; Nemotron 3.5:
+        /// on = `enable_thinking`, medium = `enable_thinking` + `medium_effort`,
+        /// off = `enable_thinking: false`). Levels are app ladder ids ascending
+        /// ("on" maps to `high`, "off" is the `none` rail); `kwargs[level]` is
+        /// sent verbatim and nothing else is invented.
+        case modeKwargs(
+            [String], defaultLevel: String?, kwargs: [String: [String: ReasoningModeValue]])
+    }
+
+    /// A declared template-kwarg value (bool or string only).
+    enum ReasoningModeValue: Equatable, Sendable {
+        case bool(Bool)
+        case string(String)
+
+        var sendable: any Sendable {
+            switch self {
+            case .bool(let value): return value
+            case .string(let value): return value
+            }
+        }
     }
 
     /// Declared support for the `preserve_thinking` chat-template kwarg
@@ -162,11 +183,170 @@ enum DeclaredReasoningEffort {
         let reasoning =
             (root["reasoning"] as? [String: Any])
             ?? ((root["chat"] as? [String: Any])?["reasoning"] as? [String: Any])
-        guard let reasoning else { return nil }
+        guard let reasoning else {
+            if let modes = parseReasoningModes(root: root) ?? flatNativeEfforts(root: root) {
+                return Declaration(control: modes, preserveThinking: nil)
+            }
+            return nil
+        }
         return Declaration(
-            control: fixedNativeEffort(root: root, reasoning: reasoning) ?? parseControl(reasoning),
+            control: fixedNativeEffort(root: root, reasoning: reasoning)
+                ?? nativeThinkingModes(reasoning) ?? parseControl(reasoning),
             preserveThinking: parsePreserveThinking(reasoning)
         )
+    }
+
+    /// Flat serving contracts are used by multiple architectures. These are
+    /// native effort kwargs, not an implied enable_thinking toggle. Absence
+    /// of an Off rail must not create an Off button.
+    private static func flatNativeEfforts(root: [String: Any]) -> Control? {
+        let chat = root["chat"] as? [String: Any]
+        let capabilities = root["capabilities"] as? [String: Any]
+        for source in [chat, capabilities].compactMap({ $0 }) {
+            guard let raw = source["reasoning_efforts"] as? [String] else { continue }
+            guard !raw.isEmpty,
+                transportIsChatTemplateKwarg(source, key: "reasoning_effort_transport")
+            else { return .noEffortControl }
+            let efforts = raw.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            guard efforts.allSatisfy({ !$0.isEmpty }), Set(efforts).count == efforts.count else {
+                return .noEffortControl
+            }
+            var kwargs: [String: [String: ReasoningModeValue]] = [:]
+            var levels: [String] = []
+            for effort in efforts {
+                let mode = isOffEffort(effort) ? "none" : effort
+                guard kwargs[mode] == nil else { return .noEffortControl }
+                kwargs[mode] = ["reasoning_effort": .string(effort)]
+                if mode != "none" { levels.append(mode) }
+            }
+            let nativeDefault =
+                (source["reasoning_effort_default"] as? String)
+                ?? (source["default_reasoning_effort"] as? String)
+            let defaultLevel = nativeDefault.flatMap { value -> String? in
+                let value = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard efforts.contains(value) else { return nil }
+                return isOffEffort(value) ? "none" : value
+            }
+            return .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs)
+        }
+        return nil
+    }
+
+    static func isOffEffort(_ value: String?) -> Bool {
+        guard let value else { return false }
+        return ["instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false"]
+            .contains(value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    struct RequestError: LocalizedError {
+        let requested: String
+        let supported: [String]
+        var errorDescription: String? {
+            "Unsupported reasoning mode '\(requested)'. This bundle declares: \(supported.joined(separator: ", "))."
+        }
+    }
+
+    /// UI, API and delegated requests use the same declared mode contract.
+    /// An unsupported explicit Off must not silently run the native default.
+    static func validateModeRequest(modelId: String, options: [String: ModelOptionValue]) throws {
+        guard case .modeKwargs(let levels, let defaultLevel, let kwargs)? = control(forModelId: modelId)
+        else { return }
+        let effort = options["reasoningEffort"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if options["disableThinking"]?.boolValue == true || isOffEffort(effort) {
+            guard kwargs["none"] != nil else {
+                throw RequestError(requested: effort ?? "off", supported: levels)
+            }
+        } else if let effort, !effort.isEmpty,
+            kwargs[effort] == nil,
+            mode(forNativeEffort: effort, control: .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs))
+                == nil,
+            snapped(effort, ontoLevels: levels, defaultLevel: defaultLevel) == nil
+        {
+            throw RequestError(requested: effort, supported: levels)
+        }
+    }
+
+    /// Some bundles encode Off as a native effort, rather than reading
+    /// `enable_thinking`. Keep that explicit two-mode contract: for example,
+    /// think=high / no_think=low must offer Off/High and send low for Off.
+    /// A bare low/high effort list does not establish this mapping.
+    private static func nativeThinkingModes(_ reasoning: [String: Any]) -> Control? {
+        guard reasoning["template_flag"] as? String == "reasoning_effort",
+            transportIsChatTemplateKwarg(reasoning, key: "reasoning_effort_transport"),
+            let modes = reasoning["modes"] as? [String],
+            Set(modes) == ["think", "no_think"], modes.count == 2,
+            let declared = reasoning["supported_reasoning_efforts"] as? [String],
+            let modeKwargs = reasoning["mode_kwargs"] as? [String: Any],
+            let on = modeKwargs["think"] as? [String: String], on.count == 1,
+            let off = modeKwargs["no_think"] as? [String: String], off.count == 1,
+            let onEffort = on["reasoning_effort"], ladderRank(onEffort) != nil,
+            let offEffort = off["reasoning_effort"], offEffort != onEffort,
+            Set(declared) == Set([onEffort, offEffort]),
+            let defaultMode = reasoning["default_mode"] as? String, modes.contains(defaultMode)
+        else { return nil }
+        return .modeKwargs(
+            [onEffort],
+            defaultLevel: defaultMode == "think" ? onEffort : "none",
+            kwargs: [
+                onEffort: ["reasoning_effort": .string(onEffort)],
+                "none": ["reasoning_effort": .string(offEffort)],
+            ]
+        )
+    }
+
+    /// Preserve a saved/native API effort when a declared mode uses it as
+    /// its transport. The picker id can differ from the native kwarg (Off).
+    static func mode(forNativeEffort effort: String, control: Control?) -> String? {
+        guard case .modeKwargs(_, _, let kwargs)? = control else { return nil }
+        return kwargs.first { $0.value["reasoning_effort"] == .string(effort) }?.key
+    }
+
+    /// `capabilities.reasoning_modes`: `{mode: {kwarg: bool|string}}`. Mode
+    /// names map onto the app ladder — `on` → `high`, `off` → the `none` rail,
+    /// any other ladder name stays itself (`medium`). A mode whose name is not
+    /// on the ladder, or whose kwargs are not all bool/string, voids the whole
+    /// declaration: a partially understood contract must not be half-applied.
+    /// The default is the mode whose kwargs equal the template default
+    /// (`jang_config.chat.thinking.default`), else `on`.
+    static func parseReasoningModes(root: [String: Any]) -> Control? {
+        guard let capabilities = root["capabilities"] as? [String: Any],
+            let modes = capabilities["reasoning_modes"] as? [String: Any], !modes.isEmpty
+        else { return nil }
+        var kwargs: [String: [String: ReasoningModeValue]] = [:]
+        for (name, raw) in modes {
+            let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let level: String
+            switch normalized {
+            case "on": level = "high"
+            case "off": level = "none"
+            default:
+                guard ladderRank(normalized) != nil else { return nil }
+                level = normalized
+            }
+            guard let values = raw as? [String: Any], !values.isEmpty else { return nil }
+            var mapped: [String: ReasoningModeValue] = [:]
+            for (key, value) in values {
+                if let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+                    mapped[key] = .bool(number.boolValue)
+                } else if let string = value as? String {
+                    mapped[key] = .string(string)
+                } else {
+                    return nil
+                }
+            }
+            guard kwargs[level] == nil else { return nil }
+            kwargs[level] = mapped
+        }
+        let levels = kwargs.keys.filter { $0 != "none" }
+            .sorted { (ladderRank($0) ?? Int.max) < (ladderRank($1) ?? Int.max) }
+        guard !levels.isEmpty else { return nil }
+        let thinkingDefault = ((root["chat"] as? [String: Any])?["thinking"] as? [String: Any])?[
+            "default"] as? Bool
+        let defaultLevel: String? =
+            thinkingDefault == false ? (kwargs["none"] != nil ? "none" : nil)
+            : (levels.contains("high") ? "high" : levels.last)
+        return .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs)
     }
 
     /// A bundle can have one required native effort while exposing no user
@@ -323,15 +503,26 @@ enum DeclaredReasoningEffort {
 
     /// Bundle-declared levels as the same capability shape the remote
     /// catalogs use, so the picker/segment/normalization pipeline needs no
-    /// second code path. An Off segment (`none`, a direct-rail id the
-    /// dispatch layer already maps to `enable_thinking=false`) is prepended
-    /// because these templates also support disabling thinking entirely.
+    /// second code path. Legacy level contracts support enable_thinking;
+    /// native kwarg contracts expose Off only when their kwargs declare it.
     static func capabilities(forModelId modelId: String) -> ModelReasoningCapabilities? {
-        guard case .levels(let levels, let defaultLevel)? = control(forModelId: modelId) else {
+        let levels: [String]
+        let defaultLevel: String?
+        let supportsOff: Bool
+        switch control(forModelId: modelId) {
+        case .levels(let declared, let declaredDefault)?:
+            levels = declared
+            defaultLevel = declaredDefault
+            supportsOff = true
+        case .modeKwargs(let declared, let declaredDefault, let kwargs)?:
+            levels = declared
+            defaultLevel = declaredDefault
+            supportsOff = kwargs["none"] != nil
+        default:
             return nil
         }
         var ids = levels
-        if !ids.contains("none") { ids.insert("none", at: 0) }
+        if supportsOff, !ids.contains("none") { ids.insert("none", at: 0) }
         return ModelReasoningCapabilities(
             levels: ids.map { ModelReasoningCapabilities.Level(id: $0) },
             defaultLevelId: defaultLevel

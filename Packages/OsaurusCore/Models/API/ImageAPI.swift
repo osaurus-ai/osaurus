@@ -51,6 +51,12 @@ struct ImageGenerationRequestDTO: Decodable, Sendable {
     let height: Int?
     let steps: Int?
     let guidance: Double?
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
+    var adapters: [ImageAdapterParameters]? = nil
+    var preview_interval: Int? = nil
+    var preview_max_pixel: Int? = nil
     let seed: UInt64?
     let response_format: String?  // "url" | "b64_json"
     let output_format: String?  // "png" | "jpeg" | "webp"
@@ -62,6 +68,11 @@ struct ImageGenerationRequestDTO: Decodable, Sendable {
     /// A Mac chat (docs/MOBILE_PROTOCOL.md §12.5) the owner's phone is
     /// generating in; the prompt and result are appended to it.
     let osaurus_session_id: String?
+    /// `osaurus_session_id` names a chat the phone starts with this image,
+    /// under `osaurus_agent_id`; the Mac creates it if it has no such chat
+    /// (docs/MOBILE_PROTOCOL.md §14.5). The owner's paired phone only.
+    var osaurus_create_session: Bool? = nil
+    var osaurus_agent_id: String? = nil
     /// The owner's phone names its job so it outlives the connection: a
     /// dropped phone comes back to `GET /images/jobs/{id}/events?after=N`
     /// (docs/MOBILE_PROTOCOL.md §12.5). Also the id `/images/cancel` takes.
@@ -84,11 +95,20 @@ struct ImageEditRequestDTO: Decodable, Sendable {
     let height: Int?
     let steps: Int?
     let guidance: Double?
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
+    var adapters: [ImageAdapterParameters]? = nil
+    var preview_interval: Int? = nil
+    var preview_max_pixel: Int? = nil
     let seed: UInt64?
     let response_format: String?
     let output_format: String?
     let stream: Bool?
     let osaurus_session_id: String?
+    /// As on `ImageGenerationRequestDTO`.
+    var osaurus_create_session: Bool? = nil
+    var osaurus_agent_id: String? = nil
     /// As on `ImageGenerationRequestDTO`.
     var osaurus_job_id: String? = nil
 }
@@ -119,9 +139,16 @@ struct VideoGenerationRequestDTO: Decodable {
     let audio: Bool?
     let quote_token: String?
     let allow_remote_media_spend: Bool?
+    var width: Int? = nil
+    var height: Int? = nil
+    var frame_count: Int? = nil
+    var fps: Int? = nil
+    var steps: Int? = nil
+    var guidance: Float? = nil
+    var seed: UInt64? = nil
 
     func request() -> MediaVideoGenerationRequest? {
-        guard let target = target.target(), target.backend != .local else { return nil }
+        guard let target = target.target() else { return nil }
         let source = source_image.flatMap(HTTPHandler.decodeImageInputWithMIME)
         if source_image != nil, source == nil { return nil }
         return MediaVideoGenerationRequest(
@@ -133,7 +160,8 @@ struct VideoGenerationRequestDTO: Decodable {
             duration: duration,
             aspectRatio: aspect_ratio,
             resolution: resolution,
-            audio: audio
+            audio: audio, width: width, height: height, frameCount: frame_count,
+            fps: fps, steps: steps, guidance: guidance, seed: seed
         )
     }
 }
@@ -159,6 +187,7 @@ struct VideoJobResponseDTO: Encodable {
     let quote_usd: Double?
     let url: String?
     let error: String?
+    let effective_parameters: VideoEffectiveParameters?
 
     init(_ job: DurableMediaJob) {
         id = job.id.uuidString.lowercased()
@@ -171,6 +200,7 @@ struct VideoJobResponseDTO: Encodable {
             ? nil
             : "/v1/videos/jobs/\(job.id.uuidString.lowercased())/content"
         error = job.errorMessage
+        effective_parameters = job.effectiveVideo
     }
 }
 
@@ -195,10 +225,18 @@ struct ImageDefaultsDTO: Encodable {
 
 struct ImageLimitsDTO: Encodable {
     let min_steps: Int
-    let max_steps: Int
+    let max_steps: Int?
     let size_multiple: Int
-    let max_pixels: Int
+    let max_pixels: Int?
     let supported_sizes: [String]
+    var min_dimension: Int? = nil
+    var max_dimension: Int? = nil
+    var fixed_steps: Int? = nil
+    var max_images: Int? = nil
+    var max_source_images: Int? = nil
+    var formats: [String]? = nil
+    var samplers: [String]? = nil
+    var schedulers: [String]? = nil
 }
 
 struct ImageModelDTO: Encodable {

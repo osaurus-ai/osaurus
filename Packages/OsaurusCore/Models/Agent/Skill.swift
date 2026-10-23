@@ -107,6 +107,10 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
     /// `web_search`, `applescript`) rather than generic persona advice, so
     /// enabling a skill teaches the agent a concrete workflow it could not
     /// otherwise know.
+    ///
+    /// Names are localized; `directoryName` is the stable English slug so an
+    /// agent's skill allow-list (`agents[].skills`) names a built-in the same
+    /// way in every language.
     public static var builtInSkills: [Skill] {
         [
             // Web Researcher
@@ -149,7 +153,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "web-researcher"
             ),
 
             // Content Summarizer
@@ -194,7 +199,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "content-summarizer"
             ),
 
             // Mac Automator
@@ -231,7 +237,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "mac-automator"
             ),
 
             // Personal Organizer
@@ -268,7 +275,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "personal-organizer"
             ),
 
             // Document Builder
@@ -311,7 +319,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "document-builder"
             ),
 
             // Workspace Assistant
@@ -355,7 +364,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "workspace-assistant"
             ),
 
             // Data Keeper
@@ -398,7 +408,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "data-keeper"
             ),
 
             // Autonomous Scheduler
@@ -435,7 +446,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "autonomous-scheduler"
             ),
 
             // Data Visualization
@@ -506,7 +518,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "data-visualizer"
             ),
         ]
     }

@@ -104,6 +104,32 @@ struct GroundedFileSideEffectCheckTests {
 
     // MARK: isGroundedFileWriteOutcome
 
+    @Test(arguments: ["image", "video"])
+    func completedMediaArtifact_groundsButQueuedOrEmptyDoesNot(tool: String) {
+        var payload: [String: Any] = [
+            "kind": tool == "image" ? "native_image_generation_job" : "generated_media_job",
+            "status": "completed",
+            "images": [["path": "/tmp/generated.png"]],
+            "media": ["path": "/tmp/generated.mp4"],
+        ]
+        func grounded() -> Bool {
+            GroundedFileSideEffectCheck.isGroundedFileWriteOutcome(
+                toolName: tool, result: ToolEnvelope.success(tool: tool, result: payload))
+        }
+        #expect(grounded())
+        payload["status"] = "queued"
+        #expect(!grounded())
+        payload["status"] = "failed"
+        #expect(!grounded())
+        payload["status"] = "completed"
+        payload["images"] = [["path": ""]]
+        payload["media"] = ["path": ""]
+        #expect(!grounded())
+        #expect(!GroundedFileSideEffectCheck.isGroundedFileWriteOutcome(
+            toolName: tool,
+            result: ToolEnvelope.failure(kind: .invalidArgs, message: "invalid size", tool: tool)))
+    }
+
     @Test
     func successfulFileWrite_grounds() {
         #expect(

@@ -1407,7 +1407,13 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     private func handlePermanentOAuthFailure(providerId: UUID) {
-        MCPProviderKeychain.deleteOAuthTokens(for: providerId)
+        // `SecItemDelete` can block for seconds on securityd / keychain I/O;
+        // this method is `@MainActor`, so enqueue the delete on the serial
+        // keychain write queue instead of running it synchronously here. The
+        // serial queue keeps ordering with any subsequent re-sign-in save.
+        Keychain.performInBackground {
+            MCPProviderKeychain.deleteOAuthTokens(for: providerId)
+        }
         if var state = providerStates[providerId] {
             state.requiresAuth = true
             state.isConnected = false

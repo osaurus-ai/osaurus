@@ -3,15 +3,15 @@
   "domain": "default_agent",
   "label": "default agent • create a custom agent (declarative apply)",
   "query": "Create a new custom agent named \"Researcher\" that specializes in web research and concise summaries.",
-  "notes": "osaurus_config apply with an agents entry (matched/created by name). Under the isolated config root the new agent lands in the throwaway temp store. This is the exact write whose persistence regression started this work — the selection assertion pins the apply carrying the agents section and the requested name.",
+  "notes": "osaurus_config apply that creates the agent by name — an `agents:` entry, or an agent template with `overrides` (the Orchestrator checks `templates` first and uses a fitting one; under the isolated config root the only templates are the built-ins Cloud Agent, Local Agent and Sub Agent). The new agent lands in the throwaway temp store. This is the exact write whose persistence regression started this work — the selection assertion pins an agent-creating apply carrying the requested name.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
       "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "Researcher" } },
-        { "tool": "osaurus_config", "args": { "yaml": "agents" } }
+        { "tool": "osaurus_config", "args": { "action": "apply" }, "argsAnyOf": [{ "yaml": "Researcher" }, { "overrides": "Researcher" }] },
+        { "tool": "osaurus_config", "args": { "action": "apply" }, "argsAnyOf": [{ "yaml": "agents" }, { "template": "agent" }] }
       ],
       "maxIterations": 8
     }

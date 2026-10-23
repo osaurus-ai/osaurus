@@ -645,6 +645,7 @@ enum FeatureTelemetry {
         case .imageGeneration: return "image_generation"
         case .agents: return "agents"
         case .agentChannels: return "agent_channels"
+        case .agentRuntimes: return "agent_runtimes"
         case .memory: return "memory"
         case .knowledge: return "knowledge"
         case .tools: return "tools"

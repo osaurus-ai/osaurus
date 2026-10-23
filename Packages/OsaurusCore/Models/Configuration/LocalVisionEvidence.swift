@@ -170,6 +170,16 @@ enum LocalVisionEvidence {
         guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
             return result(false, "The installed weight format is rejected by the local runtime preflight.")
         }
+        if ["nemotron_h_omni", "nemotronh_nano_omni_reasoning_v3"].contains(modelType.lowercased()) {
+            // Super/Bolt share the Omni architecture but declare a null video
+            // token. Nano-Omni has a token and a separate temporal embedder.
+            // A family name or the generic vision patch size cannot establish
+            // video support for an installed checkpoint.
+            nativeVideo = (omni?["video_context_token_id"] as? Int ?? -1) >= 0
+                && names.contains {
+                    $0.hasSuffix("patch_generator.video_embedder.weight")
+                }
+        }
         if mimo {
             nativeAudio = mimoAudioEvidence(directory: directory, config: config,
                                             processor: processor, names: names)

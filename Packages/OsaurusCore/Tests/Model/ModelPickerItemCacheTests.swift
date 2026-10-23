@@ -240,6 +240,40 @@ struct ModelPickerItemCacheTests {
     /// `/models` endpoint advertised (vLLM `max_model_len` etc.); models the
     /// server reported no window for keep a nil contextLength so resolution
     /// falls through to the configured fallback.
+    /// Gemini text models get their documented levels on routes that
+    /// forward the effort (native, Google OpenAI-compat, OpenRouter), and
+    /// nothing on an arbitrary proxy (#3108).
+    @Test func remoteModelItems_attachesGeminiReasoningOnlyOnHonoringRoutes() throws {
+        let providers = [
+            Self.providerEntry(
+                name: "OpenRouter", type: .openaiLegacy, host: "openrouter.ai",
+                models: ["openrouter/google/gemini-3.8-flash", "openrouter/google/gemini-3-pro-image-preview"]
+            ),
+            Self.providerEntry(
+                name: "Google", type: .gemini, host: "generativelanguage.googleapis.com",
+                models: ["google/gemini-3-pro-preview"]
+            ),
+            Self.providerEntry(
+                name: "Proxy", type: .openaiLegacy, host: "litellm.internal",
+                models: ["proxy/gemini-3.8-flash"]
+            ),
+        ]
+
+        let result = ModelPickerItemCache.remoteModelItems(
+            providers: providers,
+            codexMetadata: [:],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { _ in nil }
+        )
+
+        let flash = try #require(result.reasoningCapabilities["openrouter/google/gemini-3.8-flash"])
+        #expect(flash.levels.map(\.id) == ["low", "medium", "high"])
+        #expect(flash.defaultLevelId == "medium")
+        #expect(result.reasoningCapabilities["google/gemini-3-pro-preview"]?.levels.map(\.id) == ["low", "high"])
+        #expect(result.reasoningCapabilities["openrouter/google/gemini-3-pro-image-preview"] == nil)
+        #expect(result.reasoningCapabilities["proxy/gemini-3.8-flash"] == nil)
+    }
+
     @Test func remoteModelItems_attachesAdvertisedContextLengths() throws {
         let provider = Self.providerEntry(
             name: "vLLM",

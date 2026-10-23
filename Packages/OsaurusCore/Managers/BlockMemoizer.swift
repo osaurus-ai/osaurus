@@ -18,6 +18,7 @@ final class BlockMemoizer {
     private var lastCount = 0
     private var lastTurnId: UUID?
     private var lastContentLen = 0
+    private var lastContentRevision: UInt64 = 0
     private var lastThinkingLen = 0
     /// Final engine statistics arrive after the last content delta. They can
     /// change without a text/version tick, so they belong in the cache key.
@@ -96,6 +97,7 @@ final class BlockMemoizer {
         let liveTurnId = streamingTurnId ?? activeTurnId
         let lastId = turns.last?.id
         let contentLen = turns.last?.contentLength ?? 0
+        let contentRevision = turns.last?.contentRevision ?? 0
         let thinkingLen = turns.last?.thinkingLength ?? 0
         let generationStats = turns.last.map(GenerationStatsKey.init)
         let pendingToolName = turns.last?.pendingToolName
@@ -109,6 +111,7 @@ final class BlockMemoizer {
         if !agentNameChanged
             && count == lastCount && lastId == lastTurnId
             && contentLen == lastContentLen && thinkingLen == lastThinkingLen
+            && contentRevision == lastContentRevision
             && generationStats == lastGenerationStats
             && pendingToolName == lastPendingToolName
             && pendingToolArgSize == lastPendingToolArgSize
@@ -188,6 +191,7 @@ final class BlockMemoizer {
         lastCount = count
         lastTurnId = lastId
         lastContentLen = contentLen
+        lastContentRevision = contentRevision
         lastThinkingLen = thinkingLen
         lastGenerationStats = generationStats
         lastPendingToolName = pendingToolName
@@ -308,6 +312,7 @@ final class BlockMemoizer {
         lastCount = 0
         lastTurnId = nil
         lastContentLen = 0
+        lastContentRevision = 0
         lastThinkingLen = 0
         lastGenerationStats = nil
         lastPendingToolName = nil

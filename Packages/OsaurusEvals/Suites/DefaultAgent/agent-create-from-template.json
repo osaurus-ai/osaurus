@@ -1,0 +1,21 @@
+{
+  "id": "default_agent.agent-create-from-template",
+  "domain": "default_agent",
+  "label": "default agent • create an agent from a named built-in template",
+  "query": "Make me an agent from the Cloud Agent template and call it \"Scout\".",
+  "notes": "Agent templates contract: when the user names a template, the Orchestrator creates the agent from it — `osaurus_config` plan/apply with `template` set to the built-in Cloud Agent and the new name in `overrides` — instead of hand-writing an `agents:` entry that would drop the template's model, tools and subagent settings. Under the isolated config root the only templates are the built-ins (Cloud Agent, Local Agent, Sub Agent); Cloud Agent prefers a model that is not installed, so the plan notes the fallback to the default model and the apply still lands.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_config"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load", "clarify"],
+      "argsMustContain": [
+        { "tool": "osaurus_config", "args": { "action": "apply", "template": "cloud agent", "overrides": "Scout" } }
+      ],
+      "argsMustNotContain": [
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "agents" } }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

@@ -12,6 +12,16 @@ import Testing
 @testable import OsaurusCore
 
 struct ModelRuntimeMappingTests {
+    @Test func developerRoleSurvivesLocalRuntimeMapping() throws {
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX([
+            ChatMessage(role: "system", content: "System instruction"),
+            ChatMessage(role: "developer", content: "Developer instruction"),
+            ChatMessage(role: "user", content: "Question"),
+        ])
+        #expect(mapped.map(\.role.rawValue) == ["system", "developer", "user"])
+        #expect(mapped[1].content == "Developer instruction")
+    }
+
     @Test func richContentOrderSurvivesLocalRuntimeMapping() throws {
         let message = ChatMessage(role: "user", content: "beforeafter", contentParts: [
             .text("before"), .videoUrl(url: "file:///tmp/mimo-order-test.mp4"),

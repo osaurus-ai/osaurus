@@ -43,6 +43,30 @@ struct QwenImage21EndpointFidelityTests {
         events.contains { if case .failed = $0 { return true }; return false }
     }
 
+    @Test func editPreflightRejectsUnsupportedConditioningBeforeAdmission() async throws {
+        let limits = FluxModelLimits(dimensionMultiple: 32, minDimension: 32,
+            minimumSteps: 2, supportsNegativePrompt: true,
+            supportsEditNegativePrompt: false, supportsStrength: false,
+            supportsMask: false, maxSourceImages: 10, supportedFormats: [.png])
+        let f = ImageProducerFixture(held: [], canonical: "qwen-image-2.1",
+            capabilities: ImageModelRequestPolicy.capabilities(kind: "imageGen", canonical: "qwen-image-2.1"),
+            limits: limits)
+        let source = try png(0.5)
+        let invalid = ImageEditParameters(model: f.first, prompt: "edit", sourceImages: [source],
+            negativePrompt: "blur", width: 512, height: 512, steps: 8)
+        do {
+            _ = try await f.service.estimatedPeakBytes(for: invalid)
+            Issue.record("Unsupported conditioning reached admission")
+        } catch FluxError.invalidField(let field, _, _) {
+            #expect(field == "negativePrompt")
+        }
+        let valid = ImageEditParameters(model: f.first, prompt: "edit", sourceImages: [source],
+            width: 2080, height: 512, steps: 60)
+        #expect(try await f.service.estimatedPeakBytes(for: valid) == 0)
+        let snapshot = await f.probe.snapshot()
+        #expect(snapshot.loads.isEmpty && snapshot.edits.isEmpty)
+    }
+
     @Test func actualHTTPFactoryPreservesWideAnd2048DimensionsOnRenamedBundle() async throws {
         let f = q21()
         #expect(!f.first.contains("qwen"))
@@ -152,33 +176,39 @@ struct QwenImage21EndpointFidelityTests {
         await f.service.unload()
     }
 
-    @Test func olderHTTPPoliciesAndAdvertisedCapacityStayUnchanged() async throws {
+    @Test func localHTTPPreservesExplicitValuesAndValidatesEveryEditSource() async throws {
         let f = ImageProducerFixture(held: [], canonical: "qwen-image")
-        let job = await f.service.generateHTTP(try generation(#"{"prompt":"old","width":8192,"height":12,"steps":500,"guidance":99}"#),
+        let job = await f.service.generateHTTP(try generation(#"{"prompt":"old","width":2048,"height":512,"steps":60,"guidance":99}"#),
             modelID: f.first, jobID: "old-http-gen")
         _ = try await collectImageEvents(job.stream)
         await f.service.waitForJobDrain(jobID: "old-http-gen")
         let r = try #require(await f.probe.snapshot().starts.first)
-        #expect(r.width == 1024 && r.height == 256 && r.steps == 50 && r.guidance == 99)
-        #expect(job.activityDetails["size"] == "1024x256")
+        #expect(r.width == 2048 && r.height == 512 && r.steps == 60 && r.guidance == 99)
+        #expect(job.activityDetails["size"] == "2048x512")
         let one = await f.service.generateHTTP(try generation(#"{"prompt":"old floor","steps":1}"#),
             modelID: f.first, jobID: "old-one-step")
         _ = try await collectImageEvents(one.stream)
         await f.service.waitForJobDrain(jobID: "old-one-step")
-        #expect(await f.probe.snapshot().starts.last?.steps == 2) // existing older-family floor
+        #expect(await f.probe.snapshot().starts.last?.steps == 1) // Preserve supported native step count.
         await f.service.unload()
         let e = ImageProducerFixture(held: [], canonical: "qwen-image-edit", kind: .imageEdit)
-        let fields: [String: Any] = ["prompt": "old edit", "images": [Data([1]).base64EncodedString(), "bad"],
-            "width": 1008, "height": 9000, "steps": 500]
+        let fields: [String: Any] = ["prompt": "old edit", "images": [try png(0.5).base64EncodedString()],
+            "width": 1008, "height": 2048, "steps": 60]
         let req = try edit(fields), old = await e.service.editHTTP(req, modelID: e.first,
             decodedSources: (req.images ?? []).map(HTTPHandler.decodeImageInput), jobID: "old-http-edit")
         _ = try await collectImageEvents(old.stream)
         await e.service.waitForJobDrain(jobID: "old-http-edit")
         let edited = try #require(await e.probe.snapshot().edits.first)
         #expect(edited.sourceImages.count == 1 && edited.strength == 0.75)
-        #expect(edited.width == 1008 && edited.height == 1024 && edited.steps == 50)
-        #expect(old.activityDetails["size"] == "1008x1024" && old.activityDetails["source_images"] == "1")
+        #expect(edited.width == 1008 && edited.height == 2048 && edited.steps == 60)
+        #expect(old.activityDetails["size"] == "1008x2048" && old.activityDetails["source_images"] == "1")
         for url in edited.sourceImages { try? FileManager.default.removeItem(at: url) }
+        let invalidSources = try edit(["prompt": "reject invalid reference", "images": [try png(0.5).base64EncodedString(), "bad"]])
+        let invalidJob = await e.service.editHTTP(invalidSources, modelID: e.second,
+            decodedSources: (invalidSources.images ?? []).map(HTTPHandler.decodeImageInput), jobID: "invalid-legacy-source")
+        #expect(failed(try await collectImageEvents(invalidJob.stream)))
+        await e.service.waitForJobDrain(jobID: "invalid-legacy-source")
+        #expect(await e.probe.snapshot().loads == [e.first])
         await e.service.unload()
         let info = ImageModelInfo(id: "renamed", canonicalName: "qwen-image-2.1", displayName: "renamed",
             kind: "imageGen", ready: true, quantizationBits: nil, defaultSteps: 40, defaultGuidance: 1,
@@ -214,20 +244,16 @@ struct QwenImage21EndpointFidelityTests {
         let old = ImageSubagentKind(params: legacy, argumentsJSON: raw)
         try old.prepareLocalParameters(canonical: "qwen-image", defaultGuidance: 3.5)
         let oldRequest = old.localGenerateRequest(.init(name: "Old display", id: "old-id", isLocal: true), context: .empty)
-        #expect(oldRequest.guidance == 20 && oldRequest.model == "Old display")
+        #expect(oldRequest.guidance == 23 && oldRequest.model == "old-id")
     }
 
-    @Test func delegationRejectsMalformedAndUnsupportedExplicitQ21FieldsBeforeCoordinator() throws {
+    @Test func delegationRejectsMalformedArgumentsAndServiceRejectsUnsupportedFields() async throws {
         let legacy = ImageTool.buildParams(args: ["prompt": "bad"], prompt: "bad")
         let bad = [
-            #"{"width":1008}"#, #"{"height":2080}"#, #"{"width":1.5}"#,
-            #"{"steps":0}"#, #"{"steps":1}"#, #"{"steps":51}"#, #"{"guidance":"nan"}"#,
+            #"{"width":1.5}"#, #"{"guidance":"nan"}"#,
             #"{"seed":-1}"#, #"{"seed":1.5}"#, #"{"seed":"not-a-seed"}"#,
             #"{"seed":18446744073709551616}"#, #"{"source_paths":[]}"#,
             #"{"source_paths":["good.png",""]}"#, #"{"source_paths":["good.png",3]}"#,
-            #"{"source_paths":["a.png"],"strength":0.75}"#,
-            #"{"source_paths":["a.png"],"strength":1.5}"#,
-            #"{"source_paths":["a.png"],"negative_prompt":"blur"}"#,
             #"{"source_paths":["a.png"],"mask":"mask.png"}"#,
             #"{"strength":1}"#,
             #"{"output_format":"jpeg"}"#, #"{"output_format":"webp"}"#,
@@ -238,6 +264,34 @@ struct QwenImage21EndpointFidelityTests {
                 try kind.prepareLocalParameters(canonical: "qwen-image-2.1", defaultGuidance: 1)
             }
         }
+        // Numeric/family constraints belong to shared admission, not raw JSON parsing.
+        // Exercise the real service so deferring validation cannot silently admit a job.
+        let f = q21()
+        for raw in [#"{"width":1008}"#, #"{"height":2080}"#, #"{"steps":0}"#,
+                    #"{"steps":1}"#, #"{"steps":51}"#] {
+            let kind = ImageSubagentKind(params: legacy, argumentsJSON: raw)
+            try kind.prepareLocalParameters(canonical: "qwen-image-2.1", defaultGuidance: 1)
+            let r = kind.localGenerateRequest(.init(name: "renamed", id: f.first, isLocal: true), context: .empty)
+            let events = try await collectImageEvents(await f.service.generate(
+                .init(model: f.first, prompt: r.prompt, width: r.width, height: r.height,
+                      steps: r.steps, guidance: r.guidance), jobID: "bad-delegated"))
+            await f.service.waitForJobDrain(jobID: "bad-delegated")
+            #expect(failed(events))
+        }
+        for strength in [Float(0.75), Float(1.5)] {
+            let events = try await collectImageEvents(await f.service.edit(
+                .init(model: f.first, prompt: "edit", sourceImages: [try png(0.5)], strength: strength),
+                jobID: "bad-delegated-edit"))
+            await f.service.waitForJobDrain(jobID: "bad-delegated-edit")
+            #expect(failed(events))
+        }
+        let negative = try await collectImageEvents(await f.service.edit(
+            .init(model: f.first, prompt: "edit", sourceImages: [try png(0.5)], negativePrompt: "blur"),
+            jobID: "bad-delegated-negative"))
+        await f.service.waitForJobDrain(jobID: "bad-delegated-negative")
+        #expect(failed(negative))
+        #expect(await f.probe.snapshot().loads.isEmpty)
+        await f.service.unload()
         let raw = #"{"source_paths":["b.png","a.png"],"width":1248,"height":832,"seed":"18446744073709551615"}"#
         let p = try ImageTool.paramsForResolvedLocalModel(legacy, argumentsJSON: raw,
             canonical: "qwen-image-2.1", defaultGuidance: 1)

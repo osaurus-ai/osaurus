@@ -313,6 +313,11 @@ public enum OsaurusPaths {
         root().appendingPathComponent("templates", isDirectory: true)
     }
 
+    /// Versioned template library (`TemplateStore`).
+    public static func templateLibrary() -> URL {
+        root().appendingPathComponent("template-library", isDirectory: true)
+    }
+
     /// Artifacts directory
     public static func artifacts() -> URL {
         root().appendingPathComponent("artifacts", isDirectory: true)

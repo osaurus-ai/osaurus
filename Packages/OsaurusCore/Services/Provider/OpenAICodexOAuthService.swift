@@ -203,6 +203,7 @@ public enum OpenAICodexOAuthService {
     /// available, but this list keeps the UI usable before sign-in and when the
     /// `/models` endpoint cannot be reached.
     public static let supportedModels: [String] = [
+        "gpt-6.1-sol",
         "gpt-6-astra",
         "gpt-5.6",
         "gpt-5.6-terra",

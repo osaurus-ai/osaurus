@@ -201,6 +201,12 @@ public final class AgentManager: ObservableObject {
 
     private init() {
         refresh()
+        // Not inline: the migration's saves notify observers and schedule
+        // work that read `AgentManager.shared`, which is still mid-
+        // initialization here (a recursive dispatch_once traps).
+        Task { @MainActor [weak self] in
+            self?.migrateClaudeCodeModelsToHarness()
+        }
 
         // Load saved active agent
         if let savedId = loadActiveAgentId() {
@@ -551,6 +557,7 @@ public final class AgentManager: ObservableObject {
             updatedAt: now,
             autonomousExec: agent.autonomousExec,
             claudeCode: agent.claudeCode,
+            runtime: agent.runtime,
             pluginInstructions: agent.pluginInstructions,
             // Capability configuration is part of what "duplicate" means: a
             // MANUAL agent's copy used to come back AUTO with the whole
@@ -559,12 +566,15 @@ public final class AgentManager: ObservableObject {
             // list was written and never joined it.
             toolSelectionMode: agent.toolSelectionMode,
             manualToolNames: agent.manualToolNames,
+            skillNames: agent.skillNames,
             toolsEnabled: agent.toolsEnabled,
             memoryEnabled: agent.memoryEnabled,
             avatar: agent.avatar,
             autoSpeak: agent.autoSpeak,
             ttsVoice: agent.ttsVoice,
-            settings: agent.settings
+            settings: agent.settings,
+            // A copy of a template-made agent is still that template's kin.
+            sourceTemplateName: agent.sourceTemplateName
         )
     }
 
@@ -628,6 +638,11 @@ public final class AgentManager: ObservableObject {
                 config.spawnableAgentIDs.append(agent.id)
             }
         }
+        // Same universal creation hook doubles as the first-run setup
+        // marker: the agent stays flagged until a readiness check passes
+        // or the user finishes the setup checklist (see
+        // `SetupStateStore` / `SetupChecker`).
+        SetupStateStore.shared.markNeedsSetup(agent.id)
     }
 
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
@@ -951,6 +966,7 @@ public final class AgentManager: ObservableObject {
         _ = SubagentConfigurationStore.mutate { config in
             config.spawnableAgentIDs.removeAll { $0 == id }
         }
+        SetupStateStore.shared.clear(id)
         // …and from every remaining custom agent's own allow-list, so no
         // launcher anywhere keeps advertising a target that no longer exists.
         pruneSpawnableAgentID(id)
@@ -1166,13 +1182,20 @@ extension AgentManager {
     /// own persisted value; an agent with no explicit choice defaults ON
     /// where the sandbox is supported — the chat chip is gone, so agent
     /// settings is the opt-out (which persists an explicit `enabled: false`).
+    ///
+    /// Reads availability from `SandboxManager.State.shared.availability` — the
+    /// @MainActor-cached value seeded at launch — rather than calling
+    /// `SandboxManager.resolveAvailability()` directly. The direct call crosses
+    /// a Swift actor boundary synchronously, blocking the main thread whenever
+    /// this is evaluated during SwiftUI body rendering (e.g. FloatingInputCard).
+    @MainActor
     public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
         guard let agent = agent(for: agentId) else {
             return nil
         }
         return Self.resolvedAutonomousExec(
             for: agent,
-            availability: SandboxManager.resolveAvailability()
+            availability: SandboxManager.State.shared.availability
         )
     }
 
@@ -1245,6 +1268,19 @@ extension AgentManager {
             return (config.workingFolderBookmark, config.workingFolderPath)
         }
         guard let agent = agent(for: agentId) else { return nil }
+        return workingFolder(for: agent)
+    }
+
+    /// Agent-instance overload that avoids a second `agents` array access.
+    /// Pass a pre-fetched `Agent` value to skip the `agent(for:)` lookup (and
+    /// the associated `@Published` property read) when iterating over a
+    /// snapshot of the agents array.
+    func workingFolder(for agent: Agent) -> (bookmark: Data?, path: String?)? {
+        if agent.id == Agent.defaultId {
+            let config = DefaultAgentConfigurationStore.load()
+            guard config.hasWorkingFolder else { return nil }
+            return (config.workingFolderBookmark, config.workingFolderPath)
+        }
         let hasFolder =
             agent.workingFolderBookmark != nil || agent.workingFolderPath?.isEmpty == false
         guard hasFolder else { return nil }
@@ -1420,6 +1456,15 @@ extension AgentManager {
         guard let agent = agent(for: agentId) else {
             return defaultAgentModel ?? ChatConfigurationStore.load().defaultModel
         }
+        return effectiveModel(for: agent, defaultAgentModel: defaultAgentModel)
+    }
+
+    /// Agent-instance overload that avoids a second `agents` array access.
+    /// Pass a pre-fetched `Agent` value to skip the `agent(for:)` lookup (and
+    /// the associated `@Published` property read) when iterating over a
+    /// snapshot of the agents array.
+    func effectiveModel(for agent: Agent, defaultAgentModel: String? = nil) -> String? {
+        let defaultAgentModel = defaultAgentModel ?? DefaultAgentConfigurationStore.load().defaultModel
 
         if agent.id == Agent.defaultId {
             return defaultAgentModel

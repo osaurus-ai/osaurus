@@ -141,6 +141,35 @@ struct RemoteSessionContinuationTests {
         #expect(!encoded.contains("osaurus_session_id"))
     }
 
+    @Test func runRequestCanStartAChat() throws {
+        let json = #"""
+            {"messages":[{"role":"user","content":"hi"}],"model":"",
+             "osaurus_session_id":"abc","osaurus_create_session":true}
+            """#
+        let request = try JSONDecoder().decode(ChatCompletionRequest.self, from: Data(json.utf8))
+        #expect(request.osaurus_create_session == true)
+        let encoded = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+        #expect(!encoded.contains("osaurus_create_session"))
+    }
+
+    @MainActor @Test func aChatThePhoneStartedIsAnOrdinaryChatShownAsThePhones() {
+        let started = ChatSessionData(externalSessionKey: RemoteSessionContinuation.phoneChatKey)
+        #expect(started.workspace == nil)
+        #expect(RemoteSessionContinuation.isFromPairedPhone(started))
+        #expect(HTTPHandler.summary(for: started, fromPhone: true).origin == "ios")
+        // The marker only counts on an ordinary chat.
+        let other = ChatSessionData(source: .http, externalSessionKey: RemoteSessionContinuation.phoneChatKey)
+        #expect(!RemoteSessionContinuation.isFromPairedPhone(other))
+        #expect(!RemoteSessionContinuation.isFromPairedPhone(ChatSessionData()))
+    }
+
+    @MainActor @Test func onlyThePairedKeyCountsAsThePhone() {
+        #expect(!RemoteSessionContinuation.isPairedPhoneKey(nil))
+        guard let paired = MobilePairingService.shared.pairedKeyNonce else { return }
+        #expect(RemoteSessionContinuation.isPairedPhoneKey(paired.uppercased()))
+        #expect(!RemoteSessionContinuation.isPairedPhoneKey(paired + "x"))
+    }
+
     @Test func truncatingAnUnknownChatChangesNothing() {
         #expect(RemoteSessionContinuation.truncate(UUID(), fromTurnId: UUID()) == .sessionNotFound)
     }

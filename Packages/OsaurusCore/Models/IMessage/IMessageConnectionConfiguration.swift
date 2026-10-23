@@ -74,10 +74,15 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
     /// Default attachment root: Messages stores inbound attachments under the
     /// user's Library. Ingestion stays off by default; when enabled, only
     /// files under an allowlisted root of this shape are readable.
-    static var defaultAttachmentRoots: [String] {
+    ///
+    /// Resolved once per process: every `IMessageConnectionConfiguration()`
+    /// reaches this, including from MainActor prompt-preview composition, and
+    /// re-resolving the home directory on each call showed up as a
+    /// multi-second main-thread hang (Sentry APPLE-MACOS-3C5).
+    static let defaultAttachmentRoots: [String] = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return ["\(home)/Library/Messages/Attachments"]
-    }
+    }()
 
     init(
         readableChatIds: [String] = [],
@@ -276,12 +281,27 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
 }
 
 enum IMessageConnectionConfigurationStore {
-    nonisolated(unsafe) static var overrideDirectory: URL?
+    nonisolated(unsafe) static var overrideDirectory: URL? {
+        didSet { cache.reset() }
+    }
 
     private static let fileName = "imessage.json"
 
+    /// In-memory copy of the last loaded/saved configuration. See
+    /// `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
+    private static let cache = ConnectionConfigurationCache<IMessageConnectionConfiguration>()
+
+    /// Drop the in-memory copy so the next `load()` reads from disk.
+    static func resetCache() {
+        cache.reset()
+    }
+
     static func load() -> IMessageConnectionConfiguration {
         let url = configurationFileURL()
+        return cache.value(for: url) { loadFromDisk(at: url) }
+    }
+
+    private static func loadFromDisk(at url: URL) -> IMessageConnectionConfiguration {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return IMessageConnectionConfiguration()
         }
@@ -300,7 +320,9 @@ enum IMessageConnectionConfigurationStore {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        let normalized = configuration.normalized
+        try encoder.encode(normalized).write(to: url, options: [.atomic])
+        cache.store(normalized, for: url)
     }
 
     static func configurationFileURL() -> URL {

@@ -12,6 +12,7 @@ import MLX
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import OsaurusRepository
 
 private final class SendableBool: @unchecked Sendable {
     private var _value: Bool
@@ -306,6 +307,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// The address that Secure Channel was opened with: the agent (or
         /// the connect identity) the caller reaches this Mac through.
         var secureChannelAgentAddress: String?
+        /// Set by the auth gate when a local harness presented its live
+        /// agent token. Confines the request to `HarnessGrantStore.allowedRoutes`
+        /// and that agent's tools.
+        var harnessGrant: HarnessGrant?
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -480,6 +485,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.authedScopeIsMaster = false
             stateRef.value.callerHasVerifiedAccessKey = false
             stateRef.value.callerAccessKeyIsMaster = false
+            stateRef.value.harnessGrant = nil
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -642,7 +648,50 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // an access key; `AgentChannelWebhookIngress` fails closed on its own.
             let isChannelRoute = path.hasPrefix("/channels/")
             let isLoopback = isLoopbackConnection(context)
-            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isLoopback {
+
+            // A local harness presenting its agent token is authenticated by
+            // the token, even when loopback trust is off (network exposure),
+            // and confined to the inference + MCP routes.
+            if isPhysicalLoopbackConnection(context),
+                let token = HarnessGrantStore.shared.presentedToken(
+                    bridgeHeader: head.headers.first(name: HarnessGrantStore.headerName),
+                    authorization: head.headers.first(name: "Authorization")
+                ),
+                let grant = HarnessGrantStore.shared.resolve(token)
+            {
+                guard HarnessGrantStore.allowedRoutes.contains(path) else {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: stateRef.value.corsHeaders)
+                    let message = "This agent token can only call the inference and MCP routes."
+                    let errorBody =
+                        #"{"error":{"code":"harness_token_scope","message":"\#(message)","type":"permission_error"}}"#
+                    sendResponse(
+                        context: context,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: errorBody
+                    )
+                    logRequest(
+                        method: method,
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: errorBody,
+                        responseStatus: 403,
+                        startTime: startTime,
+                        errorMessage: message
+                    )
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
+                stateRef.value.harnessGrant = grant
+            }
+
+            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isLoopback
+                && stateRef.value.harnessGrant == nil
+            {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
                     authHeader.hasPrefix("Bearer ")
@@ -932,6 +981,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: path,
                     isLoopback: isPhysicalLoopbackConnection(context),
                     operation: .apply
+                )
+            } else if head.method == .POST, path == "/admin/import/plan" || path == "/admin/import/apply" {
+                handleImportAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context)
                 )
             } else if head.method == .GET, path == "/models/picker" {
                 handleModelPickerEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
@@ -1427,19 +1486,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } else {
                     row["last_effective_generation"] = NSNull()
                 }
-                let mlxPress = summary.mlxPressStatus
-                var mlxPressStatus: [String: Any] = [
-                    "enabled": mlxPress.enabled,
-                    "backend": mlxPress.backend.rawValue,
-                    "tiles_under_management": mlxPress.tilesUnderManagement,
-                    "total_routed_bytes": mlxPress.totalRoutedBytes,
-                ]
-                if let coldFraction = mlxPress.coldFraction {
-                    mlxPressStatus["cold_fraction"] = coldFraction
-                } else {
-                    mlxPressStatus["cold_fraction"] = NSNull()
-                }
-                row["mlx_press"] = mlxPressStatus
                 if let active = summary.activeCachePolicy {
                     row["active_cache_policy"] =
                         [
@@ -2423,6 +2469,105 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         jsonObjectString(object)
     }
 
+    /// `/admin/import/*` — the running-app side of `osaurus import`.
+    /// `plan` checks a bundle against this Mac without changing anything
+    /// (`{"bundle_path", "operations": [{"action", "kind", "name"}]}` ->
+    /// `{"issues", "warnings"}`); `apply` applies a request the CLI already
+    /// queued (`{"id"}` -> the request's `ImportResult`). Loopback-only on
+    /// the physical address for the same reason as `/admin/config/*`: it
+    /// installs agents and MCP servers.
+    private func handleImportAdminEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String,
+        isLoopback: Bool
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let parsedBody = readRequestBody()
+
+        func respond(status: HTTPResponseStatus, body: String) {
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")] + cors
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value, version: version, status: status, headers: headers, body: body)
+            }
+            logSelf.logRequest(
+                method: method,
+                path: path,
+                userAgent: userAgent,
+                requestBody: "[/admin/import body — \(parsedBody.data.count) bytes]",
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        func respondError(status: HTTPResponseStatus, message: String) {
+            respond(status: status, body: Self.errorBody(.openai(type: "invalid_request_error"), message: message))
+        }
+
+        guard isLoopback else {
+            respondError(
+                status: .forbidden,
+                message: "/admin/import/* is restricted to local (loopback) callers. Run `osaurus import` on this Mac.")
+            return
+        }
+        guard !parsedBody.data.isEmpty, parsedBody.data.count <= 256 * 1024,
+            let request = try? JSONSerialization.jsonObject(with: parsedBody.data) as? [String: Any]
+        else {
+            respondError(status: .badRequest, message: "POST a JSON object body (at most 256 KB).")
+            return
+        }
+
+        runRequestTask(priority: .userInitiated) {
+            if path == "/admin/import/plan" {
+                guard let bundlePath = request["bundle_path"] as? String, !bundlePath.isEmpty else {
+                    respondError(status: .badRequest, message: "`bundle_path` is required.")
+                    return
+                }
+                let operations = ((request["operations"] as? [[String: Any]]) ?? []).compactMap {
+                    raw -> ImportOperation? in
+                    guard let kind = (raw["kind"] as? String).flatMap(BundleItemKind.init(rawValue:)),
+                        let name = raw["name"] as? String
+                    else { return nil }
+                    let action = (raw["action"] as? String).flatMap(ImportAction.init(rawValue:)) ?? .install
+                    return ImportOperation(action: action, kind: kind, name: name, explicit: true)
+                }
+                let checked = await PendingImportProcessor.shared.plan(
+                    bundleAt: URL(fileURLWithPath: bundlePath, isDirectory: true), operations: operations)
+                respond(
+                    status: .ok,
+                    body: Self.jsonObjectString(["issues": checked.issues, "warnings": checked.warnings]))
+                return
+            }
+
+            guard let id = request["id"] as? String, !id.isEmpty else {
+                respondError(status: .badRequest, message: "`id` (the queued request id) is required.")
+                return
+            }
+            guard let result = await PendingImportProcessor.shared.process(requestId: id) else {
+                respondError(
+                    status: .unprocessableEntity,
+                    message: "No queued import request \(id). It may have been cancelled with `osaurus import remove`.")
+                return
+            }
+            guard let data = try? ImportQueue.encoder().encode(result) else {
+                respondError(status: .internalServerError, message: "Could not encode the import result.")
+                return
+            }
+            respond(status: .ok, body: String(decoding: data, as: UTF8.self))
+        }
+    }
+
     /// A response body from a dictionary, properly escaped whatever the
     /// strings in it hold.
     private static func jsonObjectString(_ object: [String: Any]) -> String {
@@ -2520,7 +2665,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "memory_limit": residentCapJSONObject(configuration.memoryLimit),
             "max_resident_bytes": residentCapJSONObject(configuration.maxResidentBytes),
             "use_mmap_safetensors": configuration.useMmapSafetensors,
-            "jang_press_policy": jangPressPolicyJSONObject(configuration.jangPress),
             "native_mtp": configuration.nativeMTP,
             "deepseek_v4_activation_qat":
                 configuration.deepseekV4ActivationQAT as Any? ?? NSNull(),
@@ -2630,17 +2774,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return ["kind": "fraction", "value": fraction]
         case .absolute(let bytes):
             return ["kind": "absolute", "value": bytes]
-        }
-    }
-
-    private static func jangPressPolicyJSONObject(_ policy: JangPressPolicy) -> [String: Any] {
-        switch policy {
-        case .disabled:
-            return ["kind": "disabled"]
-        case .enabled(let coldFraction):
-            return ["kind": "enabled", "cold_fraction": coldFraction]
-        case .auto(let envFallback):
-            return ["kind": "auto", "env_fallback": envFallback]
         }
     }
 
@@ -4726,7 +4859,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private struct AgentListResponse: Codable {
         let agents: [AgentListItem]
+        /// What this Mac does that an older one doesn't, for a client to
+        /// check before relying on it (docs/MOBILE_PROTOCOL.md §14.5).
+        var features: [String] = HTTPHandler.connectFeatures
     }
+
+    /// `session_create`: a run may start a chat with `osaurus_create_session`.
+    static let connectFeatures = ["session_create"]
 
     /// The Action Bar a client shows for `agent`: its own, else for the
     /// Orchestrator the configure-oriented defaults its Mac chat shows (a
@@ -5052,7 +5191,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let name: String
         /// Tab / section title: "Local", "Apple Foundation", or the provider name.
         let provider: String
-        /// `foundation | local | remote | claude-code`
+        /// `foundation | local | remote`
         let source: String
         let vision: Bool
         let thinking: Bool
@@ -5061,8 +5200,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// False for local bundles the picker greys out (non-MLX format).
         let available: Bool
         let description: String?
-        /// The picker tab holding this model (`local`, `remote-<uuid>`,
-        /// `claude-code`) and its title (`Local`, the provider name).
+        /// The picker tab holding this model (`local`, `remote-<uuid>`) and its
+        /// title (`Local`, the provider name).
         let tab: String
         let tabTitle: String
         /// Key in the Mac's favourites list (source key + id).
@@ -5087,12 +5226,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// offers and its starting price, for the phone's controls and its
         /// spend confirmation (MOBILE_PROTOCOL.md §12.5).
         let cloud: PickerCloudImageDTO?
+        /// For a cloud chat model: how the Privacy Filter treats a run on it,
+        /// `review` (asks before sending) or `auto` (redacts unasked); absent
+        /// when it doesn't run, so a voice call can ask the user first
+        /// (MOBILE_PROTOCOL.md §6.5).
+        let privacy: String?
 
         enum CodingKeys: String, CodingKey {
             case id, name, provider, source, vision, thinking, params, quantization, available, description, tab
             case kind, edits
             case image
             case cloud
+            case privacy
             case tabTitle = "tab_title"
             case favoriteKey = "favorite_key"
             case contextLength = "context_length"
@@ -5205,16 +5350,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 steps: item.imageDefaultSteps,
                 guidance: item.imageDefaultGuidance.map { Double($0) }
             )
-            limits = ImageHTTPParameterBuilder.limits(canonicalName: item.imageCanonicalName, capabilities: caps)
+            limits = ImageHTTPParameterBuilder.limits(canonicalName: item.imageCanonicalName,
+                capabilities: caps, runtime: item.imageRequestLimits)
             maxGuidance = 20
         }
-    }
-
-    private struct PickerModelsResponse: Encodable {
-        /// In the Mac picker's tab order, and its order within each tab.
-        let models: [PickerModelDTO]
-        /// The Mac's favourite model keys, oldest first.
-        let favorites: [String]
     }
 
     /// Whether the caller owns this Mac: loopback, or a master-scoped key
@@ -5259,9 +5398,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Chat models, ready on-device image models and available cloud
             // image models, which the Mac picker also lists (picking one puts
             // the composer in image mode).
-            let items = await ModelPickerItemCache.shared.buildModelPickerItems()
+            // The items as they stand: kept current by every change already,
+            // where a rebuild per request cost the phone seconds a time.
+            let clock = ContinuousClock()
+            let began = clock.now
+            let allItems = await ModelPickerItemCache.shared.currentItems()
+            let gathered = clock.now
+            let items = allItems
                 .filter { $0.isLikelyChatCapable || $0.isPhoneImageModel || PickerCloudImageDTO($0) != nil }
             let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
+            let privacyConfig = PrivacyFilterStore.snapshot()
             // Grouped as the Mac picker groups them, so the phone shows the
             // same tabs in the same order.
             let tabbed = items.groupedByTab().flatMap { tab in tab.models.map { (tab: tab, item: $0) } }
@@ -5271,11 +5417,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 switch item.source {
                 case .foundation: source = "foundation"
                 case .local: source = "local"
-                case .claudeCode: source = "claude-code"
                 case .remote: source = "remote"
                 case .imageGeneration: source = "image"
                 }
                 let cloud = PickerCloudImageDTO(item)
+                var privacy: String?
+                if case .remote(_, let providerId) = item.source, privacyConfig.isEnabled(forProviderId: providerId) {
+                    privacy = privacyConfig.alwaysApproveByDefault ? "auto" : "review"
+                }
                 return PickerModelDTO(
                     id: item.id,
                     name: item.displayName,
@@ -5300,12 +5449,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // Cloud models can't edit over HTTP yet.
                     edits: cloud == nil && item.isImageEditDelegateCandidate,
                     image: PickerImageDTO(item),
-                    cloud: cloud
+                    cloud: cloud,
+                    privacy: privacy
                 )
             }
-            let json =
-                (try? JSONEncoder.osaurusCanonical().encode(PickerModelsResponse(models: models, favorites: favorites)))
-                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"models":[]}"#
+            // One model at a time: one that can't be encoded (a NaN in its
+            // numbers, say) is left out, and said, rather than the whole list
+            // going out empty, which emptied the phone's picker.
+            let encoder = JSONEncoder.osaurusCanonical()
+            var encoded: [String] = []
+            for model in models {
+                do {
+                    encoded.append(String(decoding: try encoder.encode(model), as: UTF8.self))
+                } catch {
+                    MobileConnectLog.write("models/picker: left out \(model.id): \(error)")
+                }
+            }
+            let favoritesJSON = (try? encoder.encode(favorites)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+            let json = #"{"favorites":"# + favoritesJSON + #","models":["# + encoded.joined(separator: ",") + "]}"
+            let sentCount = encoded.count
+            let ms = { (from: ContinuousClock.Instant, to: ContinuousClock.Instant) in
+                Int(from.duration(to: to) / .milliseconds(1))
+            }
+            MobileConnectLog.write(
+                "models/picker: sent \(sentCount) of \(models.count) models, \(json.utf8.count) bytes; "
+                    + "items \(ms(began, gathered)) ms, rest \(ms(gathered, clock.now)) ms"
+            )
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
@@ -5315,7 +5484,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/models/picker",
                     userAgent: userAgent,
                     requestBody: nil,
-                    responseBody: "{\"models\":[\(models.count) items]}",
+                    responseBody: "{\"models\":[\(sentCount) of \(models.count) items]}",
                     responseStatus: 200,
                     startTime: startTime
                 )
@@ -7414,13 +7583,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let contentMatches: Set<UUID> =
                 search.isEmpty ? [] : await ChatSessionStore.sessionIds(withContentContaining: search)
             let phoneSessions: Set<UUID> = await MainActor.run {
-                Set(
-                    sessions
-                        .filter { session in
-                            session.workspace.map(RemoteSessionContinuation.isFromPairedPhone) ?? false
-                        }
-                        .map(\.id)
-                )
+                Set(sessions.filter { RemoteSessionContinuation.isFromPairedPhone($0) }.map(\.id))
             }
             // One predicate rather than a chain of `.filter`s: the chain grew
             // long enough that the type checker gave up on it.
@@ -9775,8 +9938,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // always speaks. Only this caller gets cards relayed (privacy reviews,
         // tool approvals); a bare loopback script is still owner but has no
         // one polling for cards, so it keeps failing closed instead of
-        // waiting on an answer that never comes.
-        let remoteReviewer = ownerRun && stateRef.value.isSecureChannel
+        // waiting on an answer that never comes. The phone is identified by
+        // the master key it validates inside the channel, never by loopback:
+        // the Secure Channel handshake does not authenticate the client, so a
+        // local process can open its own session and must not gain the
+        // phone's powers (`osaurus_privacy`, run ids, model options).
+        let remoteReviewer = stateRef.value.authedScopeIsMaster && stateRef.value.isSecureChannel
         if !ownerRun,
             let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run")
         {
@@ -10019,6 +10186,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            if let harnessError = await MainActor.run(body: {
+                AgentManager.shared.harnessUnsupportedError(for: agentId)
+            }) {
+                let msg = harnessError.localizedDescription
+                hop {
+                    writerBound.value.writeError(msg, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    errorMessage: msg
+                )
+                return
+            }
+
             // Resolve model: a Mode 2 caller omits `model` (decoded as empty),
             // and older clients send the "default" sentinel. Both resolve to
             // the agent's effective model server-side.
@@ -10192,7 +10379,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let raw = req.osaurus_session_id,
                     let id = UUID(uuidString: raw)
                 else { return nil }
-                return await MainActor.run { RemoteSessionContinuation.isContinuable(id) ? id : nil }
+                if await MainActor.run(body: { RemoteSessionContinuation.isContinuable(id) }) {
+                    await RemoteSessionContinuation.adoptHostedPhoneChat(id)
+                    return id
+                }
+                // A chat the phone starts with this run: the Mac keeps it from
+                // the first message, so it stays one chat however the phone's
+                // copy and the Mac's differ (tool steps, an interrupted reply).
+                guard req.osaurus_create_session == true,
+                    await MainActor.run(body: { RemoteSessionContinuation.isPairedPhoneKey(callerKeyNonce) })
+                else { return nil }
+                let started = await RemoteSessionContinuation.startPhoneChat(
+                    id,
+                    agentId: agentId,
+                    messages: req.messages
+                )
+                return started ? id : nil
             }()
             // Index of the first message this run adds to that chat (its own
             // request messages and everything the loop appends).
@@ -10205,8 +10407,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 messages.insert(contentsOf: history, at: systemCount)
                 persistFrom.value = systemCount + history.count
                 // The chat to bring forward when the user is back at the Mac.
+                // Its composer waits for this run (see `isPhoneReplying`).
                 await MainActor.run {
                     PhoneChatHandoff.shared.notePhoneRun(sessionId: continuedSessionId, keyNonce: callerKeyNonce)
+                    RemoteSessionContinuation.beginPhoneRun(continuedSessionId)
                 }
             }
             // A turn of the owner's phone call: ask for a short, spoken reply,
@@ -10223,8 +10427,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let saved = voiceCall ? VoiceCallReplies.removingNote(from: turns) : turns
                     let appended = saved.filter { $0.role != "system" }
                     let runModel = model
-                    if !appended.isEmpty {
-                        Task { @MainActor in
+                    Task { @MainActor in
+                        if !appended.isEmpty {
                             await RemoteSessionContinuation.append(
                                 appended,
                                 to: continuedSessionId,
@@ -10235,6 +10439,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 keyNonce: callerKeyNonce
                             )
                         }
+                        // After its turns are in, so a send the Mac held goes after them.
+                        RemoteSessionContinuation.endPhoneRun(continuedSessionId)
                     }
                 }
             }
@@ -10291,8 +10497,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // background task: a live read-only tab of the shared agent
             // ("Alice → Research Agent" with step + Stop), a History row from
             // the first turn, retained across relaunch until dismissed.
+            // Not a run continuing one of the Mac's chats (§14.5): that chat
+            // takes its turns, and a hosted row beside it, keyed by this
+            // request alone, split every phone turn into a chat of its own.
             let inboundRun: InboundSharedRun? = await {
-                guard isAuthenticatedRemote, let nonce = authedKeyNonce else { return nil }
+                guard isAuthenticatedRemote, continuedSessionId == nil, let nonce = authedKeyNonce else { return nil }
                 let context: WorkspaceSessionContext
                 if let record = workspaceKeyRecord {
                     let callerName = await WorkspaceCallerNameResolver.shared.displayName(
@@ -10597,7 +10806,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         n: nil,
                         tools: tools.isEmpty ? nil : tools,
                         tool_choice: resolvedToolChoice,
-                        session_id: req.session_id,
+                        // A continued chat is keyed as the Mac's own window
+                        // keys it, so the Privacy Filter remembers its
+                        // redactions across steps and turns (and shares them
+                        // with the Mac). Without a key it started afresh on
+                        // every model call: the phone, which sends none for
+                        // a Mac chat, was asked again each step, and earlier
+                        // turns went out unredacted. With no key at all, the
+                        // run's own: its steps at least share one memory.
+                        session_id: continuedSessionId?.uuidString ?? req.session_id ?? requestId,
                         seed: req.seed,
                         response_format: req.response_format,
                         stream_options: req.stream_options
@@ -11069,7 +11286,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // the parallel batch executor inherit the task-locals.
                 // `currentFolderRoot` scopes the folder tools + undo +
                 // change checkpoints to THIS run's granted folder.
-                let runResult = try await ChatExecutionContext.$hasRemoteReviewer
+                // The owner's phone call may turn the Privacy Filter off, or
+                // its review to auto-accept, for its own turns (§6.5).
+                let callPrivacy = remoteReviewer ? req.osaurus_privacy.flatMap(VoiceCallPrivacy.init(rawValue:)) : nil
+                let runResult = try await ChatExecutionContext.$voiceCallPrivacy
+                    .withValue(callPrivacy) {
+                    try await ChatExecutionContext.$hasRemoteReviewer
                     .withValue(remoteReviewer) {
                     try await ChatExecutionContext.$workspaceBillingContext
                     .withValue(workspaceBilling) {
@@ -11091,6 +11313,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             }
                     }
                     }
+                    }
                 exitState = runResult.exit
                 RemoteAgentRunLog.server(
                     "run loop done agent=\(agentId.uuidString) model=\(model) exit=\(String(describing: exitState))"
@@ -11099,9 +11322,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } catch {
                 inboundOutcome.record(error: error, cancelled: disconnected.value)
                 await releaseHostFolder()
-                RemoteAgentRunLog.serverError(
-                    "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
-                )
+                // Stopped, or a send the user declined in a privacy review,
+                // is how a run is meant to end then: no error to log.
+                if error is CancellationError {
+                    RemoteAgentRunLog.server("run loop cancelled agent=\(agentId.uuidString) model=\(model)")
+                } else {
+                    RemoteAgentRunLog.serverError(
+                        "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
+                    )
+                }
                 // SSE response head was already written as 200 — the
                 // failure surfaces as an in-band SSE error chunk. Log
                 // the actual on-wire status (200) so dashboards don't
@@ -12580,7 +12809,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             // Into the Mac chat the phone named, as local images are; the same
             // owner-and-Secure-Channel rule applies.
-            let remoteSession = phoneImageSession(req.osaurus_session_id, context: context)
+            let remoteSession = phoneImageSession(
+                req.osaurus_session_id,
+                startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+                context: context
+            )
             if remoteSession != nil,
                 requiresOwnerChannel(
                     head: head,
@@ -12614,7 +12847,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         let modelId = selectedTarget.modelID
-        let continuedSession = phoneImageSession(req.osaurus_session_id, context: context)
+        let continuedSession = phoneImageSession(
+            req.osaurus_session_id,
+            startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+            context: context
+        )
         if continuedSession != nil,
             requiresOwnerChannel(
                 head: head, context: context, path: "/images/generations", startTime: startTime, userAgent: userAgent)
@@ -12672,8 +12909,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     /// The Mac chat an owner's phone named with `osaurus_session_id` on an
     /// image request (docs/MOBILE_PROTOCOL.md §12.5); nil for anyone else.
-    private func phoneImageSession(_ raw: String?, context: ChannelHandlerContext) -> UUID? {
+    /// `startsUnder` is the agent of a chat the phone starts with this image
+    /// (§14.5): the exchange then creates it.
+    private func phoneImageSession(
+        _ raw: String?,
+        startsUnder agentRaw: String? = nil,
+        context: ChannelHandlerContext
+    ) -> UUID? {
         guard let raw, let id = UUID(uuidString: raw), callerOwnsThisMac(context) else { return nil }
+        if let agentRaw, let agentId = UUID(uuidString: agentRaw) {
+            let keyNonce = inboundConnectionInfo()?.accessKeyId
+            Task { @MainActor in
+                RemoteSessionContinuation.notePhoneImageChat(id, agentId: agentId, keyNonce: keyNonce)
+            }
+        }
         return id
     }
 
@@ -12993,7 +13242,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
-        guard dto.allow_remote_media_spend == true else {
+        guard request.target.backend == .local || dto.allow_remote_media_spend == true else {
             sendImageError(
                 head: head,
                 context: context,
@@ -13317,7 +13566,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
-        let continuedSession = phoneImageSession(req.osaurus_session_id, context: context)
+        let continuedSession = phoneImageSession(
+            req.osaurus_session_id,
+            startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+            context: context
+        )
         if continuedSession != nil,
             requiresOwnerChannel(
                 head: head, context: context, path: "/images/edits", startTime: startTime, userAgent: userAgent)
@@ -16587,6 +16840,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Minimal MCP-style endpoints (same port)
+
+    /// The harness token this request carries: the one the auth gate already
+    /// bound, or one presented on the bridge header from a loopback caller
+    /// that loopback trust let past the gate.
+    private func resolvedHarnessGrant(head: HTTPRequestHead) -> HarnessGrant? {
+        if let bound = stateRef.value.harnessGrant { return bound }
+        guard
+            let token = HarnessGrantStore.shared.presentedToken(
+                bridgeHeader: head.headers.first(name: HarnessGrantStore.headerName),
+                authorization: head.headers.first(name: "Authorization")
+            )
+        else { return nil }
+        return HarnessGrantStore.shared.resolve(token)
+    }
+
     private func handleMCPListTools(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -16601,12 +16869,40 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
+        let harnessGrant = resolvedHarnessGrant(head: head)
+        // Same contract as `/mcp/call`: a revoked token must not fall back to
+        // the unscoped loopback catalog.
+        if harnessGrant == nil, !(head.headers.first(name: HarnessGrantStore.headerName) ?? "").isEmpty {
+            let message = "This agent token is invalid or has been revoked."
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .unauthorized,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + cors,
+                body: #"{"error":"harness_token_invalid","message":"\#(message)"}"#
+            )
+            logRequest(
+                method: "GET",
+                path: "/mcp/tools",
+                userAgent: userAgent,
+                requestBody: nil,
+                responseStatus: 401,
+                startTime: startTime,
+                errorMessage: message
+            )
+            return
+        }
         runRequestTask(priority: .userInitiated) {
             // External callers never see app-only tool classes; `/mcp/call`
-            // refuses the same deny list too.
+            // refuses the same deny list too. A harness token narrows the
+            // list further to what its agent may call.
             let entries = await MainActor.run {
-                ToolRegistry.shared.listTools().filter {
-                    $0.enabled && !ToolRegistry.externallyDeniedToolNames.contains($0.name)
+                ToolRegistry.shared.listTools().filter { entry in
+                    guard entry.enabled, !ToolRegistry.externallyDeniedToolNames.contains(entry.name) else {
+                        return false
+                    }
+                    guard let harnessGrant else { return true }
+                    return HarnessGrantStore.agentPolicyAllows(harnessGrant, toolName: entry.name)
                 }
             }
             let tools = entries.map { e in
@@ -16773,6 +17069,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let toolName = req.name
+        let harnessTokenPresented = !(head.headers.first(name: HarnessGrantStore.headerName) ?? "").isEmpty
+        let harnessGrant = resolvedHarnessGrant(head: head)
         // Capture for logging
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -16868,44 +17166,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 // Restore the chat identity the process boundary dropped.
                 //
-                // A bridged Claude Code turn reaches this handler as an ordinary
+                // A harness's tool call reaches this handler as an ordinary
                 // loopback request, so the `@TaskLocal` agent id its in-process
-                // peers rely on is gone. A live grant — minted per turn, handed
-                // only to the child Osaurus spawned, revoked when the turn ends
-                // — is proof of which chat this call belongs to, so the agent it
+                // peers rely on is gone. A live token — minted per harness
+                // process, handed only to that child, revoked when it exits —
+                // is proof of which chat this call belongs to, so the agent it
                 // names is bound for the duration of this execution.
                 //
                 // `isExternalSurface` deliberately stays true: the caller is
                 // still out of process, so every other external restriction
                 // (the deny list above, unattended-prompt refusal) continues to
                 // apply. This grants attribution, not trust.
-                let bridgeGrantToken = head.headers.first(
-                    name: ClaudeCodeBridgeGrantStore.headerName
-                )
-                let bridgeGrant: ClaudeCodeBridgeGrant? = await {
-                    guard let bridgeGrantToken else { return nil }
-                    return await ClaudeCodeBridgeGrantStore.shared.resolve(bridgeGrantToken)
-                }()
+                let bridgeGrant = harnessGrant
 
                 let result: String
-                if bridgeGrantToken != nil, bridgeGrant == nil {
-                    // A caller that opts into bridge attribution must present a
-                    // live token. Falling back to ordinary loopback semantics
-                    // would let expired/revoked grants silently shed scope.
+                if harnessTokenPresented, bridgeGrant == nil {
+                    // A caller that opts into attribution must present a live
+                    // token. Falling back to ordinary loopback semantics would
+                    // let a revoked token silently shed scope.
                     result = ToolEnvelope.failure(
                         kind: .rejected,
-                        message: "This Claude Code bridge grant is invalid or expired.",
+                        message: "This agent token is invalid or has been revoked.",
                         tool: toolName,
                         retryable: false
                     )
-                } else if let bridgeGrant, !bridgeGrant.allowsTool(toolName) {
+                } else if let bridgeGrant, HarnessGrantStore.builtInLoopToolNames.contains(toolName) {
+                    let refusal = await MainActor.run {
+                        AgentManager.shared.harnessUnsupportedError(for: bridgeGrant.agentId)
+                    }
+                    result = ToolEnvelope.failure(
+                        kind: .unavailable,
+                        message: refusal?.localizedDescription
+                            ?? "Tool '\(toolName)' runs Osaurus's own agent loop and can't be called with an agent token.",
+                        tool: toolName,
+                        retryable: false
+                    )
+                } else if let bridgeGrant,
+                    !(await MainActor.run { HarnessGrantStore.agentPolicyAllows(bridgeGrant, toolName: toolName) })
+                {
                     // The stdio proxy also filters this surface, but it is not
-                    // the trust boundary: a child with Bash can make a direct
-                    // loopback request. Enforce the grant's immutable scope at
-                    // the receiving server before binding agent identity.
+                    // the trust boundary: a harness with a shell can make a
+                    // direct loopback request. Enforce the token's scope at the
+                    // receiving server before binding agent identity.
                     result = ToolEnvelope.failure(
                         kind: .rejected,
-                        message: "Tool '\(toolName)' is outside this Claude Code turn's grant.",
+                        message: "Tool '\(toolName)' is outside this agent token's scope.",
                         tool: toolName,
                         retryable: false
                     )
@@ -16913,10 +17218,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
                         try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
                             try await ChatExecutionContext.$currentAgentId.withValue(bridgeGrant?.agentId) {
-                                try await ToolRegistry.shared.execute(
-                                    name: toolName,
-                                    argumentsJSON: argsJSON
-                                )
+                                try await ChatExecutionContext.$harnessTokenAgentId.withValue(bridgeGrant?.agentId) {
+                                    try await ToolRegistry.shared.execute(
+                                        name: toolName,
+                                        argumentsJSON: argsJSON
+                                    )
+                                }
                             }
                         }
                     }

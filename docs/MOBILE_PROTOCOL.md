@@ -450,7 +450,10 @@ Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch`, and every
 owner-only request that changes something (any method but `GET`: creating,
 editing or deleting an agent, its tools, answering an approval or a privacy
 review, editing or deleting a chat, stopping a run), that arrive in plaintext
-are refused with `426`. Loopback callers are exempt; owner reads stay open:
+are refused with `426`. So is every owner route, reads included, when a
+remote caller presents an owner (master-scoped) key outside the channel
+(`HTTPHandler.ownerChannelRoutes`; see SECURE_CHANNEL.md). Loopback callers
+are exempt:
 
 ```json
 {"error":{"code":"secure_channel_required","message":"…","type":"upgrade_required"}}
@@ -590,6 +593,15 @@ never saved: a continued chat (§14.5) stores the turn without it.
 Owner callers only (loopback or a master-scoped key); for anyone else the
 field is ignored. A Mac too old for it ignores the field, and the reply is
 as long as in the chat.
+
+A review read out mid-call is slow to answer, so when the call's model has
+`privacy` set (§12.1), the phone asks as the call starts whether to keep
+reviewing, auto-accept or turn the filter off, for this call only. Its turns
+then carry `"osaurus_privacy": "auto"` (every detection redacted, no review)
+or `"off"` (sent as written), or neither. The field is honoured only from
+the owner on the Secure Channel (§19), with or without `osaurus_voice_call`;
+otherwise it is ignored and the filter runs as configured. Nothing is saved: the next
+call asks again.
 
 ---
 
@@ -974,16 +986,20 @@ picker's tab order and its order within each tab, plus the Mac's favourites:
  "favorites":["local\u001fmlx-community/Qwen3-8B-4bit"]}
 ```
 
-`source` is `foundation | local | remote | claude-code | image`. `kind` is
+`source` is `foundation | local | remote | image`. `kind` is
 `chat` or `image`: an image model never takes a chat run, it generates through
 `/images/generations` (and `/images/edits` when `edits` is true). `tab` / `tab_title`
-name the picker tab holding the model (`local`, `claude-code`,
+name the picker tab holding the model (`local`,
 `remote-<provider uuid>`). `available: false` marks bundles the Mac can't run.
 The picker's sort and filters read `context_length` (tokens), `input_price` /
 `output_price` (Router micro-USD per million tokens) and `external_source`
 (where a local bundle was discovered); each is omitted when unknown, as are
 `params`, `quantization` and `description`. `favorites` lists favourite keys
 oldest first.
+`privacy` is set on a cloud model the Privacy Filter runs for: `review` when
+fresh detections are reviewed before sending (§19), `auto` when the Mac
+redacts them unasked (Always Approve). It is absent when the filter does
+not run for the model, local ones included. A voice call reads it (§6.5).
 
 ### 12.2 `PUT /agents/{id}/model`
 
@@ -1227,8 +1243,8 @@ the title or any message body, the same scan the Mac search uses), `limit`
 the chat came from (`chat`, `http`, `channel`, `schedule`, …).
 
 `origin` is what a client shows as the row icon: `mac` for the user's own
-chats, `ios` for chats this phone started (hosted runs stamp the pairing
-key as their caller), otherwise the source. `capabilities` are the Mac's
+chats, `ios` for chats this phone started (§14.5; older ones are hosted
+rows that stamp the pairing key as their caller), otherwise the source. `capabilities` are the Mac's
 badges (`vision`, `voice`, `code`, `search`).
 
 ### 14.2 `GET /sessions/{id}`
@@ -1318,6 +1334,41 @@ live; otherwise History refreshes. The run's model becomes the chat's
 Ignored (the run proceeds statelessly) when the id is unknown or names a
 workspace chat served for a teammate. `session_id` keeps its existing
 meaning (host-side cache scoping) and is unrelated.
+
+A run that continues a chat is not also hosted as a shared-agent run
+(§15): the chat is the only place its turns go.
+
+**Starting a chat.** The phone names a new chat itself: on its first run it
+sends a fresh `osaurus_session_id` with `"osaurus_create_session": true`,
+and the Mac creates the chat under that id (empty, titled from the message),
+then treats the run as a continuation. From then on the Mac owns the
+history and the phone sends only each new message, so the chat stays one
+chat however the phone's copy and the Mac's differ (tool steps, a reply the
+user interrupted). The flag may be sent on every run of such a chat: an id
+the Mac already has is simply continued, so a retried first run creates
+nothing twice. An existing chat is never replaced.
+
+- Honoured only for the paired phone's own key, inside the Secure Channel
+  (the run route refuses remote plaintext, §6.2). Any other caller's flag is
+  ignored and the run proceeds as above.
+- The chat is an ordinary Mac chat, not a workspace row, so the Mac can open
+  and continue it too. It is marked as the phone's, and §14.1 reports it with
+  `origin: "ios"`.
+- A Mac that supports this lists `"session_create"` in `features` on
+  `GET /agents`. A phone checks for it (from a roster read inside the
+  channel) before starting chats this way; an older Mac would treat the
+  unknown id as a stateless run and drop the history.
+- An image request (§12.5) starts a chat the same way, with
+  `"osaurus_create_session": true` and `"osaurus_agent_id": "<agent uuid>"`
+  (the image routes name no agent). The chat is created with the exchange,
+  once the image is in; a job that fails creates nothing.
+- While a phone run is going in a chat, the Mac marks the chat as running
+  and its own composer holds a send for it (shown as queued) until the
+  run's turns are in, so the two never interleave. A phone run that starts
+  while the Mac is replying in the chat appends after that reply.
+- An older phone chat (a hosted row the Mac shows read-only) becomes an
+  ordinary chat the first time the phone continues it, unless a Mac tab
+  or window holds it then; the next run tries again.
 
 ### 14.6 `GET /projects`
 
@@ -1618,6 +1669,13 @@ Owner-only, and the payload is the detected PII itself, so it travels only
 inside the Secure Channel to the user's own device. It is never written to
 the request log.
 
+Decisions are remembered per chat: a run continuing a Mac chat (§14.5) is
+filtered under that chat's id, as the Mac's own window filters it, so what
+was answered once is not asked again on the run's later steps or later
+turns, earlier turns go out with the same placeholders, and a review's
+`session_id` is that chat's id. A run with neither that nor a `session_id`
+is remembered for its own steps only.
+
 ### 19.1 `GET /privacy/reviews`
 
 ```json
@@ -1653,12 +1711,29 @@ via the same FluidAudio models the Mac uses for its own dictation and read-
 aloud.
 
 So there is no call API. Each spoken turn is `POST /agents/{id}/run` (§6.3)
-with the transcript as the user message, in the same session as the chat it
-was started from, and the phone feeds the `text` stream events to the
+with the transcript as the user message, continuing the Mac chat the call
+was started from (§14.5), so a call adds turns to that one chat however
+often the user interrupts. The phone feeds the `text` stream events to the
 synthesiser sentence by sentence. Thinking and tool blocks are not spoken.
 
-Anything the Mac asks mid-run — an approval card (§14), a Privacy Filter
-review (§19) — arrives the way it always does, and the phone pauses the
-call's listening while it is shown, since a card cannot be answered by voice
-yet. A call ends nothing on the Mac: hanging up cancels the in-flight run
+Anything the Mac asks mid-run — a tool approval (§16.1), a Privacy Filter
+review (§19), a config plan (§16.3), a computer-use step (§16.4), a secret
+(§16.5) — arrives the way it always does, and is answered on the call, so a
+call never needs the chat screen. The phone reads the card out ("I need your
+approval for this: … Say yes to approve, or no to decline.") over a sheet
+with the same choices, and takes a short spoken yes or no; the answer goes
+back through the card's own route, as a tap in the chat would.
+
+- A risky step takes "confirm", not "yes": a tool that runs on the Mac
+  itself or on a remote server, or changes or sends something; a high-risk
+  config plan; a computer-use step that edits or is consequential.
+- A Privacy Filter review is read as kinds only ("a name and a phone
+  number"), never the details. Yes redacts them all, as the Mac's sheet
+  defaults to; no cancels the send. Sending as written is a button only.
+- A secret is typed on the sheet, never said; by voice it can only be
+  declined.
+- Choices the voice doesn't take (Always Allow, Allow for This Task, Approve
+  the Rest) are buttons on the sheet.
+
+A call ends nothing on the Mac: hanging up cancels the in-flight run
 exactly as tapping stop in the chat does.

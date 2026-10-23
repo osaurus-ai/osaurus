@@ -16,6 +16,17 @@ Each agent has an optional **Brief description (optional)** field under Settings
 
 When the description is blank and the agent has a system prompt, Osaurus generates a summary in the background (using the configured core model, or the model already loaded for chat) and shows it as the field's placeholder. Generation never blocks a save and never loads a model on its own; it runs after a chat turn completes or when the Orchestrator builds its delegation roster. Typing your own description overrides the generated one; editing the system prompt regenerates it. Description text is routing metadata and never grants tools or permissions.
 
+## Agent runtimes
+
+An agent runs on Osaurus's own loop by default. To run it on an external harness instead, register the harness under Settings… (⌘,) → Agents → **Runtimes** (**Add Runtime**: protocol, name, executable, arguments, environment), then pick it in Settings → Agents → the agent → Configure → **Runtime** → **Runs on**. Claude Code is registered on first launch; Pi and Pi-based harnesses use the **Pi (RPC)** protocol with `--mode rpc` in their arguments.
+
+- Each chat gets its own long-running harness process, started in the chat's folder (or a private per-chat scratch folder when none is set). Changing the folder restarts the process there after the current reply; Claude Code resumes its conversation, and a Pi runtime resumes only when its arguments include `--session-id {chat_id}`.
+- The harness picks its own model and tools. In chat the composer shows the runtime's name in place of the model picker; Osaurus abilities, memory, and the sandbox don't apply to that agent.
+- **Test** starts the runtime once (Pi answers `get_state`; Claude Code reports its sign-in). **Sign In** on a Claude Code runtime opens Claude Code's own browser sign-in, with a Terminal fallback.
+- For Claude Code agents, **Claude Code Options** (Claude model, Execution mode, Allow file changes, Allow shell commands, Allow Osaurus read tools, Allow Osaurus configuration changes) appear under the agent's Configure tab. File changes are limited to the chat folder; shell commands and Pi tools can't be confined. Allow Osaurus configuration changes is available on the Default agent only.
+- Agents on a harness can't be the target of `spawn_agent`, `/agents/{id}/run`, Computer Use, or AppleScript; those return an error naming the harness instead of running with different settings.
+- Harness authors: see `docs/HARNESS_RUNTIMES.md` for the environment variables (`OSAURUS_CHAT_ID`, `OSAURUS_AGENT_ID`, `OSAURUS_AGENT_TOKEN`, …) and what the agent token may call.
+
 ## What the assistant can change in chat
 
 - The Orchestrator (itself): display name, model, temperature, max output tokens, persona (system prompt).
@@ -33,10 +44,11 @@ When the description is blank and the agent has a system prompt, Osaurus generat
 - General: start at login, hide dock icon, appearance, global hotkey, Core Model, **Use models already on this Mac**, Show Notifications; **Advanced** holds the Models Directory, Model Sources, Max Concurrent Background Tasks, and **Data & Storage** (encryption, backup, file history). **Factory Reset…** sits at the very bottom.
 - Voice: **Setup** (speech model, microphone, detection sensitivity), **Chat Voice** (voice input in chat), **Transcription** (system-wide dictation hotkey, stop behavior, cleanup), **Text-to-Speech** (voice, preview; engine under Advanced), **Wake Word**, and **Models**.
 - Themes: theme gallery, custom theme editor, import/export. **Themes → Text & Fonts → Small body** sets the font size for compact controls and model lists (14 pt by default). Search for **Small body** to open the current theme in the editor and highlight its control. Built-in themes use **Save as Copy**; apply the saved copy from the gallery to use it. The chat model picker and Credits menu use Secondary Background and the default Border Color, Border Width, and Border Opacity controls under Borders & Effects; these controls are also available through Settings search.
-- Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
+- Computer Use / Browser Use / Sandbox: autonomy presets, app allowlists, resources.
+- Agents → **Runtimes** and each agent's **Runtime** (Runs on) and **Claude Code Options**. The assistant can't register harnesses or move an agent onto one.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies and **Auto-Allow All Tool Calls** live under Tools & MCP → All Tools.
 - Tools & MCP: **Services** (connected MCP services, **Add Service**, and the **Directory** of services you can add, filterable by category chips such as Legal, Finance & Accounting, and Healthcare & Life Sciences), **All Tools** (every tool with its permission policy), **Plugins** (native plugin registry).
-- Images: **Defaults** (default generation and edit models, image/video job permissions, cloud video defaults; the **Image model load policy** is under Advanced) and **Image Models**.
+- Images: **Defaults** (default generation and edit models, image/video job permissions, local and cloud video defaults; the **Image model load policy** is under Advanced) and **Image Models**.
 - Mobile: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
 - Privacy: **Filter** (the redaction filter, AI detection, per-provider overrides, background-request review, and Send Crash Reports), **Activity Log** (**Keep Activity History** retention, **Store Prompts and Responses**, **Review Activity in Insights**), **Rules**, and **Models** (the detection model).
   - Privacy → **Rules** has five sections: **Detection Patterns** (built-in phone — international and North American — email, URL and Luhn-valid card numbers), **My Regions** (the countries whose national ID / tax / health / bank presets are on by default; the first chip is detected from the Mac locale, **Add region…** opens a searchable picker over every country, removing a region never disables anything), **Preset Rules** (ready-made patterns grouped **My regions → Global → Other regions**, each group with **Enable all** / **Disable all**, a search field, and a **Suggested for …** banner when a home-region preset is off; US SSN is the `us.ssn` preset here, not a built-in), **Custom Rules** (**Add Rule**), and **Test Your Rules** (dry-run tester).
@@ -68,6 +80,8 @@ separate from updating the Osaurus application.
 | Audit log / activity history / "what was sent to the cloud" | Insights (dashboard) and Keep Activity History / Store Prompts and Responses (policy) | Settings… (⌘,) → Insights; Settings… (⌘,) → Privacy → Activity Log |
 | Tool permissions | Could be Tools catalog, Chat folder tools, or macOS Permissions — ask `find` |
 | Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
+| Which skills an agent can use / skill allow-list | Limit to selected skills (switch plus **Choose Skills…** checklist) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].skills`; installing skill content is **Skills** in the sidebar) |
+| Claude Code / Pi / external harness / "run this agent on Claude Code" | Runs on (per agent) and the Runtimes list | Settings… (⌘,) → Agents → *agent* → Configure → Runtime; register or test harnesses in Settings… (⌘,) → Agents → Runtimes |
 | Calendar / Contacts / Automation grant for the whole app | macOS permission | Settings… (⌘,) → Permissions (or the **Permission needed** badge on the app's group under Agents → Abilities → Tools) |
 
 ## Apple Apps (built-in)
@@ -158,7 +172,7 @@ macOS manages swap. Osaurus no longer shows swap warnings or requires a
 
 ## Management sidebar
 
-General, Conversation, Voice, Themes, Credits, Workspaces, Mobile, Identity, Permissions, Privacy, Local Models, Providers, Images, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools & MCP, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
+General, Conversation, Voice, Themes, Credits, Workspaces, Mobile, Identity, Permissions, Privacy, Local Models, Providers, Images, Orchestrator, Agents, Runtimes, Channels, Web Search, Knowledge, Memory, Tools & MCP, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
 
 Older names still resolve: the former **Chat** tab is now **Conversation**, **Media** is **Images**, **Tools** is **Tools & MCP**, and the separate **Storage** tab (encryption, backup, file history) now lives under General → Advanced → Data & Storage. The Command Line Tool installer moved to Server → Overview.
 
@@ -179,7 +193,7 @@ it does not increase the cache limit. Save directory changes before clearing the
 SSD cache; Clear is disabled while the displayed directory differs from the saved
 directory. Clearing remains available when prefix reuse is disabled.
 
-Disk Cache Size left blank uses **Automatic**: 30% of free space plus the cache's indexed payload bytes, including companions. Cache growth therefore does not shrink its own quota. An explicit percentage remains a percentage of total volume size, bounded by 25% of free space plus this cache; Settings shows the requested and effective amounts when limited. Existing percentages and legacy GB choices are preserved. Editing the percentage field replaces a legacy GB choice; clearing an explicit percentage selects Automatic. For a saved legacy GB choice, click **Use Automatic Cache Size**, then Save Changes.
+Disk Cache Size left blank uses **Automatic**: 30% of free space plus the cache's indexed payload bytes, including companions. Cache growth therefore does not shrink its own quota. An explicit percentage greater than 0 and up to 100 uses the total volume size without a 25% or 30% ceiling. It sets a maximum, not a reservation. Settings shows a red advisory when the limit exceeds currently available space or free space is low; the selected limit is not reduced. Existing percentages and legacy GB choices are preserved. Editing the percentage field replaces a legacy GB choice; clearing an explicit percentage selects Automatic. For a saved legacy GB choice, click **Use Automatic Cache Size**, then Save Changes.
 
 Saving only the disk size updates resident models without unloading their weights. A decrease is enforced at the next cache write. Low free space produces an advisory and does not silently disable caching. Prefix Cache remains the master reuse switch; with paged RAM off, SSD reuse can still operate independently.
 
@@ -204,3 +218,22 @@ In **Images → Models**, choose **Upscale** beside an installed SeedVR2 3B bund
 Select a source image, choose **Scale** (2× or 4×), and optionally enter a seed.
 SeedVR2 preserves the source aspect ratio and runs its fixed one-step restoration.
 Cancel stops cooperatively; the image lane remains held until the producer drains.
+
+### Image sampling controls
+
+In **Images → Image Models**, open **Generate** or **Edit** for an installed local bundle. **Sampler** and **Scheduler** list the choices supported by that bundle; **Bundle default** preserves its native behavior. **Timestep shift** appears only when the bundle supports an override. Leaving it empty preserves the default. Turbo bundles with a fixed sampling schedule reject alternate schedules or shifts. The same optional `sampler`, `scheduler`, and `shift` fields are accepted by the local image API and image tool; unsupported provider requests fail instead of silently dropping them.
+
+**Live previews** in the local Generate/Edit panel shows an optional small image every five denoising steps. API/tool callers can set `preview_interval` and `preview_max_pixel`. Previews are off by default, may be dropped when busy or under memory pressure, and never replace the saved final image.
+
+### Keeping model weights resident
+
+Server → Memory Safety → **Keep Model in Memory** requests GPU residency while a local model is loaded. It is on by default when the model fits the GPU working-set ceiling and the OS reserve. Other apps may slow down because wired pages cannot be reclaimed. Turning it off permits the OS to evict model pages, which can slow replies under memory pressure. Saving changes reloads the model before its next request. This setting does not change **Keep Model Loaded** or the idle unload timer. A model that does not fit still loads in Safe Auto with an advisory; Strict retains its admission checks.
+
+
+In **Images → Image Models**, open **Generate** or **Edit** for a FLUX 3 Image Klein bundle.
+**Width** and **Height** in the Generate/Edit panel and chat size picker accept custom dimensions and snap on Return to multiples of 16 within the bundle's declared 64–4096 range. **Steps** in the panel or chat accepts a typed count; FLUX 3 has no fixed maximum. Choose **Default** in the chat size picker to restore unsized edits (the first prepared reference determines the canvas).
+The default is 1024×1024 and 16 steps. For edits, **Use source aspect ratio** leaves both dimensions
+unset so the runtime uses the first prepared reference (and crops a padded single reference back to its fitted box).
+Up to ten ordered references are supported. Negative prompt and Guidance controls are hidden because the
+distilled model has no unconditional pass; supplied API/tool negative prompts are accepted and ignored.
+Memory estimates are advisory for this family. The license is **FLUX Kommunity (non-commercial)**.

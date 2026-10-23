@@ -232,14 +232,25 @@ struct ModelRuntimeFindDirectoryTests {
             kvRetentionCap: nil
         )
 
-        #expect(safeAutoCap == strictCap * 4)
-        #expect(uncapped == strictCap * 16)
+        // Twelve KV owners scale with retained tokens. The other 36 layers
+        // retain fixed FP32 recurrence and BF16 convolution tails, including
+        // when the bundle omits dimensions supplied by Qwen35Configuration.
+        let recurrentPerLayer: Int64 = 64 * 192 * 128 * 4
+        let convolutionPerLayer: Int64 = 3 * (2 * 16 * 192 + 64 * 128) * 2
+        let fixedState = 36 * (recurrentPerLayer + convolutionPerLayer)
+        let fixedPriced = fixedState + fixedState / 4
+        let kvPerPosition: Int64 = 12 * 2 * 8 * 128 * 2
+        let strictKV = kvPerPosition * 16_384
+        #expect(strictCap == fixedPriced + strictKV + strictKV / 4)
+        #expect(safeAutoCap - fixedPriced == (strictCap - fixedPriced) * 4)
+        #expect(uncapped - fixedPriced == (strictCap - fixedPriced) * 16)
     }
 
     /// The delegated-contract price is genuinely below cap pricing on real
     /// architecture facts: the same estimator, once at the model-wide 64K
     /// retention cap and once at the enforced delegated ceiling (tool-enabled
-    /// default contract → 16,684 positions), must charge proportionally less
+    /// default contract → 16,684 positions), must charge less for KV while
+    /// preserving the fixed recurrent-state allocation
     /// — this is the byte-level statement of the 16 GiB refusal→admission
     /// flip for a tool-enabled delegated agent.
     @Test("delegated contract ceiling prices below the retention cap")
@@ -282,9 +293,18 @@ struct ModelRuntimeFindDirectoryTests {
             kvRetentionCap: contract.contextPositions
         )
         #expect(contractPriced < capPriced)
-        // Position pricing is linear, so the ratio tracks the position ratio.
-        #expect(contractPriced <= capPriced * 13_713 / 65_536 + 1024)
-        #expect(contractPriced > 0)
+        #expect(contract.contextPositions == 13_713)
+        // Only attention KV scales with positions; GDN recurrence and the
+        // convolution tail are fixed, so scaling the entire price undercounts.
+        let recurrentPerLayer: Int64 = 64 * 192 * 128 * 4
+        let convolutionPerLayer: Int64 = 3 * (2 * 16 * 192 + 64 * 128) * 2
+        let fixedState = 36 * (recurrentPerLayer + convolutionPerLayer)
+        let fixedPriced = fixedState + fixedState / 4
+        let kvPerPosition: Int64 = 12 * 2 * 8 * 128 * 2
+        let contractKV = kvPerPosition * 13_713
+        let capKV = kvPerPosition * 65_536
+        #expect(contractPriced == fixedPriced + contractKV + contractKV / 4)
+        #expect(capPriced == fixedPriced + capKV + capKV / 4)
     }
 
     /// The REPORTED 16 GiB shape on Gemma-class topology: an E2B-scale
@@ -992,8 +1012,12 @@ struct ModelRuntimeFindDirectoryTests {
             kvRetentionCap: 65_536
         )
         let kv = Int64(16) * 65_536 * (2 * 4 * 256) * 2
-        let gdnState = Int64(48) * (32 * 128 * 128) * 2
-        let expected = Int64(Double(kv + gdnState) * 1.25)
+        // Recurrence is FP32 regardless of KV dtype. The default 16 key
+        // heads also contribute to the separate BF16 convolution tail.
+        let gdnState = Int64(48) * (32 * 128 * 128) * 4
+        let convState = Int64(48) * 3 * (2 * 16 * 128 + 32 * 128) * 2
+        let state = kv + gdnState + convState
+        let expected = state + state / 4
         #expect(headroom == expected)
         // The old all-layers-are-attention count priced this at ~20 GiB.
         #expect(headroom < 8 * 1024 * 1024 * 1024)

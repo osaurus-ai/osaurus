@@ -215,7 +215,8 @@ enum SubagentResidency {
         config: SubagentConfiguration,
         idleWaitSeconds: Int,
         deniedMessage: String,
-        invokingParentModelName: String?
+        invokingParentModelName: String?,
+        memoryEstimateIsAdvisory: Bool = false
     ) async throws -> ResidencyPlan {
         // Compare on the canonical installed-bundle identity, not the raw
         // request string. `ModelRuntime` records resident chat models under
@@ -266,7 +267,7 @@ enum SubagentResidency {
             residentChatModels: invokingParentModels,
             protectedResidentModels: protectedResidentModels,
             handoffEnabled: config.localOrchestratorTextHandoffActive,
-            ramSafetyEnabled: config.ramSafetyPreflightEnabled,
+            ramSafetyEnabled: config.ramSafetyPreflightEnabled && !memoryEstimateIsAdvisory,
             requiredBytes: requiredBytes,
             idleWaitSeconds: idleWaitSeconds,
             deniedMessage: deniedMessage,
