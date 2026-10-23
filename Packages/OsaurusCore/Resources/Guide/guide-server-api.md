@@ -17,12 +17,13 @@ Osaurus runs a local HTTP server so other apps, scripts, and SDKs can use your m
 
 ## Requiring a key from this Mac
 
-By default, callers on this Mac need no key. Turning on Settings → Server → Settings → Authentication → **Require Access Key for Local Admin Routes** changes that for the routes that read chats, drive agents, run tools, or rewrite configuration: `/sessions`, `/agents` (and everything under them), `/mcp/*` and `/admin/config/*`, with or without the `/v1` prefix.
+By default, callers on this Mac need no key. Turning on Settings → Server → Settings → Authentication → **Require Access Key for Local Admin Routes** changes that for the routes that read chats, drive agents, run tools, or rewrite configuration: `/sessions`, `/agents` (and everything under them), `/mcp/*`, `/admin/config/*` and `/admin/import/*`, with or without the `/v1` prefix.
 
 - Without a valid access key (`Authorization: Bearer osk-v1…`) these return `401`. Inference and model routes (`/v1/chat/completions`, `/v1/models`, …) are unaffected.
 - A request carrying a browser `Origin` header is refused with `403` (`browser_origin_refused`), key or not, unless that origin is listed by name in **Allowed Origins (CORS)**; `*` does not count. A listed origin still needs a key.
 - An all-agents key gets the same local behavior as before. An agent-scoped key is confined exactly as it is for a remote caller.
-- Siri / Shortcuts and local harness tokens keep working. `osaurus mcp` and `osaurus config` take `--access-key KEY` or `OSAURUS_API_KEY`.
+- Siri / Shortcuts and local harness tokens keep working. `osaurus mcp`, `osaurus config` and `osaurus import` take `--access-key KEY` or `OSAURUS_API_KEY`. Without one, `osaurus import` still queues the bundle, and it applies the next time Osaurus opens.
+- An Osaurus bundle can switch this (and add to Allowed Origins) during `osaurus import`, through its `settings` object. Turning it off or adding an origin needs `--yes`.
 
 ## Using Osaurus from Codex CLI
 

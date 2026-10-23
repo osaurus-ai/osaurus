@@ -26,11 +26,12 @@ Contents:
 
 ## 1. What a bundle is
 
-A bundle is a folder with an `osaurus-bundle.json` manifest at its root. It can contain three kinds of items:
+A bundle is a folder with an `osaurus-bundle.json` manifest at its root. It can contain four kinds of items:
 
 - **Agents**: custom agents with their prompt, model, capability switches, skill allow-list, exact tool list, MCP servers, sandbox and network settings.
 - **Skills**: [Agent Skills](https://agentskills.io/) folders (`SKILL.md` plus optional `references/` and `assets/`).
 - **MCP servers**: HTTP or stdio MCP servers your agents use, with their credentials given as Keychain references.
+- **Settings**: a short list of Osaurus server settings, such as requiring an access key from apps on this Mac ([Settings](#settings)).
 
 A bundle **can't** contain these. Each has its own path, covered in [section 8](#8-writing-the-installer-script):
 
@@ -39,7 +40,7 @@ A bundle **can't** contain these. Each has its own path, covered in [section 8](
 | Plugins | `osaurus tools install <plugin-id> --consent` in your script |
 | Models | `strictness: preferred` so the agent falls back to the user's model, or `osaurus pull <model-id>` in your script |
 | Raw secrets | Keychain items your script creates; the bundle holds only `keychain:SERVICE/ACCOUNT` references |
-| Other Osaurus settings | Not provisioned by bundles. Users change them in Settings. |
+| Settings not in the [list](#settings) | Not provisioned by bundles. Users change them in Settings. |
 
 **How it works.** `osaurus import` checks the bundle and copies the parts it needs into `~/.osaurus/import/pending/`. It never launches Osaurus. If Osaurus is running, the command asks it to apply the import right away. Otherwise Osaurus applies the queue the next time it opens. Either way, Osaurus records what your bundle installed, so later updates and removals touch only your items.
 
@@ -134,14 +135,41 @@ Only the manifest and the files it lists are copied into the queue. Your scripts
 | `skills` | array | no | `{ "name", "path" }`. `path` is a folder relative to the bundle root. |
 | `mcp_servers` | array | no | MCP server entries, written inline ([section 6](#6-mcp-server-reference)). |
 | `agents` | array | no | `{ "path" }`. `path` is a JSON file relative to the bundle root ([section 4](#4-agent-file-reference)). |
+| `settings` | object | no | Osaurus settings to change, by key ([Settings](#settings)). |
 
-At least one of `skills`, `mcp_servers` or `agents` must list something. Unknown keys are rejected with a did-you-mean hint, so a typo fails `validate` instead of being silently ignored.
+At least one of `skills`, `mcp_servers`, `agents` or `settings` must list something. Unknown keys are rejected with a did-you-mean hint, so a typo fails `validate` instead of being silently ignored.
 
 **Paths** must be relative and stay inside the bundle folder. Absolute paths, `~` paths, and paths that leave the folder through `..` or a symbolic link are refused. Each JSON file (the manifest and each agent file) is capped at 512 KB.
 
 **The `id` is your ownership key.** Osaurus remembers which bundle id installed each item. A bundle can update and remove only the items installed under its own id, and never touches the user's own items or another bundle's. Pick an id once and never change it. A new id is treated as a different bundle, and its items conflict with the old ones by name.
 
 **Versioning.** Bump `version` for every release you ship. `update` skips any item whose installed version is newer than the one you offer, so a stale installer can't downgrade a user. Within the same version, Osaurus compares content: an unchanged item reports `unchanged` and is not rewritten.
+
+### Settings
+
+The `settings` object changes Osaurus settings while the bundle installs. Only these keys are accepted; anything else fails `validate` with a did-you-mean hint.
+
+| Key | Value | The control in Osaurus | What installing does |
+| --- | --- | --- | --- |
+| `require_local_access_key` | `true` or `false` | Server → Settings → Authentication → **Require Access Key for Local Admin Routes** | Turns it on or off. On, apps and scripts on this Mac need an access key for `/sessions`, `/agents`, `/mcp/*`, `/admin/config/*` and `/admin/import/*`, and browser pages are refused there unless their origin is in Allowed Origins. |
+| `allowed_origins` | list of origins, like `["https://app.acme.example"]` | Server → Settings → Connection → **Allowed Origins (CORS)** | Adds your origins to the user's list. It never removes one. Osaurus restarts its server to use the new list. |
+
+```json
+"settings": {
+  "require_local_access_key": true,
+  "allowed_origins": ["https://app.acme.example"]
+}
+```
+
+- **Origins** are written the way browsers send them: lowercase `https://host` or `http://host:port`, with no path, no trailing slash and no `*`.
+- **High risk.** Settings that loosen security need `--yes` and are listed under `risks`: `require_local_access_key: false`, and every origin in `allowed_origins`. Turning the access key on is not high risk, but it changes what apps on the user's Mac can reach. Ship it only when your setup needs it.
+- **No access key yet.** Bundles can't create access keys. If `require_local_access_key: true` applies when the user has no key, the item reports `needs_user_action` (exit code `3`): local apps lose access to those routes until the user creates a key in Server → Overview.
+- **Shared values.** Settings belong to the user, not to your bundle. Osaurus records what you asked for so later updates respect the user:
+  - `install` always sets the value.
+  - `update` leaves a setting the user changed since your bundle set it (`skipped`, "Changed in … since … set it").
+  - If another bundle turned `require_local_access_key` the other way, the item fails with a conflict.
+  - `remove` leaves settings as they are.
+- **Live imports with the key on.** Once Require Access Key for Local Admin Routes is on, `osaurus import` needs `--access-key KEY` (or `OSAURUS_API_KEY`) to apply an import while Osaurus is running. Without one, the import is queued (exit code `0`, with a warning) and applies the next time Osaurus opens.
 
 ## 4. Agent file reference
 
@@ -521,6 +549,7 @@ Ship the new bundle with a higher `version` and run:
 - Items the user **deleted** in Osaurus are not brought back by `update` (`skipped`, "Removed in Osaurus since it was installed"). `install` adds them back.
 - Items installed at a newer version than you offer are skipped.
 - Items you dropped from the new bundle stay installed. Remove them explicitly with `remove` (below).
+- Settings the user changed since your bundle set them are left as they are ([Settings](#settings)).
 
 **The user's edits.** An update re-applies only the keys your agent file declares; everything else keeps the user's changes. If your file sets `system_prompt`, the update resets the prompt. If it doesn't set `temperature`, the user's temperature stays. Lists you declare (`tools.enabled`, `skills`, `sandbox.allowed_domains`) replace the user's list. An agent the user renamed keeps the user's name. Declare only what you need to manage.
 
@@ -537,6 +566,7 @@ security delete-generic-password -s com.example.acme-support -a tickets-token
 - `remove --bundle <id> agent "Support Desk"` removes one item. Removing an agent also removes the skills and servers that were installed only for it and that nothing else uses.
 - A skill or server that an agent still uses isn't removed. The item fails with "Still used by …". This includes the user's own agents that list your skill.
 - Items the user already deleted report "Already removed in Osaurus."
+- Settings stay as they are. Removing a setting only drops Osaurus's record that your bundle set it.
 - When Osaurus isn't running, the removal is queued and happens the next time it opens.
 
 ## 10. What the user sees
@@ -563,6 +593,7 @@ cat ~/.osaurus/import/results/<request-id>.json   # per-item result of an applie
 | `no Keychain item keychain:…` at install | The item doesn't exist for this user, or has a different service or account | Check with `security find-generic-password -s SERVICE -a ACCOUNT` (without `-w`, so it doesn't prompt). |
 | "A skill/agent named … already exists and was not installed by …" | The user, or another bundle, already has an item with that name | Rename your item, or ask the user to remove theirs. |
 | `refused` with risks listed | High-risk items without `--yes` | Review the risks, then pass `--yes`. |
+| `queued` with "did not accept the access key for /admin/import" while Osaurus is running | Require Access Key for Local Admin Routes is on | Pass `--access-key KEY` or set `OSAURUS_API_KEY`, or let the import apply when Osaurus next opens. |
 | An agent is missing a tool | The server didn't connect (network, missing secret, `npx` not installed), or the tool name is wrong | Check Settings → Tools & MCP. Compare names with `osaurus config export`. |
 | `validate` warns that agent and server entries were "only checked for shape" | Osaurus wasn't running | Open Osaurus and re-run `validate` for the full schema check. |
 | "This bundle needs Osaurus X or newer" | The installed app is older than `min_osaurus_version` | Update Osaurus first. |
@@ -577,6 +608,7 @@ cat ~/.osaurus/import/results/<request-id>.json   # per-item result of an applie
 - **Handle secrets as in [section 7](#7-secrets-step-by-step)**: standard input, not arguments; `-T` for Osaurus only; deleted on uninstall.
 - **Send no telemetry** from your installer about the user's Osaurus setup without their consent.
 - **Pin your stdio packages** (`@scope/server@1.2.3`, not `@latest`) so an update to a package can't change what runs on the user's Mac.
+- **Don't loosen the user's server settings** unless your setup can't work otherwise. List only the origins you operate in `allowed_origins`, and never ship `require_local_access_key: false`.
 
 ## 13. Reference
 
@@ -584,11 +616,13 @@ cat ~/.osaurus/import/results/<request-id>.json   # per-item result of an applie
 
 ```text
 osaurus import validate --from <bundle> [--json]
-osaurus import install  --from <bundle> [agent|skill|mcp] [<name> ...] [--yes] [--json]
-osaurus import update   --from <bundle> [agent|skill|mcp] [<name> ...] [--yes] [--json]
-osaurus import remove   --bundle <id> [agent|skill|mcp] [<name> ...] [--json]
+osaurus import install  --from <bundle> [agent|skill|mcp|setting] [<name> ...] [--yes] [--json]
+osaurus import update   --from <bundle> [agent|skill|mcp|setting] [<name> ...] [--yes] [--json]
+osaurus import remove   --bundle <id> [agent|skill|mcp|setting] [<name> ...] [--json]
 osaurus import list     [--bundle <id>] [--json]
 ```
+
+Every command also takes `--access-key KEY` (or `OSAURUS_API_KEY` in the environment), needed to apply live when Require Access Key for Local Admin Routes is on.
 
 - With no names, every item in the bundle (or everything the bundle installed, for `remove`) is processed.
 - Naming an agent also installs the skills and servers it uses from the same bundle.
@@ -630,12 +664,12 @@ osaurus import list     [--bundle <id>] [--json]
 | Field | Values |
 | --- | --- |
 | `state` | `validated`, `applied`, `partial` (some items failed or need the user), `queued`, `failed`, `refused` (root, or high-risk without `--yes`), `listed`, `nothing_to_do` |
-| `items[].kind` | `agent`, `skill`, `mcp` |
+| `items[].kind` | `agent`, `skill`, `mcp`, `setting` (named by its key, like `require_local_access_key`) |
 | `items[].action` | `install`, `update`, `remove` |
 | `items[].status` | `done`, `unchanged`, `needs_user_action`, `failed`, `skipped`, `queued` (not applied yet), `valid` (from `validate`) |
 | `issues` | Why the command failed. Empty on success. |
 | `warnings` | Advisory notes that didn't stop anything. |
-| `installed` | (`list`) One receipt per installed item: `bundle_id`, `bundle_version`, `kind`, `name`, `explicit` (false for items pulled in as dependencies), `pending_secrets`, `needs_user_action`, `installed_at`, `updated_at`. |
+| `installed` | (`list`) One receipt per installed item: `bundle_id`, `bundle_version`, `kind`, `name`, `explicit` (false for items pulled in as dependencies), `pending_secrets`, `needs_user_action`, `setting_value` (for settings: the value your bundle asked for), `installed_at`, `updated_at`. |
 | `queued` | (`list`) Imports not applied yet: `request_id`, `bundle_id`, `operations`. |
 | `cancelled_requests` | (`remove`) Queued imports of the bundle that were dropped. |
 

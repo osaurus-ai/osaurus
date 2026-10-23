@@ -37,7 +37,9 @@ final class ImportCommandTests: XCTestCase {
         try text.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func writeBundle(minVersion: String? = nil, stdio: Bool = false) throws {
+    private func writeBundle(
+        minVersion: String? = nil, stdio: Bool = false, settings: [String: Any]? = nil
+    ) throws {
         var manifest: [String: Any] = [
             "format": "osaurus.bundle", "format_version": 1, "id": "com.example.cli",
             "name": "CLI Test", "version": "1.0.0",
@@ -51,6 +53,7 @@ final class ImportCommandTests: XCTestCase {
             "agents": [["path": "agents/helper.json"], ["path": "agents/plain.json"]],
         ]
         if let minVersion { manifest["min_osaurus_version"] = minVersion }
+        if let settings { manifest["settings"] = settings }
         if stdio {
             manifest["mcp_servers"] = [
                 ["name": "Tickets", "transport": "stdio", "command": "npx", "args": ["tickets-mcp"]]
@@ -126,6 +129,16 @@ final class ImportCommandTests: XCTestCase {
         XCTAssertEqual(try ImportCommand.parse(["help"]).subcommand, .help)
     }
 
+    func testParsesTheSettingKindAndTakesTheAccessKeyOutFirst() throws {
+        let args = [
+            "install", "--from", "/tmp/b", "setting", "allowed_origins", "--access-key", "osk-v1.test",
+        ]
+        XCTAssertEqual(AccessKeyResolver.resolve(args: args, environment: [:])?.token, "osk-v1.test")
+        let inv = try ImportCommand.parse(AccessKeyResolver.removingAccessKeyOptions(from: args))
+        XCTAssertEqual(inv.kind, .setting)
+        XCTAssertEqual(inv.names, ["allowed_origins"])
+    }
+
     // MARK: Checks
 
     func testRefusesToRunAsRoot() async throws {
@@ -152,6 +165,24 @@ final class ImportCommandTests: XCTestCase {
         XCTAssertEqual(report.state, "queued")
         XCTAssertEqual(report.exitCode, 0)
         XCTAssertEqual(report.items.map(\.name), ["notes"])
+    }
+
+    func testOnlySettingsThatLoosenSecurityNeedYes() async throws {
+        try writeBundle(settings: [
+            "require_local_access_key": false, "allowed_origins": ["https://app.example.com"],
+        ])
+        let loosen = try ImportCommand.parse(["install", "--from", bundleURL.path, "settings"])
+        let refused = await ImportCommand.run(loosen, environment: environment())
+        XCTAssertEqual(refused.state, "refused")
+        XCTAssertTrue(refused.risks.contains { $0.contains("Turns off") }, "\(refused.risks)")
+        XCTAssertTrue(refused.risks.contains { $0.contains("https://app.example.com") }, "\(refused.risks)")
+        XCTAssertTrue(ImportQueue.pending().isEmpty)
+
+        try writeBundle(settings: ["require_local_access_key": true])
+        let tighten = try ImportCommand.parse(["install", "--from", bundleURL.path, "settings"])
+        let queued = await ImportCommand.run(tighten, environment: environment())
+        XCTAssertEqual(queued.state, "queued", "\(queued.issues)")
+        XCTAssertEqual(queued.items.map { "\($0.kind.rawValue)/\($0.name)" }, ["setting/require_local_access_key"])
     }
 
     func testMissingKeychainItemFailsInstallButOnlyWarnsOnValidate() async throws {
@@ -246,6 +277,32 @@ final class ImportCommandTests: XCTestCase {
         XCTAssertEqual(report.exitCode, 0)
         XCTAssertTrue(report.warnings.contains { $0.contains("too old") })
         XCTAssertEqual(ImportQueue.pending().count, 1)
+    }
+
+    func testRejectedAccessKeyLeavesTheRequestQueuedForTheNextLaunch() async throws {
+        let inv = try ImportCommand.parse(["install", "--from", bundleURL.path, "--yes"])
+        for status in [401, 403] {
+            let env = environment(running: true) { _, _ in
+                (status, Data(#"{"error":{"message":"Access key required."}}"#.utf8))
+            }
+            let report = await ImportCommand.run(inv, environment: env)
+            XCTAssertEqual(report.state, "queued", "\(status)")
+            XCTAssertEqual(report.exitCode, 0, "\(status)")
+            XCTAssertTrue(report.issues.isEmpty, "\(report.issues)")
+            XCTAssertTrue(
+                report.warnings.contains { $0.contains("HTTP \(status)") && $0.contains("--access-key") },
+                "\(report.warnings)")
+        }
+        XCTAssertEqual(ImportQueue.pending().count, 2)
+    }
+
+    func testValidateWithoutAnAcceptedKeyOnlyWarns() async throws {
+        let inv = try ImportCommand.parse(["validate", "--from", bundleURL.path])
+        let env = environment(running: true) { _, _ in (401, Data()) }
+        let report = await ImportCommand.run(inv, environment: env)
+        XCTAssertEqual(report.state, "validated")
+        XCTAssertEqual(report.exitCode, 0, "\(report.issues)")
+        XCTAssertTrue(report.warnings.contains { $0.contains("OSAURUS_API_KEY") }, "\(report.warnings)")
     }
 
     func testAppErrorFailsWithItsMessage() async throws {

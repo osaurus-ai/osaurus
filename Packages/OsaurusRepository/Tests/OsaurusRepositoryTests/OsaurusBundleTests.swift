@@ -235,7 +235,8 @@ final class OsaurusBundleTests: XCTestCase {
         let bundle = try OsaurusBundle.load(from: root)
         let found = issues { _ = try bundle.select(kind: nil, names: ["Support", "nope"]) }
         XCTAssertTrue(found.contains { $0.contains("names more than one item") }, "\(found)")
-        XCTAssertTrue(found.contains { $0.contains("no agent, skill or MCP server named \"nope\"") }, "\(found)")
+        XCTAssertTrue(
+            found.contains { $0.contains("no agent, skill, MCP server or setting named \"nope\"") }, "\(found)")
         XCTAssertEqual(try bundle.select(kind: .skill, names: ["Support"]).map(\.kind), [.skill])
     }
 
@@ -247,6 +248,129 @@ final class OsaurusBundleTests: XCTestCase {
         XCTAssertTrue(risks.contains { $0.contains("\"Files\" launches a local process: npx -y @example/files-mcp") })
         XCTAssertTrue(risks.contains { $0.contains("\"Writer\" turns on computer_use_enabled") })
         XCTAssertTrue(bundle.risks(for: [BundleItemRef(kind: .skill, name: "release-notes", explicit: true)]).isEmpty)
+    }
+
+    // MARK: Settings
+
+    func testSettingsLoadSelectLastAndHash() throws {
+        try writeFixture()
+        try manifest([
+            "settings": ["require_local_access_key": true, "allowed_origins": ["https://app.example.com"]]
+        ])
+        let bundle = try OsaurusBundle.load(from: root)
+        XCTAssertEqual(bundle.settings.map(\.setting.key), ["require_local_access_key", "allowed_origins"])
+        XCTAssertEqual(bundle.setting(named: "require_local_access_key")?.value, .bool(true))
+
+        let items = try bundle.select(kind: nil, names: [])
+        XCTAssertEqual(items.suffix(2).map(\.kind), [.setting, .setting])
+        XCTAssertEqual(try bundle.select(kind: .setting, names: []).map(\.name), bundle.settings.map(\.setting.key))
+        XCTAssertEqual(
+            try bundle.select(kind: nil, names: ["allowed_origins"]),
+            [BundleItemRef(kind: .setting, name: "allowed_origins", explicit: true)])
+        XCTAssertEqual(BundleItemKind(argument: "settings"), .setting)
+
+        let hash = try XCTUnwrap(bundle.contentHash(kind: .setting, name: "require_local_access_key"))
+        try manifest(["settings": ["require_local_access_key": false]])
+        let flipped = try OsaurusBundle.load(from: root)
+        XCTAssertNotEqual(flipped.contentHash(kind: .setting, name: "require_local_access_key"), hash)
+        XCTAssertNil(flipped.contentHash(kind: .setting, name: "allowed_origins"))
+    }
+
+    func testSettingsOnlyBundleIsValid() throws {
+        try manifest(["settings": ["require_local_access_key": true]], drop: ["skills", "mcp_servers", "agents"])
+        let bundle = try OsaurusBundle.load(from: root)
+        XCTAssertEqual(try bundle.select(kind: nil, names: []).map(\.kind), [.setting])
+
+        try manifest([:], drop: ["skills", "mcp_servers", "agents"])
+        let found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("no agents, skills, MCP servers or settings") }, "\(found)")
+    }
+
+    func testRejectsUnknownSettingsWrongTypesAndBadOrigins() throws {
+        try writeFixture()
+        try manifest(["settings": ["require_local_acess_key": true, "port": 1337]])
+        var found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(
+            found.contains { $0.contains("settings: unknown key `require_local_acess_key`") && $0.contains("`require_local_access_key`") },
+            "\(found)")
+
+        try manifest(["settings": ["require_local_access_key": ["yes"], "allowed_origins": true]])
+        found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("settings.require_local_access_key: must be true or false") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("settings.allowed_origins: must be a list of origins") }, "\(found)")
+
+        try manifest([
+            "settings": [
+                "allowed_origins": [
+                    "*", "https://*.example.com", "https://app.example.com/", "https://app.example.com/path",
+                    "ftp://files.example.com", "https://App.Example.com", "app.example.com",
+                    "https://app.example.com", "http://localhost:3000",
+                ]
+            ]
+        ])
+        found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertEqual(found.count, 7, "\(found)")
+        XCTAssertEqual(found.filter { $0.contains("wildcard") }.count, 2, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("\"https://app.example.com/\" has a path") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("\"https://app.example.com/path\" has a path") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("\"ftp://files.example.com\" is not an origin") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("write \"https://App.Example.com\" in lowercase") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("\"app.example.com\" is not an origin") }, "\(found)")
+
+        try manifest(["settings": ["allowed_origins": []]])
+        found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("list at least one origin") }, "\(found)")
+
+        try manifest(["settings": ["require_local_access_key"]])
+        found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertFalse(found.isEmpty)
+    }
+
+    func testOnlySettingsThatLoosenSecurityAreRisks() throws {
+        try writeFixture()
+        try manifest([
+            "settings": ["require_local_access_key": true, "allowed_origins": ["https://app.example.com"]]
+        ])
+        var bundle = try OsaurusBundle.load(from: root)
+        let on = BundleItemRef(kind: .setting, name: "require_local_access_key", explicit: true)
+        let origins = BundleItemRef(kind: .setting, name: "allowed_origins", explicit: true)
+        XCTAssertTrue(bundle.risks(for: [on]).isEmpty)
+        XCTAssertEqual(
+            bundle.risks(for: [origins]),
+            ["Lets web pages from https://app.example.com call Osaurus on this Mac from a browser"])
+
+        try manifest(["settings": ["require_local_access_key": false]])
+        bundle = try OsaurusBundle.load(from: root)
+        XCTAssertEqual(bundle.risks(for: [on]).count, 1)
+        XCTAssertTrue(bundle.risks(for: [on])[0].contains("Turns off \"Require Access Key for Local Admin Routes\""))
+    }
+
+    func testOriginsAreAddedNeverRemoved() {
+        let setting = BundleSetting.allowedOrigins
+        let wanted = BundleSettingValue.strings(["https://b.example", "https://a.example"])
+        let current = BundleSettingValue.strings(["https://a.example", "https://c.example"])
+        XCTAssertFalse(setting.isSatisfied(wanted, by: current))
+        let stored = setting.applying(wanted, to: current)
+        XCTAssertEqual(stored, .strings(["https://a.example", "https://c.example", "https://b.example"]))
+        XCTAssertTrue(setting.isSatisfied(wanted, by: stored))
+
+        let toggle = BundleSetting.requireLocalAccessKey
+        XCTAssertEqual(toggle.applying(.bool(true), to: .bool(false)), .bool(true))
+        XCTAssertFalse(toggle.isSatisfied(.bool(true), by: .bool(false)))
+    }
+
+    func testSettingReceiptRoundTripsItsValue() throws {
+        ToolsPaths.overrideRoot = root.appendingPathComponent("tools-root", isDirectory: true)
+        let receipt = ImportReceipt(
+            bundleId: "com.example.starter", bundleName: nil, bundleVersion: "1.0.0", kind: .setting,
+            name: "allowed_origins", explicit: true, contentHash: "abc",
+            installedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            settingValue: .strings(["https://app.example.com"]))
+        try ImportQueue.saveReceipts([receipt])
+        XCTAssertEqual(ImportQueue.loadReceipts(), [receipt])
+        let text = try String(contentsOf: ImportQueue.receiptsURL(), encoding: .utf8)
+        XCTAssertTrue(text.contains("\"setting_value\""), text)
     }
 
     func testSkillSlugMatchesAppRules() {

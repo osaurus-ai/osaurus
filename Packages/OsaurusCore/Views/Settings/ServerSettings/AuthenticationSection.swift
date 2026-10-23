@@ -28,7 +28,7 @@ struct AuthenticationSection: View {
             SettingsToggle(
                 title: L("Require Access Key for Local Admin Routes"),
                 description:
-                    "Callers on this Mac must send an access key to /sessions, /agents, /mcp/* and /admin/config/*. Browser pages are refused on these routes unless their origin is listed by name in Allowed Origins (CORS). Siri and Shortcuts keep working. Takes effect on the next request.",
+                    "Callers on this Mac must send an access key to /sessions, /agents, /mcp/*, /admin/config/* and /admin/import/*. Browser pages are refused on these routes unless their origin is listed by name in Allowed Origins (CORS). Siri and Shortcuts keep working. Takes effect on the next request.",
                 isOn: $requireLocalKey
             )
             .settingsLandingAnchor("server.localAccessKey")

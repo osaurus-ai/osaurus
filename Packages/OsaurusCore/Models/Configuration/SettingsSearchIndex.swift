@@ -657,7 +657,7 @@ public enum SettingsSearchIndex {
             ],
             subTab: "authentication",
             disambiguation:
-                "Makes callers on this Mac send an access key to /sessions, /agents, /mcp/* and /admin/config/*, and refuses browser origins there unless listed by name in Allowed Origins (CORS). Not the access key list itself (Server → Overview) and not the CORS list (Server → Connection)."
+                "Makes callers on this Mac send an access key to /sessions, /agents, /mcp/*, /admin/config/* and /admin/import/*, and refuses browser origins there unless listed by name in Allowed Origins (CORS). Not the access key list itself (Server → Overview) and not the CORS list (Server → Connection)."
         ),
         .init(
             id: "server.generation",

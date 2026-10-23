@@ -2633,9 +2633,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             guard let data = try? ImportQueue.encoder().encode(result) else {
                 respondError(status: .internalServerError, message: "Could not encode the import result.")
+                await PendingImportProcessor.shared.applyDeferredSettings()
                 return
             }
             respond(status: .ok, body: String(decoding: data, as: UTF8.self))
+            await PendingImportProcessor.shared.applyDeferredSettings()
         }
     }
 

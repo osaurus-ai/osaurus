@@ -7,10 +7,11 @@
 //  rewrite configuration?
 //
 //  Off (the default) keeps today's contract: loopback callers are trusted
-//  without a key. On, `/sessions`, `/agents`, `/mcp/*` and `/admin/config/*`
-//  require a valid access key (or a harness token where it already applies)
-//  even from 127.0.0.1, and browser requests to those routes are refused
-//  unless their `Origin` is listed by name in Allowed Origins (CORS).
+//  without a key. On, `/sessions`, `/agents`, `/mcp/*`, `/admin/config/*`
+//  and `/admin/import/*` require a valid access key (or a harness token
+//  where it already applies) even from 127.0.0.1, and browser requests to
+//  those routes are refused unless their `Origin` is listed by name in
+//  Allowed Origins (CORS).
 //
 //  The app's own in-process clients (App Intents via `OsaurusLocalClient`)
 //  hold no access key; they present `appSessionToken`, a per-launch secret
@@ -50,6 +51,7 @@ enum LocalAPIKeyPolicy {
             || path == "/agents" || path.hasPrefix("/agents/")
             || path.hasPrefix("/mcp/")
             || path.hasPrefix("/admin/config/")
+            || path.hasPrefix("/admin/import/")
     }
 
     /// A browser origin is admitted to a protected route only when Allowed

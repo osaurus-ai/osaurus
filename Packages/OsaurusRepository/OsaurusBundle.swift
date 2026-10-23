@@ -3,8 +3,8 @@
 //  osaurus
 //
 //  An Osaurus bundle is a folder a third-party installer ships: a manifest
-//  (`osaurus-bundle.json`) naming agents, skills and MCP servers, plus the
-//  files they live in. `osaurus import` checks it here, copies it into the
+//  (`osaurus-bundle.json`) naming agents, skills, MCP servers and settings,
+//  plus the files they live in. `osaurus import` checks it here, copies it into the
 //  import queue, and the app applies it through the declarative config
 //  engine. Shared by the CLI and the app so both read the same format.
 //
@@ -27,11 +27,13 @@ public enum OsaurusBundleFormat {
     public static let maxSkillPathDepth = 16
 }
 
-/// What a bundle item is. `mcp` is an MCP server.
+/// What a bundle item is. `mcp` is an MCP server; `setting` is one of
+/// `BundleSetting.all`, named by its manifest key.
 public enum BundleItemKind: String, Codable, Sendable, CaseIterable, Comparable {
     case skill
     case mcp
     case agent
+    case setting
 
     /// Accepts the spellings people type on the command line.
     public init?(argument: String) {
@@ -40,6 +42,7 @@ public enum BundleItemKind: String, Codable, Sendable, CaseIterable, Comparable 
         case "skill", "skills": self = .skill
         case "mcp", "mcp-server", "mcp_server", "mcp-servers", "mcp_servers", "server", "servers":
             self = .mcp
+        case "setting", "settings": self = .setting
         default: return nil
         }
     }
@@ -49,15 +52,18 @@ public enum BundleItemKind: String, Codable, Sendable, CaseIterable, Comparable 
         case .agent: return "agent"
         case .skill: return "skill"
         case .mcp: return "MCP server"
+        case .setting: return "setting"
         }
     }
 
-    /// Install order: skills and servers exist before the agents that use them.
+    /// Install order: skills and servers exist before the agents that use
+    /// them; settings go last.
     private var order: Int {
         switch self {
         case .skill: return 0
         case .mcp: return 1
         case .agent: return 2
+        case .setting: return 3
         }
     }
 
@@ -132,6 +138,8 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
     public var skills: [SkillReference]
     public var mcpServers: [MCPServerReference]
     public var agents: [AgentReference]
+    /// Manifest key (`BundleSetting.key`) -> value.
+    public var settings: [String: BundleSettingValue]
 
     enum CodingKeys: String, CodingKey {
         case format
@@ -141,6 +149,7 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
         case skills
         case mcpServers = "mcp_servers"
         case agents
+        case settings
     }
 
     public init(from decoder: Decoder) throws {
@@ -156,12 +165,14 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
         skills = try c.decodeIfPresent([SkillReference].self, forKey: .skills) ?? []
         mcpServers = try c.decodeIfPresent([MCPServerReference].self, forKey: .mcpServers) ?? []
         agents = try c.decodeIfPresent([AgentReference].self, forKey: .agents) ?? []
+        settings = try c.decodeIfPresent([String: BundleSettingValue].self, forKey: .settings) ?? [:]
     }
 
     static let allowedKeys: Set<String> = [
         "format", "format_version", "id", "name", "version", "description", "publisher",
-        "min_osaurus_version", "skills", "mcp_servers", "agents",
+        "min_osaurus_version", "skills", "mcp_servers", "agents", "settings",
     ]
+    static let allowedSettingKeys = Set(BundleSetting.all.map(\.key))
     static let allowedPublisherKeys: Set<String> = ["name", "url", "email"]
     static let allowedSkillKeys: Set<String> = ["name", "path"]
     static let allowedAgentKeys: Set<String> = ["path"]
@@ -214,6 +225,15 @@ public struct OsaurusBundle: Sendable {
 
     public func mcpServer(named name: String) -> OsaurusBundleManifest.MCPServerReference? {
         mcpServers.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// The settings the bundle changes, in `BundleSetting.all` order.
+    public var settings: [(setting: BundleSetting, value: BundleSettingValue)] {
+        BundleSetting.all.compactMap { setting in manifest.settings[setting.key].map { (setting, $0) } }
+    }
+
+    public func setting(named name: String) -> (setting: BundleSetting, value: BundleSettingValue)? {
+        settings.first { $0.setting.key == name.lowercased() }
     }
 
     /// The raw JSON object of each MCP server entry, for the app's strict
@@ -320,6 +340,14 @@ extension OsaurusBundle {
                     in: object, allowed: OsaurusBundleManifest.allowedAgentKeys, at: "agents[\(index)]")
             }
         }
+        if let settings = rawRoot["settings"] {
+            if let object = settings as? [String: Any] {
+                issues += unknownKeys(
+                    in: object, allowed: OsaurusBundleManifest.allowedSettingKeys, at: "settings")
+            } else {
+                issues.append("settings: must be an object, like {\"require_local_access_key\": true}.")
+            }
+        }
 
         let manifest: OsaurusBundleManifest
         do {
@@ -350,8 +378,15 @@ extension OsaurusBundle {
         if let min = manifest.minOsaurusVersion, SemanticVersion.parse(min) == nil {
             issues.append("min_osaurus_version must be a semantic version like 0.26.0 (got \"\(min)\").")
         }
-        if manifest.skills.isEmpty && manifest.mcpServers.isEmpty && manifest.agents.isEmpty {
-            issues.append("The bundle lists no agents, skills or MCP servers.")
+        if manifest.skills.isEmpty && manifest.mcpServers.isEmpty && manifest.agents.isEmpty
+            && manifest.settings.isEmpty
+        {
+            issues.append("The bundle lists no agents, skills, MCP servers or settings.")
+        }
+        for (key, value) in manifest.settings.sorted(by: { $0.key < $1.key }) {
+            if let setting = BundleSetting.named(key), setting.key == key {
+                issues += setting.problems(with: value)
+            }
         }
 
         // Skills
@@ -748,6 +783,8 @@ extension OsaurusBundle {
                 case .skill: explicit += skills.map { BundleItemRef(kind: .skill, name: $0.name, explicit: true) }
                 case .mcp: explicit += mcpServers.map { BundleItemRef(kind: .mcp, name: $0.name, explicit: true) }
                 case .agent: explicit += agents.map { BundleItemRef(kind: .agent, name: $0.name, explicit: true) }
+                case .setting:
+                    explicit += settings.map { BundleItemRef(kind: .setting, name: $0.setting.key, explicit: true) }
                 }
             }
         } else {
@@ -763,9 +800,12 @@ extension OsaurusBundle {
                 if kind == nil || kind == .mcp, let m = mcpServer(named: name) {
                     matches.append(BundleItemRef(kind: .mcp, name: m.name, explicit: true))
                 }
+                if kind == nil || kind == .setting, let s = setting(named: name) {
+                    matches.append(BundleItemRef(kind: .setting, name: s.setting.key, explicit: true))
+                }
                 switch matches.count {
                 case 0:
-                    let what = kind?.displayName ?? "agent, skill or MCP server"
+                    let what = kind?.displayName ?? "agent, skill, MCP server or setting"
                     issues.append("This bundle has no \(what) named \"\(name)\".")
                 case 1:
                     explicit.append(matches[0])
@@ -773,7 +813,7 @@ extension OsaurusBundle {
                     issues.append(
                         "\"\(name)\" names more than one item ("
                             + matches.map(\.kind.rawValue).joined(separator: ", ")
-                            + "). Say which: osaurus import ... agent|skill|mcp \"\(name)\".")
+                            + "). Say which: osaurus import ... agent|skill|mcp|setting \"\(name)\".")
                 }
             }
             if !issues.isEmpty { throw OsaurusBundleError(issues: issues) }
@@ -828,6 +868,9 @@ extension OsaurusBundle {
                 for key in a.highRiskCapabilities {
                     out.append("Agent \"\(a.name)\" turns on \(key)")
                 }
+            case .setting:
+                guard let s = setting(named: item.name) else { continue }
+                out += s.setting.risks(of: s.value)
             }
         }
         return out

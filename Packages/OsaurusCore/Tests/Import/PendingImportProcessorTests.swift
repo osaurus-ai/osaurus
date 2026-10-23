@@ -314,6 +314,226 @@ struct PendingImportProcessorTests {
         }
     }
 
+    // MARK: Settings
+
+    @MainActor
+    private final class FakeSettings: ImportSettingsAccess {
+        var values: [BundleSetting.ID: BundleSettingValue] = [
+            .requireLocalAccessKey: .bool(false), .allowedOrigins: .strings([]),
+        ]
+        var accessKeys = false
+        var restartPending = false
+        var restarts = 0
+
+        func value(of setting: BundleSetting) -> BundleSettingValue { values[setting.id]! }
+
+        func set(_ value: BundleSettingValue, for setting: BundleSetting) {
+            values[setting.id] = value
+            if setting.id == .allowedOrigins { restartPending = true }
+        }
+
+        func hasAccessKeys() -> Bool { accessKeys }
+
+        func applyDeferredChanges() async {
+            guard restartPending else { return }
+            restartPending = false
+            restarts += 1
+        }
+    }
+
+    /// A settings-only bundle; returns its folder and id.
+    private func makeSettingsBundle(_ settings: [String: Any], id: String? = nil) throws -> (URL, String) {
+        let suffix = UUID().uuidString.prefix(8).lowercased()
+        let bundleId = id ?? "com.example.settings\(suffix)"
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-import-settings-\(suffix)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let manifest: [String: Any] = [
+            "format": "osaurus.bundle", "format_version": 1, "id": bundleId, "name": "Settings Probe",
+            "version": "1.0.0", "settings": settings,
+        ]
+        try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+            .write(to: root.appendingPathComponent("osaurus-bundle.json"))
+        return (root, bundleId)
+    }
+
+    private func apply(
+        _ action: ImportAction, bundleAt root: URL, bundleId: String, settings: FakeSettings, yes: Bool = false
+    ) async throws -> ImportResult {
+        var operations: [ImportOperation]
+        var bundle: OsaurusBundle?
+        if action == .remove {
+            operations = ImportQueue.loadReceipts().filter { $0.bundleId == bundleId }.map {
+                ImportOperation(action: .remove, kind: $0.kind, name: $0.name, explicit: true)
+            }
+        } else {
+            let loaded = try OsaurusBundle.load(from: root)
+            bundle = loaded
+            operations = try loaded.select(kind: nil, names: []).map {
+                ImportOperation(action: action, kind: $0.kind, name: $0.name, explicit: $0.explicit)
+            }
+        }
+        let request = ImportRequest(
+            bundleId: bundleId, bundleName: nil, bundleVersion: bundle?.manifest.version,
+            operations: operations, confirmHighRisk: yes)
+        try ImportQueue.enqueue(request, bundle: bundle)
+        let processor = processor()
+        processor.settings = settings
+        return try #require(await processor.process(requestId: request.id))
+    }
+
+    private func settingReceipt(_ bundleId: String, _ key: String) -> ImportReceipt? {
+        ImportQueue.loadReceipts().first { $0.bundleId == bundleId && $0.matches(kind: .setting, name: key) }
+    }
+
+    /// Bundle settings name the control by its catalog id and on-screen
+    /// title, so messages and the author guide match Settings.
+    @Test
+    func everyBundleSettingIsACatalogedControl() {
+        for setting in BundleSetting.all {
+            let entry = SettingsSearchIndex.entries.first { $0.id == setting.catalogId }
+            #expect(entry?.title == setting.title, "\(setting.key) -> \(setting.catalogId)")
+        }
+    }
+
+    @Test
+    func accessKeySetting_installs_updateRespectsTheUser_removeLeavesIt() async throws {
+        try await exclusive {
+            let (root, id) = try makeSettingsBundle(["require_local_access_key": true])
+            defer { try? FileManager.default.removeItem(at: root) }
+            let settings = FakeSettings()
+            let key = BundleSetting.ID.requireLocalAccessKey
+
+            let first = try await apply(.install, bundleAt: root, bundleId: id, settings: settings)
+            let row = try #require(first.items.first)
+            #expect(row.kind == .setting && row.name == "require_local_access_key")
+            #expect(row.status == .needsUserAction, "\(first.items)")
+            #expect(row.message?.contains("No access key exists yet") == true, "\(row.message ?? "")")
+            #expect(first.exitCode == 3)
+            #expect(settings.values[key] == .bool(true))
+            #expect(settingReceipt(id, "require_local_access_key")?.settingValue == .bool(true))
+
+            settings.accessKeys = true
+            let again = try await apply(.install, bundleAt: root, bundleId: id, settings: settings)
+            #expect(again.items.first?.status == .unchanged, "\(again.items)")
+
+            settings.values[key] = .bool(false)
+            let update = try await apply(.update, bundleAt: root, bundleId: id, settings: settings)
+            #expect(update.items.first?.status == .skipped, "\(update.items)")
+            #expect(update.items.first?.message?.contains("Changed in") == true)
+            #expect(settings.values[key] == .bool(false))
+
+            let reinstall = try await apply(.install, bundleAt: root, bundleId: id, settings: settings)
+            #expect(reinstall.items.first?.status == .done, "\(reinstall.items)")
+            #expect(settings.values[key] == .bool(true))
+
+            let removed = try await apply(.remove, bundleAt: root, bundleId: id, settings: settings)
+            #expect(removed.items.first?.status == .done, "\(removed.items)")
+            #expect(removed.items.first?.message?.contains("stays on") == true, "\(removed.items)")
+            #expect(settings.values[key] == .bool(true))
+            #expect(settingReceipt(id, "require_local_access_key") == nil)
+        }
+    }
+
+    @Test
+    func turningTheAccessKeyOffNeedsConfirmation() async throws {
+        try await exclusive {
+            let (root, id) = try makeSettingsBundle(["require_local_access_key": false])
+            defer { try? FileManager.default.removeItem(at: root) }
+            let settings = FakeSettings()
+            settings.values[.requireLocalAccessKey] = .bool(true)
+
+            let refused = try await apply(.install, bundleAt: root, bundleId: id, settings: settings)
+            #expect(refused.items.first?.status == .failed)
+            #expect(refused.items.first?.message?.contains("--yes") == true)
+            #expect(settings.values[.requireLocalAccessKey] == .bool(true))
+
+            let confirmed = try await apply(.install, bundleAt: root, bundleId: id, settings: settings, yes: true)
+            #expect(confirmed.items.first?.status == .done, "\(confirmed.items)")
+            #expect(settings.values[.requireLocalAccessKey] == .bool(false))
+
+            _ = try await apply(.remove, bundleAt: root, bundleId: id, settings: settings)
+        }
+    }
+
+    @Test
+    func originsAreAdded_andTheServerRestartWaitsForTheCaller() async throws {
+        try await exclusive {
+            let (root, id) = try makeSettingsBundle(["allowed_origins": ["https://app.example.com"]])
+            defer { try? FileManager.default.removeItem(at: root) }
+            let settings = FakeSettings()
+            settings.values[.allowedOrigins] = .strings(["https://mine.example.com"])
+
+            let refused = try await apply(.install, bundleAt: root, bundleId: id, settings: settings)
+            #expect(refused.items.first?.status == .failed)
+            #expect(settings.values[.allowedOrigins] == .strings(["https://mine.example.com"]))
+
+            let result = try await apply(.install, bundleAt: root, bundleId: id, settings: settings, yes: true)
+            #expect(result.items.first?.status == .done, "\(result.items)")
+            #expect(result.items.first?.message?.contains("restarts") == true)
+            #expect(
+                settings.values[.allowedOrigins] == .strings(["https://mine.example.com", "https://app.example.com"]))
+            #expect(settings.restarts == 0)
+            let processor = processor()
+            processor.settings = settings
+            await processor.applyDeferredSettings()
+            #expect(settings.restarts == 1)
+
+            let removed = try await apply(.remove, bundleAt: root, bundleId: id, settings: settings)
+            #expect(removed.items.first?.status == .done)
+            #expect(settings.values[.allowedOrigins]?.description.contains("https://app.example.com") == true)
+        }
+    }
+
+    @Test
+    func aSettingAlreadyInPlaceIsRecorded_soUpdateStillRespectsTheUser() async throws {
+        try await exclusive {
+            let (root, id) = try makeSettingsBundle(["require_local_access_key": true])
+            defer { try? FileManager.default.removeItem(at: root) }
+            let settings = FakeSettings()
+            settings.values[.requireLocalAccessKey] = .bool(true)
+            settings.accessKeys = true
+
+            let first = try await apply(.install, bundleAt: root, bundleId: id, settings: settings)
+            #expect(first.items.first?.status == .unchanged, "\(first.items)")
+            #expect(first.items.first?.message?.contains("already on") == true, "\(first.items)")
+            #expect(settingReceipt(id, "require_local_access_key")?.settingValue == .bool(true))
+
+            settings.values[.requireLocalAccessKey] = .bool(false)
+            let update = try await apply(.update, bundleAt: root, bundleId: id, settings: settings)
+            #expect(update.items.first?.status == .skipped, "\(update.items)")
+            #expect(settings.values[.requireLocalAccessKey] == .bool(false))
+
+            _ = try await apply(.remove, bundleAt: root, bundleId: id, settings: settings)
+        }
+    }
+
+    @Test
+    func twoBundlesMayNotAskForOppositeValues() async throws {
+        try await exclusive {
+            let (onRoot, onId) = try makeSettingsBundle(["require_local_access_key": true])
+            let (offRoot, offId) = try makeSettingsBundle(["require_local_access_key": false])
+            defer {
+                try? FileManager.default.removeItem(at: onRoot)
+                try? FileManager.default.removeItem(at: offRoot)
+            }
+            let settings = FakeSettings()
+            settings.accessKeys = true
+            _ = try await apply(.install, bundleAt: onRoot, bundleId: onId, settings: settings)
+
+            let other = try await apply(.install, bundleAt: offRoot, bundleId: offId, settings: settings, yes: true)
+            let row = try #require(other.items.first)
+            #expect(row.status == .failed)
+            #expect(row.message?.contains(onId) == true, "\(row.message ?? "")")
+            #expect(settings.values[.requireLocalAccessKey] == .bool(true))
+
+            _ = try await apply(.remove, bundleAt: onRoot, bundleId: onId, settings: settings)
+            let afterRemoval = try await apply(.install, bundleAt: offRoot, bundleId: offId, settings: settings, yes: true)
+            #expect(afterRemoval.items.first?.status == .done, "\(afterRemoval.items)")
+            _ = try await apply(.remove, bundleAt: offRoot, bundleId: offId, settings: settings)
+        }
+    }
+
     /// docs/examples/osaurus-bundle-example is what the author guide walks
     /// through: every agent file and server entry passes the app's strict
     /// schema check, the same one `osaurus import validate` asks a running

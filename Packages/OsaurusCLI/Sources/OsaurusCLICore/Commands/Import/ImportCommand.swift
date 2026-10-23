@@ -2,8 +2,9 @@
 //  ImportCommand.swift
 //  osaurus
 //
-//  `osaurus import` — install, update and remove the agents, skills and MCP
-//  servers in an Osaurus bundle (a folder with `osaurus-bundle.json`). Built
+//  `osaurus import` — install, update and remove the agents, skills, MCP
+//  servers and settings in an Osaurus bundle (a folder with
+//  `osaurus-bundle.json`). Built
 //  for third-party installer scripts: the command checks the bundle, copies
 //  it into `~/.osaurus/import/pending/`, and the app applies it the next
 //  time it opens, or right away over loopback when it is already running.
@@ -107,29 +108,36 @@ public struct ImportEnvironment: Sendable {
         self.post = post
     }
 
-    public static let live = ImportEnvironment(
-        userId: { getuid() },
-        appVersion: { CLIVersionResolver.resolve().version },
-        keychainItemExists: { ref in
-            guard ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] != "1" else {
-                return nil
+    public static let live = live(accessKey: nil)
+
+    /// `accessKey` is sent as a Bearer token, for when Require Access Key
+    /// for Local Admin Routes is on.
+    public static func live(accessKey: String?) -> ImportEnvironment {
+        ImportEnvironment(
+            userId: { getuid() },
+            appVersion: { CLIVersionResolver.resolve().version },
+            keychainItemExists: { ref in
+                guard ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] != "1" else {
+                    return nil
+                }
+                return ImportCommand.keychainItemExists(ref)
+            },
+            port: { Configuration.resolveConfiguredPort() ?? 1337 },
+            isAppRunning: { await ServerControl.checkHealth(port: $0) },
+            post: { port, path, body in
+                guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                if let accessKey { request.setValue("Bearer \(accessKey)", forHTTPHeaderField: "Authorization") }
+                request.httpBody = body
+                // Applying waits for new MCP servers to connect.
+                request.timeoutInterval = 600
+                guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
+                return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
             }
-            return ImportCommand.keychainItemExists(ref)
-        },
-        port: { Configuration.resolveConfiguredPort() ?? 1337 },
-        isAppRunning: { await ServerControl.checkHealth(port: $0) },
-        post: { port, path, body in
-            guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = body
-            // Applying waits for new MCP servers to connect.
-            request.timeoutInterval = 600
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
-            return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
-        }
-    )
+        )
+    }
 }
 
 // MARK: - Command
@@ -138,9 +146,10 @@ public struct ImportCommand: Command {
     public static let name = "import"
 
     public static func execute(args: [String]) async {
+        let credential = AccessKeyResolver.resolve(args: args)
         let invocation: ImportInvocation
         do {
-            invocation = try parse(args)
+            invocation = try parse(AccessKeyResolver.removingAccessKeyOptions(from: args))
         } catch {
             fputs("\(error)\n\n", stderr)
             printUsage()
@@ -150,7 +159,7 @@ public struct ImportCommand: Command {
             printUsage()
             exit(EXIT_SUCCESS)
         }
-        let report = await run(invocation, environment: .live)
+        let report = await run(invocation, environment: .live(accessKey: credential?.token))
         if invocation.json {
             print(renderJSON(report))
         } else {
@@ -381,7 +390,12 @@ public struct ImportCommand: Command {
                 "operations": items.map { ["action": "install", "kind": $0.kind.rawValue, "name": $0.name] },
             ]
             let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
-            if let response = await environment.post(port, "/admin/import/plan", data),
+            let response = await environment.post(port, "/admin/import/plan", data)
+            if let response, let refusal = keyRefusal(response) {
+                report.warnings.append(
+                    "\(refusal) Agent and server entries were only checked for shape; pass --access-key KEY "
+                        + "or set OSAURUS_API_KEY for the full check.")
+            } else if let response,
                 let object = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
             {
                 if let error = object["error"] as? [String: Any] {
@@ -487,7 +501,7 @@ public struct ImportCommand: Command {
                 default:
                     report.issues.append(
                         "\"\(name)\" names more than one installed item. Say which: "
-                            + "osaurus import remove --bundle \(bundleId) agent|skill|mcp \"\(name)\".")
+                            + "osaurus import remove --bundle \(bundleId) agent|skill|mcp|setting \"\(name)\".")
                 }
             }
         }
@@ -586,6 +600,15 @@ public struct ImportCommand: Command {
                     + "updated and reopened.")
             return report
         }
+        if let refusal = keyRefusal(response) {
+            report.items = queued
+            report.state = "queued"
+            report.exitCode = 0
+            report.warnings.append(
+                "\(refusal) The import applies the next time Osaurus opens; to apply it now, pass "
+                    + "--access-key KEY or set OSAURUS_API_KEY.")
+            return report
+        }
         let object = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
         let error = object?["error"] as? [String: Any]
         report.items = queued
@@ -597,6 +620,16 @@ public struct ImportCommand: Command {
     }
 
     // MARK: Helpers
+
+    /// The running app turned the call away for want of an accepted access
+    /// key (Require Access Key for Local Admin Routes is on).
+    static func keyRefusal(_ response: (status: Int, body: Data)) -> String? {
+        guard response.status == 401 || response.status == 403 else { return nil }
+        let object = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
+        let message = (object?["error"] as? [String: Any])?["message"] as? String
+        return "Osaurus did not accept the access key for /admin/import (HTTP \(response.status)"
+            + (message.map { ": \($0)" } ?? "") + ")."
+    }
 
     /// Accepts `0.26` and `0.26.0` alike; app versions are not always
     /// three-part.
@@ -653,6 +686,7 @@ public struct ImportCommand: Command {
                 print("\(bundleId)\(version)")
                 for receipt in receipts {
                     var line = "  \(receipt.kind.rawValue)/\(receipt.name)"
+                    if let value = receipt.settingValue { line += " = \(value)" }
                     if !receipt.explicit { line += " (dependency)" }
                     if let secrets = receipt.pendingSecrets, !secrets.isEmpty {
                         line += " — needs secrets: \(secrets.joined(separator: ", "))"
@@ -693,25 +727,33 @@ public struct ImportCommand: Command {
     public static func printUsage() {
         print(
             """
-            osaurus import - install agents, skills and MCP servers from an Osaurus bundle
+            osaurus import - install agents, skills, MCP servers and settings from an Osaurus bundle
 
             Usage:
               osaurus import validate --from <bundle> [--json]
                                       Check a bundle without installing anything.
-              osaurus import install  --from <bundle> [agent|skill|mcp] [<name> ...] [--yes] [--json]
+              osaurus import install  --from <bundle> [agent|skill|mcp|setting] [<name> ...] [--yes] [--json]
                                       Install items (all of them when no names are given).
                                       Installing an agent also installs the skills and MCP
                                       servers it uses from the same bundle.
-              osaurus import update   --from <bundle> [agent|skill|mcp] [<name> ...] [--yes] [--json]
+              osaurus import update   --from <bundle> [agent|skill|mcp|setting] [<name> ...] [--yes] [--json]
                                       Update items this bundle installed to the bundle's version.
-              osaurus import remove   --bundle <id> [agent|skill|mcp] [<name> ...] [--json]
+                                      A setting the user changed since is left as it is.
+              osaurus import remove   --bundle <id> [agent|skill|mcp|setting] [<name> ...] [--json]
                                       Remove items this bundle installed (all when no names).
+                                      Settings stay as they are.
               osaurus import list     [--bundle <id>] [--json]
                                       Show what bundles installed and what is still queued.
 
+            Options:
+              --access-key <key>      Access key for a running Osaurus that has Require Access
+                                      Key for Local Admin Routes on (or set OSAURUS_API_KEY).
+                                      Without one the import is queued for the next launch.
+
             A bundle is a folder with osaurus-bundle.json. Changes are queued in
             ~/.osaurus/import/ and applied the next time Osaurus opens, or right away
-            when it is running. MCP servers and risky agent switches need --yes.
+            when it is running. MCP servers, risky agent switches and settings that
+            loosen security need --yes.
             Secrets are keychain:SERVICE/ACCOUNT references to items your installer
             stores with `security add-generic-password ... -T /Applications/Osaurus.app`.
             Run as the logged-in user, never as root.

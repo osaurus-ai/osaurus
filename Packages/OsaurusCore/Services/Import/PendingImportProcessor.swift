@@ -9,10 +9,16 @@
 //
 //  Within a request, skills install first, then MCP servers, then agents,
 //  so an agent's skill allow-list and server tools exist when it is
-//  created. Removals run the other way round. Every item goes through the
-//  same paths as the rest of the app (SkillManager, ConfigPlanner /
-//  ConfigApplier), and `installed.json` receipts record what each bundle
-//  owns so updates and removals never touch anything else.
+//  created; settings go last. Removals run the other way round. Every item
+//  goes through the same paths as the rest of the app (SkillManager,
+//  ConfigPlanner / ConfigApplier, the Settings stores), and `installed.json`
+//  receipts record what each bundle owns so updates and removals never
+//  touch anything else.
+//
+//  Settings are shared, so they follow their own rules: `update` leaves a
+//  setting the user changed since the bundle set it, two bundles may not
+//  ask for opposite values, and removing a bundle leaves its settings as
+//  they are.
 //
 
 import Foundation
@@ -29,6 +35,8 @@ public final class PendingImportProcessor {
     /// their tools resolve by group name.
     var connectTimeout: TimeInterval = 30
 
+    var settings: ImportSettingsAccess = LiveImportSettings.shared
+
     private var tail: Task<Void, Never>?
 
     init() {}
@@ -41,7 +49,14 @@ public final class PendingImportProcessor {
         guard !ImportQueue.pending().isEmpty else { return }
         if waitForPlugins { await PluginManager.shared.ensurePromptCatalogReady() }
         let results = await processAll()
+        await applyDeferredSettings()
         announce(results)
+    }
+
+    /// Restarts the server for settings an import changed, such as Allowed
+    /// Origins. `/admin/import/apply` calls this after it has answered.
+    public func applyDeferredSettings() async {
+        await settings.applyDeferredChanges()
     }
 
     /// Applies every pending request, oldest first.
@@ -184,6 +199,7 @@ public final class PendingImportProcessor {
         case .agent: return 0
         case .skill: return 1
         case .mcp: return 2
+        case .setting: return 3
         }
     }
 
@@ -213,6 +229,7 @@ public final class PendingImportProcessor {
         case agent(
             entry: AgentEntry, existingId: UUID?, quickActions: [AgentQuickAction]?,
             source: OsaurusBundle.Agent)
+        case setting(BundleSetting, value: BundleSettingValue)
     }
 
     private struct PreparedItem {
@@ -359,7 +376,52 @@ public final class PendingImportProcessor {
             item.notes = notes
             item.needsUser = needsUser
             return item
+
+        case .setting:
+            guard let entry = bundle.setting(named: op.name) else {
+                throw PrepareFailure(message: "Not found in the bundle.")
+            }
+            let decision = decideSetting(
+                op, setting: entry.setting, wanted: entry.value, bundle: bundle, bundleVersion: bundleVersion,
+                receipts: receipts)
+            return PreparedItem(
+                op: op, hash: hash, receipt: receipt, decision: decision,
+                payload: .setting(entry.setting, value: entry.value))
         }
+    }
+
+    /// Ownership rules for a shared setting. `install` always sets it;
+    /// `update` leaves it once the user has changed what the bundle set.
+    /// A bundle may not ask for the opposite of what another bundle set.
+    private func decideSetting(
+        _ op: ImportOperation, setting: BundleSetting, wanted: BundleSettingValue, bundle: OsaurusBundle,
+        bundleVersion: String?, receipts: [ImportReceipt]
+    ) -> Decision {
+        let current = settings.value(of: setting)
+        let own = receipts.first { $0.bundleId == bundle.id && $0.matches(kind: .setting, name: setting.key) }
+        if setting.kind == .toggle,
+            let other = receipts.first(where: {
+                $0.bundleId != bundle.id && $0.matches(kind: .setting, name: setting.key)
+                    && $0.settingValue != nil && $0.settingValue != wanted
+            }), let theirs = other.settingValue
+        {
+            return .conflict(
+                "\(other.bundleId) turned it \(theirs). Change it in \(setting.location), or remove that "
+                    + "bundle's setting first.")
+        }
+        guard let own else { return setting.isSatisfied(wanted, by: current) ? .unchanged : .create }
+        if let installed = own.bundleVersion.flatMap(SemanticVersion.parse),
+            let incoming = bundleVersion.flatMap(SemanticVersion.parse),
+            installed > incoming
+        {
+            return .skip("Version \(installed) is installed, newer than \(incoming). Nothing changed.")
+        }
+        if op.action == .update, let applied = own.settingValue, !setting.isSatisfied(applied, by: current) {
+            return .skip(
+                "Changed in \(setting.location) since \(bundle.id) set it; left as it is. "
+                    + "Run install to set it again.")
+        }
+        return setting.isSatisfied(wanted, by: current) ? .unchanged : .replace
     }
 
     /// Ownership rules. An item another bundle (or the user) owns is never
@@ -422,11 +484,25 @@ public final class PendingImportProcessor {
         case .conflict(let message): return result(.failed, message)
         case .skip(let message): return result(.skipped, message)
         case .unchanged:
+            let own = receipts.first(where: { $0.bundleId == bundle.id && $0.matches(kind: op.kind, name: op.name) })
+            if case .setting(let setting, let value) = item.payload, own?.settingValue != value {
+                // Already the way the bundle wants it: record it, so a later
+                // update can tell when the user changes it.
+                var receipt =
+                    own
+                    ?? ImportReceipt(
+                        bundleId: bundle.id, bundleName: bundle.manifest.name, bundleVersion: nil,
+                        kind: .setting, name: setting.key, explicit: op.explicit, contentHash: item.hash)
+                receipt.bundleVersion = request.bundleVersion
+                receipt.contentHash = item.hash
+                receipt.settingValue = value
+                receipt.updatedAt = Date()
+                upsert(receipt, into: &receipts)
+                return result(.unchanged, "\(setting.title) is already \(settings.value(of: setting)).")
+            }
             // Keep every item of a bundle on one version, so a later older
             // version is skipped for this item like for its siblings.
-            if var receipt = receipts.first(where: { $0.bundleId == bundle.id && $0.matches(kind: op.kind, name: op.name) }),
-                receipt.bundleVersion != request.bundleVersion
-            {
+            if var receipt = own, receipt.bundleVersion != request.bundleVersion {
                 receipt.bundleVersion = request.bundleVersion
                 receipt.bundleName = request.bundleName ?? receipt.bundleName
                 upsert(receipt, into: &receipts)
@@ -534,6 +610,30 @@ public final class PendingImportProcessor {
                 notes.isEmpty ? "\(verb) agent." : notes.joined(separator: " "),
                 pending: pendingSecrets,
                 name: agent.name)
+
+        case .setting(let setting, let value):
+            let stored = setting.applying(value, to: settings.value(of: setting))
+            settings.set(stored, for: setting)
+            var notes = ["Set \(setting.title) to \(stored)."]
+            var needsUser = false
+            switch (setting.id, value) {
+            case (.requireLocalAccessKey, .bool(true)):
+                notes.append(
+                    "Apps and scripts on this Mac now need an access key for /sessions, /agents, /mcp/*, "
+                        + "/admin/config/* and /admin/import/*.")
+                if !settings.hasAccessKeys() {
+                    needsUser = true
+                    notes.append("No access key exists yet. Create one in Server → Overview.")
+                }
+            case (.allowedOrigins, _):
+                notes.append("The server restarts to use the new list.")
+            default:
+                break
+            }
+            receipt.settingValue = value
+            receipt.needsUserAction = needsUser ? true : nil
+            upsert(receipt, into: &receipts)
+            return result(needsUser ? .needsUserAction : .done, notes.joined(separator: " "))
         }
     }
 
@@ -653,7 +753,7 @@ public final class PendingImportProcessor {
                 }
             case .mcp:
                 uses = (receipt.mcpServers ?? []).contains { $0.caseInsensitiveCompare(name) == .orderedSame }
-            case .agent:
+            case .agent, .setting:
                 uses = false
             }
             if uses { users.append(receipt.name) }
@@ -704,6 +804,13 @@ public final class PendingImportProcessor {
             } else {
                 gone = true
             }
+        case .setting:
+            receipts.removeAll { $0.bundleId == receipt.bundleId && $0.matches(kind: .setting, name: receipt.name) }
+            guard let setting = BundleSetting.named(receipt.name) else { return row(.done, nil) }
+            return row(
+                .done,
+                "\(setting.title) stays \(settings.value(of: setting)); removing a bundle does not change "
+                    + "its settings back.")
         }
         receipts.removeAll { $0.bundleId == receipt.bundleId && $0.matches(kind: receipt.kind, name: receipt.name) }
         removed.insert(Self.removalKey(receipt.kind, receipt.name))

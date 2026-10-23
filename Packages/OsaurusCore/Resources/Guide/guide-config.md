@@ -93,7 +93,7 @@ osaurus config apply <file.yaml|.json> [--prune] [--yes]
 
 When Settings → Server → Settings → Authentication → **Require Access Key for Local Admin Routes** is on, the `/admin/config/*` endpoints need an access key even from this Mac: pass `--access-key KEY` or set `OSAURUS_API_KEY` (a missing or rejected key exits `1` with a hint).
 
-To install agents, skills, and MCP servers from a vendor's Osaurus bundle (an installer-shipped folder with `osaurus-bundle.json`), use `osaurus import install --from <folder>`; see `docs/OSAURUS_BUNDLES.md` in the repository.
+To install agents, skills, and MCP servers from a vendor's Osaurus bundle (an installer-shipped folder with `osaurus-bundle.json`), use `osaurus import install --from <folder>`; see `docs/OSAURUS_BUNDLES.md` in the repository. A bundle can also switch **Require Access Key for Local Admin Routes** and add to **Allowed Origins (CORS)** through its `settings` object; no other setting is provisioned that way.
 
 High-risk applies are refused until re-run with `--yes` (the risks are printed first). Exit codes: `0` fully applied, `1` a change failed or was cancelled, `3` applied but a step must be finished in the app (typically credentials).
 

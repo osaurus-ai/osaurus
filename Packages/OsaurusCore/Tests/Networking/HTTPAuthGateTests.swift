@@ -705,6 +705,7 @@ struct HTTPAuthGateTests {
         ("GET", "/mcp/tools"),
         ("POST", "/mcp/call"),
         ("GET", "/admin/config/schema"),
+        ("POST", "/admin/import/plan"),
     ]
 
     /// Setting off (every existing install): a key-less loopback caller and a
@@ -761,6 +762,10 @@ struct HTTPAuthGateTests {
             let result = try await Self.sendLocal("GET", path, server: server, token: token)
             #expect(result.status == 200, "\(path) returned \(result.status): \(result.body)")
         }
+        // Past the gate: the import endpoint itself rejects the request.
+        let importPlan = try await Self.sendLocal("POST", "/admin/import/plan", server: server, token: token)
+        #expect(importPlan.status == 400, "\(importPlan.status): \(importPlan.body)")
+        #expect(importPlan.body.contains("bundle_path"), "\(importPlan.body)")
     }
 
     /// An agent-scoped key on loopback is confined exactly as it is remotely:
@@ -781,6 +786,8 @@ struct HTTPAuthGateTests {
         }
         let sessions = try await Self.sendLocal("GET", "/sessions", server: server, token: fixture.token)
         #expect(sessions.status == 403, "\(sessions.status): \(sessions.body)")
+        let importPlan = try await Self.sendLocal("POST", "/admin/import/plan", server: server, token: fixture.token)
+        #expect(importPlan.status == 403, "\(importPlan.status): \(importPlan.body)")
     }
 
     @Test func localKeyPolicyOn_unlistedBrowserOriginIsRefusedEvenWithKey() async throws {
@@ -904,16 +911,16 @@ struct HTTPAuthGateTests {
 }
 
 struct LocalAPIKeyPolicyTests {
-    @Test func protectedRoutesMatchOnlyTheFourGroups() {
+    @Test func protectedRoutesMatchOnlyTheFiveGroups() {
         for path in [
             "/sessions", "/sessions/abc", "/agents", "/agents/abc/run", "/mcp/tools", "/mcp/call",
-            "/admin/config/export", "/admin/config/apply",
+            "/admin/config/export", "/admin/config/apply", "/admin/import/plan", "/admin/import/apply",
         ] {
             #expect(LocalAPIKeyPolicy.isProtectedRoute(path), "\(path)")
         }
         for path in [
             "/", "/health", "/models", "/chat/completions", "/sessionsx", "/agentsx", "/mcp",
-            "/admin/runtime-settings", "/admin/configx", "/plugins/x", "/channels/x",
+            "/admin/runtime-settings", "/admin/configx", "/admin/importx", "/plugins/x", "/channels/x",
         ] {
             #expect(!LocalAPIKeyPolicy.isProtectedRoute(path), "\(path)")
         }
