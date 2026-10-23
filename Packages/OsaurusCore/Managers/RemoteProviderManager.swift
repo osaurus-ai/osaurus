@@ -103,8 +103,11 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Provider IDs created from Bonjour discovery — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
-    /// Providers whose credential write is queued but has not landed yet.
-    private var pendingCredentialStaging: Set<UUID> = []
+    /// Generation of the latest queued credential write per provider that has
+    /// not landed yet. Overlapping saves each get their own generation, so an
+    /// earlier save finishing does not hide a later one that is stuck.
+    private var pendingCredentialStaging: [UUID: Int] = [:]
+    private var credentialStagingGeneration = 0
     /// Providers that were told their save stalled, so a late success can
     /// clear that warning.
     private var stalledCredentialStaging: Set<UUID> = []
@@ -239,7 +242,7 @@ public final class RemoteProviderManager: ObservableObject {
         let providerId = provider.id
         let shouldConnect = provider.enabled
         let persistsToDisk = !isEphemeral
-        watchCredentialStaging(providerId: providerId, providerName: provider.name)
+        let stagingGeneration = watchCredentialStaging(providerId: providerId, providerName: provider.name)
         Keychain.performInBackground {
             var credentialsDurable = true
             if let apiKey = apiKey, !apiKey.isEmpty {
@@ -255,6 +258,7 @@ public final class RemoteProviderManager: ObservableObject {
             Task { @MainActor in
                 RemoteProviderManager.shared.finishCredentialStaging(
                     providerId: providerId,
+                    generation: stagingGeneration,
                     credentialsDurable: credentialsDurable,
                     persistsToDisk: persistsToDisk,
                     connect: shouldConnect
@@ -272,12 +276,14 @@ public final class RemoteProviderManager: ObservableObject {
     /// requested connect.
     private func finishCredentialStaging(
         providerId: UUID,
+        generation: Int,
         credentialsDurable: Bool,
         persistsToDisk: Bool,
         connect shouldConnect: Bool
     ) {
-        pendingCredentialStaging.remove(providerId)
-        if stalledCredentialStaging.remove(providerId) != nil, credentialsDurable {
+        let isLatest = pendingCredentialStaging[providerId] == generation
+        if isLatest { pendingCredentialStaging[providerId] = nil }
+        if isLatest, credentialsDurable, stalledCredentialStaging.remove(providerId) != nil {
             providerStates[providerId]?.lastError = nil
             notifyStatusChanged()
         }
@@ -301,11 +307,13 @@ public final class RemoteProviderManager: ObservableObject {
     /// the edit sheet has already closed, so the save would otherwise fail
     /// silently. Past the limit the provider shows an error and the user gets
     /// a toast. A late success clears it in `finishCredentialStaging`.
-    private func watchCredentialStaging(providerId: UUID, providerName: String) {
-        pendingCredentialStaging.insert(providerId)
+    private func watchCredentialStaging(providerId: UUID, providerName: String) -> Int {
+        credentialStagingGeneration += 1
+        let generation = credentialStagingGeneration
+        pendingCredentialStaging[providerId] = generation
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.credentialStagingStallLimit)
-            guard let self, self.pendingCredentialStaging.contains(providerId) else { return }
+            guard let self, self.pendingCredentialStaging[providerId] == generation else { return }
             self.stalledCredentialStaging.insert(providerId)
             self.providerStates[providerId]?.lastError =
                 "Saving credentials to the Keychain is taking longer than expected. The key may not be saved yet."
@@ -315,6 +323,7 @@ public final class RemoteProviderManager: ObservableObject {
                 message: L("The Keychain has not responded for \(providerName). Try saving again in a few minutes.")
             )
         }
+        return generation
     }
 
     /// Update an existing provider
@@ -340,7 +349,7 @@ public final class RemoteProviderManager: ObservableObject {
         // reads the fresh key.
         let providerId = provider.id
         let shouldReconnect = wasConnected && provider.enabled
-        watchCredentialStaging(providerId: providerId, providerName: provider.name)
+        let stagingGeneration = watchCredentialStaging(providerId: providerId, providerName: provider.name)
         Keychain.performInBackground {
             var credentialsDurable = true
             if let apiKey = apiKey {
@@ -361,6 +370,7 @@ public final class RemoteProviderManager: ObservableObject {
             Task { @MainActor in
                 RemoteProviderManager.shared.finishCredentialStaging(
                     providerId: providerId,
+                    generation: stagingGeneration,
                     credentialsDurable: credentialsDurable,
                     persistsToDisk: true,
                     connect: shouldReconnect

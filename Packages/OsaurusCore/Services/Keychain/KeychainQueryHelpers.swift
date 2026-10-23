@@ -49,13 +49,17 @@ enum KeychainQueryHelpers {
     /// this returns nil and the query runs with `kSecUseAuthenticationUISkip`
     /// alone, which still refuses UI, instead of every Keychain read in the app
     /// queueing forever behind one stuck `LAContext()`. A later call picks the
-    /// context up once the background creation finishes.
+    /// context up once the background creation finishes. After one caller has
+    /// timed out, later callers skip the wait until that creation finishes, so
+    /// a long coreauthd stall costs one 2 s wait instead of one per read.
     static func nonInteractiveContext() -> LAContext? {
         contextCondition.lock()
         defer { contextCondition.unlock() }
         if let cached = sharedNonInteractiveContext { return cached }
+        if contextCreationInFlight, contextCreationTimedOut { return nil }
         if !contextCreationInFlight {
             contextCreationInFlight = true
+            contextCreationTimedOut = false
             Thread.detachNewThread {
                 let context = LAContext()
                 context.interactionNotAllowed = true
@@ -70,6 +74,7 @@ enum KeychainQueryHelpers {
         while sharedNonInteractiveContext == nil {
             guard contextCondition.wait(until: deadline) else { break }
         }
+        if sharedNonInteractiveContext == nil { contextCreationTimedOut = true }
         return sharedNonInteractiveContext
     }
 
@@ -79,6 +84,8 @@ enum KeychainQueryHelpers {
     private static let contextCondition = NSCondition()
     nonisolated(unsafe) private static var sharedNonInteractiveContext: LAContext?
     nonisolated(unsafe) private static var contextCreationInFlight = false
+    /// Set once a caller gave up waiting on the in-flight creation.
+    nonisolated(unsafe) private static var contextCreationTimedOut = false
 
     /// The non-interactive query options. The context is added only when it
     /// is available; `kSecUseAuthenticationUISkip` is always set.
