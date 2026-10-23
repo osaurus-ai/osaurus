@@ -96,6 +96,31 @@ struct FavoriteModelsStoreStarterSeedTests {
         #expect(store.favoriteKeys == [mine])
     }
 
+    /// Local and other-provider favourites are not a curated Cloud list, so
+    /// they don't block the starters that fill the Cloud shortlist.
+    @Test func nonCloudFavoritesDoNotBlockStarters() {
+        let (store, _) = makeStore()
+        let local = FavoriteModelsStore.key(sourceKey: "local", modelId: "mlx/model")
+        let otherProvider = FavoriteModelsStore.key(sourceKey: "remote-\(UUID().uuidString)", modelId: "p/model")
+        store.add(local)
+        store.add(otherProvider)
+
+        store.seedStarterFavoritesIfNeeded(
+            routerModelIds: Self.fullCatalog,
+            routerSourceKey: Self.routerSourceKey
+        )
+        #expect(
+            store.favoriteKeys == [
+                local,
+                otherProvider,
+                key("osaurus/deepseek-v4-1-flash"),
+                key("osaurus/claude-opus-5-5"),
+                key("osaurus/gpt-6-astra"),
+            ]
+        )
+        #expect(store.seededStarterSlugs == FavoriteModelsStore.starterOsaurusCloudSlugs)
+    }
+
     /// A starter the Router does not offer yet stays pending and is appended
     /// exactly once when a later catalog includes it.
     @Test func missingStarterLandsOnLaterCatalog() {

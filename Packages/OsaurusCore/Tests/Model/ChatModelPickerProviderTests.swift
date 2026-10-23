@@ -111,6 +111,34 @@ struct ChatModelPickerProviderTests {
         #expect(groups.first?.availableModels == groups.first?.models)
     }
 
+    @Test func favoritesPinToTopOfLocalAndConnectedColumnsInStableOrder() {
+        let alpha = ModelPickerItem(id: "mlx/alpha", displayName: "Alpha", source: .local)
+        let beta = ModelPickerItem(id: "mlx/beta", displayName: "Beta", source: .local)
+        let zeta = ModelPickerItem(id: "mlx/zeta", displayName: "Zeta", source: .local)
+        let remoteA = remote("p/a", providerID: providerA, name: "Provider A")
+        let remoteB = remote("p/b", providerID: providerA, name: "Provider A")
+        let sameIdOtherProvider = remote("p/b", providerID: providerB, name: "Provider B")
+        let groups = ChatModelPickerProvider.groups(
+            from: [alpha, beta, zeta, .foundation(), remoteA, remoteB, sameIdOtherProvider],
+            favoriteKeys: [zeta.favoriteKey, beta.favoriteKey, remoteB.favoriteKey]
+        )
+        let localIDs = groups.first { $0.isLocal }?.models.map(\.id)
+        #expect(localIDs == ["mlx/beta", "mlx/zeta", "foundation", "mlx/alpha"])
+        #expect(groups.first { $0.title == "Provider A" }?.models == [remoteB, remoteA])
+        #expect(groups.first { $0.title == "Provider B" }?.models == [sameIdOtherProvider])
+    }
+
+    @Test func favoritesDoNotReorderTheCloudShortlist() {
+        let first = cloud("osaurus/a")
+        let second = cloud("osaurus/b")
+        let groups = ChatModelPickerProvider.groups(
+            from: [second, first],
+            cloudModelIDs: [first.id, second.id],
+            favoriteKeys: [second.favoriteKey]
+        )
+        #expect(groups.first { $0.isOsaurusCloud }?.models == [first, second])
+    }
+
     @Test func groupingPreservesRouteIDsSourcesAndMetadataAcrossProviders() {
         let first = ModelPickerItem(
             id: "same/model", displayName: "Zeta", source: .remote(providerName: "Same Name", providerId: providerA),

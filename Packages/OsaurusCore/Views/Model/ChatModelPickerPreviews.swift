@@ -72,7 +72,11 @@ private struct ChatModelPickerPreview: View {
         // inactive discovery rows, and favorite/current-model policy as chat.
         var shortlist = Set(availableModels.filter { favorites.isFavorite($0.favoriteKey) }.map(\.id))
         if let selectedModel { shortlist.insert(selectedModel) }
-        return ChatModelPickerProvider.groups(from: availableModels, cloudModelIDs: shortlist)
+        return ChatModelPickerProvider.groups(
+            from: availableModels,
+            cloudModelIDs: shortlist,
+            favoriteKeys: Set(favorites.favoriteKeys)
+        )
     }
 
     private var optionsControl: ModelPickerOptionsControl? {

@@ -3203,7 +3203,11 @@ extension FloatingInputCard {
         let shortlist = Set(cachedPickerItems.filter {
             chatModelFavorites.isFavorite($0.favoriteKey) || $0.id == selectedModel
         }.map(\.id))
-        return ChatModelPickerProvider.groups(from: cachedPickerItems, cloudModelIDs: shortlist)
+        return ChatModelPickerProvider.groups(
+            from: cachedPickerItems,
+            cloudModelIDs: shortlist,
+            favoriteKeys: Set(chatModelFavorites.favoriteKeys)
+        )
     }
 
     /// Inline "Model Options" section for the model popover: the semantic
