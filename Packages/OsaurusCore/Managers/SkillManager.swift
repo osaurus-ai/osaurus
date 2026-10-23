@@ -475,6 +475,42 @@ public final class SkillManager {
         return result
     }
 
+    /// Installs an unpacked skill folder (`SKILL.md` plus optional
+    /// `references/` and `assets/`) the same way a zip import lays it out.
+    /// Passing `replacing` overwrites that skill in place and keeps its id,
+    /// so search entries and anything holding the id stay attached.
+    @discardableResult
+    public func installSkill(fromDirectory directory: URL, replacing existing: Skill? = nil) async throws -> Skill {
+        if let existing, existing.isBuiltIn { throw SkillFileError.cannotModifyBuiltIn }
+        if let existing, existing.isFromPlugin { throw SkillFileError.cannotModifyPluginSkill }
+        let skill = try await Self.performDirectoryInstall(directory, replacing: existing)
+        await refresh()
+        Task { await SkillSearchService.shared.indexSkill(skill) }
+        return skill
+    }
+
+    nonisolated private static func performDirectoryInstall(
+        _ directory: URL, replacing existing: Skill?
+    ) async throws -> Skill {
+        let markdown = directory.appendingPathComponent("SKILL.md")
+        guard FileManager.default.fileExists(atPath: markdown.path) else { throw SkillFileError.invalidSkillArchive }
+        let content = try String(contentsOf: markdown, encoding: .utf8)
+        let parsed = try Skill.parseAnyFormat(from: content)
+        let skill = Skill(
+            id: existing?.id ?? UUID(),
+            name: parsed.name,
+            description: parsed.description,
+            version: parsed.version,
+            author: parsed.author,
+            category: parsed.category,
+            instructions: parsed.instructions,
+            createdAt: existing?.createdAt ?? Date(),
+            directoryName: existing?.directoryName ?? parsed.xplaceholder_agentSkillsNamex
+        )
+        try installImportedSkill(skill, from: directory, overwriteExisting: existing != nil)
+        return skill
+    }
+
     /// Nonisolated async work runs off the main actor while preserving the
     /// caller task's cancellation state through validation and extraction.
     nonisolated private static func performZipImport(

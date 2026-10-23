@@ -19,13 +19,13 @@ The document has 16 sections (plus `version`):
 - `memory` — persistent memory: enabled, token budget, retention days.
 - `default_agent` — the built-in Default agent (the Orchestrator): display name, model, temperature, max tokens, persona.
 - `new_chat_agent` — which agent **new** chats open with: `default` or a custom agent's name. (`active_agent` is still accepted as a legacy spelling; exports write `new_chat_agent`.)
-- `agents` — custom agents: prompt, model, sampling, and per-agent capability toggles (tools, web search, browser, computer use, relay, knowledge collections, `apple_apps`, …). `capabilities.apple_apps` is the list of built-in Apple apps the agent may use (`calendar`, `reminders`, `contacts`, `notes`, `mail`, `messages`, `maps`, `music`, `shortcuts`); the full list replaces the set and `[]` turns them all off. Enabling `mail`, `messages`, or `shortcuts` adds a risk line to the plan. `template: coder | researcher | writer | assistant | productivity` fills in the system prompt when omitted; `description` is an optional one-line routing summary (generated in the background from the system prompt when omitted); an omitted `model` means the Orchestrator's current model.
+- `agents` — custom agents: prompt, model, sampling, and per-agent capability toggles (tools, web search, browser, computer use, relay, knowledge collections, `apple_apps`, …). `skills` is the agent's skill allow-list: omit it to leave it unchanged, `null` for every installed skill, or a list of skill names or slugs (`[]` means none); only listed skills appear in the agent's prompt, `capabilities_load`, and slash commands. `tools` with `mode: manual` is the exact tool list: an export lists a fully selected plugin or MCP group under `plugins` / `mcp_servers`, and a partly selected group as its exact tool names under `tools.enabled`. `capabilities.apple_apps` is the list of built-in Apple apps the agent may use (`calendar`, `reminders`, `contacts`, `notes`, `mail`, `messages`, `maps`, `music`, `shortcuts`); the full list replaces the set and `[]` turns them all off. Enabling `mail`, `messages`, or `shortcuts` adds a risk line to the plan. `template: coder | researcher | writer | assistant | productivity` fills in the system prompt when omitted; `description` is an optional one-line routing summary (generated in the background from the system prompt when omitted); an omitted `model` means the Orchestrator's current model.
 - `tools` — global tool enablement and per-tool policies (`auto` / `ask` / `deny`). Tools that send or delete as the user (`messages_send`, `calendar_delete_event`, `reminders_delete`, `delete_knowledge`) ask on every call regardless; `auto` on them is stored but has no effect, and the plan says so. `mail_compose` / `mail_reply` on `auto` covers drafts only — `send: true` still asks.
 - `delegation` — the Orchestrator's pool and limits: `spawnable_agents` (custom agent names), `spawnable_workspace_agents` (teammates' shared agents), `workspace_auto_join`, `permission_defaults` (`spawn`, `spawn_workspace`, …), the per-subagent budgets (`budget_max_tokens`, `budget_max_turns`, `budget_max_seconds`, `budget_max_parallel_spawns`, `budget_max_remote_parallel_spawns`), RAM-safety preflight. See "Delegation" below.
 - `commands` — user slash-command templates.
 - `knowledge_collections` — folder-backed knowledge collections with include/exclude globs.
 - `channels` — messaging platforms (Telegram, Slack, …): read limits, allowlists, write enables, and the global write kill switch.
-- `mcp_servers` — MCP servers, HTTP or stdio (`command` / `args` / `env`), with `token_ref` / `secret_env_refs` for credentials.
+- `mcp_servers` — MCP servers, HTTP or stdio (`command` / `args` / `env`), with `token_ref` (HTTP bearer token), `secret_header_refs` (HTTP custom headers such as `X-API-Key`, header name → reference), and `secret_env_refs` (stdio environment) for credentials.
 - `models` — the desired-state list of installed local model ids; adding an id starts the download, pruning deletes from disk.
 - `plugins` — installed plugin ids.
 - `providers` — cloud model providers, including endpoint fields (create-only) and `api_key_ref` / `set_api_key`.
@@ -73,7 +73,7 @@ Secrets never appear in a document — exports contain none, and applies never a
 
 Two ways to wire credentials:
 
-- **Secret references.** `api_key_ref` (providers), `token_ref` (MCP servers), `secret_env_refs` (stdio MCP env), and `bot_token_ref` (channels) accept `env:VAR_NAME` or `keychain:SERVICE/ACCOUNT`. Apply resolves the reference at apply time; the document only ever carries the pointer.
+- **Secret references.** `api_key_ref` (providers), `token_ref` and `secret_header_refs` (MCP servers), `secret_env_refs` (stdio MCP env), and `bot_token_ref` (channels) accept `env:VAR_NAME` or `keychain:SERVICE/ACCOUNT`. Apply resolves the reference at apply time; the document only ever carries the pointer.
 - **The credential sheet.** Creating a cloud provider opens the native credential sheet during apply. To set or rotate an *existing* provider's key, add `set_api_key: true` to its entry: apply opens the same secure sheet even when the provider already has working credentials. The flag is a one-shot request — never exported, and the secret itself still never touches the document.
 
 ## Typical flows
@@ -91,6 +91,8 @@ osaurus config plan <file.yaml|.json> [--prune]       # dry-run: show the diff
 osaurus config apply <file.yaml|.json> [--prune] [--yes]
 ```
 
+To install agents, skills, and MCP servers from a vendor's Osaurus bundle (an installer-shipped folder with `osaurus-bundle.json`), use `osaurus import install --from <folder>`; see `docs/OSAURUS_BUNDLES.md` in the repository.
+
 High-risk applies are refused until re-run with `--yes` (the risks are printed first). Exit codes: `0` fully applied, `1` a change failed or was cancelled, `3` applied but a step must be finished in the app (typically credentials).
 
 ## Schema and samples
@@ -101,5 +103,5 @@ Ask the assistant to "show the configuration schema" (it calls `osaurus_config` 
 
 Two classes, both by design:
 
-- **Removed from the declarative surface** (Settings UI only): server runtime (port, network exposure, generation defaults, caches, concurrency, model exposure), chat behavior (core model), app shell (login item, dock icon, appearance/themes/toasts), voice/wake words, global computer-use presets, sandbox resources, privacy filter, image-generation targets, the Orchestrator's working folder, and the agent-target model override. Per-agent capability *toggles* (computer use, browser, relay, …) remain declarative under `agents[].capabilities`. Skills are read-only via `osaurus_inspect` — installing a skill is content acquisition, not configuration state.
+- **Removed from the declarative surface** (Settings UI only): server runtime (port, network exposure, generation defaults, caches, concurrency, model exposure), chat behavior (core model), app shell (login item, dock icon, appearance/themes/toasts), voice/wake words, global computer-use presets, sandbox resources, privacy filter, image-generation targets, the Orchestrator's working folder, and the agent-target model override. Per-agent capability *toggles* (computer use, browser, relay, …) remain declarative under `agents[].capabilities`. Skills are read-only via `osaurus_inspect` — installing a skill is content acquisition, not configuration state (an agent's allow-list is `agents[].skills`; third-party installers ship skills in an Osaurus bundle with `osaurus import`).
 - **Inherently interactive**: macOS permission (TCC) grants, OAuth sign-in and device pairing, hotkey capture, folder pickers/bookmarks, download progress, destructive resets, and payment.

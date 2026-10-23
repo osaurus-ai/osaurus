@@ -241,6 +241,8 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
     public var tools: [String]
     /// Agent only: knowledge collection names.
     public var knowledge: [String]
+    /// Agent only: the skill allow-list (`agents[].skills`), by name or slug.
+    public var skills: [String]
     /// Agent only.
     public var workingFolder: PathHint?
     /// Designer notes keyed by `TemplateRequirement.id`.
@@ -255,10 +257,12 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         network: [String] = [],
         tools: [String] = [],
         knowledge: [String] = [],
+        skills: [String] = [],
         workingFolder: PathHint? = nil,
         notes: [String: String] = [:]
     ) {
         self.tools = tools
+        self.skills = skills
         self.models = models
         self.secrets = secrets
         self.mcpServers = mcpServers
@@ -271,7 +275,7 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case models, secrets, permissions, network, knowledge, notes, plugins, tools
+        case models, secrets, permissions, network, knowledge, notes, plugins, tools, skills
         case mcpServers = "mcp_servers"
         case workingFolder = "working_folder"
     }
@@ -286,12 +290,13 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         network = try c.decodeIfPresent([String].self, forKey: .network) ?? []
         tools = try c.decodeIfPresent([String].self, forKey: .tools) ?? []
         knowledge = try c.decodeIfPresent([String].self, forKey: .knowledge) ?? []
+        skills = try c.decodeIfPresent([String].self, forKey: .skills) ?? []
         workingFolder = try c.decodeIfPresent(PathHint.self, forKey: .workingFolder)
         notes = try c.decodeIfPresent([String: String].self, forKey: .notes) ?? [:]
     }
 
-    /// `tools` is left out when empty so templates without it keep their
-    /// content hash.
+    /// `tools` and `skills` are left out when empty so templates without
+    /// them keep their content hash.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(models, forKey: .models)
@@ -302,6 +307,7 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         try c.encode(network, forKey: .network)
         if !tools.isEmpty { try c.encode(tools, forKey: .tools) }
         try c.encode(knowledge, forKey: .knowledge)
+        if !skills.isEmpty { try c.encode(skills, forKey: .skills) }
         try c.encodeIfPresent(workingFolder, forKey: .workingFolder)
         try c.encode(notes, forKey: .notes)
     }
@@ -334,6 +340,7 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
             network: union(network, other.network),
             tools: union(tools, other.tools),
             knowledge: union(knowledge, other.knowledge),
+            skills: union(skills, other.skills),
             workingFolder: workingFolder ?? other.workingFolder,
             notes: notes.merging(other.notes) { a, _ in a }
         )
@@ -373,6 +380,7 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         for name in knowledge {
             out.append(note(TemplateRequirement(kind: .knowledgeCollection, value: name)))
         }
+        for name in skills { out.append(note(TemplateRequirement(kind: .skill, value: name))) }
         if let folder = workingFolder {
             out.append(
                 note(
@@ -395,6 +403,7 @@ public struct TemplateRequirement: Codable, Equatable, Sendable, Identifiable {
         case secret
         case network
         case tool
+        case skill
     }
 
     /// Kept for agent-template call sites that name the policy directly.

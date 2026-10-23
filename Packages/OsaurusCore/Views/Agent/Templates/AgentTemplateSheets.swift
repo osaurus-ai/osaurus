@@ -221,7 +221,9 @@ struct SaveAgentTemplateSheet: View {
             case .systemPrompt: return !(entry.systemPrompt ?? "").isEmpty
             case .description: return !(entry.description ?? "").isEmpty
             case .model: return entry.model.valueOrNil != nil
-            case .tools: return entry.tools?.mode == "manual" || entry.mcpServers != nil || entry.plugins != nil
+            case .tools:
+                return entry.tools?.mode == "manual" || entry.mcpServers != nil || entry.plugins != nil
+                    || entry.skills.isSpecified
             case .sandbox: return entry.sandbox != nil
             case .subagents: return entry.subagents?.enabled == true
             case .workingFolder: return entry.workingFolder.valueOrNil != nil
@@ -382,6 +384,7 @@ extension TemplateRequirement.Kind {
         case .secret: return L("Secret")
         case .network: return L("Network")
         case .tool: return L("Tool")
+        case .skill: return L("Skill")
         }
     }
 
@@ -396,6 +399,7 @@ extension TemplateRequirement.Kind {
         case .secret: return "key"
         case .network: return "network"
         case .tool: return "wrench.and.screwdriver"
+        case .skill: return "lightbulb"
         }
     }
 }

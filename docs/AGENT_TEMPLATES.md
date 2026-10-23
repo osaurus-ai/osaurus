@@ -64,6 +64,10 @@ An agent template is one agent's configuration as a portable JSON document. User
 
 Cases 2 and 3 are wrapped into a template named after the agent. Files arrive only through Import Template (Choose File) or a drop on the Templates page. There is no link, clipboard, or paste path.
 
+## Installing from the command line
+
+Installers can pre-load agents without the import sheet: an Osaurus bundle is a folder of agent files in any of the shapes above, plus skills and MCP servers, installed with `osaurus import install --from <folder>`. The CLI queues the bundle and the app applies it at launch (or right away when running) through the same parser, planner, and applier. Agent files in a bundle must be JSON, and an envelope needs its top-level `name`. See the [Osaurus Bundles guide](OSAURUS_BUNDLES.md).
+
 ## Export
 
 **Export File…** on a template card writes the sanitized template through a save panel as `<slug>-v<N>.osaurustemplate` (JSON). When this Mac has an Osaurus master key the file is signed (`TemplateSigner.signedWithMasterKey`, domain `Osaurus Signed Template`); a signature that does not finish leaves the file unsigned rather than unwritten. A signed file whose signature no longer verifies is shown in the import review but never imported.

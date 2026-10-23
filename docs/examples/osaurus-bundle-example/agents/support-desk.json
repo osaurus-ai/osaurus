@@ -1,0 +1,37 @@
+{
+  "format": "osaurus.template",
+  "format_version": 1,
+  "kind": "agent",
+  "version": 1,
+  "name": "Support Desk",
+  "summary": "Triages and answers Acme support tickets.",
+  "author": { "name": "Acme Example" },
+  "requirements": {
+    "models": [{ "slot": "main", "preferred": "foundation", "strictness": "preferred" }]
+  },
+  "actions": [
+    { "icon": "tray.full", "text": "Triage my queue", "prompt": "Find my open Acme tickets and triage the five oldest." }
+  ],
+  "agent": {
+    "name": "Support Desk",
+    "description": "Triages, prioritizes and drafts replies for Acme support tickets.",
+    "system_prompt": "You are Acme's support desk assistant. Look tickets up with the Acme Tickets tools, triage them with the triage-ticket skill, and draft replies for a human to send. Never close a ticket yourself.",
+    "model": "foundation",
+    "capabilities": {
+      "tools_enabled": true,
+      "memory_enabled": true,
+      "web_search_enabled": false
+    },
+    "skills": ["triage-ticket"],
+    "tools": {
+      "mode": "manual",
+      "enabled": [
+        "get_current_time",
+        "acme_tickets_search_tickets",
+        "acme_tickets_get_ticket",
+        "acme_tickets_add_internal_note"
+      ]
+    },
+    "sandbox": { "enabled": false }
+  }
+}

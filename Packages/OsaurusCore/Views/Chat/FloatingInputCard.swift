@@ -368,7 +368,7 @@ struct FloatingInputCard: View {
 
     private var slashFilteredCommands: [SlashCommand] {
         guard let query = activeSlashQuery else { return [] }
-        return slashRegistry.filtered(query: query)
+        return slashRegistry.filtered(query: query, agentId: effectiveAgentId)
     }
 
     private var showSlashPopup: Bool {

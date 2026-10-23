@@ -48,22 +48,44 @@ private actor ConfigApplySerialQueue {
     }
 }
 
+/// How an apply treats things this Mac cannot honour yet. Interactive
+/// applies use `.default`; `osaurus import` runs before the MCP servers it
+/// adds have connected and before the user can paste a secret, so it keeps
+/// what it cannot resolve yet and reports it instead.
+struct ConfigApplyOptions: Sendable, Equatable {
+    /// Keep `tools.enabled` names no tool on this Mac provides yet (a server
+    /// still connecting) instead of skipping them.
+    var keepUnregisteredTools = false
+    /// Register an MCP server whose secret reference does not resolve, with
+    /// the secret keys pending, instead of refusing to add it.
+    var registerWithUnresolvedSecrets = false
+
+    static let `default` = ConfigApplyOptions()
+    static let bundleImport = ConfigApplyOptions(
+        keepUnregisteredTools: true, registerWithUnresolvedSecrets: true)
+}
+
 enum ConfigApplier {
 
     /// Apply the document. The caller (tool / CLI endpoint) has already
     /// validated it via `ConfigPlanner.plan` and obtained user approval.
     /// Applies are serialized process-wide: a second apply waits for the
     /// first to finish rather than interleaving with it.
-    static func apply(document: OsaurusConfigDocument, prune: Bool) async -> [ConfigApplyResult] {
+    static func apply(
+        document: OsaurusConfigDocument,
+        prune: Bool,
+        options: ConfigApplyOptions = .default
+    ) async -> [ConfigApplyResult] {
         await ConfigApplySerialQueue.shared.acquire()
-        let results = await applyLocked(document: document, prune: prune)
+        let results = await applyLocked(document: document, prune: prune, options: options)
         await ConfigApplySerialQueue.shared.release()
         return results
     }
 
     private static func applyLocked(
         document: OsaurusConfigDocument,
-        prune: Bool
+        prune: Bool,
+        options: ConfigApplyOptions
     ) async -> [ConfigApplyResult] {
         var results: [ConfigApplyResult] = []
 
@@ -82,7 +104,7 @@ enum ConfigApplier {
         if let entries = document.agents {
             results.append(
                 contentsOf: await applyAgents(
-                    entries, prune: prune, pendingModelIds: document.models ?? []))
+                    entries, prune: prune, pendingModelIds: document.models ?? [], options: options))
         }
         if let section = document.tools {
             results.append(contentsOf: await applyTools(section))
@@ -99,7 +121,7 @@ enum ConfigApplier {
             results.append(contentsOf: await applyChannels(section))
         }
         if let entries = document.mcpServers {
-            results.append(contentsOf: await applyMCPServers(entries, prune: prune))
+            results.append(contentsOf: await applyMCPServers(entries, prune: prune, options: options))
         }
         if let plugins = document.plugins {
             results.append(contentsOf: await applyPlugins(plugins, prune: prune))
@@ -338,7 +360,7 @@ enum ConfigApplier {
     // MARK: - Agents
 
     private static func applyAgents(
-        _ entries: [AgentEntry], prune: Bool, pendingModelIds: [String]
+        _ entries: [AgentEntry], prune: Bool, pendingModelIds: [String], options: ConfigApplyOptions
     ) async -> [ConfigApplyResult] {
         var results: [ConfigApplyResult] = []
         var matchedIds = Set<UUID>()
@@ -396,7 +418,7 @@ enum ConfigApplier {
                     }
                 }
                 if var agent = existing {
-                    let outcome = patch(&agent, from: entry)
+                    let outcome = patch(&agent, from: entry, options: options)
                     AgentManager.shared.update(agent)
                     // A patch can open a blocking gap (a folder this Mac
                     // cannot reach, a tool that is not installed) on an agent
@@ -429,7 +451,7 @@ enum ConfigApplier {
                         maxTokens: entry.maxTokens.valueOrNil
                     )
                     matchedIds.insert(agent.id)
-                    let outcome = patch(&agent, from: entry)
+                    let outcome = patch(&agent, from: entry, options: options)
                     AgentManager.shared.update(agent)
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
                     // New agents join the Default spawn pool on create
@@ -495,7 +517,9 @@ enum ConfigApplier {
 
     @MainActor
     @discardableResult
-    private static func patch(_ agent: inout Agent, from entry: AgentEntry) -> AgentPatchOutcome {
+    private static func patch(
+        _ agent: inout Agent, from entry: AgentEntry, options: ConfigApplyOptions = .default
+    ) -> AgentPatchOutcome {
         var outcome = AgentPatchOutcome()
         if let v = entry.description { agent.description = v }
         if let v = entry.systemPrompt { agent.systemPrompt = v }
@@ -504,7 +528,8 @@ enum ConfigApplier {
             agent.temperature = entry.temperature.valueOrNil.map(Float.init)
         }
         if entry.maxTokens.isSpecified { agent.maxTokens = entry.maxTokens.valueOrNil }
-        patchToolSelection(&agent, from: entry, outcome: &outcome)
+        patchToolSelection(&agent, from: entry, options: options, outcome: &outcome)
+        patchSkills(&agent, from: entry.skills, outcome: &outcome)
         if let instructions = entry.pluginInstructions {
             agent.pluginInstructions = instructions.isEmpty ? nil : instructions
         }
@@ -521,9 +546,35 @@ enum ConfigApplier {
         return outcome
     }
 
+    /// A skill not installed yet is kept on the list (it may arrive with the
+    /// same import or later) and reported, never fatal.
+    @MainActor
+    private static func patchSkills(
+        _ agent: inout Agent, from field: ConfigField<[String]>, outcome: inout AgentPatchOutcome
+    ) {
+        switch field {
+        case .absent:
+            return
+        case .null:
+            agent.skillNames = nil
+        case .value(let names):
+            var seen = Set<String>()
+            agent.skillNames = names
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && seen.insert(Skill.agentSkillsSlug(for: $0)).inserted }
+            let missing = agent.missingAllowListedSkills(in: SkillManager.shared.skills)
+            if !missing.isEmpty {
+                outcome.notes.append(
+                    "skills: not installed here yet: \(missing.joined(separator: ", ")). "
+                        + "The agent sees them once they are installed.")
+            }
+        }
+    }
+
     @MainActor
     private static func patchToolSelection(
-        _ agent: inout Agent, from entry: AgentEntry, outcome: inout AgentPatchOutcome
+        _ agent: inout Agent, from entry: AgentEntry, options: ConfigApplyOptions,
+        outcome: inout AgentPatchOutcome
     ) {
         let hasGroups = entry.mcpServers != nil || entry.plugins != nil
         guard entry.tools != nil || hasGroups else { return }
@@ -548,17 +599,40 @@ enum ConfigApplier {
             enabledGroups: enabled,
             disabledGroups: disabled,
             registered: Set(registry.listTools().map(\.name)),
-            groups: groups
+            groups: groups,
+            keepUnregistered: options.keepUnregisteredTools
         )
         agent.manualToolNames = applied.manualToolNames
         if !applied.missingTools.isEmpty {
             outcome.notes.append(
                 "Skipped tools not installed here: \(applied.missingTools.joined(separator: ", ")).")
         }
-        if !applied.missingGroups.isEmpty {
+        if !applied.keptUnregistered.isEmpty {
+            outcome.notes.append(
+                "Kept tools no server provides yet (they work once their server connects): "
+                    + applied.keptUnregistered.joined(separator: ", ") + ".")
+        }
+        // A configured server only has a tool group once it has connected.
+        let configuredServers = Set(MCPProviderManager.shared.configuration.providers.map { $0.name.lowercased() })
+        let offline = Set(
+            enabled.compactMap { group -> String? in
+                guard case .mcpServer(let name) = group, groups[group] == nil,
+                    configuredServers.contains(name.lowercased())
+                else { return nil }
+                return name
+            })
+        let absent = applied.missingGroups.filter { !offline.contains($0) }
+        let notConnected = applied.missingGroups.filter { offline.contains($0) }
+        if !notConnected.isEmpty {
+            outcome.notes.append(
+                "Not connected yet, so none of their tools were added (re-apply once connected): "
+                    + notConnected.joined(separator: ", ") + ".")
+            outcome.needsUserAction = true
+        }
+        if !absent.isEmpty {
             outcome.notes.append(
                 "Not set up on this Mac (add them in Settings, then re-apply): "
-                    + applied.missingGroups.joined(separator: ", ") + ".")
+                    + absent.joined(separator: ", ") + ".")
             outcome.needsUserAction = true
         }
     }
@@ -1114,9 +1188,45 @@ enum ConfigApplier {
 
     // MARK: - MCP servers
 
+    /// One `secret_env_refs` / `secret_header_refs` entry after resolution.
+    private struct ResolvedSecretRef {
+        var key: String
+        var secret: String?
+        var display: String
+    }
+
+    private static func resolveSecretMap(_ refs: [String: String]?) async -> [ResolvedSecretRef] {
+        var out: [ResolvedSecretRef] = []
+        for (key, raw) in (refs ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let (secret, display) = await resolveSecretRef(raw)
+            out.append(ResolvedSecretRef(key: key, secret: secret, display: display))
+        }
+        return out
+    }
+
+    /// Stores resolved header secrets for an HTTP server and marks every
+    /// referenced header secret, pending ones included, so Settings shows
+    /// the slot to fill. Returns the headers whose Keychain write failed.
+    @MainActor
+    private static func storeHeaderSecrets(
+        _ refs: [ResolvedSecretRef], in provider: inout MCPProvider
+    ) -> [String] {
+        var failures: [String] = []
+        for ref in refs {
+            if !provider.secretHeaderKeys.contains(ref.key) { provider.secretHeaderKeys.append(ref.key) }
+            provider.customHeaders.removeValue(forKey: ref.key)
+            if let secret = ref.secret,
+                !MCPProviderKeychain.saveHeaderSecret(secret, key: ref.key, for: provider.id)
+            {
+                failures.append(ref.key)
+            }
+        }
+        return failures
+    }
+
     @MainActor
     private static func applyMCPServers(
-        _ entries: [MCPServerEntry], prune: Bool
+        _ entries: [MCPServerEntry], prune: Bool, options: ConfigApplyOptions = .default
     ) async -> [ConfigApplyResult] {
         var results: [ConfigApplyResult] = []
         let manager = MCPProviderManager.shared
@@ -1134,13 +1244,8 @@ enum ConfigApplier {
             if let raw = entry.tokenRef {
                 resolvedToken = await resolveSecretRef(raw)
             }
-            var resolvedEnvRefs: [(key: String, secret: String?, display: String)] = []
-            if let refs = entry.secretEnvRefs {
-                for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
-                    let (secret, display) = await resolveSecretRef(raw)
-                    resolvedEnvRefs.append((envKey, secret, display))
-                }
-            }
+            let resolvedEnvRefs = await resolveSecretMap(entry.secretEnvRefs)
+            let resolvedHeaderRefs = await resolveSecretMap(entry.secretHeaderRefs)
 
             let existing = ConfigExporter.manageableMCPProviders().first {
                 $0.name.lowercased() == entry.name.lowercased()
@@ -1150,6 +1255,7 @@ enum ConfigApplier {
                 var authChangedToKeyed = false
                 var secretMessages: [String] = []
                 var secretFailure = false
+                var unresolvedRefs: [String] = []
                 switch provider.transport {
                 case .http:
                     if let url = entry.url { provider.url = url }
@@ -1173,8 +1279,25 @@ enum ConfigApplier {
                             }
                         } else {
                             secretFailure = true
+                            unresolvedRefs.append(display)
                             secretMessages.append(
                                 "Could not resolve \(display) — no token was stored.")
+                        }
+                    }
+                    let failures = storeHeaderSecrets(resolvedHeaderRefs, in: &provider)
+                    for ref in resolvedHeaderRefs {
+                        if ref.secret == nil {
+                            secretFailure = true
+                            unresolvedRefs.append(ref.display)
+                            secretMessages.append(
+                                "Could not resolve \(ref.display) for header \(ref.key) — nothing "
+                                    + "was stored.")
+                        } else if failures.contains(ref.key) {
+                            secretFailure = true
+                            secretMessages.append(
+                                "Could not store header \(ref.key) — Keychain unavailable.")
+                        } else {
+                            secretMessages.append("Stored secret header \(ref.key) from \(ref.display).")
                         }
                     }
                 case .stdio:
@@ -1193,27 +1316,32 @@ enum ConfigApplier {
                     {
                         provider.executionHost = host
                     }
-                    if !resolvedEnvRefs.isEmpty {
-                        for (envKey, secret, display) in resolvedEnvRefs {
-                            guard let secret else {
-                                secretFailure = true
-                                secretMessages.append(
-                                    "Could not resolve \(display) for env \(envKey) — nothing "
-                                        + "was stored.")
-                                continue
+                    for ref in resolvedEnvRefs {
+                        guard let secret = ref.secret else {
+                            secretFailure = true
+                            unresolvedRefs.append(ref.display)
+                            secretMessages.append(
+                                "Could not resolve \(ref.display) for env \(ref.key) — nothing "
+                                    + "was stored.")
+                            if options.registerWithUnresolvedSecrets,
+                                !provider.secretEnvKeys.contains(ref.key)
+                            {
+                                provider.secretEnvKeys.append(ref.key)
+                                provider.env.removeValue(forKey: ref.key)
                             }
-                            if MCPProviderKeychain.saveEnvSecret(secret, key: envKey, for: provider.id) {
-                                if !provider.secretEnvKeys.contains(envKey) {
-                                    provider.secretEnvKeys.append(envKey)
-                                }
-                                // The secret slot supersedes any plain copy.
-                                provider.env.removeValue(forKey: envKey)
-                                secretMessages.append("Stored secret env \(envKey) from \(display).")
-                            } else {
-                                secretFailure = true
-                                secretMessages.append(
-                                    "Could not store env \(envKey) — Keychain unavailable.")
+                            continue
+                        }
+                        if MCPProviderKeychain.saveEnvSecret(secret, key: ref.key, for: provider.id) {
+                            if !provider.secretEnvKeys.contains(ref.key) {
+                                provider.secretEnvKeys.append(ref.key)
                             }
+                            // The secret slot supersedes any plain copy.
+                            provider.env.removeValue(forKey: ref.key)
+                            secretMessages.append("Stored secret env \(ref.key) from \(ref.display).")
+                        } else {
+                            secretFailure = true
+                            secretMessages.append(
+                                "Could not store env \(ref.key) — Keychain unavailable.")
                         }
                     }
                 }
@@ -1228,7 +1356,8 @@ enum ConfigApplier {
                     results.append(
                         ConfigApplyResult(
                             section: "mcp_servers", target: entry.name, status: .needsUserAction,
-                            message: secretMessages.joined(separator: " ")))
+                            message: secretMessages.joined(separator: " "),
+                            unresolvedSecretRefs: unresolvedRefs))
                 } else if authChangedToKeyed {
                     results.append(
                         ConfigApplyResult(
@@ -1252,23 +1381,17 @@ enum ConfigApplier {
                     continue
                 }
                 // Secret env refs resolve BEFORE the server is registered so
-                // a bad reference never leaves a half-configured server.
-                var resolvedSecretEnv: [(key: String, value: String, display: String)] = []
-                var unresolved: [String] = []
-                for (envKey, secret, display) in resolvedEnvRefs {
-                    if let secret {
-                        resolvedSecretEnv.append((envKey, secret, display))
-                    } else {
-                        unresolved.append("\(display) (env \(envKey))")
-                    }
-                }
-                guard unresolved.isEmpty else {
+                // a bad reference never leaves a half-configured server —
+                // unless the caller registers with pending secrets.
+                let unresolved = resolvedEnvRefs.filter { $0.secret == nil }
+                guard unresolved.isEmpty || options.registerWithUnresolvedSecrets else {
                     results.append(
                         ConfigApplyResult(
                             section: "mcp_servers", target: entry.name, status: .failed,
                             message: "secret_env_refs: could not resolve "
-                                + unresolved.joined(separator: ", ")
-                                + " — the server was not added."))
+                                + unresolved.map { "\($0.display) (env \($0.key))" }.joined(separator: ", ")
+                                + " — the server was not added.",
+                            unresolvedSecretRefs: unresolved.map(\.display)))
                     continue
                 }
                 var provider = MCPProvider(
@@ -1287,28 +1410,38 @@ enum ConfigApplier {
                     entry.executionHost.flatMap {
                         MCPProviderExecutionHost(rawValue: $0.lowercased())
                     } ?? .sandbox
-                provider.secretEnvKeys = resolvedSecretEnv.map { $0.key }
-                for item in resolvedSecretEnv {
-                    provider.env.removeValue(forKey: item.key)
+                provider.secretEnvKeys = resolvedEnvRefs.map(\.key)
+                for ref in resolvedEnvRefs {
+                    provider.env.removeValue(forKey: ref.key)
                 }
                 manager.addProvider(provider, token: nil)
                 matched.insert(provider.id)
                 var storeFailures: [String] = []
-                for item in resolvedSecretEnv
-                where !MCPProviderKeychain.saveEnvSecret(item.value, key: item.key, for: provider.id) {
-                    storeFailures.append(item.key)
+                for ref in resolvedEnvRefs {
+                    guard let secret = ref.secret else { continue }
+                    if !MCPProviderKeychain.saveEnvSecret(secret, key: ref.key, for: provider.id) {
+                        storeFailures.append(ref.key)
+                    }
                 }
-                if storeFailures.isEmpty {
-                    results.append(
-                        ConfigApplyResult(section: "mcp_servers", target: entry.name, status: .done))
-                } else {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "mcp_servers", target: entry.name, status: .needsUserAction,
-                            message: "Registered, but could not store secret env "
-                                + storeFailures.joined(separator: ", ")
-                                + " — Keychain unavailable; set them in Settings → Tools & MCP → Services."))
+                var notes: [String] = []
+                if !unresolved.isEmpty {
+                    notes.append(
+                        "Registered without secret env "
+                            + unresolved.map { "\($0.key) (\($0.display) not found)" }.joined(separator: ", ")
+                            + ". Add the Keychain item and import again, or set it in Settings → Tools & MCP → Services.")
                 }
+                if !storeFailures.isEmpty {
+                    notes.append(
+                        "Registered, but could not store secret env "
+                            + storeFailures.joined(separator: ", ")
+                            + " — Keychain unavailable; set them in Settings → Tools & MCP → Services.")
+                }
+                results.append(
+                    ConfigApplyResult(
+                        section: "mcp_servers", target: entry.name,
+                        status: notes.isEmpty ? .done : .needsUserAction,
+                        message: notes.isEmpty ? nil : notes.joined(separator: " "),
+                        unresolvedSecretRefs: unresolved.map(\.display)))
             } else {
                 guard let url = entry.url else {
                     results.append(
@@ -1320,44 +1453,83 @@ enum ConfigApplier {
                 var auth = entry.auth.flatMap(ConfigMCPAuth.auth(forKey:)) ?? MCPProviderAuthType.none
                 var token: String? = nil
                 var tokenDisplay: String? = nil
+                var unresolvedRefs: [String] = []
                 if case let (secret, display)? = resolvedToken {
-                    guard let secret else {
+                    if let secret {
+                        auth = .bearerToken
+                        token = secret
+                        tokenDisplay = display
+                    } else if options.registerWithUnresolvedSecrets {
+                        auth = .bearerToken
+                        unresolvedRefs.append(display)
+                    } else {
                         results.append(
                             ConfigApplyResult(
                                 section: "mcp_servers", target: entry.name, status: .failed,
                                 message: "token_ref: could not resolve \(display) — the server "
-                                    + "was not added."))
+                                    + "was not added.",
+                                unresolvedSecretRefs: [display]))
                         continue
                     }
-                    auth = .bearerToken
-                    token = secret
-                    tokenDisplay = display
                 }
-                let provider = MCPProvider(
+                let unresolvedHeaders = resolvedHeaderRefs.filter { $0.secret == nil }
+                guard unresolvedHeaders.isEmpty || options.registerWithUnresolvedSecrets else {
+                    results.append(
+                        ConfigApplyResult(
+                            section: "mcp_servers", target: entry.name, status: .failed,
+                            message: "secret_header_refs: could not resolve "
+                                + unresolvedHeaders.map { "\($0.display) (header \($0.key))" }
+                                .joined(separator: ", ")
+                                + " — the server was not added.",
+                            unresolvedSecretRefs: unresolvedHeaders.map(\.display)))
+                    continue
+                }
+                unresolvedRefs += unresolvedHeaders.map(\.display)
+                var provider = MCPProvider(
                     name: entry.name,
                     url: url,
                     enabled: entry.enabled ?? true,
                     authType: auth,
                     transport: .http
                 )
+                provider.secretHeaderKeys = resolvedHeaderRefs.map(\.key)
                 manager.addProvider(provider, token: token)
                 matched.insert(provider.id)
-                if let tokenDisplay {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "mcp_servers", target: entry.name, status: .done,
-                            message: "Registered with the bearer token from \(tokenDisplay)."))
-                } else if auth != .none {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "mcp_servers", target: entry.name, status: .needsUserAction,
-                            message: "Registered. Finish "
-                                + (auth == .oauth ? "sign-in" : "token entry")
-                                + " in Settings → Tools & MCP → Services."))
-                } else {
-                    results.append(
-                        ConfigApplyResult(section: "mcp_servers", target: entry.name, status: .done))
+                let headerFailures = storeHeaderSecrets(resolvedHeaderRefs, in: &provider)
+                var notes: [String] = []
+                if let tokenDisplay { notes.append("Registered with the bearer token from \(tokenDisplay).") }
+                let storedHeaders = resolvedHeaderRefs.filter { $0.secret != nil && !headerFailures.contains($0.key) }
+                if !storedHeaders.isEmpty {
+                    notes.append(
+                        "Stored secret header " + storedHeaders.map(\.key).joined(separator: ", ") + ".")
                 }
+                var needsUser = false
+                if !unresolvedRefs.isEmpty {
+                    needsUser = true
+                    notes.append(
+                        "Registered without " + unresolvedRefs.joined(separator: ", ")
+                            + " (not found). Add the Keychain item and import again, or enter it in "
+                            + "Settings → Tools & MCP → Services.")
+                }
+                if !headerFailures.isEmpty {
+                    needsUser = true
+                    notes.append(
+                        "Could not store header " + headerFailures.joined(separator: ", ")
+                            + " — Keychain unavailable; set it in Settings → Tools & MCP → Services.")
+                }
+                if tokenDisplay == nil, unresolvedRefs.isEmpty, auth != .none {
+                    needsUser = true
+                    notes.append(
+                        "Registered. Finish "
+                            + (auth == .oauth ? "sign-in" : "token entry")
+                            + " in Settings → Tools & MCP → Services.")
+                }
+                results.append(
+                    ConfigApplyResult(
+                        section: "mcp_servers", target: entry.name,
+                        status: needsUser ? .needsUserAction : .done,
+                        message: notes.isEmpty ? nil : notes.joined(separator: " "),
+                        unresolvedSecretRefs: unresolvedRefs))
             }
         }
 

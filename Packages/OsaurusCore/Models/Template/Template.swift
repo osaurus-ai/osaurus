@@ -322,6 +322,7 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
         for raw in carried.permissions where !permissions.contains(raw) { permissions.append(raw) }
         out.permissions = permissions
         out.knowledge = carried.knowledge
+        out.skills = entry.skills.valueOrNil ?? []
         if let path = entry.workingFolder.valueOrNil, !path.isEmpty {
             out.workingFolder = PathHint(path: path, label: carried.workingFolder?.label)
         }

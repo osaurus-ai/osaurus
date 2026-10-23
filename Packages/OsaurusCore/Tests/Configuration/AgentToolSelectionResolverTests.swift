@@ -24,7 +24,9 @@ struct AgentToolSelectionResolverTests {
     @Test
     func export_splitsUngroupedToolsFromGroups() {
         let exported = AgentToolSelectionResolver.export(
-            manualToolNames: ["fetch", "linear_search", "notes_create", "time", "fetch"],
+            manualToolNames: [
+                "fetch", "linear_search", "linear_create_issue", "notes_create", "notes_list", "time", "fetch",
+            ],
             groups: groups)
         #expect(exported.toolNames == ["fetch", "time"])
         #expect(exported.enabledMCPServers == ["Linear"])
@@ -33,11 +35,46 @@ struct AgentToolSelectionResolverTests {
         #expect(exported.disabledPlugins.isEmpty)
     }
 
+    /// A partly selected group exports its exact tools, so `config export`
+    /// shows the list the agent runs with instead of the whole group.
     @Test
-    func export_partialGroupSelectionCountsAsEnabled() {
+    func export_partialGroupSelectionListsExactTools() {
         let exported = AgentToolSelectionResolver.export(
-            manualToolNames: ["linear_search"], groups: groups)
-        #expect(exported.enabledMCPServers == ["Linear"])
+            manualToolNames: ["fetch", "linear_search", "notes_create"], groups: groups)
+        #expect(exported.toolNames == ["fetch", "linear_search", "notes_create"])
+        #expect(exported.enabledMCPServers.isEmpty)
+        #expect(exported.disabledMCPServers == ["Notion"])
+        #expect(exported.enabledPlugins.isEmpty)
+        #expect(exported.disabledPlugins.isEmpty)
+    }
+
+    @Test
+    func roundTrip_partialGroupStaysExact() {
+        let original = ["fetch", "linear_search"]
+        let exported = AgentToolSelectionResolver.export(manualToolNames: original, groups: groups)
+        let applied = AgentToolSelectionResolver.apply(
+            current: ["linear_create_issue", "linear_search", "notion_read_page"],
+            baseToolNames: exported.toolNames,
+            enabledGroups: exported.enabledMCPServers.map { .mcpServer($0) },
+            disabledGroups: exported.disabledMCPServers.map { .mcpServer($0) },
+            registered: ["fetch"],
+            groups: groups)
+        #expect(applied.manualToolNames == original)
+    }
+
+    @Test
+    func apply_keepUnregisteredKeepsToolsOfServersNotConnectedYet() {
+        let applied = AgentToolSelectionResolver.apply(
+            current: [],
+            baseToolNames: ["fetch", "acme_tickets_search"],
+            enabledGroups: [],
+            disabledGroups: [],
+            registered: ["fetch"],
+            groups: [:],
+            keepUnregistered: true)
+        #expect(applied.manualToolNames == ["fetch", "acme_tickets_search"])
+        #expect(applied.missingTools.isEmpty)
+        #expect(applied.keptUnregistered == ["acme_tickets_search"])
     }
 
     @Test

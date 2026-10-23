@@ -246,6 +246,10 @@ public enum ConfigManifest {
                         ]),
                         comment: "plugin registry ids; same semantics as mcp_servers"),
                     ConfigKeySpec(
+                        "skills", .scalarList(.string, example: ["code-review"]),
+                        comment: "skill allow-list by name or slug; the list REPLACES the set;",
+                        moreComments: ["null = every installed skill (the default); [] = none"]),
+                    ConfigKeySpec(
                         "plugin_instructions",
                         .freeformMap(.string, exampleKey: "osaurus.notes", exampleValue: "\"\""),
                         comment: "plugin id -> extra instructions for that plugin's tools"),
@@ -499,6 +503,14 @@ public enum ConfigManifest {
                         moreComments: [
                             "values are read at apply and stored in the",
                             "Keychain; keys become secret env — never exported",
+                        ]),
+                    ConfigKeySpec(
+                        "secret_header_refs",
+                        .freeformMap(.string, exampleKey: "X-API-Key", exampleValue: "keychain:com.example/api-key"),
+                        comment: "write-only (http): request header -> secret ref;",
+                        moreComments: [
+                            "values are read at apply and stored in the",
+                            "Keychain; headers become secret headers — never exported",
                         ]),
                 ],
                 requiredKey: "name")),

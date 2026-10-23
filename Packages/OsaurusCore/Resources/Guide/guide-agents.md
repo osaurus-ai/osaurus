@@ -31,6 +31,12 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - Off by default, opt in per agent: Charts, Voice output, Memory Recall (search past memory), Self-scheduling, Computer Use, Database (per-agent private SQLite), Knowledge collections, sandbox execution options.
 - Working Folder: the one folder the agent works inside. Picking a folder with the chat Folder chip — or in the picker the agent itself opens with `prompt_working_folder` when a folder-less chat needs files — remembers it on the agent, so new chats, schedules, watchers, and other background runs without their own folder start there; it also grants remote agent runs file access confined to that folder. Inside it, `file_read` handles every file type (text, PDF, Word, PowerPoint, Excel preview, images for vision models or via OCR) and `file_write` generates `.xlsx`, `.docx`, and `.pdf` as well as text — see the Chat topic, "File formats the folder tools handle".
 
+## Skills per agent (agent → Abilities → Tools)
+
+- Skills come from the shared library (**Skills** in the sidebar). By default every custom agent can use every installed skill.
+- **Limit to selected skills** above the tool picker narrows that to a list: only ticked skills appear in the agent's prompt, `capabilities_load`, and its slash commands. Turning it on starts with every installed skill ticked; **Choose Skills…** opens the checklist. A listed skill that is not installed here is flagged **not installed** and starts working once it is installed (for example by an `osaurus import` bundle).
+- In config YAML this is `agents[].skills`: omit it to leave it unchanged, `null` for all skills, a list (skill names or slugs) for only those. Templates and bundles carry the list; the Templates review shows missing skills as an advisory.
+
 ## The Orchestrator (default agent) vs custom agents
 
 - The Orchestrator configures and explains Osaurus, answers short questions inline, and delegates everything else to the agents you allow. It has a working folder it can **read** (`file_read`, `file_search`) but no shell, sandbox, browser, computer use, skills, knowledge, or media tools — that keeps setup safe and predictable.

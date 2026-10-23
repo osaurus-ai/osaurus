@@ -73,6 +73,8 @@ public enum SetupChecker {
         var toolGroups: [PortableToolGroup: [String]] = [:]
         /// The MCP servers / plugins the named source template turns on.
         var templateToolGroups: (String) -> [PortableToolGroup] = { _ in [] }
+        /// Skills installed here; nil skips the skill allow-list check.
+        var installedSkills: [Skill]? = nil
 
         @MainActor
         static func live() -> Environment {
@@ -85,7 +87,8 @@ public enum SetupChecker {
                 bookmarkResolves: { FolderContextService.resolveSecurityScopedURL(from: $0) != nil },
                 knowledgeCollectionExists: { collections.contains($0) },
                 toolGroups: ToolRegistry.shared.portableToolGroups(),
-                templateToolGroups: { TemplateStore.shared.template(named: $0, kind: .agent)?.toolGroups ?? [] }
+                templateToolGroups: { TemplateStore.shared.template(named: $0, kind: .agent)?.toolGroups ?? [] },
+                installedSkills: SkillManager.shared.skills
             )
         }
     }
@@ -192,6 +195,21 @@ public enum SetupChecker {
                             detail: L("The \(source) template uses the \(id) plugin, which is not installed on this Mac. Install it in Plugins to give the agent its tools."),
                             value: id))
                 }
+            }
+        }
+
+        // Skill allow-list naming skills that are not installed here. The
+        // agent runs; it just cannot load those skills.
+        if let installed = env.installedSkills {
+            let missing = agent.missingAllowListedSkills(in: installed)
+            if !missing.isEmpty {
+                let joined = missing.joined(separator: ", ")
+                items.append(
+                    SetupItem(
+                        kind: .skill, severity: .advisory,
+                        title: L("Skills"),
+                        detail: L("Not installed on this Mac: \(joined). Install them in Skills, or remove them from the agent's skill list."),
+                        value: joined))
             }
         }
 

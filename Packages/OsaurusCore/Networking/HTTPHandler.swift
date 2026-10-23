@@ -12,6 +12,7 @@ import MLX
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import OsaurusRepository
 
 private final class SendableBool: @unchecked Sendable {
     private var _value: Bool
@@ -932,6 +933,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: path,
                     isLoopback: isPhysicalLoopbackConnection(context),
                     operation: .apply
+                )
+            } else if head.method == .POST, path == "/admin/import/plan" || path == "/admin/import/apply" {
+                handleImportAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context)
                 )
             } else if head.method == .GET, path == "/models/picker" {
                 handleModelPickerEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
@@ -2408,6 +2419,105 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private static func configAdminBody(_ object: [String: Any]) -> String {
         jsonObjectString(object)
+    }
+
+    /// `/admin/import/*` — the running-app side of `osaurus import`.
+    /// `plan` checks a bundle against this Mac without changing anything
+    /// (`{"bundle_path", "operations": [{"action", "kind", "name"}]}` ->
+    /// `{"issues", "warnings"}`); `apply` applies a request the CLI already
+    /// queued (`{"id"}` -> the request's `ImportResult`). Loopback-only on
+    /// the physical address for the same reason as `/admin/config/*`: it
+    /// installs agents and MCP servers.
+    private func handleImportAdminEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String,
+        isLoopback: Bool
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let parsedBody = readRequestBody()
+
+        func respond(status: HTTPResponseStatus, body: String) {
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")] + cors
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value, version: version, status: status, headers: headers, body: body)
+            }
+            logSelf.logRequest(
+                method: method,
+                path: path,
+                userAgent: userAgent,
+                requestBody: "[/admin/import body — \(parsedBody.data.count) bytes]",
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        func respondError(status: HTTPResponseStatus, message: String) {
+            respond(status: status, body: Self.errorBody(.openai(type: "invalid_request_error"), message: message))
+        }
+
+        guard isLoopback else {
+            respondError(
+                status: .forbidden,
+                message: "/admin/import/* is restricted to local (loopback) callers. Run `osaurus import` on this Mac.")
+            return
+        }
+        guard !parsedBody.data.isEmpty, parsedBody.data.count <= 256 * 1024,
+            let request = try? JSONSerialization.jsonObject(with: parsedBody.data) as? [String: Any]
+        else {
+            respondError(status: .badRequest, message: "POST a JSON object body (at most 256 KB).")
+            return
+        }
+
+        runRequestTask(priority: .userInitiated) {
+            if path == "/admin/import/plan" {
+                guard let bundlePath = request["bundle_path"] as? String, !bundlePath.isEmpty else {
+                    respondError(status: .badRequest, message: "`bundle_path` is required.")
+                    return
+                }
+                let operations = ((request["operations"] as? [[String: Any]]) ?? []).compactMap {
+                    raw -> ImportOperation? in
+                    guard let kind = (raw["kind"] as? String).flatMap(BundleItemKind.init(rawValue:)),
+                        let name = raw["name"] as? String
+                    else { return nil }
+                    let action = (raw["action"] as? String).flatMap(ImportAction.init(rawValue:)) ?? .install
+                    return ImportOperation(action: action, kind: kind, name: name, explicit: true)
+                }
+                let checked = await PendingImportProcessor.shared.plan(
+                    bundleAt: URL(fileURLWithPath: bundlePath, isDirectory: true), operations: operations)
+                respond(
+                    status: .ok,
+                    body: Self.jsonObjectString(["issues": checked.issues, "warnings": checked.warnings]))
+                return
+            }
+
+            guard let id = request["id"] as? String, !id.isEmpty else {
+                respondError(status: .badRequest, message: "`id` (the queued request id) is required.")
+                return
+            }
+            guard let result = await PendingImportProcessor.shared.process(requestId: id) else {
+                respondError(
+                    status: .unprocessableEntity,
+                    message: "No queued import request \(id). It may have been cancelled with `osaurus import remove`.")
+                return
+            }
+            guard let data = try? ImportQueue.encoder().encode(result) else {
+                respondError(status: .internalServerError, message: "Could not encode the import result.")
+                return
+            }
+            respond(status: .ok, body: String(decoding: data, as: UTF8.self))
+        }
     }
 
     /// A response body from a dictionary, properly escaped whatever the

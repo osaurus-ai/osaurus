@@ -713,6 +713,20 @@ enum ConfigPlanner {
                                     + "interactively — token_ref only fits bearer auth.")
                         }
                     }
+                    if let refs = entry.secretHeaderRefs {
+                        for (header, raw) in refs.sorted(by: { $0.key < $1.key }) {
+                            if header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                issues.append(
+                                    "mcp_servers[\(entry.name)].secret_header_refs: header names "
+                                        + "must be non-empty.")
+                                continue
+                            }
+                            validateSecretRef(
+                                raw,
+                                label: "mcp_servers[\(entry.name)].secret_header_refs[\(header)]",
+                                into: &issues)
+                        }
+                    }
                 case .stdio:
                     if current == nil,
                         (entry.command ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -727,10 +741,12 @@ enum ConfigPlanner {
                         issues.append(
                             "mcp_servers[\(entry.name)].execution_host: must be sandbox or host.")
                     }
-                    if entry.url != nil || entry.auth != nil || entry.tokenRef != nil {
+                    if entry.url != nil || entry.auth != nil || entry.tokenRef != nil
+                        || entry.secretHeaderRefs != nil
+                    {
                         issues.append(
-                            "mcp_servers[\(entry.name)]: url/auth/token_ref only apply to "
-                                + "transport: http.")
+                            "mcp_servers[\(entry.name)]: url/auth/token_ref/secret_header_refs only "
+                                + "apply to transport: http.")
                     }
                     if let refs = entry.secretEnvRefs {
                         for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
@@ -1185,6 +1201,18 @@ enum ConfigPlanner {
             diffGroupList(
                 "plugins", desired: plugins,
                 currentEnabled: current.enabledPlugins, into: &changes)
+        }
+        switch entry.skills {
+        case .absent:
+            break
+        case .null:
+            if agent.skillNames != nil { changes.append("skills: every installed skill") }
+        case .value(let names):
+            let desired = Set(names.map { Skill.agentSkillsSlug(for: $0) })
+            let current = agent.skillNames.map { Set($0.map { Skill.agentSkillsSlug(for: $0) }) }
+            if current != desired {
+                changes.append("skills: \(names.isEmpty ? "none" : names.joined(separator: ", "))")
+            }
         }
         if let instructions = entry.pluginInstructions {
             diffMap(
@@ -1816,6 +1844,12 @@ enum ConfigPlanner {
                 {
                     changes.append("token: store from \(ref.display)")
                 }
+                if provider.transport == .http, let refs = entry.secretHeaderRefs {
+                    for (header, raw) in refs.sorted(by: { $0.key < $1.key }) {
+                        guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
+                        changes.append("secret header \(header): store from \(ref.display)")
+                    }
+                }
                 if provider.transport == .stdio, let refs = entry.secretEnvRefs {
                     for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
                         guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
@@ -1865,6 +1899,10 @@ enum ConfigPlanner {
                     changes.append(
                         "auth: \(ConfigMCPAuth.key(for: auth)) — finish sign-in in "
                             + "Settings → Tools & MCP → Services (secrets never travel through the document)")
+                }
+                for (header, raw) in (entry.secretHeaderRefs ?? [:]).sorted(by: { $0.key < $1.key }) {
+                    guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
+                    changes.append("secret header \(header): store from \(ref.display)")
                 }
                 actions.append(
                     ConfigPlanAction(

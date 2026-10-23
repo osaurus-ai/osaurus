@@ -13,8 +13,11 @@
 //   - provider endpoint CHANGES on existing providers (changing an endpoint
 //     under a stored credential is the classic bait-and-switch; endpoints
 //     export for visibility and are create-only)
-//   - skills (content installation, not configuration) and custom search
-//     definitions (nested endpoint templates with interleaved secrets)
+//   - skill content (installation, not configuration; `osaurus import`
+//     installs it from a bundle). An agent's skill allow-list does export,
+//     as `agents[].skills`, when the agent has one.
+//   - custom search definitions (nested endpoint templates with
+//     interleaved secrets)
 //   - channel credentials, custom HTTP channel connections, per-room
 //     dispatch routes, platform extras (polling, attachments, receipts)
 //   - per-agent autonomy ceilings, telemetry, identity/pairing, storage
@@ -137,6 +140,7 @@ enum ConfigExporter {
         caps.relayEnabled = relay.isEnabled(for: agent.id)
         entry.capabilities = caps
         exportToolSelection(of: agent, into: &entry, groups: toolGroups)
+        if let skillNames = agent.skillNames { entry.skills = .value(skillNames) }
         entry.pluginInstructions =
             (agent.pluginInstructions?.isEmpty ?? true) ? nil : agent.pluginInstructions
         entry.sandbox = exportSandbox(of: agent)
@@ -146,10 +150,11 @@ enum ConfigExporter {
         return entry
     }
 
-    /// Manual tool selection splits into ungrouped tool names plus MCP /
-    /// plugin group enablement so the document survives a move to a machine
-    /// where the same server exposes different tool names. Auto mode only
-    /// records the mode.
+    /// Manual tool selection splits into tool names plus MCP / plugin group
+    /// enablement. Fully selected groups travel by name so the document
+    /// survives a move to a machine where the same server exposes different
+    /// tool names; partly selected groups travel as their exact tool names.
+    /// Auto mode only records the mode.
     private static func exportToolSelection(
         of agent: Agent, into entry: inout AgentEntry,
         groups: [PortableToolGroup: [String]]

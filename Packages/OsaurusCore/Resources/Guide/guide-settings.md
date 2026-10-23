@@ -68,6 +68,7 @@ separate from updating the Osaurus application.
 | Audit log / activity history / "what was sent to the cloud" | Insights (dashboard) and Keep Activity History / Store Prompts and Responses (policy) | Settings… (⌘,) → Insights; Settings… (⌘,) → Privacy → Activity Log |
 | Tool permissions | Could be Tools catalog, Chat folder tools, or macOS Permissions — ask `find` |
 | Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
+| Which skills an agent can use / skill allow-list | Limit to selected skills (switch plus **Choose Skills…** checklist) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].skills`; installing skill content is **Skills** in the sidebar) |
 | Calendar / Contacts / Automation grant for the whole app | macOS permission | Settings… (⌘,) → Permissions (or the **Permission needed** badge on the app's group under Agents → Abilities → Tools) |
 
 ## Apple Apps (built-in)

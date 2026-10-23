@@ -1903,6 +1903,24 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
 
+        // Agents → (custom agent) → Abilities → Tools: the per-agent skill
+        // allow-list card above the picker. Also writable via
+        // `agents[].skills`.
+        .init(
+            id: "agents.skills",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Limit to selected skills",
+            keywords: [
+                "skills", "skill allow-list", "allowed skills", "allow list", "allowlist",
+                "restrict skills", "choose skills", "agent skills", "skill access",
+            ],
+            subTab: "capabilities",
+            disambiguation:
+                "Per-custom-agent switch in Abilities → Tools. Off: the agent sees every installed skill. On: only the ticked skills appear in its prompt, capabilities_load and slash commands. Installing skill content is Skills in the sidebar, not this card. Declarative: agents[].skills (omit = unchanged, null = all skills, list = only these).",
+            declarativeSection: "agents"
+        ),
+
         // MARK: Search
         .init(
             id: "search.providers",

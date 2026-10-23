@@ -106,9 +106,10 @@ public final class SlashCommandRegistry {
     // MARK: - Filtering
 
     /// Returns commands matching `query`, sorted by relevance then alphabetically.
-    /// An empty query returns all commands in default order.
-    public func filtered(query: String) -> [SlashCommand] {
-        let all = allCommands
+    /// An empty query returns all commands in default order. With `agentId`,
+    /// skills outside that agent's skill allow-list are left out.
+    public func filtered(query: String, agentId: UUID? = nil) -> [SlashCommand] {
+        let all = commands(for: agentId)
         guard !query.isEmpty else { return all }
         let q = query.lowercased()
         return
@@ -127,7 +128,8 @@ public final class SlashCommandRegistry {
     // MARK: - Private
 
     /// Full command list: built-ins → custom → skills (deduplicated by name).
-    private var allCommands: [SlashCommand] {
+    func commands(for agentId: UUID?) -> [SlashCommand] {
+        let owner = agentId.flatMap { AgentManager.shared.agent(for: $0) }
         var seen = Set<String>()
         var result: [SlashCommand] = []
 
@@ -155,7 +157,7 @@ public final class SlashCommandRegistry {
             if tier(a) != tier(b) { return tier(a) < tier(b) }
             return a.id.uuidString < b.id.uuidString
         }
-        for skill in precedenceOrdered {
+        for skill in precedenceOrdered where owner?.allowsSkill(skill) ?? true {
             let slug = skill.name
                 .lowercased()
                 .replacingOccurrences(of: " ", with: "-")

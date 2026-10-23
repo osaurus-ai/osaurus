@@ -430,6 +430,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
+        // Agents, skills and MCP servers an installer queued with
+        // `osaurus import` while the app was closed. Applied after the
+        // server binds so a large bundle never delays `/health`.
+        Task { @MainActor [shouldLoadPluginsAtStartup] in
+            await serverStartupTask.value
+            await PendingImportProcessor.shared.processAtLaunch(waitForPlugins: shouldLoadPluginsAtStartup)
+        }
+
         // Only warm the storage key when the user opted in to encryption.
         // The default plaintext posture needs no key, so launch never touches
         // the Keychain in that case.

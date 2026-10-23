@@ -88,6 +88,7 @@ extension Template {
             if let v = overrides.tools { entry.tools = v }
             if let v = overrides.mcpServers { entry.mcpServers = v }
             if let v = overrides.plugins { entry.plugins = v }
+            if overrides.skills.isSpecified { entry.skills = overrides.skills }
             if let v = overrides.sandbox { entry.sandbox = v }
             if let v = overrides.subagents { entry.subagents = v }
         }
@@ -146,6 +147,7 @@ extension Template {
             entry.tools = nil
             entry.mcpServers = nil
             entry.plugins = nil
+            entry.skills = .absent
         }
         if sections.contains(.sandbox) { entry.sandbox = nil }
         if sections.contains(.subagents) { entry.subagents = nil }

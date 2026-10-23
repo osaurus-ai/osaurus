@@ -1904,12 +1904,13 @@ public struct SystemPromptComposer: Sendable {
         }
 
         // Plugin skills (pluginId != nil), plus standalone skills
-        // (pluginId == nil) collected for the trailing synthetic group. Every
-        // installed skill is universally available to custom agents; both come
-        // straight from `SkillManager` — no search.
+        // (pluginId == nil) collected for the trailing synthetic group, both
+        // straight from `SkillManager` — no search. An agent with a skill
+        // allow-list sees only the skills on it.
         var skillsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
         var standaloneCaps: [SystemPromptTemplates.ManifestCapability] = []
-        for skill in SkillManager.shared.skills {
+        let skillOwner = AgentManager.shared.agent(for: agentId)
+        for skill in SkillManager.shared.skills where skillOwner?.allowsSkill(skill) ?? true {
             let cap = SystemPromptTemplates.ManifestCapability(
                 name: skill.name,
                 description: skill.description

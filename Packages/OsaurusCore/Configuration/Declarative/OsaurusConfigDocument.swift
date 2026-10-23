@@ -439,6 +439,9 @@ public struct AgentEntry: Equatable, Sendable {
     public var tools: AgentToolsEntry?
     public var mcpServers: AgentToolGroupsEntry?
     public var plugins: AgentToolGroupsEntry?
+    /// Skill allow-list (`Agent.skillNames`) by name or slug. A list
+    /// replaces the set; explicit `null` lets the agent see every skill.
+    public var skills: ConfigField<[String]> = .absent
     /// Plugin id → extra instructions injected when that plugin's tools load.
     public var pluginInstructions: [String: String]?
     public var sandbox: AgentSandboxEntry?
@@ -466,6 +469,7 @@ extension AgentEntry: Codable {
         case tools
         case mcpServers = "mcp_servers"
         case plugins
+        case skills
         case pluginInstructions = "plugin_instructions"
         case sandbox
         case subagents
@@ -486,6 +490,7 @@ extension AgentEntry: Codable {
         tools = try c.decodeIfPresent(AgentToolsEntry.self, forKey: .tools)
         mcpServers = try c.decodeIfPresent(AgentToolGroupsEntry.self, forKey: .mcpServers)
         plugins = try c.decodeIfPresent(AgentToolGroupsEntry.self, forKey: .plugins)
+        skills = try c.configField([String].self, forKey: .skills)
         pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
         sandbox = try c.decodeIfPresent(AgentSandboxEntry.self, forKey: .sandbox)
         subagents = try c.decodeIfPresent(AgentSubagentsEntry.self, forKey: .subagents)
@@ -506,6 +511,7 @@ extension AgentEntry: Codable {
         try c.encodeIfPresent(tools, forKey: .tools)
         try c.encodeIfPresent(mcpServers, forKey: .mcpServers)
         try c.encodeIfPresent(plugins, forKey: .plugins)
+        try c.encode(configField: skills, forKey: .skills)
         try c.encodeIfPresent(pluginInstructions, forKey: .pluginInstructions)
         try c.encodeIfPresent(sandbox, forKey: .sandbox)
         try c.encodeIfPresent(subagents, forKey: .subagents)
@@ -564,6 +570,11 @@ public struct MCPServerEntry: Codable, Equatable, Sendable {
     /// resolved at apply and stored in the Keychain; the key joins
     /// `secretEnvKeys` and leaves the plain env. Never exported.
     public var secretEnvRefs: [String: String]?
+    /// Write-only map of HTTP request header -> secret reference, for
+    /// servers keyed by a custom header such as `X-API-Key`. Each value is
+    /// resolved at apply and stored in the Keychain; the header joins
+    /// `secretHeaderKeys`. Never exported.
+    public var secretHeaderRefs: [String: String]?
 
     public init(name: String) {
         self.name = name
@@ -575,6 +586,7 @@ public struct MCPServerEntry: Codable, Equatable, Sendable {
         case executionHost = "execution_host"
         case tokenRef = "token_ref"
         case secretEnvRefs = "secret_env_refs"
+        case secretHeaderRefs = "secret_header_refs"
     }
 }
 

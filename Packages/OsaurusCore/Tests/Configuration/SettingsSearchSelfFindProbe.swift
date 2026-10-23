@@ -293,6 +293,9 @@ struct SettingsSearchSelfFindProbe {
             ("Shortcuts", "agents.appleApps.shortcuts"),
             ("imessage", "agents.appleApps.messages"),
             ("apple_apps", "agents.appleApps"),
+            // Agents → Abilities → Tools: the per-agent skill allow-list card.
+            ("Limit to selected skills", "agents.skills"),
+            ("skill allow-list", "agents.skills"),
             ("Keep File History", "storage.fileHistory.retention"),
             ("file history retention", "storage.fileHistory.retention"),
             ("File History Size Limit", "storage.fileHistory.sizeLimit"),

@@ -559,6 +559,7 @@ public final class AgentManager: ObservableObject {
             // list was written and never joined it.
             toolSelectionMode: agent.toolSelectionMode,
             manualToolNames: agent.manualToolNames,
+            skillNames: agent.skillNames,
             toolsEnabled: agent.toolsEnabled,
             memoryEnabled: agent.memoryEnabled,
             avatar: agent.avatar,

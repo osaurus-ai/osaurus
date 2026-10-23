@@ -347,9 +347,9 @@ struct AgentsView: View {
             )
             return
         }
-        if pending.hasPrefix("agents.appleApps") {
-            // The Apple app groups live inside a custom agent's
-            // Abilities → Tools picker, not on the grid: route into the
+        if pending.hasPrefix("agents.appleApps") || pending == "agents.skills" {
+            // The Apple app groups and the skill allow-list live inside a
+            // custom agent's Abilities → Tools picker, not on the grid: route into the
             // first custom agent's Tools tab (or keep the currently open
             // custom agent) so the anchored group can scroll and glow.
             // With no custom agent yet there is nothing to land on; the
@@ -7463,6 +7463,7 @@ struct AgentDetailView: View {
             bonjourEnabled: current.bonjourEnabled,
             toolSelectionMode: current.toolSelectionMode,
             manualToolNames: current.manualToolNames,
+            skillNames: current.skillNames,
             toolsEnabled: toolsEnabled,
             memoryEnabled: memoryEnabled,
             avatar: avatar,
