@@ -6222,7 +6222,10 @@ final class ChatSession: ObservableObject {
         isDirty = true
     }
 
-    func send(_ text: String, attachments: [Attachment] = [], directUserSend: Bool = false) {
+    func send(
+        _ text: String, attachments: [Attachment] = [], directUserSend: Bool = false,
+        toolIntentText: String? = nil
+    ) {
         let alignmentRepairModel = directUserSend && source == .chat && !isRemoteAgentTarget
             ? selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id } : nil
         // The user's clock starts here, not when generation does. Everything
@@ -6231,6 +6234,10 @@ final class ChatSession: ObservableObject {
         // reported TTFT excluded it and the wait was unattributable. See #2347.
         let sendRequestedAt = Date()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Delivery contracts and folder diagnostics are model context, not a
+        // request to invoke every tool they mention. Freeze the dispatch's
+        // original task without modifying its rendered or persisted prompt.
+        let toolChoiceInput = toolIntentText ?? trimmed
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
@@ -6300,6 +6307,7 @@ final class ChatSession: ObservableObject {
         guard warmupController.needsPreSendHandshake else {
             dispatchSend(
                 trimmed: trimmed,
+                toolChoiceInput: toolChoiceInput,
                 attachments: attachments,
                 hasContent: hasContent,
                 sendRequestedAt: sendRequestedAt,
@@ -6344,6 +6352,7 @@ final class ChatSession: ObservableObject {
             self.awaitingPreSendHandshake = false
             self.dispatchSend(
                 trimmed: trimmed,
+                toolChoiceInput: toolChoiceInput,
                 attachments: attachments,
                 hasContent: hasContent,
                 preAppendedUserTurn: preAppendedUserTurn,
@@ -6361,6 +6370,7 @@ final class ChatSession: ObservableObject {
     /// yielded the MainActor.
     private func dispatchSend(
         trimmed: String,
+        toolChoiceInput: String,
         attachments: [Attachment],
         hasContent: Bool,
         preAppendedUserTurn: ChatTurn? = nil,
@@ -7991,7 +8001,7 @@ final class ChatSession: ObservableObject {
                             #endif
                             let requestedToolChoice = ChatToolChoicePolicy.resolve(
                                 tools: iterationToolSpecs,
-                                userText: trimmed,
+                                userText: toolChoiceInput,
                                 attempt: attempt
                             )
                             forcedToolGate.arm(requestedToolChoice)
