@@ -3,10 +3,10 @@
 //  osaurus
 //
 //  An Osaurus bundle is a folder a third-party installer ships: a manifest
-//  (`osaurus-bundle.json`) naming agents, skills, MCP servers and settings,
-//  plus the files they live in. `osaurus import` checks it here, copies it into the
-//  import queue, and the app applies it through the declarative config
-//  engine. Shared by the CLI and the app so both read the same format.
+//  (`osaurus-bundle.json`) naming agents, skills, MCP servers, harness
+//  runtimes and settings, plus the files they live in. `osaurus import`
+//  checks it here, copies it into the import queue, and the app applies it
+//  through the declarative config engine. Shared by the CLI and the app so both read the same format.
 //
 //  Not to be confused with `.mcpb` MCP bundles (`osaurus bundle load`).
 //
@@ -32,6 +32,7 @@ public enum OsaurusBundleFormat {
 public enum BundleItemKind: String, Codable, Sendable, CaseIterable, Comparable {
     case skill
     case mcp
+    case harnessRuntime = "harness_runtime"
     case agent
     case setting
 
@@ -42,6 +43,9 @@ public enum BundleItemKind: String, Codable, Sendable, CaseIterable, Comparable 
         case "skill", "skills": self = .skill
         case "mcp", "mcp-server", "mcp_server", "mcp-servers", "mcp_servers", "server", "servers":
             self = .mcp
+        case "runtime", "runtimes", "harness", "harnesses", "harness-runtime", "harness_runtime",
+            "harness-runtimes", "harness_runtimes":
+            self = .harnessRuntime
         case "setting", "settings": self = .setting
         default: return nil
         }
@@ -52,18 +56,20 @@ public enum BundleItemKind: String, Codable, Sendable, CaseIterable, Comparable 
         case .agent: return "agent"
         case .skill: return "skill"
         case .mcp: return "MCP server"
+        case .harnessRuntime: return "harness runtime"
         case .setting: return "setting"
         }
     }
 
-    /// Install order: skills and servers exist before the agents that use
-    /// them; settings go last.
+    /// Install order: skills, servers and runtimes exist before the agents
+    /// that use them; settings go last.
     private var order: Int {
         switch self {
         case .skill: return 0
         case .mcp: return 1
-        case .agent: return 2
-        case .setting: return 3
+        case .harnessRuntime: return 2
+        case .agent: return 3
+        case .setting: return 4
         }
     }
 
@@ -127,6 +133,27 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
         }
     }
 
+    /// An external agent harness (Claude Code, Pi, or a Pi-based CLI) the
+    /// bundle registers. Same keys as the config document's
+    /// `harness_runtimes` entries; the environment holds plain values only.
+    public struct HarnessRuntimeReference: Codable, Sendable, Equatable {
+        public var name: String
+        /// `claude_code` | `pi_rpc`.
+        public var kind: String
+        public var executable: String?
+        public var arguments: [String]?
+        public var environment: [String: String]?
+
+        /// The program and arguments it launches, for risk lines.
+        public var commandLine: String {
+            let program =
+                executable?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? (kind == "claude_code" ? "claude" : "pi")
+            let args = arguments ?? (kind == "pi_rpc" ? ["--mode", "rpc"] : [])
+            return ([program] + args).joined(separator: " ")
+        }
+    }
+
     public var format: String
     public var formatVersion: Int
     public var id: String
@@ -137,6 +164,7 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
     public var minOsaurusVersion: String?
     public var skills: [SkillReference]
     public var mcpServers: [MCPServerReference]
+    public var harnessRuntimes: [HarnessRuntimeReference]
     public var agents: [AgentReference]
     /// Manifest key (`BundleSetting.key`) -> value.
     public var settings: [String: BundleSettingValue]
@@ -148,6 +176,7 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
         case minOsaurusVersion = "min_osaurus_version"
         case skills
         case mcpServers = "mcp_servers"
+        case harnessRuntimes = "harness_runtimes"
         case agents
         case settings
     }
@@ -164,18 +193,21 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
         minOsaurusVersion = try c.decodeIfPresent(String.self, forKey: .minOsaurusVersion)
         skills = try c.decodeIfPresent([SkillReference].self, forKey: .skills) ?? []
         mcpServers = try c.decodeIfPresent([MCPServerReference].self, forKey: .mcpServers) ?? []
+        harnessRuntimes = try c.decodeIfPresent([HarnessRuntimeReference].self, forKey: .harnessRuntimes) ?? []
         agents = try c.decodeIfPresent([AgentReference].self, forKey: .agents) ?? []
         settings = try c.decodeIfPresent([String: BundleSettingValue].self, forKey: .settings) ?? [:]
     }
 
     static let allowedKeys: Set<String> = [
         "format", "format_version", "id", "name", "version", "description", "publisher",
-        "min_osaurus_version", "skills", "mcp_servers", "agents", "settings",
+        "min_osaurus_version", "skills", "mcp_servers", "harness_runtimes", "agents", "settings",
     ]
     static let allowedSettingKeys = Set(BundleSetting.all.map(\.key))
     static let allowedPublisherKeys: Set<String> = ["name", "url", "email"]
     static let allowedSkillKeys: Set<String> = ["name", "path"]
     static let allowedAgentKeys: Set<String> = ["path"]
+    static let allowedHarnessRuntimeKeys: Set<String> = ["name", "kind", "executable", "arguments", "environment"]
+    static let harnessKinds = ["claude_code", "pi_rpc"]
 }
 
 // MARK: - Loaded bundle
@@ -200,6 +232,16 @@ public struct OsaurusBundle: Sendable {
         public var mcpServers: [String]
         /// High-risk capability switches it turns on.
         public var highRiskCapabilities: [String]
+        /// The agent's `runtime` (`builtin` or a harness runtime's name).
+        public var runtime: String?
+
+        /// The harness runtime it runs on, when it names one.
+        public var harnessRuntime: String? {
+            guard let name = runtime?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
+                name.lowercased() != "builtin"
+            else { return nil }
+            return name
+        }
     }
 
     public let rootURL: URL
@@ -210,6 +252,7 @@ public struct OsaurusBundle: Sendable {
     public let warnings: [String]
 
     public var mcpServers: [OsaurusBundleManifest.MCPServerReference] { manifest.mcpServers }
+    public var harnessRuntimes: [OsaurusBundleManifest.HarnessRuntimeReference] { manifest.harnessRuntimes }
     public var id: String { manifest.id }
     public var version: SemanticVersion? { SemanticVersion.parse(manifest.version) }
     public var manifestURL: URL { rootURL.appendingPathComponent(OsaurusBundleFormat.manifestFileName) }
@@ -227,6 +270,13 @@ public struct OsaurusBundle: Sendable {
         mcpServers.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
+    public func harnessRuntime(named name: String) -> OsaurusBundleManifest.HarnessRuntimeReference? {
+        let key = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return harnessRuntimes.first {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(key) == .orderedSame
+        }
+    }
+
     /// The settings the bundle changes, in `BundleSetting.all` order.
     public var settings: [(setting: BundleSetting, value: BundleSettingValue)] {
         BundleSetting.all.compactMap { setting in manifest.settings[setting.key].map { (setting, $0) } }
@@ -239,11 +289,23 @@ public struct OsaurusBundle: Sendable {
     /// The raw JSON object of each MCP server entry, for the app's strict
     /// schema check. Keyed by lowercased name.
     public func rawMCPServerEntries() throws -> [String: [String: Any]] {
+        try rawEntries("mcp_servers")
+    }
+
+    /// The raw JSON object of each harness runtime entry. Keyed by
+    /// lowercased name.
+    public func rawHarnessRuntimeEntries() throws -> [String: [String: Any]] {
+        try rawEntries("harness_runtimes")
+    }
+
+    private func rawEntries(_ key: String) throws -> [String: [String: Any]] {
         let data = try Data(contentsOf: manifestURL)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
         var out: [String: [String: Any]] = [:]
-        for case let entry as [String: Any] in (root["mcp_servers"] as? [Any]) ?? [] {
-            if let name = entry["name"] as? String { out[name.lowercased()] = entry }
+        for case let entry as [String: Any] in (root[key] as? [Any]) ?? [] {
+            if let name = entry["name"] as? String {
+                out[name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()] = entry
+            }
         }
         return out
     }
@@ -340,6 +402,13 @@ extension OsaurusBundle {
                     in: object, allowed: OsaurusBundleManifest.allowedAgentKeys, at: "agents[\(index)]")
             }
         }
+        for (index, item) in ((rawRoot["harness_runtimes"] as? [Any]) ?? []).enumerated() {
+            if let object = item as? [String: Any] {
+                issues += unknownKeys(
+                    in: object, allowed: OsaurusBundleManifest.allowedHarnessRuntimeKeys,
+                    at: "harness_runtimes[\(index)]")
+            }
+        }
         if let settings = rawRoot["settings"] {
             if let object = settings as? [String: Any] {
                 issues += unknownKeys(
@@ -379,9 +448,9 @@ extension OsaurusBundle {
             issues.append("min_osaurus_version must be a semantic version like 0.26.0 (got \"\(min)\").")
         }
         if manifest.skills.isEmpty && manifest.mcpServers.isEmpty && manifest.agents.isEmpty
-            && manifest.settings.isEmpty
+            && manifest.harnessRuntimes.isEmpty && manifest.settings.isEmpty
         {
-            issues.append("The bundle lists no agents, skills, MCP servers or settings.")
+            issues.append("The bundle lists no agents, skills, MCP servers, harness runtimes or settings.")
         }
         for (key, value) in manifest.settings.sorted(by: { $0.key < $1.key }) {
             if let setting = BundleSetting.named(key), setting.key == key {
@@ -470,6 +539,36 @@ extension OsaurusBundle {
             }
         }
 
+        // Harness runtimes
+        var seenRuntimes = Set<String>()
+        for runtime in manifest.harnessRuntimes {
+            let key = runtime.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let label = "harness_runtimes[\(runtime.name)]"
+            guard !key.isEmpty else {
+                issues.append("harness_runtimes[]: every runtime needs a name.")
+                continue
+            }
+            if key == "builtin" {
+                issues.append("\(label): `builtin` is reserved for Osaurus's own loop.")
+            }
+            if !seenRuntimes.insert(key).inserted {
+                issues.append("\(label): listed twice.")
+            }
+            if !OsaurusBundleManifest.harnessKinds.contains(runtime.kind) {
+                issues.append(
+                    "\(label).kind: must be one of: \(OsaurusBundleManifest.harnessKinds.joined(separator: ", ")).")
+            }
+            if let executable = runtime.executable,
+                executable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                issues.append("\(label).executable: must not be empty.")
+            }
+            for name in (runtime.environment ?? [:]).keys
+            where name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append("\(label).environment: variable names must not be empty.")
+            }
+        }
+
         // Agents
         var agents: [Agent] = []
         var seenAgents = Set<String>()
@@ -534,6 +633,17 @@ extension OsaurusBundle {
                     risky.append(key)
                 }
             }
+            if (entry["claude_code"] as? [String: Any])?["allow_shell"] as? Bool == true {
+                risky.append("claude_code.allow_shell")
+            }
+            var runtime: String?
+            if let raw = entry["runtime"] {
+                if let name = raw as? String {
+                    runtime = name
+                } else {
+                    issues.append("agents[\(name)].runtime: must be \"builtin\" or a harness runtime's name.")
+                }
+            }
             for skill in skillNames ?? [] where !skills.contains(where: { skillSlug(for: $0.name) == skillSlug(for: skill) }) {
                 warnings.append(
                     "agents[\(name)].skills: \"\(skill)\" is not in this bundle; it must be a built-in skill "
@@ -555,10 +665,20 @@ extension OsaurusBundle {
                     usedServers.append(server.name)
                 }
             }
-            agents.append(
-                Agent(
-                    name: name, path: ref.path, file: file, skills: skillNames,
-                    mcpServers: usedServers, highRiskCapabilities: risky))
+            let agent = Agent(
+                name: name, path: ref.path, file: file, skills: skillNames,
+                mcpServers: usedServers, highRiskCapabilities: risky, runtime: runtime)
+            if let harness = agent.harnessRuntime,
+                !manifest.harnessRuntimes.contains(where: {
+                    $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(harness)
+                        == .orderedSame
+                })
+            {
+                warnings.append(
+                    "agents[\(name)].runtime: \"\(harness)\" is not in this bundle; it must already be "
+                        + "registered on this Mac (Agents → Runtimes), or the agent will not install.")
+            }
+            agents.append(agent)
         }
 
         guard issues.isEmpty else { throw OsaurusBundleError(issues: issues) }
@@ -772,8 +892,8 @@ public struct BundleItemRef: Codable, Sendable, Equatable, Hashable {
 extension OsaurusBundle {
 
     /// The items to install or update for `kind` / `names`, plus the
-    /// skills and MCP servers selected agents need from this bundle.
-    /// Ordered skills, then servers, then agents.
+    /// skills, MCP servers and harness runtimes selected agents need from
+    /// this bundle. Ordered skills, then servers, then runtimes, then agents.
     public func select(kind: BundleItemKind?, names: [String]) throws -> [BundleItemRef] {
         var explicit: [BundleItemRef] = []
         if names.isEmpty {
@@ -782,6 +902,10 @@ extension OsaurusBundle {
                 switch k {
                 case .skill: explicit += skills.map { BundleItemRef(kind: .skill, name: $0.name, explicit: true) }
                 case .mcp: explicit += mcpServers.map { BundleItemRef(kind: .mcp, name: $0.name, explicit: true) }
+                case .harnessRuntime:
+                    explicit += harnessRuntimes.map {
+                        BundleItemRef(kind: .harnessRuntime, name: $0.name, explicit: true)
+                    }
                 case .agent: explicit += agents.map { BundleItemRef(kind: .agent, name: $0.name, explicit: true) }
                 case .setting:
                     explicit += settings.map { BundleItemRef(kind: .setting, name: $0.setting.key, explicit: true) }
@@ -800,12 +924,15 @@ extension OsaurusBundle {
                 if kind == nil || kind == .mcp, let m = mcpServer(named: name) {
                     matches.append(BundleItemRef(kind: .mcp, name: m.name, explicit: true))
                 }
+                if kind == nil || kind == .harnessRuntime, let r = harnessRuntime(named: name) {
+                    matches.append(BundleItemRef(kind: .harnessRuntime, name: r.name, explicit: true))
+                }
                 if kind == nil || kind == .setting, let s = setting(named: name) {
                     matches.append(BundleItemRef(kind: .setting, name: s.setting.key, explicit: true))
                 }
                 switch matches.count {
                 case 0:
-                    let what = kind?.displayName ?? "agent, skill, MCP server or setting"
+                    let what = kind?.displayName ?? "agent, skill, MCP server, harness runtime or setting"
                     issues.append("This bundle has no \(what) named \"\(name)\".")
                 case 1:
                     explicit.append(matches[0])
@@ -813,7 +940,7 @@ extension OsaurusBundle {
                     issues.append(
                         "\"\(name)\" names more than one item ("
                             + matches.map(\.kind.rawValue).joined(separator: ", ")
-                            + "). Say which: osaurus import ... agent|skill|mcp|setting \"\(name)\".")
+                            + "). Say which: osaurus import ... agent|skill|mcp|runtime|setting \"\(name)\".")
                 }
             }
             if !issues.isEmpty { throw OsaurusBundleError(issues: issues) }
@@ -837,6 +964,9 @@ extension OsaurusBundle {
             }
             for name in a.mcpServers {
                 if let m = mcpServer(named: name) { add(BundleItemRef(kind: .mcp, name: m.name, explicit: false)) }
+            }
+            if let name = a.harnessRuntime, let r = harnessRuntime(named: name) {
+                add(BundleItemRef(kind: .harnessRuntime, name: r.name, explicit: false))
             }
         }
         return out.enumerated().sorted { lhs, rhs in
@@ -863,10 +993,20 @@ extension OsaurusBundle {
                 } else {
                     out.append("MCP server \"\(server.name)\" connects to \(server.url ?? "a new endpoint")")
                 }
+            case .harnessRuntime:
+                guard let runtime = harnessRuntime(named: item.name) else { continue }
+                out.append(
+                    "Harness runtime \"\(runtime.name)\" launches a local program for every chat of an agent "
+                        + "on it: \(runtime.commandLine)")
             case .agent:
                 guard let a = agent(named: item.name) else { continue }
                 for key in a.highRiskCapabilities {
                     out.append("Agent \"\(a.name)\" turns on \(key)")
+                }
+                if let runtime = a.harnessRuntime {
+                    out.append(
+                        "Agent \"\(a.name)\" runs on harness runtime \"\(runtime)\", outside the Osaurus "
+                            + "sandbox")
                 }
             case .setting:
                 guard let s = setting(named: item.name) else { continue }

@@ -16,7 +16,31 @@ Settings → Agents → **Runtimes** → **Add Runtime**:
 | Arguments | One per line. Placeholders are substituted per launch (below) |
 | Environment | Extra `KEY=value` lines. Stored unencrypted in `~/.osaurus/config/harness-runtimes.json`, so don't put secrets here. `OSAURUS_*` names are reserved |
 
-Then pick the runtime in the agent's Configure tab under **Runtime → Runs on**. **Test** starts the runtime once: a Pi runtime must answer `get_state`, and a Claude Code runtime must report its sign-in with `claude auth status`.
+Then pick the runtime from the chat's model picker (each runtime is a column; Claude Code lists Sonnet, Opus, and Haiku) or in the agent's Configure tab under **Runtime → Runs on**. Both set the same per-agent runtime; picking a model row moves the agent back to Osaurus's own loop. **Test** starts the runtime once: a Pi runtime must answer `get_state`, and a Claude Code runtime must report its sign-in with `claude auth status`.
+
+### From a configuration document
+
+The declarative config (`osaurus config apply`, `osaurus_config`, `POST /admin/config/apply`) registers runtimes under `harness_runtimes` and moves agents onto them with `runtime`:
+
+```yaml
+harness_runtimes:
+  - name: Spotlight
+    kind: pi_rpc            # claude_code | pi_rpc; required to add, fixed after
+    executable: ~/.local/bin/spotlight
+    arguments: ["--mode", "rpc", "--session-id", "{chat_id}"]
+    environment: { PI_LOG_LEVEL: info }   # merged; plain values only
+
+agents:
+  - name: Researcher
+    runtime: Spotlight      # or "builtin"
+default_agent:
+  runtime: Claude Code
+  claude_code: { model: opus, allow_writes: true }
+```
+
+An installer can also ship a runtime in an Osaurus bundle (`harness_runtimes` in `osaurus-bundle.json`, installed with `osaurus import install --yes`); see [OSAURUS_BUNDLES.md](OSAURUS_BUNDLES.md#6a-harness-runtime-reference).
+
+Runtimes apply before agents, so one document can add a runtime and move an agent onto it. A `runtime` that names no registered runtime fails validation; it never falls back to `builtin`. Adding a runtime, changing its command line or environment, moving an agent onto a harness, and turning on `allow_shell` or `allow_osaurus_config_writes` (Default agent only) are high-risk plan lines that need approval.
 
 ### Argument placeholders
 

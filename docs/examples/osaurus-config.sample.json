@@ -5,12 +5,22 @@
     "budget_tokens": 1200,
     "retention_days": 365
   },
+  "harness_runtimes": [
+    {
+      "name": "Pi",
+      "kind": "pi_rpc",
+      "executable": "pi",
+      "arguments": ["--mode", "rpc", "--session-id", "{chat_id}"],
+      "environment": {}
+    }
+  ],
   "default_agent": {
     "name": null,
     "model": "foundation",
     "temperature": 0.7,
     "max_tokens": null,
-    "system_prompt": "You are a friendly, concise assistant."
+    "system_prompt": "You are a friendly, concise assistant.",
+    "runtime": "builtin"
   },
   "new_chat_agent": "default",
   "agents": [

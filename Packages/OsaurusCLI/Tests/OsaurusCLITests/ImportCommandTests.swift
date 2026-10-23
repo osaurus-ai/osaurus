@@ -38,7 +38,7 @@ final class ImportCommandTests: XCTestCase {
     }
 
     private func writeBundle(
-        minVersion: String? = nil, stdio: Bool = false, settings: [String: Any]? = nil
+        minVersion: String? = nil, stdio: Bool = false, runtime: Bool = false, settings: [String: Any]? = nil
     ) throws {
         var manifest: [String: Any] = [
             "format": "osaurus.bundle", "format_version": 1, "id": "com.example.cli",
@@ -59,6 +59,11 @@ final class ImportCommandTests: XCTestCase {
                 ["name": "Tickets", "transport": "stdio", "command": "npx", "args": ["tickets-mcp"]]
             ]
         }
+        if runtime {
+            manifest["harness_runtimes"] = [
+                ["name": "Spotlight", "kind": "pi_rpc", "executable": "spotlight-cli", "arguments": ["--mode", "rpc"]]
+            ]
+        }
         let data = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
         try write(String(decoding: data, as: UTF8.self), "osaurus-bundle.json")
         try write("---\nname: notes\ndescription: Take notes.\n---\nBody\n", "skills/notes/SKILL.md")
@@ -76,6 +81,7 @@ final class ImportCommandTests: XCTestCase {
         uid: uid_t = 501,
         appVersion: String? = "0.30.0",
         keychain: Bool? = true,
+        onPath: Bool? = nil,
         running: Bool = false,
         calls: Calls = Calls(),
         respond: @escaping @Sendable (String, [String: Any]) -> (Int, Data) = { _, _ in (404, Data()) }
@@ -91,7 +97,8 @@ final class ImportCommandTests: XCTestCase {
                 calls.posts.append((path, object))
                 let (status, data) = respond(path, object)
                 return (status, data)
-            })
+            },
+            executableOnPath: { _ in onPath })
     }
 
     // MARK: Parsing
@@ -201,6 +208,32 @@ final class ImportCommandTests: XCTestCase {
         XCTAssertEqual(report.state, "validated")
         XCTAssertEqual(report.exitCode, 0)
         XCTAssertTrue(report.warnings.contains { $0.contains("no Keychain item") })
+    }
+
+    func testHarnessRuntimeNeedsYesAndWarnsWhenItsProgramIsMissing() async throws {
+        try writeBundle(runtime: true)
+        XCTAssertEqual(try ImportCommand.parse(["install", "--from", "/tmp/b", "runtime"]).kind, .harnessRuntime)
+
+        let install = try ImportCommand.parse(["install", "--from", bundleURL.path, "runtime", "Spotlight"])
+        let refused = await ImportCommand.run(install, environment: environment(onPath: true))
+        XCTAssertEqual(refused.state, "refused")
+        XCTAssertTrue(
+            refused.risks.contains { $0.contains("Harness runtime \"Spotlight\"") && $0.contains("spotlight-cli --mode rpc") },
+            "\(refused.risks)")
+        XCTAssertFalse(refused.warnings.contains { $0.contains("not found on PATH") })
+
+        let validate = try ImportCommand.parse(["validate", "--from", bundleURL.path])
+        let report = await ImportCommand.run(validate, environment: environment(onPath: false))
+        XCTAssertEqual(report.state, "validated")
+        XCTAssertTrue(
+            report.warnings.contains { $0.contains("harness_runtimes[Spotlight].executable: spotlight-cli was not found on PATH") },
+            "\(report.warnings)")
+    }
+
+    func testExecutableOnPathLookup() {
+        XCTAssertTrue(ImportCommand.executableOnPath("/bin/sh"))
+        XCTAssertTrue(ImportCommand.executableOnPath("sh"))
+        XCTAssertFalse(ImportCommand.executableOnPath("osaurus-no-such-program-\(UUID().uuidString)"))
     }
 
     func testMinimumOsaurusVersion() async throws {

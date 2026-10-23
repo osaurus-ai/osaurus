@@ -1749,7 +1749,7 @@ final class NativeToolCallRowView: NSView {
         case "plugins": return .tools
         case "schedules": return .schedules
         case "watchers": return .watchers
-        case "agents", "default_agent", "active_agent": return .agents
+        case "agents", "default_agent", "active_agent", "harness_runtimes": return .agents
         case "tools": return .tools
         case "search_providers": return .search
         case "server": return .server

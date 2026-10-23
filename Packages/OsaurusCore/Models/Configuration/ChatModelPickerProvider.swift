@@ -14,6 +14,7 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
         case local
         case osaurusCloud
         case connected
+        case harness(HarnessKind)
     }
 
     let id: String
@@ -25,17 +26,47 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
     /// All currently available models, including Cloud models outside the
     /// shortlist. Lets Explore use the same live data without inventing rows.
     let availableModels: [ModelPickerItem]
+    /// Rows for a harness runtime column; empty for model providers.
+    var harnessOptions: [ChatHarnessPickerOption] = []
 
-    var isActive: Bool { !models.isEmpty }
+    var isActive: Bool { !models.isEmpty || !harnessOptions.isEmpty }
     var isLocal: Bool { kind == .local }
     var isOsaurusCloud: Bool { kind == .osaurusCloud }
+    var isHarness: Bool {
+        if case .harness = kind { return true }
+        return false
+    }
+    var rowCount: Int { models.count + harnessOptions.count }
+
+    /// One column per registered harness runtime. `current` is the agent's
+    /// runtime and Claude Code model, so a full model id the agent runs on
+    /// still has a row to mark.
+    static func harnessProviders(
+        runtimes: [HarnessRuntime],
+        current: (runtimeId: UUID, claudeModel: String)? = nil
+    ) -> [ChatModelPickerProvider] {
+        runtimes.map { runtime in
+            let claudeModel = current?.runtimeId == runtime.id ? current?.claudeModel : nil
+            return ChatModelPickerProvider(
+                id: "harness-\(runtime.id.uuidString)",
+                title: runtime.displayName,
+                kind: .harness(runtime.kind),
+                models: [],
+                availableModels: [],
+                harnessOptions: ChatHarnessPickerOption.options(for: runtime, currentClaudeModel: claudeModel)
+            )
+        }
+    }
 
     /// Pure grouping: does not connect providers, select models, or persist
     /// anything. A nil Cloud shortlist preserves the existing full catalog;
     /// a non-nil set contains exact, provider-prefixed picker model IDs.
+    /// Harness columns follow the model providers, ahead of inactive
+    /// Explore entries.
     static func groups(
         from items: [ModelPickerItem],
-        cloudModelIDs: Set<String>? = nil
+        cloudModelIDs: Set<String>? = nil,
+        harnesses: [ChatModelPickerProvider] = []
     ) -> [ChatModelPickerProvider] {
         let cloudID = RemoteProviderManager.osaurusRouterProviderId
         var foundation: [ModelPickerItem] = []
@@ -96,7 +127,7 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
                 availableModels: models
             )
         }
-        return ordered(local: localProvider, cloud: cloudProvider, connected: connected)
+        return ordered(local: localProvider, cloud: cloudProvider, connected: connected, harnesses: harnesses)
     }
 
     /// Keep placement policy separate from membership, so changing where an
@@ -104,10 +135,11 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
     private static func ordered(
         local: ChatModelPickerProvider,
         cloud: ChatModelPickerProvider,
-        connected: [ChatModelPickerProvider]
+        connected: [ChatModelPickerProvider],
+        harnesses: [ChatModelPickerProvider]
     ) -> [ChatModelPickerProvider] {
         let builtIns = [local, cloud]
-        return builtIns.filter(\.isActive) + connected + builtIns.filter { !$0.isActive }
+        return builtIns.filter(\.isActive) + connected + harnesses + builtIns.filter { !$0.isActive }
     }
 
     private static nonisolated func sorted(_ models: [ModelPickerItem]) -> [ModelPickerItem] {

@@ -292,6 +292,10 @@ struct FloatingInputCard: View {
     @ObservedObject private var harnessRuntimeStore = HarnessRuntimeStore.shared
     @State private var showHarnessFolderWarning = false
     @State private var pendingHarnessFolderChange: (() -> Void)?
+    /// The Default agent's runtime and Claude Code options live in a config
+    /// file, not published state, so a change there would not redraw the
+    /// chip. Bumped on `.agentUpdated`; the harness lookups read it.
+    @State private var harnessConfigRevision = 0
     @ObservedObject private var recentFolders = RecentFoldersStore.shared
     // Deliberately NOT `@ObservedObject`: sandbox provisioning publishes
     // per-progress-tick during runtime downloads and the clipboard service
@@ -1038,6 +1042,9 @@ struct FloatingInputCard: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: LocalVisionEvidence.evidenceReady)) { _ in
                 mediaEvidenceGeneration &+= 1
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .agentUpdated)) { _ in
+                harnessConfigRevision &+= 1
             }
             .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
                 // Reload voice config when settings change
@@ -2689,9 +2696,7 @@ extension FloatingInputCard {
 
     private var selectorRow: some View {
         HStack(spacing: 6) {
-            if isHarnessAgent {
-                harnessRuntimeChip
-            } else if !pickerItems.isEmpty || isModelPinned {
+            if !pickerItems.isEmpty || isModelPinned || isHarnessAgent || !pickerHarnessRuntimes.isEmpty {
                 modelSelectorChip
             }
 
@@ -3002,16 +3007,22 @@ extension FloatingInputCard {
         let isLocalModelRun: Bool
         let selectedModel: String?
         let modelDetails: String
+        /// Replaces the model status when the agent runs on a harness.
+        var harnessHelp: String? = nil
         @ObservedObject var warmupController: ChatWarmupController
 
         func body(content: Content) -> some View {
+            content.help(harnessHelp ?? modelHelp)
+        }
+
+        private var modelHelp: String {
             let status = isDeprecated
                 ? String(
                     localized: "This model is outdated. Click to switch to a newer version.",
                     bundle: .module
                 )
                 : helpText
-            content.help([status, modelDetails].filter { !$0.isEmpty }.joined(separator: "\n"))
+            return [status, modelDetails].filter { !$0.isEmpty }.joined(separator: "\n")
         }
 
         private var helpText: String {
@@ -3036,37 +3047,76 @@ extension FloatingInputCard {
         }
     }
 
-    /// Stands in for the model picker when the agent runs on an external
-    /// harness, which picks its own model.
-    private var harnessRuntimeChip: some View {
+    /// Chip label when the agent runs on an external harness: the runtime,
+    /// plus the Claude Code model it launches with.
+    private var harnessChipLabel: some View {
         let missing = harnessRuntime == nil
-        return Button {
-            AppDelegate.shared?.showManagementWindow(initialTab: .agentRuntimes)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: missing ? "exclamationmark.triangle.fill" : "terminal.fill")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(missing ? theme.warningColor : theme.tertiaryText)
-                Text(harnessRuntime?.displayName ?? L("Runtime missing"))
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(missing ? theme.warningColor : theme.secondaryText)
+        return HStack(spacing: 6) {
+            Image(systemName: missing ? "exclamationmark.triangle.fill" : "terminal.fill")
+                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                .foregroundColor(missing ? theme.warningColor : theme.tertiaryText)
+            Text(harnessRuntime?.displayName ?? L("Runtime missing"))
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(missing ? theme.warningColor : theme.secondaryText)
+                .lineLimit(1)
+            if let model = harnessClaudeModelLabel {
+                Text(verbatim: "· \(model)")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .foregroundColor(theme.tertiaryText)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(theme.secondaryBackground.opacity(0.8)))
-            .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1))
-            .clipShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .help(
-            missing
-                ? L("This agent's runtime was deleted. Pick another one in the agent's settings.")
-                : String(
-                    format: L("This agent runs on %@, which chooses its own model and tools. Click to manage runtimes."),
-                    harnessRuntime?.displayName ?? ""
-                )
+    }
+
+    private var harnessClaudeModelLabel: String? {
+        guard let runtime = harnessRuntime, runtime.kind == .claudeCode else { return nil }
+        let model = agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId).resolvedModel
+        return ClaudeCodeModel(rawValue: model) != nil ? model.capitalized : model
+    }
+
+    private var harnessChipHelp: String? {
+        guard isHarnessAgent else { return nil }
+        guard let runtime = harnessRuntime else {
+            return L("This agent's runtime was deleted. Pick another runtime or a model.")
+        }
+        return String(
+            format: L("This agent runs on %@, which uses its own tools. Click to switch runtimes or models."),
+            runtime.displayName
         )
+    }
+
+    /// Runtimes offered as picker columns. A remote agent run is pinned to
+    /// the remote agent's own model, so it offers none.
+    private var pickerHarnessRuntimes: [HarnessRuntime] {
+        guard !isRemoteAgentRun, !isModelPinned else { return [] }
+        return harnessRuntimeStore.all()
+    }
+
+    private var selectedHarnessPickerID: String? {
+        ChatHarnessPickerOption.selectedID(
+            runtime: harnessRuntime,
+            claudeConfig: agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId)
+        )
+    }
+
+    /// Per-agent, like a model pick: the agent's runtime changes for this
+    /// chat and later ones. Nil moves it back to the built-in loop.
+    private func selectHarness(_ option: ChatHarnessPickerOption?) {
+        let agentId = effectiveAgentId
+        guard let option else {
+            agentManager.updateRuntime(.builtIn, for: agentId)
+            harnessConfigRevision &+= 1
+            return
+        }
+        if let claudeModel = option.claudeModel {
+            var config = agentManager.effectiveClaudeCodeConfig(for: agentId)
+            if config.resolvedModel != claudeModel {
+                config.model = claudeModel
+                agentManager.updateClaudeCodeConfig(config, for: agentId)
+            }
+        }
+        agentManager.updateRuntime(.harness(option.runtimeId), for: agentId)
+        harnessConfigRevision &+= 1
     }
 
     /// Non-interactive model label for Mode 2 (remote agent run). The model is
@@ -3098,7 +3148,8 @@ extension FloatingInputCard {
         modelPickerCardSize = ChatModelPickerCard.initialSize(
             providers: chatPickerProviders,
             selectedModel: selectedModel,
-            optionsControl: modelPickerOptionsControl
+            optionsControl: modelPickerOptionsControl,
+            selectedHarnessID: selectedHarnessPickerID
         )
         showModelPicker = true
     }
@@ -3106,6 +3157,7 @@ extension FloatingInputCard {
     /// Keep the pill visually simple while retaining the removed badges'
     /// thinking and input-capability information for hover and VoiceOver.
     private var modelSelectorDetails: String {
+        guard !isHarnessAgent else { return "" }
         var details: [String] = []
         if let thinkingOn = inlineThinkingEnabled {
             if inlineThinkingUsesNativeDefault {
@@ -3128,58 +3180,10 @@ extension FloatingInputCard {
             if showModelPicker { dismissModelPicker() }
             else { openModelPicker() }
         } content: {
-            HStack(spacing: 6) {
-                if isSelectedModelDeprecated {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                        .foregroundColor(.orange)
-                        .localizedHelp("This model is outdated. Click to switch to a newer version.")
-                } else {
-                    // Tooltip comes from the chip-wide `.help` below — the
-                    // 6px dot is too small to be its own hover target.
-                    Circle()
-                        .fill(modelWarmupDotColor)
-                        .frame(width: 6, height: 6)
-                }
-
-                // Model name and reasoning text, without suffix icons.
-                if let option = selectedPickerItem {
-                    HStack(spacing: 4) {
-                        Text(option.displayName)
-                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                            .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
-                            .lineLimit(1)
-
-                        // Effective reasoning effort/mode for models with a
-                        // segmented reasoning option (Codex catalog, official
-                        // OpenAI GPT-5.6, DSV4/Mistral/Hy3 profiles),
-                        // matching ChatGPT's "model · effort" hierarchy.
-                        // Shows the catalog/profile default when no explicit
-                        // choice exists.
-                        if let suffix = inlineReasoningSuffix {
-                            Text(verbatim: "· \(suffix)")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                                .foregroundColor(theme.tertiaryText)
-                                .lineLimit(1)
-                        }
-
-                        if !isCompact, let params = option.parameterCount {
-                            Text(params)
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
-                                .foregroundColor(.blue.opacity(0.8))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                        .fill(Color.blue.opacity(0.12))
-                                )
-                        }
-                    }
-                } else {
-                    Text("Select Model", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
+            if isHarnessAgent {
+                harnessChipLabel
+            } else {
+                builtInModelChipLabel
             }
         }
         .accessibilityValue(Text(verbatim: modelSelectorDetails))
@@ -3190,6 +3194,7 @@ extension FloatingInputCard {
                 isLocalModelRun: isSelectedModelLocal && !isRemoteAgentRun,
                 selectedModel: selectedModel,
                 modelDetails: modelSelectorDetails,
+                harnessHelp: harnessChipHelp,
                 warmupController: warmupController
             )
         )
@@ -3198,6 +3203,9 @@ extension FloatingInputCard {
                 providers: chatPickerProviders,
                 selectedModel: $selectedModel,
                 optionsControl: modelPickerOptionsControl,
+                selectedHarnessID: selectedHarnessPickerID,
+                runtimeSwitchLocked: isStreaming,
+                onSelectHarness: { selectHarness($0) },
                 onExploreLocal: {
                     dismissModelPicker()
                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
@@ -3246,6 +3254,62 @@ extension FloatingInputCard {
         }
     }
 
+    private var builtInModelChipLabel: some View {
+        HStack(spacing: 6) {
+            if isSelectedModelDeprecated {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                    .foregroundColor(.orange)
+                    .localizedHelp("This model is outdated. Click to switch to a newer version.")
+            } else {
+                // Tooltip comes from the chip-wide `.help` below — the
+                // 6px dot is too small to be its own hover target.
+                Circle()
+                    .fill(modelWarmupDotColor)
+                    .frame(width: 6, height: 6)
+            }
+
+            // Model name and reasoning text, without suffix icons.
+            if let option = selectedPickerItem {
+                HStack(spacing: 4) {
+                    Text(option.displayName)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
+                        .lineLimit(1)
+
+                    // Effective reasoning effort/mode for models with a
+                    // segmented reasoning option (Codex catalog, official
+                    // OpenAI GPT-5.6, DSV4/Mistral/Hy3 profiles),
+                    // matching ChatGPT's "model · effort" hierarchy.
+                    // Shows the catalog/profile default when no explicit
+                    // choice exists.
+                    if let suffix = inlineReasoningSuffix {
+                        Text(verbatim: "· \(suffix)")
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+
+                    if !isCompact, let params = option.parameterCount {
+                        Text(params)
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
+                            .foregroundColor(.blue.opacity(0.8))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .fill(Color.blue.opacity(0.12))
+                            )
+                    }
+                }
+            } else {
+                Text("Select Model", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+        }
+    }
+
     private var cloudPickerItems: [ModelPickerItem] {
         pickerItems.filter {
             if case .remote(_, let providerID) = $0.source {
@@ -3259,7 +3323,14 @@ extension FloatingInputCard {
         let shortlist = Set(cachedPickerItems.filter {
             chatModelFavorites.isFavorite($0.favoriteKey) || $0.id == selectedModel
         }.map(\.id))
-        return ChatModelPickerProvider.groups(from: cachedPickerItems, cloudModelIDs: shortlist)
+        let current = harnessRuntime.map {
+            (runtimeId: $0.id, claudeModel: agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId).resolvedModel)
+        }
+        return ChatModelPickerProvider.groups(
+            from: cachedPickerItems,
+            cloudModelIDs: shortlist,
+            harnesses: ChatModelPickerProvider.harnessProviders(runtimes: pickerHarnessRuntimes, current: current)
+        )
     }
 
     /// Inline "Model Options" section for the model popover: the semantic
@@ -3719,13 +3790,15 @@ extension FloatingInputCard {
 
     /// The harness this composer's agent runs on, when it resolves.
     private var harnessRuntime: HarnessRuntime? {
+        _ = harnessConfigRevision
         guard !isRemoteAgentRun, case .resolved(let runtime)? = agentManager.effectiveHarness(for: effectiveAgentId)
         else { return nil }
         return runtime
     }
 
     private var isHarnessAgent: Bool {
-        !isRemoteAgentRun && agentManager.effectiveHarness(for: effectiveAgentId) != nil
+        _ = harnessConfigRevision
+        return !isRemoteAgentRun && agentManager.effectiveHarness(for: effectiveAgentId) != nil
     }
 
     /// A harness's working directory is fixed when its process starts, and a

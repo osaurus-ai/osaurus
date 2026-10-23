@@ -30,9 +30,10 @@ enum ConfigSchemaReference {
         Semantics
         - Merge-by-default: a key ABSENT from the document is left unchanged.
         - Explicit `null` clears an optional override back to its default.
-        - Entities (agents, mcp_servers, providers, schedules, watchers) match
-          existing ones by `name` (case-insensitive): unmatched entries are
-          created, matched ones are patched.
+        - Entities (agents, harness_runtimes, mcp_servers, providers,
+          schedules, watchers) match existing ones by `name`
+          (case-insensitive): unmatched entries are created, matched ones are
+          patched.
         - `models` and `plugins` are plain desired-state lists of ids.
         - apply with `prune: true` additionally DELETES entries not listed in
           the sections the document declares. Never prunes undeclared sections.
@@ -44,6 +45,9 @@ enum ConfigSchemaReference {
           cloud provider opens the native credential sheet during apply, and
           keyed MCP/search providers are registered for the user to finish
           auth in Settings.
+        - harness_runtimes apply before agents, so `runtime:` may name a
+          runtime the same document adds. An unknown runtime name is an error,
+          never a fallback to `builtin`.
         """
 
     static let footer = """

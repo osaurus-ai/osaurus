@@ -213,6 +213,15 @@ struct ChatModelPickerCard: View {
     let providers: [ChatModelPickerProvider]
     @Binding var selectedModel: String?
     let optionsControl: ModelPickerOptionsControl?
+    /// The harness row the agent runs on; nil on the built-in loop, where
+    /// `selectedModel` is the live choice.
+    var selectedHarnessID: String? = nil
+    /// While a turn runs, rows that would move the agent to another runtime
+    /// are disabled; the running turn keeps its process.
+    var runtimeSwitchLocked = false
+    /// A harness row was picked, or nil when a model row moves the agent
+    /// back to the built-in loop.
+    var onSelectHarness: (ChatHarnessPickerOption?) -> Void = { _ in }
     let onExploreLocal: () -> Void
     let onExploreCloud: () -> Void
     let onSizeChange: (CGSize) -> Void
@@ -230,8 +239,28 @@ struct ChatModelPickerCard: View {
 
     private var provider: ChatModelPickerProvider? {
         providers.first { $0.id == browsedProviderID }
-            ?? providers.first { $0.models.contains { $0.id == selectedModel } }
+            ?? Self.selectedProvider(in: providers, selectedModel: selectedModel, selectedHarnessID: selectedHarnessID)
             ?? providers.first { $0.isActive }
+    }
+
+    private static func selectedProvider(
+        in providers: [ChatModelPickerProvider],
+        selectedModel: String?,
+        selectedHarnessID: String?
+    ) -> ChatModelPickerProvider? {
+        if let selectedHarnessID {
+            return providers.first { $0.harnessOptions.contains { $0.id == selectedHarnessID } }
+        }
+        return providers.first { $0.models.contains { $0.id == selectedModel } }
+    }
+
+    private var harnessOptions: [ChatHarnessPickerOption] {
+        provider?.harnessOptions ?? []
+    }
+
+    /// A model row is the live choice only on the built-in loop.
+    private var builtInSelectedModel: String? {
+        selectedHarnessID == nil ? selectedModel : nil
     }
 
     private var models: [ModelPickerItem] {
@@ -243,7 +272,9 @@ struct ChatModelPickerCard: View {
     }
 
     private var control: ModelPickerOptionsControl? {
-        guard provider?.models.contains(where: { $0.id == selectedModel }) == true else { return nil }
+        guard let builtInSelectedModel,
+            provider?.models.contains(where: { $0.id == builtInSelectedModel }) == true
+        else { return nil }
         return optionsControl
     }
 
@@ -275,11 +306,13 @@ struct ChatModelPickerCard: View {
     static func initialSize(
         providers: [ChatModelPickerProvider],
         selectedModel: String?,
-        optionsControl: ModelPickerOptionsControl?
+        optionsControl: ModelPickerOptionsControl?,
+        selectedHarnessID: String? = nil
     ) -> CGSize {
-        let provider = providers.first { $0.models.contains { $0.id == selectedModel } }
+        let provider = selectedProvider(in: providers, selectedModel: selectedModel, selectedHarnessID: selectedHarnessID)
             ?? providers.first { $0.isActive }
-        let control = provider?.models.contains { $0.id == selectedModel } == true ? optionsControl : nil
+        let control = selectedHarnessID == nil && provider?.models.contains { $0.id == selectedModel } == true
+            ? optionsControl : nil
         return cardSize(provider: provider, providerCount: providers.count,
                         options: ChatPickerOptionsSnapshot.make(modelID: selectedModel, control: control),
                         columnWidth: ChatPickerLayout.columnWidth,
@@ -299,7 +332,7 @@ struct ChatModelPickerCard: View {
         optionsColumnWidth: CGFloat
     ) -> CGSize {
         let twoColumnWidth = 2 * columnWidth + ChatPickerLayout.columnSpacing + 2 * ChatPickerLayout.padding
-        let count = min(8, max(providerCount, provider?.models.count ?? 0))
+        let count = min(8, max(providerCount, provider?.rowCount ?? 0))
         let modelFooter = provider?.isLocal == true || provider?.isOsaurusCloud == true ? 44 : 0
         let searchHeight = (provider?.models.count ?? 0) > 10 ? 38 : 0
         let rowsHeight = CGFloat(count) * ChatPickerLayout.rowHeight
@@ -460,13 +493,31 @@ struct ChatModelPickerCard: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: ChatPickerLayout.rowSpacing) {
+                        ForEach(harnessOptions) { option in
+                            let selected = option.id == selectedHarnessID
+                            let locked = runtimeSwitchLocked && !selected
+                            ChatPickerRow(title: option.title, selected: selected, muted: locked,
+                                          focused: keyboardNavigation && focus == option.id, icon: { EmptyView() }) {
+                                guard !locked, !selected else { return }
+                                onSelectHarness(option)
+                            }
+                            .disabled(locked)
+                            .focused($focus, equals: option.id)
+                            .id(option.id)
+                            .help(locked ? L("Wait for the current reply to finish before switching runtimes.") : option.title)
+                        }
                         ForEach(models) { model in
                             let key = "model:\(model.id)"
+                            let locked = runtimeSwitchLocked && selectedHarnessID != nil
                             HStack(spacing: 0) {
-                                ChatPickerRow(title: model.displayName, selected: model.id == selectedModel,
+                                ChatPickerRow(title: model.displayName, selected: model.id == builtInSelectedModel,
+                                              muted: locked,
                                               focused: keyboardNavigation && focus == key, icon: { EmptyView() }) {
+                                    guard !locked else { return }
+                                    if selectedHarnessID != nil { onSelectHarness(nil) }
                                     selectedModel = model.id
                                 }
+                                .disabled(locked)
                                 .focused($focus, equals: key)
                                 if provider?.isOsaurusCloud == true {
                                     let saved = favorites.isFavorite(model.favoriteKey)
@@ -498,7 +549,7 @@ struct ChatModelPickerCard: View {
                             .id(key)
                             .help(model.displayName)
                         }
-                        if models.isEmpty {
+                        if models.isEmpty && harnessOptions.isEmpty {
                             Text(search.isEmpty ? L("Choose a provider to browse models.") : L("No matching models. Try another name."))
                                 .foregroundStyle(theme.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -526,7 +577,7 @@ struct ChatModelPickerCard: View {
                 }
                 .onChange(of: focus) { _, key in
                     if let key {
-                        if key.hasPrefix("model:") || key == "more" { proxy.scrollTo(key) }
+                        if key.hasPrefix("model:") || key.hasPrefix("harness:") || key == "more" { proxy.scrollTo(key) }
                         if key.hasPrefix("favorite:") { proxy.scrollTo("model:" + key.dropFirst(9)) }
                     }
                 }
@@ -635,7 +686,13 @@ struct ChatModelPickerCard: View {
     }
 
     @ViewBuilder private func providerIcon(_ provider: ChatModelPickerProvider) -> some View {
-        if provider.isLocal {
+        if case .harness(let kind) = provider.kind {
+            if kind == .claudeCode {
+                Image("provider-logo-anthropic", bundle: .module).resizable().scaledToFit().frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "terminal").frame(width: 16)
+            }
+        } else if provider.isLocal {
             Image(systemName: "desktopcomputer").frame(width: 16)
         } else if provider.isOsaurusCloud {
             Image("osaurus-logo", bundle: .module).resizable().renderingMode(.template).scaledToFit().frame(width: 16, height: 16)
@@ -652,7 +709,7 @@ struct ChatModelPickerCard: View {
     }
 
     private var focusColumns: [[String]] {
-        var modelKeys = models.flatMap { model in
+        var modelKeys = harnessOptions.map(\.id) + models.flatMap { model in
             provider?.isOsaurusCloud == true
                 ? ["model:\(model.id)", "favorite:\(model.id)"] : ["model:\(model.id)"]
         }

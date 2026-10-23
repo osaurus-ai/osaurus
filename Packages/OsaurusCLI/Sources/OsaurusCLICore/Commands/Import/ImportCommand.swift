@@ -3,11 +3,11 @@
 //  osaurus
 //
 //  `osaurus import` — install, update and remove the agents, skills, MCP
-//  servers and settings in an Osaurus bundle (a folder with
-//  `osaurus-bundle.json`). Built
-//  for third-party installer scripts: the command checks the bundle, copies
-//  it into `~/.osaurus/import/pending/`, and the app applies it the next
-//  time it opens, or right away over loopback when it is already running.
+//  servers, harness runtimes and settings in an Osaurus bundle (a folder
+//  with `osaurus-bundle.json`). Built for third-party installer scripts:
+//  the command checks the bundle, copies it into
+//  `~/.osaurus/import/pending/`, and the app applies it the next time it
+//  opens, or right away over loopback when it is already running.
 //  The CLI never launches the app. Author guide: docs/OSAURUS_BUNDLES.md.
 //
 
@@ -91,6 +91,9 @@ public struct ImportEnvironment: Sendable {
     public var isAppRunning: @Sendable (Int) async -> Bool
     /// POST JSON to the loopback admin API. `nil` on transport errors.
     public var post: @Sendable (Int, String, Data) async -> (status: Int, body: Data)?
+    /// Whether a harness runtime's executable resolves on PATH; `nil` when
+    /// not checked.
+    public var executableOnPath: @Sendable (String) -> Bool?
 
     public init(
         userId: @escaping @Sendable () -> uid_t,
@@ -98,7 +101,8 @@ public struct ImportEnvironment: Sendable {
         keychainItemExists: @escaping @Sendable (BundleSecretRef) -> Bool?,
         port: @escaping @Sendable () -> Int,
         isAppRunning: @escaping @Sendable (Int) async -> Bool,
-        post: @escaping @Sendable (Int, String, Data) async -> (status: Int, body: Data)?
+        post: @escaping @Sendable (Int, String, Data) async -> (status: Int, body: Data)?,
+        executableOnPath: @escaping @Sendable (String) -> Bool? = { _ in nil }
     ) {
         self.userId = userId
         self.appVersion = appVersion
@@ -106,6 +110,7 @@ public struct ImportEnvironment: Sendable {
         self.port = port
         self.isAppRunning = isAppRunning
         self.post = post
+        self.executableOnPath = executableOnPath
     }
 
     public static let live = live(accessKey: nil)
@@ -135,7 +140,8 @@ public struct ImportEnvironment: Sendable {
                 request.timeoutInterval = 600
                 guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
                 return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
-            }
+            },
+            executableOnPath: { ImportCommand.executableOnPath($0) }
         )
     }
 }
@@ -363,6 +369,18 @@ public struct ImportCommand: Command {
             report.warnings.append("Keychain checks were skipped (OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1).")
         }
 
+        for item in items where item.kind == .harnessRuntime {
+            guard let runtime = bundle.harnessRuntime(named: item.name) else { continue }
+            let program =
+                runtime.executable?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? (runtime.kind == "claude_code" ? "claude" : "pi")
+            if environment.executableOnPath(program) == false {
+                report.warnings.append(
+                    "harness_runtimes[\(runtime.name)].executable: \(program) was not found on PATH. Install it "
+                        + "before an agent runs on this runtime; Osaurus looks it up on the login shell's PATH.")
+            }
+        }
+
         guard report.issues.isEmpty else { return nil }
         return (bundle, items)
     }
@@ -501,7 +519,7 @@ public struct ImportCommand: Command {
                 default:
                     report.issues.append(
                         "\"\(name)\" names more than one installed item. Say which: "
-                            + "osaurus import remove --bundle \(bundleId) agent|skill|mcp|setting \"\(name)\".")
+                            + "osaurus import remove --bundle \(bundleId) agent|skill|mcp|runtime|setting \"\(name)\".")
                 }
             }
         }
@@ -642,6 +660,17 @@ public struct ImportCommand: Command {
 
     /// Attributes-only lookup: proves the item exists without reading the
     /// secret, and never prompts. It cannot prove Osaurus may read it.
+    /// `~` expands; a name without a slash is searched on PATH.
+    static func executableOnPath(_ program: String) -> Bool {
+        let expanded = (program as NSString).expandingTildeInPath
+        let fm = FileManager.default
+        if expanded.contains("/") { return fm.isExecutableFile(atPath: expanded) }
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        return path.split(separator: ":").contains { dir in
+            fm.isExecutableFile(atPath: (String(dir) as NSString).appendingPathComponent(expanded))
+        }
+    }
+
     static func keychainItemExists(_ ref: BundleSecretRef) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -727,19 +756,19 @@ public struct ImportCommand: Command {
     public static func printUsage() {
         print(
             """
-            osaurus import - install agents, skills, MCP servers and settings from an Osaurus bundle
+            osaurus import - install agents, skills, MCP servers, harness runtimes and settings from an Osaurus bundle
 
             Usage:
               osaurus import validate --from <bundle> [--json]
                                       Check a bundle without installing anything.
-              osaurus import install  --from <bundle> [agent|skill|mcp|setting] [<name> ...] [--yes] [--json]
+              osaurus import install  --from <bundle> [agent|skill|mcp|runtime|setting] [<name> ...] [--yes] [--json]
                                       Install items (all of them when no names are given).
-                                      Installing an agent also installs the skills and MCP
-                                      servers it uses from the same bundle.
-              osaurus import update   --from <bundle> [agent|skill|mcp|setting] [<name> ...] [--yes] [--json]
+                                      Installing an agent also installs the skills, MCP
+                                      servers and harness runtime it uses from the same bundle.
+              osaurus import update   --from <bundle> [agent|skill|mcp|runtime|setting] [<name> ...] [--yes] [--json]
                                       Update items this bundle installed to the bundle's version.
                                       A setting the user changed since is left as it is.
-              osaurus import remove   --bundle <id> [agent|skill|mcp|setting] [<name> ...] [--json]
+              osaurus import remove   --bundle <id> [agent|skill|mcp|runtime|setting] [<name> ...] [--json]
                                       Remove items this bundle installed (all when no names).
                                       Settings stay as they are.
               osaurus import list     [--bundle <id>] [--json]
@@ -752,8 +781,8 @@ public struct ImportCommand: Command {
 
             A bundle is a folder with osaurus-bundle.json. Changes are queued in
             ~/.osaurus/import/ and applied the next time Osaurus opens, or right away
-            when it is running. MCP servers, risky agent switches and settings that
-            loosen security need --yes.
+            when it is running. MCP servers, harness runtimes, risky agent switches
+            and settings that loosen security need --yes.
             Secrets are keychain:SERVICE/ACCOUNT references to items your installer
             stores with `security add-generic-password ... -T /Applications/Osaurus.app`.
             Run as the logged-in user, never as root.

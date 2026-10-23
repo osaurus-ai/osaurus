@@ -278,6 +278,7 @@ enum ConfigurationReadNextStep {
         case "default_agent": return [.defaultAgent]
         case "tools": return [.tools]
         case "delegation": return [.delegation]
+        case "harness_runtimes": return [.harnessRuntimes]
         default: return nil
         }
     }
@@ -397,11 +398,12 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     .string("server"), .string("chat"), .string("app"),
                     .string("memory"), .string("default_agent"),
                     .string("new_chat_agent"), .string("active_agent"), .string("tools"),
-                    .string("delegation"),
+                    .string("delegation"), .string("harness_runtimes"),
                 ]),
                 "description": .string(
                     "Configuration scope. Required for list and describe. memory, "
-                        + "default_agent, new_chat_agent (alias active_agent), tools, and delegation are settings "
+                        + "default_agent, new_chat_agent (alias active_agent), tools, delegation, and "
+                        + "harness_runtimes are settings "
                         + "document sections — list/describe returns the section's current "
                         + "values (change them with osaurus_config apply). server, chat, and "
                         + "app are Settings-UI-only."),
