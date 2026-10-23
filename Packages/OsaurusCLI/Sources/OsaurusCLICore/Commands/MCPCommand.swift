@@ -179,41 +179,11 @@ public struct MCPCommand: Command {
         }
     }
 
-    struct AccessKeyCredential: Equatable {
-        let token: String
-        let source: String
-    }
-
     static func resolvedAccessKey(
         args: [String],
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AccessKeyCredential? {
-        for index in args.indices {
-            let arg = args[index]
-            if let value = accessKeyValue(fromInlineArgument: arg) {
-                return AccessKeyCredential(token: value, source: accessKeySource(fromInlineArgument: arg))
-            }
-            guard accessKeyOptionNames.contains(arg), args.indices.contains(index + 1) else {
-                continue
-            }
-            if let token = normalizedAccessKey(args[index + 1]) {
-                return AccessKeyCredential(token: token, source: arg)
-            }
-        }
-
-        for name in accessKeyEnvironmentNames {
-            if let token = normalizedAccessKey(environment[name]) {
-                return AccessKeyCredential(token: token, source: name)
-            }
-        }
-
-        for name in authorizationEnvironmentNames {
-            if let token = normalizedAuthorizationHeader(environment[name]) {
-                return AccessKeyCredential(token: token, source: name)
-            }
-        }
-
-        return nil
+        AccessKeyResolver.resolve(args: args, environment: environment)
     }
 
     static func makeProxyRequest(
@@ -250,59 +220,6 @@ public struct MCPCommand: Command {
     static let bridgeGrantEnvironmentKey = "OSAURUS_MCP_BRIDGE_GRANT"
     static let bridgeGrantHeaderName = "X-Osaurus-Bridge-Grant"
 
-    private static let accessKeyOptionNames: Set<String> = [
-        "--access-key",
-        "--api-key",
-        "--token",
-        "--bearer-token",
-    ]
-
-    private static let accessKeyEnvironmentNames = [
-        "OSAURUS_MCP_ACCESS_KEY",
-        "OSAURUS_ACCESS_KEY",
-        "OSAURUS_API_KEY",
-        "OSU_ACCESS_KEY",
-        "OSU_API_KEY",
-    ]
-
-    private static let authorizationEnvironmentNames = [
-        "OSAURUS_MCP_AUTHORIZATION",
-        "AUTHORIZATION",
-        "HTTP_AUTHORIZATION",
-    ]
-
-    private static func accessKeyValue(fromInlineArgument argument: String) -> String? {
-        for option in accessKeyOptionNames {
-            let prefix = option + "="
-            guard argument.hasPrefix(prefix) else { continue }
-            return normalizedAccessKey(String(argument.dropFirst(prefix.count)))
-        }
-        return nil
-    }
-
-    private static func accessKeySource(fromInlineArgument argument: String) -> String {
-        argument.split(separator: "=", maxSplits: 1).first.map(String.init) ?? "--access-key"
-    }
-
-    private static func normalizedAccessKey(_ rawValue: String?) -> String? {
-        guard var value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
-            return nil
-        }
-        if value.lowercased().hasPrefix("bearer ") {
-            value = String(value.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return value.isEmpty ? nil : value
-    }
-
-    private static func normalizedAuthorizationHeader(_ rawValue: String?) -> String? {
-        guard let value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-            value.lowercased().hasPrefix("bearer ")
-        else {
-            return nil
-        }
-        return normalizedAccessKey(value)
-    }
-
     private static func printUsage() {
         let usage = """
             Usage:
@@ -310,8 +227,9 @@ public struct MCPCommand: Command {
 
             Runs an MCP stdio server that proxies tool discovery and calls to
             the local Osaurus HTTP server. Local-only servers can rely on
-            loopback trust. If Server > Network exposure is enabled, provide an
-            access key with --access-key or OSAURUS_MCP_ACCESS_KEY.
+            loopback trust. If Server > Network exposure or Require Access Key
+            for Local Admin Routes is enabled, provide an access key with
+            --access-key or OSAURUS_MCP_ACCESS_KEY.
 
             --tools limits which tools are exposed. Comma-separated names, each
             optionally ending in '*' to match by prefix. Omitted, every tool is

@@ -311,6 +311,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// agent token. Confines the request to `HarnessGrantStore.allowedRoutes`
         /// and that agent's tools.
         var harnessGrant: HarnessGrant?
+        /// Set by the auth gate when `LocalAPIKeyPolicy` made a loopback
+        /// caller present an agent-scoped key: that caller is held to the
+        /// remote contract, so `isLoopbackConnection` reports `false`.
+        var loopbackTrustWithdrawn: Bool = false
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -326,6 +330,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let peerInferenceSharingProvider: @Sendable () -> Bool
     private var peerInferenceEnabled: Bool { peerInferenceSharingProvider() }
 
+    /// Live read of the owner's "require an access key from this Mac too"
+    /// switch (`LocalAPIKeyPolicy`), injectable for the same reason.
+    private let localKeyRequiredProvider: @Sendable () -> Bool
+
+    private func localKeyRequired(for normalizedPath: String) -> Bool {
+        LocalAPIKeyPolicy.isProtectedRoute(normalizedPath) && localKeyRequiredProvider()
+    }
+
     init(
         configuration: ServerConfiguration,
         apiKeyValidator: APIKeyValidator = .empty,
@@ -334,7 +346,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         chatEngine: ChatEngineProtocol = ChatEngine(),
         trustLoopback: Bool = true,
         responseEncryptor: SecureChannelResponseEncryptor? = nil,
-        peerInferenceSharingProvider: @escaping @Sendable () -> Bool = { PeerInferenceSharing.isEnabled() }
+        peerInferenceSharingProvider: @escaping @Sendable () -> Bool = { PeerInferenceSharing.isEnabled() },
+        localKeyRequiredProvider: @escaping @Sendable () -> Bool = { LocalAPIKeyPolicy.isEnabled() }
     ) {
         self.configuration = configuration
         self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
@@ -342,6 +355,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         self.trustLoopback = trustLoopback
         self.responseEncryptor = responseEncryptor
         self.peerInferenceSharingProvider = peerInferenceSharingProvider
+        self.localKeyRequiredProvider = localKeyRequiredProvider
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
 
@@ -486,6 +500,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.callerHasVerifiedAccessKey = false
             stateRef.value.callerAccessKeyIsMaster = false
             stateRef.value.harnessGrant = nil
+            stateRef.value.loopbackTrustWithdrawn = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -497,7 +512,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.corsHeaders = computeCORSHeaders(
                 for: head,
                 isPreflight: false,
-                isLoopback: isLoopbackConnection(context)
+                isLoopback: isLoopbackConnection(context),
+                explicitOriginsOnly: localKeyRequired(for: normalize(extractPath(from: head.uri)))
             )
             stateRef.value.bodyByteLimit = bodyByteLimit(for: head)
 
@@ -600,7 +616,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let cors = computeCORSHeaders(
                     for: head,
                     isPreflight: true,
-                    isLoopback: isLoopbackConnection(context)
+                    isLoopback: isLoopbackConnection(context),
+                    explicitOriginsOnly: localKeyRequired(for: path)
                 )
                 sendResponse(
                     context: context,
@@ -620,6 +637,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Authorization header flows through the existing validator,
             // scope check, and routing untouched. The response encryptor is
             // armed here so everything the route writes goes out sealed.
+            let outerHead = head
             if head.method == .POST, path == "/secure/call" {
                 guard let rewritten = decryptSecureCall(head: head, context: context) else {
                     // decryptSecureCall already sent the error response.
@@ -633,6 +651,54 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 stateRef.value.normalizedPath = path
                 stateRef.value.isSecureChannel = true
                 _isSecureChannel.value = true
+            }
+
+            // `LocalAPIKeyPolicy`: on a protected route, a browser origin not
+            // listed by name is refused outright (key or not), and the
+            // in-process app token stands in for a key over physical loopback.
+            let localKeyRequired = localKeyRequired(for: path)
+            var presentedAppToken = false
+            if localKeyRequired {
+                stateRef.value.corsHeaders = computeCORSHeaders(
+                    for: outerHead,
+                    isPreflight: false,
+                    isLoopback: false,
+                    explicitOriginsOnly: true
+                )
+                let origin = outerHead.headers.first(name: "Origin") ?? head.headers.first(name: "Origin")
+                if let origin,
+                    !LocalAPIKeyPolicy.isExplicitlyAllowedOrigin(origin, allowedOrigins: configuration.allowedOrigins)
+                {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: stateRef.value.corsHeaders)
+                    let message =
+                        "Browser requests to this route are refused. Add the origin to Allowed Origins (CORS) to permit it."
+                    let errorBody =
+                        #"{"error":{"code":"browser_origin_refused","message":"\#(message)","type":"permission_error"}}"#
+                    sendResponse(
+                        context: context,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: errorBody
+                    )
+                    logRequest(
+                        method: method,
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: errorBody,
+                        responseStatus: 403,
+                        startTime: startTime,
+                        errorMessage: message
+                    )
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
+                presentedAppToken =
+                    isPhysicalLoopbackConnection(context)
+                    && LocalAPIKeyPolicy.isAppSessionToken(head.headers.first(name: LocalAPIKeyPolicy.appTokenHeaderName))
             }
 
             // Access key authentication gate (all data snapshotted at server start, zero locks)
@@ -689,7 +755,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 stateRef.value.harnessGrant = grant
             }
 
-            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isLoopback
+            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute
+                && (!isLoopback || (localKeyRequired && !presentedAppToken))
                 && stateRef.value.harnessGrant == nil
             {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
@@ -716,6 +783,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stateRef.value.authedKeyIsWorkspaceMinted =
                             !stateRef.value.authedScopeIsMaster
                             && WorkspaceAgentAccessHost.isWorkspaceMintedKey(nonce: keyNonce)
+                        // A local owner key keeps loopback behavior; a local
+                        // agent-scoped key gets exactly what it gets remotely.
+                        stateRef.value.loopbackTrustWithdrawn =
+                            isLoopback && !stateRef.value.authedScopeIsMaster
                         // Snapshot the attribution into the off-loop-readable box
                         // (read by the possibly-off-loop request log) so inbound
                         // `.httpAPI` traffic is tied to this paired key. Built
@@ -3971,7 +4042,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // (see `relayOriginHeaderName`). Such requests never count as a trusted
         // local caller, so they remain subject to the auth gate, CORS origin
         // rules, and the built-in-agent remote block.
-        guard !stateRef.value.isRelayOrigin else { return false }
+        guard !stateRef.value.isRelayOrigin, !stateRef.value.loopbackTrustWithdrawn else { return false }
         return trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
     }
 
@@ -4314,20 +4385,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// a literal `"*"` matches everything; otherwise the request `Origin`
     /// header must appear in the list verbatim, in which case it's echoed
     /// back with `Vary: Origin`.
+    ///
+    /// `explicitOriginsOnly` (routes protected by `LocalAPIKeyPolicy`) drops
+    /// both the loopback grant and the `"*"` wildcard: only an origin listed
+    /// by name is echoed.
     private func computeCORSHeaders(
         for head: HTTPRequestHead,
         isPreflight: Bool,
-        isLoopback: Bool
+        isLoopback: Bool,
+        explicitOriginsOnly: Bool = false
     ) -> [(String, String)] {
         let origin = head.headers.first(name: "Origin")
         var headers: [(String, String)] = []
 
-        let allowsAny = isLoopback || configuration.allowedOrigins.contains("*")
+        let allowsAny =
+            !explicitOriginsOnly && (isLoopback || configuration.allowedOrigins.contains("*"))
         if allowsAny {
             headers.append(("Access-Control-Allow-Origin", "*"))
         } else if let origin,
             !origin.contains("\r"), !origin.contains("\n"),
-            configuration.allowedOrigins.contains(origin)
+            LocalAPIKeyPolicy.isExplicitlyAllowedOrigin(origin, allowedOrigins: configuration.allowedOrigins)
         {
             headers.append(("Access-Control-Allow-Origin", origin))
             headers.append(("Vary", "Origin"))
@@ -8590,6 +8667,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) -> Bool {
         if stateRef.value.isSecureChannel { return false }
         if isLoopbackConnection(context) { return false }
+        // Plaintext over physical loopback never leaves this Mac.
+        if stateRef.value.loopbackTrustWithdrawn, isPhysicalLoopbackConnection(context) { return false }
 
         var headers = [("Content-Type", "application/json; charset=utf-8")]
         headers.append(contentsOf: stateRef.value.corsHeaders)
