@@ -30612,6 +30612,35 @@
         }
       }
     },
+    "Require Access Key for Local Admin Routes" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zugriffsschlüssel für lokale Admin-Routen verlangen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로컬 관리자 경로에 액세스 키 요구"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Требовать ключ доступа для локальных админ-маршрутов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "本地管理路由需要访问密钥"
+          }
+        }
+      }
+    },
     "Allowed Origins (CORS)" : {
       "extractionState" : "manual",
       "localizations" : {
