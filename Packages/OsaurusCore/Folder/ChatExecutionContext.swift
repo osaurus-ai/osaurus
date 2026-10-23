@@ -126,6 +126,11 @@ public enum ChatExecutionContext {
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
 
+    /// The agent a verified harness agent token speaks for, bound only by
+    /// `/mcp/call` after the token resolved. Module-internal so nothing
+    /// outside the server can claim it.
+    @TaskLocal static var harnessTokenAgentId: UUID?
+
     /// Insights attribution: which surface owns the current unit of work.
     /// Bound by `HTTPHandler` around media / embedding / transcription
     /// handlers so the in-process emitters (`MediaActivityLogger`) skip

@@ -19,6 +19,11 @@ public enum ConfigurationToolBase {
     /// `ToolPermissionPolicy` is module-internal.
     static let defaultPolicy: ToolPermissionPolicy = .ask
 
+    /// Read-only tools an external harness may call for its own agent with
+    /// a live agent token. They never emit secrets; `osaurus_config` stays
+    /// Default-agent only.
+    static let harnessReadableTools: Set<String> = ["osaurus_inspect", "osaurus_help"]
+
     /// Returns a ready-to-serve `ToolEnvelope.failure` when the call
     /// site is anything other than a default-agent chat turn; `nil`
     /// when the call is allowed. Complementary to the composer's
@@ -35,6 +40,9 @@ public enum ConfigurationToolBase {
             )
         }
         if agentId != Agent.defaultId {
+            if harnessReadableTools.contains(tool), ChatExecutionContext.harnessTokenAgentId == agentId {
+                return nil
+            }
             return ToolEnvelope.failure(
                 kind: .unavailable,
                 message:

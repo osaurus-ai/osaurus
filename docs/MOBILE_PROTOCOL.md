@@ -986,10 +986,10 @@ picker's tab order and its order within each tab, plus the Mac's favourites:
  "favorites":["local\u001fmlx-community/Qwen3-8B-4bit"]}
 ```
 
-`source` is `foundation | local | remote | claude-code | image`. `kind` is
+`source` is `foundation | local | remote | image`. `kind` is
 `chat` or `image`: an image model never takes a chat run, it generates through
 `/images/generations` (and `/images/edits` when `edits` is true). `tab` / `tab_title`
-name the picker tab holding the model (`local`, `claude-code`,
+name the picker tab holding the model (`local`,
 `remote-<provider uuid>`). `available: false` marks bundles the Mac can't run.
 The picker's sort and filters read `context_length` (tokens), `input_price` /
 `output_price` (Router micro-USD per million tokens) and `external_source`

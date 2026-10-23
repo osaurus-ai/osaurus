@@ -118,12 +118,11 @@ struct ChatModelPickerProviderTests {
             reasoningCapabilities: ModelReasoningCapabilities(levels: [.init(id: "high")], defaultLevelId: "high")
         )
         let second = remote("same/model", providerID: providerB, name: "Same Name")
-        let cli = ModelPickerItem(id: "claude-code/sonnet", displayName: "Sonnet", source: .claudeCode)
-        let input = [first, second, cli]
+        let input = [first, second]
         let groups = ChatModelPickerProvider.groups(from: input)
         let connected = groups.filter { $0.kind == .connected }
-        #expect(connected.count == 3)
-        #expect(Set(connected.map(\.id)).count == 3)
+        #expect(connected.count == 2)
+        #expect(Set(connected.map(\.id)).count == 2)
         #expect(connected.flatMap(\.models) == input)
         #expect(groups.first { $0.isLocal }?.models.isEmpty == true)
     }

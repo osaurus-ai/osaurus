@@ -120,6 +120,7 @@ public enum SettingsSearchIndex {
         "sandbox.overview",
         "insights.overview",
         "agents.overview",
+        "agentRuntimes.overview",
         "agents.configure",
         "agents.description",
         "agents.database",
@@ -1872,6 +1873,74 @@ public enum SettingsSearchIndex {
             keywords: ["agent description", "purpose", "routing", "delegation", "auto-generated description", "generated description"],
             disambiguation: "Optional one-line summary shown to the orchestrator when it chooses a delegation target. Left blank, Osaurus generates one in the background from the agent's system prompt; typing your own overrides it.",
             declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.runtime",
+            tab: .agents,
+            section: "Runtime",
+            title: "Runs on",
+            keywords: [
+                "runtime", "agent runtime", "harness", "external harness", "claude code", "pi", "pi rpc",
+                "built-in loop", "osaurus built-in", "run agent on claude code", "spotlight", "splash",
+                "manage runtimes",
+            ],
+            disambiguation:
+                "Per-agent choice between Osaurus's own loop and a registered harness (Configure tab → Runtime). Register or test harnesses under Agents → Runtimes."
+        ),
+        .init(
+            id: "agents.claudeCode.model",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Claude model",
+            keywords: ["claude code model", "sonnet", "opus", "haiku", "model alias"],
+            disambiguation: "Shown only when the agent's runtime is Claude Code. Not the Osaurus model picker."
+        ),
+        .init(
+            id: "agents.claudeCode",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Allow file changes",
+            keywords: [
+                "execution mode", "text only", "allow shell commands", "bash", "allow osaurus read tools",
+                "allow osaurus configuration changes", "claude code permissions", "claude code tools", "mcp bridge",
+            ],
+            disambiguation:
+                "Claude Code permission switches on an agent whose runtime is Claude Code. File changes are scoped to the chat folder; shell commands can't be confined."
+        ),
+        // MARK: Agent Runtimes
+        .init(
+            id: "agentRuntimes.overview",
+            tab: .agentRuntimes,
+            title: "Agent Runtimes",
+            keywords: [
+                "runtimes", "harness", "harnesses", "external agent", "claude code", "pi", "pi rpc", "rpc mode",
+                "spotlight", "splash", "agent backend", "pluggable",
+            ]
+        ),
+        .init(
+            id: "agentRuntimes.add",
+            tab: .agentRuntimes,
+            title: "Add Runtime",
+            keywords: [
+                "new runtime", "register harness", "executable", "arguments", "environment", "protocol",
+                "session id", "chat id placeholder", "system prompt file",
+            ]
+        ),
+        .init(
+            id: "agentRuntimes.list",
+            tab: .agentRuntimes,
+            title: "Test",
+            keywords: [
+                "test runtime", "check harness", "get_state", "sign in", "claude code sign in", "claude login",
+                "edit runtime", "delete runtime",
+            ],
+            disambiguation: "Per-runtime Test, Sign In (Claude Code), Edit, and Delete buttons in Agents → Runtimes."
+        ),
+        .init(
+            id: "agentRuntimes.safety",
+            tab: .agentRuntimes,
+            title: "How runtimes work",
+            keywords: ["harness permissions", "confine", "harness sandbox", "harness folder", "osaurus_agent_token"]
         ),
         .init(
             id: "agents.database",

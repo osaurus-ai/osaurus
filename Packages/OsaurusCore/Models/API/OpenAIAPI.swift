@@ -814,12 +814,6 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// (e.g. a leftover prefix like `fugu/...`) can't redirect an agent run to a
     /// different provider. Not decoded from OpenAI JSON, not sent to providers.
     var remoteAgentProviderId: UUID? = nil
-    /// Local-only: per-agent behavior for the Claude Code subprocess backend
-    /// (mode + tool opt-ins + working directory). Set by the chat surface from
-    /// the active agent's `claudeCode` config; read only by `ClaudeCodeService`
-    /// and ignored by every other backend. Not decoded from OpenAI JSON and
-    /// never forwarded to a provider.
-    var claudeCodeOptions: ClaudeCodeRunOptions? = nil
     /// Local-only: when true, model-load and prefill progress are not surfaced
     /// through `InferenceProgressManager` (background warm-up requests).
     var suppressProgressUI: Bool = false
@@ -913,7 +907,6 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
-        copy.claudeCodeOptions = claudeCodeOptions
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
         copy.cacheStableSystemPrefix = cacheStableSystemPrefix
@@ -965,7 +958,6 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
-        copy.claudeCodeOptions = claudeCodeOptions
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
         copy.cacheStableSystemPrefix = cacheStableSystemPrefix

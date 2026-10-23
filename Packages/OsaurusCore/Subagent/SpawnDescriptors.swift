@@ -145,6 +145,8 @@ enum SpawnTargetState: Sendable, Equatable {
     case checking
     case disconnected
     case missing
+    /// Runs on an external harness, which `spawn_agent` can't drive.
+    case harness
 }
 
 struct SpawnAgentTarget: Sendable, Equatable {
@@ -202,6 +204,7 @@ public enum SpawnDescriptors {
         let modelId: String?
         /// The agent's sticky Working Folder path, nil when none is set.
         var workingFolderPath: String? = nil
+        var runsOnHarness = false
     }
 
     /// Durable roster view of one shared workspace agent, for the workspace
@@ -369,7 +372,7 @@ public enum SpawnDescriptors {
                     providerName: locality.providerName,
                     workingFolderPath: source.workingFolderPath
                 ),
-                state: modelState ?? .missing
+                state: source.runsOnHarness ? .harness : (modelState ?? .missing)
             )
         }
 
@@ -532,7 +535,8 @@ public enum SpawnDescriptors {
                 // Same source of truth as the dispatch-folder fallback
                 // (`BackgroundTaskManager.resolveDispatchFolder`), so the
                 // folder the prompt advertises is the folder the child runs in.
-                workingFolderPath: manager.workingFolder(for: agent)?.path
+                workingFolderPath: manager.workingFolder(for: agent)?.path,
+                runsOnHarness: manager.effectiveRuntime(for: agent.id).harnessId != nil
             )
         }
     }
@@ -571,11 +575,6 @@ public enum SpawnDescriptors {
         switch item.source {
         case .remote(let providerName, _):
             return (false, providerName)
-        case .claudeCode:
-            // Not local: the CLI runs on this Mac, but inference happens on
-            // Anthropic's servers, so the locality badge must not claim
-            // on-device.
-            return (false, ModelPickerItem.Source.claudeCode.displayName)
         case .local, .foundation, .imageGeneration:
             return (true, nil)
         }

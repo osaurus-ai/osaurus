@@ -59,9 +59,8 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
                 local.append(item)
             case .remote(_, let providerID) where providerID == cloudID:
                 cloud.append(item)
-            case .claudeCode, .remote:
-                // Claude Code is network-backed, so it keeps its own provider
-                // row. Provider UUIDs keep same-named connections distinct.
+            case .remote:
+                // Provider UUIDs keep same-named connections distinct.
                 let key = item.source.uniqueKey
                 if connectedModels[key] == nil {
                     connectedOrder.append((key, item.source.displayName))

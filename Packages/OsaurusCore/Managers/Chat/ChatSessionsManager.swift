@@ -195,6 +195,7 @@ final class ChatSessionsManager: ObservableObject {
         // Drop the session's file history and collect its now-unreferenced
         // snapshot blobs.
         Task { await FileChangeJournal.shared.purgeSession(id.uuidString) }
+        Task { await HarnessSessionManager.shared.close(chatId: id) }
     }
 
     /// Delete every session owned by an agent. Strict ownership match, unlike
@@ -223,6 +224,7 @@ final class ChatSessionsManager: ObservableObject {
         sessions.removeAll { idSet.contains($0.id) }
         for id in ids {
             Task { await FileChangeJournal.shared.purgeSession(id.uuidString) }
+            Task { await HarnessSessionManager.shared.close(chatId: id) }
         }
         await withCheckedContinuation { continuation in
             ChatSessionStore.deleteBatch(ids: ids) {

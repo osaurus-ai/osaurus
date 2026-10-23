@@ -129,7 +129,7 @@ public actor CoreModelService {
     private static let circuitBreakerMaxCooldownSeconds: TimeInterval = 30 * 60
 
     private init() {
-        localServices = [FoundationModelService(), ClaudeCodeService(), MLXService.shared]
+        localServices = [FoundationModelService(), MLXService.shared]
     }
 
     init(localServices: [ModelService]) {
@@ -650,10 +650,6 @@ public actor CoreModelService {
     /// `.circuitBreakerOpen` won't either. Cancellation is never retryable.
     static func isRetryable(_ error: Error) -> Bool {
         if error is CancellationError { return false }
-        // A second Claude Code subprocess would spend the same subscription
-        // quota (or repeat the same auth/install failure). The CLI already owns
-        // its transport retries, so never replay a failed turn here.
-        if error is ClaudeCodeError { return false }
         if let fm = error as? FoundationModelServiceError { return fm.isTransient }
         guard let coreErr = error as? CoreModelError else { return true }
         return coreErr == .timedOut

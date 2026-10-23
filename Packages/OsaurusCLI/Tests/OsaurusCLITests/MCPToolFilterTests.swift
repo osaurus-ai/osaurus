@@ -99,7 +99,7 @@ struct MCPToolFilterTests {
 
 @Suite("MCP bridge grant header")
 struct MCPBridgeGrantTests {
-    /// Pins both literals. `ClaudeCodeBridgeGrantStore` in OsaurusCore declares
+    /// Pins both literals. `HarnessGrantStore` in OsaurusCore declares
     /// the same two strings; the CLI cannot import Core, so a rename on either
     /// side silently breaks the bridge unless something asserts the values.
     @Test("constants match the OsaurusCore contract")

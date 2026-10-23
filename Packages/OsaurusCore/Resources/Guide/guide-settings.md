@@ -16,6 +16,17 @@ Each agent has an optional **Brief description (optional)** field under Settings
 
 When the description is blank and the agent has a system prompt, Osaurus generates a summary in the background (using the configured core model, or the model already loaded for chat) and shows it as the field's placeholder. Generation never blocks a save and never loads a model on its own; it runs after a chat turn completes or when the Orchestrator builds its delegation roster. Typing your own description overrides the generated one; editing the system prompt regenerates it. Description text is routing metadata and never grants tools or permissions.
 
+## Agent runtimes
+
+An agent runs on Osaurus's own loop by default. To run it on an external harness instead, register the harness under Settings… (⌘,) → Agents → **Runtimes** (**Add Runtime**: protocol, name, executable, arguments, environment), then pick it in Settings → Agents → the agent → Configure → **Runtime** → **Runs on**. Claude Code is registered on first launch; Pi and Pi-based harnesses use the **Pi (RPC)** protocol with `--mode rpc` in their arguments.
+
+- Each chat gets its own long-running harness process, started in the chat's folder (or a private per-chat scratch folder when none is set). Changing the folder restarts the process there after the current reply; Claude Code resumes its conversation, and a Pi runtime resumes only when its arguments include `--session-id {chat_id}`.
+- The harness picks its own model and tools. In chat the composer shows the runtime's name in place of the model picker; Osaurus abilities, memory, and the sandbox don't apply to that agent.
+- **Test** starts the runtime once (Pi answers `get_state`; Claude Code reports its sign-in). **Sign In** on a Claude Code runtime opens Claude Code's own browser sign-in, with a Terminal fallback.
+- For Claude Code agents, **Claude Code Options** (Claude model, Execution mode, Allow file changes, Allow shell commands, Allow Osaurus read tools, Allow Osaurus configuration changes) appear under the agent's Configure tab. File changes are limited to the chat folder; shell commands and Pi tools can't be confined. Allow Osaurus configuration changes is available on the Default agent only.
+- Agents on a harness can't be the target of `spawn_agent`, `/agents/{id}/run`, Computer Use, or AppleScript; those return an error naming the harness instead of running with different settings.
+- Harness authors: see `docs/HARNESS_RUNTIMES.md` for the environment variables (`OSAURUS_CHAT_ID`, `OSAURUS_AGENT_ID`, `OSAURUS_AGENT_TOKEN`, …) and what the agent token may call.
+
 ## What the assistant can change in chat
 
 - The Orchestrator (itself): display name, model, temperature, max output tokens, persona (system prompt).
@@ -34,6 +45,7 @@ When the description is blank and the agent has a system prompt, Osaurus generat
 - Voice: **Setup** (speech model, microphone, detection sensitivity), **Chat Voice** (voice input in chat), **Transcription** (system-wide dictation hotkey, stop behavior, cleanup), **Text-to-Speech** (voice, preview; engine under Advanced), **Wake Word**, and **Models**.
 - Themes: theme gallery, custom theme editor, import/export. **Themes → Text & Fonts → Small body** sets the font size for compact controls and model lists (14 pt by default). Search for **Small body** to open the current theme in the editor and highlight its control. Built-in themes use **Save as Copy**; apply the saved copy from the gallery to use it. The chat model picker and Credits menu use Secondary Background and the default Border Color, Border Width, and Border Opacity controls under Borders & Effects; these controls are also available through Settings search.
 - Computer Use / Browser Use / Sandbox: autonomy presets, app allowlists, resources.
+- Agents → **Runtimes** and each agent's **Runtime** (Runs on) and **Claude Code Options**. The assistant can't register harnesses or move an agent onto one.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies and **Auto-Allow All Tool Calls** live under Tools & MCP → All Tools.
 - Tools & MCP: **Services** (connected MCP services, **Add Service**, and the **Directory** of services you can add, filterable by category chips such as Legal, Finance & Accounting, and Healthcare & Life Sciences), **All Tools** (every tool with its permission policy), **Plugins** (native plugin registry).
 - Images: **Defaults** (default generation and edit models, image/video job permissions, local and cloud video defaults; the **Image model load policy** is under Advanced) and **Image Models**.
@@ -69,6 +81,7 @@ separate from updating the Osaurus application.
 | Tool permissions | Could be Tools catalog, Chat folder tools, or macOS Permissions — ask `find` |
 | Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
 | Which skills an agent can use / skill allow-list | Limit to selected skills (switch plus **Choose Skills…** checklist) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].skills`; installing skill content is **Skills** in the sidebar) |
+| Claude Code / Pi / external harness / "run this agent on Claude Code" | Runs on (per agent) and the Runtimes list | Settings… (⌘,) → Agents → *agent* → Configure → Runtime; register or test harnesses in Settings… (⌘,) → Agents → Runtimes |
 | Calendar / Contacts / Automation grant for the whole app | macOS permission | Settings… (⌘,) → Permissions (or the **Permission needed** badge on the app's group under Agents → Abilities → Tools) |
 
 ## Apple Apps (built-in)
@@ -159,7 +172,7 @@ macOS manages swap. Osaurus no longer shows swap warnings or requires a
 
 ## Management sidebar
 
-General, Conversation, Voice, Themes, Credits, Workspaces, Mobile, Identity, Permissions, Privacy, Local Models, Providers, Images, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools & MCP, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
+General, Conversation, Voice, Themes, Credits, Workspaces, Mobile, Identity, Permissions, Privacy, Local Models, Providers, Images, Orchestrator, Agents, Runtimes, Channels, Web Search, Knowledge, Memory, Tools & MCP, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
 
 Older names still resolve: the former **Chat** tab is now **Conversation**, **Media** is **Images**, **Tools** is **Tools & MCP**, and the separate **Storage** tab (encryption, backup, file history) now lives under General → Advanced → Data & Storage. The Command Line Tool installer moved to Server → Overview.
 

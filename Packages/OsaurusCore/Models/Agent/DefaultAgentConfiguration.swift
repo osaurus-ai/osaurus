@@ -55,6 +55,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     public var autonomousExec: AutonomousExecConfig?
     /// Claude Code backend behavior for the Default agent.
     public var claudeCode: ClaudeCodeAgentConfig?
+    /// Which loop runs the Default agent's chats. Nil = built-in loop.
+    public var runtime: AgentRuntime?
 
     /// Tool selection mode (auto / manual). `nil` defaults to `.auto`.
     public var toolSelectionMode: ToolSelectionMode?
@@ -96,6 +98,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         maxTokens: Int? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
         claudeCode: ClaudeCodeAgentConfig? = nil,
+        runtime: AgentRuntime? = nil,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
         workingFolderBookmark: Data? = nil,
@@ -108,6 +111,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         self.maxTokens = maxTokens
         self.autonomousExec = autonomousExec
         self.claudeCode = claudeCode
+        self.runtime = runtime
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
         self.workingFolderBookmark = workingFolderBookmark
@@ -124,6 +128,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         // Added after initial release; absent in older config JSON.
         claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)
+        runtime = try? c.decodeIfPresent(AgentRuntime.self, forKey: .runtime)
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
         // Working folder — added with the Orchestrator rework; absent before.

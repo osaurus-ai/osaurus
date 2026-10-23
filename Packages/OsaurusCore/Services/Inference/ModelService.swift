@@ -121,15 +121,6 @@ struct GenerationParameters: Sendable {
             && !runAsRemoteAgent && !preserveExistingResidencyOwner
     }
 
-    /// Per-agent options for the Claude Code subprocess backend (mode +
-    /// tool opt-ins + working directory). Nil everywhere else; only
-    /// `ClaudeCodeService` reads it.
-    ///
-    /// Rides on `GenerationParameters` for the same reason `loadIntent` does:
-    /// it has to survive the whole ChatEngine → service path without every
-    /// layer re-plumbing an extra argument.
-    let claudeCode: ClaudeCodeRunOptions?
-
     /// Preserve a non-nil residency owner when this request reuses an already
     /// resident model. Nested subagents set this so using an API/plugin-owned
     /// resident cannot silently convert it into a chat-owned unload target.
@@ -185,7 +176,6 @@ struct GenerationParameters: Sendable {
         privacyReviewMode: PrivacyReviewMode = .interactive,
         loadIntent: ModelLoadIntent = .interactive,
         alignmentRepairModel: String? = nil,
-        claudeCode: ClaudeCodeRunOptions? = nil,
         preserveExistingResidencyOwner: Bool = false,
         auxiliaryCacheIntent: Bool = false,
         collectCompleteToolResponse: Bool = false,
@@ -220,7 +210,6 @@ struct GenerationParameters: Sendable {
         self.privacyReviewMode = privacyReviewMode
         self.loadIntent = loadIntent
         self.alignmentRepairModel = alignmentRepairModel
-        self.claudeCode = claudeCode
         self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         self.auxiliaryCacheIntent = auxiliaryCacheIntent
         self.collectCompleteToolResponse = collectCompleteToolResponse

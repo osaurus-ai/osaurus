@@ -57,7 +57,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private let privacyReviewMode: PrivacyReviewMode
 
     init(
-        services: [ModelService] = [FoundationModelService(), ClaudeCodeService(), MLXService()],
+        services: [ModelService] = [FoundationModelService(), MLXService()],
         installedModelsProvider: @escaping @Sendable () -> [String] = {
             MLXService.getAvailableModels()
         },
@@ -322,7 +322,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             alignmentRepairModel: inferenceSource == .chatUI && !request.backgroundModelLoad
                 && !request.warmupPrefill && !request.suppressProgressUI
                 ? request.alignmentRepairModel : nil,
-            claudeCode: request.claudeCodeOptions,
             preserveExistingResidencyOwner: request.preserveExistingResidencyOwner,
             collectCompleteToolResponse: inferenceSource == .httpAPI && !request.isAgentRequest
         )

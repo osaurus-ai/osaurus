@@ -1554,7 +1554,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await LiveExecRegistry.shared.terminateAll()
             }
             await runWithDeadline(seconds: 2) {
-                await ClaudeCodeProcessRegistry.shared.terminateAll()
+                await HarnessProcessRegistry.shared.terminateAll()
             }
             await runWithDeadline(seconds: 2) {
                 await MCPProviderManager.shared.shutdownAllStdioRunners()

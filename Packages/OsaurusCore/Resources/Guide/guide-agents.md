@@ -37,6 +37,12 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - **Limit to selected skills** above the tool picker narrows that to a list: only ticked skills appear in the agent's prompt, `capabilities_load`, and its slash commands. Turning it on starts with every installed skill ticked; **Choose Skills…** opens the checklist. A listed skill that is not installed here is flagged **not installed** and starts working once it is installed (for example by an `osaurus import` bundle).
 - In config YAML this is `agents[].skills`: omit it to leave it unchanged, `null` for all skills, a list (skill names or slugs) for only those. Templates and bundles carry the list; the Templates review shows missing skills as an advisory.
 
+## Runtime (agent → Configure → Runtime)
+
+- **Runs on** chooses who runs the agent's chats: Osaurus (built-in), or a harness registered under Settings → Agents → **Runtimes**, such as Claude Code, Pi, or a Pi-based harness.
+- On a harness, each chat is a long-running process in the chat's folder that brings its own model, tools, and history. The agent's system prompt is passed to Claude Code, and to a Pi runtime whose arguments include `{system_prompt_file}`; Osaurus abilities, memory, and the sandbox don't apply.
+- Harness agents can't be delegated to or run through `/agents/{id}/run`, Computer Use, or AppleScript yet; those return an error naming the harness.
+
 ## The Orchestrator (default agent) vs custom agents
 
 - The Orchestrator configures and explains Osaurus, answers short questions inline, and delegates everything else to the agents you allow. It has a working folder it can **read** (`file_read`, `file_search`) but no shell, sandbox, browser, computer use, skills, knowledge, or media tools — that keeps setup safe and predictable.

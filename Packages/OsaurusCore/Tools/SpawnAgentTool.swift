@@ -228,6 +228,19 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         {
             return refusal
         }
+        if case .local(let agentID) = target,
+            let harnessError = await MainActor.run(body: {
+                AgentManager.shared.harnessUnsupportedError(for: agentID)
+            })
+        {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: harnessError.localizedDescription,
+                field: "agent",
+                tool: name,
+                retryable: false
+            )
+        }
 
         // The shared host owns the recursion guard, live feed, permission
         // verdict, residency handoff, compact-result normalization, and

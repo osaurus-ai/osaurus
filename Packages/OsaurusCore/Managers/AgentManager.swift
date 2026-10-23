@@ -201,6 +201,12 @@ public final class AgentManager: ObservableObject {
 
     private init() {
         refresh()
+        // Not inline: the migration's saves notify observers and schedule
+        // work that read `AgentManager.shared`, which is still mid-
+        // initialization here (a recursive dispatch_once traps).
+        Task { @MainActor [weak self] in
+            self?.migrateClaudeCodeModelsToHarness()
+        }
 
         // Load saved active agent
         if let savedId = loadActiveAgentId() {
@@ -551,6 +557,7 @@ public final class AgentManager: ObservableObject {
             updatedAt: now,
             autonomousExec: agent.autonomousExec,
             claudeCode: agent.claudeCode,
+            runtime: agent.runtime,
             pluginInstructions: agent.pluginInstructions,
             // Capability configuration is part of what "duplicate" means: a
             // MANUAL agent's copy used to come back AUTO with the whole

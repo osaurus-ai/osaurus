@@ -426,7 +426,13 @@ final class ChatSession: ObservableObject {
     var remoteSteers: [String] = []
 
     // MARK: - Persistence Properties
-    @Published var sessionId: UUID?
+    @Published var sessionId: UUID? {
+        didSet {
+            // One harness process per open chat: the chat this session
+            // showed before is resumed on its next send.
+            if let oldValue, oldValue != sessionId { closeHarnessSession(for: oldValue) }
+        }
+    }
     @Published var title: String = "New Chat"
     /// One-shot latch for the AI-generated title. Set when a generation is
     /// kicked off for the current session so later runs in the same chat
@@ -512,7 +518,7 @@ final class ChatSession: ObservableObject {
     @Published var workspaceContext: WorkspaceSessionContext?
 
     /// Tracks if session has unsaved content changes
-    private var isDirty: Bool = false
+    var isDirty: Bool = false
     /// Session id whose first persisted turn belongs to the active send.
     /// Used to undo transient rows on privacy-review cancels, including
     /// pre-minted empty session ids.
@@ -1948,7 +1954,9 @@ final class ChatSession: ObservableObject {
     /// don't contend. Resolved against the catalog so it doesn't depend on
     /// `pickerItems` being populated.
     var selectedModelIsLocal: Bool {
-        guard let model = selectedModel else { return false }
+        // A harness agent never generates on the local runtime, whatever
+        // model the picker last held.
+        guard let model = selectedModel, !isHarnessAgentActive else { return false }
         // Cache-only: this getter runs in main-actor/view contexts where the
         // blocking lookup can park on the cold-cache disk scan for seconds.
         return ModelManager.findInstalledModelFromCache(named: model) != nil
@@ -3319,7 +3327,9 @@ final class ChatSession: ObservableObject {
     /// at ≥85% of the usable budget (the same near-limit signal that turns
     /// the context chip amber) and there is an uncovered span to summarize.
     private var shouldAutoCompactBeforeSend: Bool {
-        guard !skipAutoCompactionForNextSend,
+        // A harness keeps (and compacts) its own context.
+        guard !isHarnessAgentActive,
+            !skipAutoCompactionForNextSend,
             compactionState == .idle,
             hasCompactableConversation,
             let fraction = contextUsageFractionEstimate
@@ -4224,7 +4234,7 @@ final class ChatSession: ObservableObject {
         let memoryProjectId: UUID?
     }
 
-    private func isRunActive(_ runId: UUID) -> Bool {
+    func isRunActive(_ runId: UUID) -> Bool {
         activeRunId == runId && !Task.isCancelled
     }
 
@@ -4239,7 +4249,7 @@ final class ChatSession: ObservableObject {
     /// the cell shows nothing until the steady-state read is meaningful —
     /// avoids the prior "shows 12 tok/s for the first half-second then
     /// jumps to 60 tok/s" jitter users complained about.
-    private func refreshLiveRate(
+    func refreshLiveRate(
         rolling: inout RollingTokenRate,
         lastRefreshAt: inout Date,
         now: Date,
@@ -4437,29 +4447,6 @@ final class ChatSession: ObservableObject {
         folderState.context
     }
 
-    /// Per-run options for the Claude Code subprocess backend.
-    ///
-    /// The working directory starts Claude Code in the folder the user picked
-    /// for this chat. It is not an Osaurus sandbox; enabled Claude Code tools
-    /// retain the macOS user's normal filesystem access. `agentId` travels
-    /// with the run because the
-    /// subprocess is out of process: the `@TaskLocal` chat identity cannot
-    /// follow it, so the MCP bridge mints a grant naming this agent instead.
-    private func claudeCodeRunOptions(for agentId: UUID) -> ClaudeCodeRunOptions {
-        let config = AgentManager.shared.effectiveClaudeCodeConfig(for: agentId)
-        let root = activeFolderContext(for: agentId)?.rootPath
-        return ClaudeCodeRunOptions(
-            mode: config.mode,
-            allowWrites: config.allowWrites,
-            allowShell: config.allowShell,
-            allowOsaurusTools: config.allowOsaurusTools,
-            allowOsaurusConfigWrites: config.allowOsaurusConfigWrites,
-            osaurusCLIPath: ClaudeCodeConfiguration.embeddedCLIPath(),
-            workingDirectory: root,
-            agentId: agentId
-        )
-    }
-
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
         let folder = activeFolderContext(for: agentId)
         let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
@@ -4611,7 +4598,7 @@ final class ChatSession: ObservableObject {
             autoTitleGenerationStarted = true
         case .generate(let userText, let assistantText, let previewTitle):
             autoTitleGenerationStarted = true
-            let fallbackModel = selectedModel
+            let fallbackModel = isHarnessAgentActive ? nil : selectedModel
             Task { [weak self] in
                 guard
                     let generated = await ChatTitleService.shared.generateTitle(
@@ -4698,7 +4685,7 @@ final class ChatSession: ObservableObject {
         followUpGenerationStarted = true
         let userText = userTurn.content
         let assistantText = assistantTurn.content
-        let fallbackModel = selectedModel
+        let fallbackModel = isHarnessAgentActive ? nil : selectedModel
         // Per-agent model override (the only follow-up config). The Default
         // agent carries none, so it falls back to `.empty` → shared core model.
         let followUpModelOverride =
@@ -6554,6 +6541,7 @@ final class ChatSession: ObservableObject {
         let imageInput = turns.last(where: { $0.role == .user }).map { (prompt: $0.content, attachments: $0.attachments) }
             ?? (prompt: trimmed, attachments: attachments)
         let turnModelId = selectedModel
+        let turnHarness = harnessSelection
         let turnModelType = selectedPickerItem?.modelType
         let turnSupportsImages = selectedModelSupportsImages
         let turnSupportsAudio = selectedModelSupportsAudio
@@ -6592,7 +6580,7 @@ final class ChatSession: ObservableObject {
             // turn composes WITH the folder instead of silently folder-less.
             // Instant when no restore is pending. Default agent skips — it
             // is folder-less by policy and must not wait on a restore.
-            if turnAgentId != Agent.defaultId {
+            if turnAgentId != Agent.defaultId || turnHarness != nil {
                 _ = await self.folderState.contextWaitingForRestore()
             }
             guard self.isRunActive(runId) else { return }
@@ -6660,6 +6648,21 @@ final class ChatSession: ObservableObject {
                 // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
                 // user-only while isStreaming is true and the table early-returns without assistant rows.
                 rebuildVisibleBlocks()
+
+                // A harness agent's turn runs in its own process with its own
+                // history; none of the built-in loop below applies.
+                if let turnHarness {
+                    await self.runHarnessTurn(
+                        turnHarness,
+                        prompt: imageInput.prompt,
+                        attachments: imageInput.attachments,
+                        agentId: turnAgentId,
+                        folderRoot: self.folderState.context?.rootPath,
+                        into: assistantTurn,
+                        runId: runId
+                    )
+                    return
+                }
 
                 // Image-generation models route through ImageGenerationService
                 // (a second MLX graph, gated exclusive to LLM eval) instead of
@@ -8066,7 +8069,6 @@ final class ChatSession: ObservableObject {
                             req.admissionPositionLimit = self.delegationBudget?.contextPositions
                             req.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
                             req.samplingParametersAreImplicit = true
-                            req.claudeCodeOptions = self.claudeCodeRunOptions(for: turnAgentId)
                             // Mode 2 routing signal: tells `RemoteProviderService`
                             // to target the peer's `/agents/{address}/run`
                             // endpoint (remote agent runs fully server-side). The
@@ -8632,7 +8634,6 @@ final class ChatSession: ObservableObject {
                                 finalReq.admissionPositionLimit = self.delegationBudget?.contextPositions
                                 finalReq.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
                                 finalReq.samplingParametersAreImplicit = true
-                                finalReq.claudeCodeOptions = claudeCodeRunOptions(for: turnAgentId)
                                 finalReq.runAsRemoteAgent = isRemoteAgentTarget
                                 finalReq.cacheStableSystemPrefix =
                                     isRemoteAgentTarget ? nil : context.staticPrefix
@@ -10047,7 +10048,7 @@ struct ChatView: View {
                         chatHeader
 
                         // Content area (show immediately, model discovery is async)
-                        if session.hasAnyModel || session.isDiscoveringModels {
+                        if session.hasAnyModel || session.isDiscoveringModels || session.isHarnessAgentActive {
                             if !session.hasVisibleThreadMessages {
                                 if session.isHydratingTranscript {
                                     // A hibernated tab being woken: its

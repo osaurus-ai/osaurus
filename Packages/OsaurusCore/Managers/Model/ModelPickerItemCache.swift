@@ -221,14 +221,6 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.foundation())
         }
 
-        // Cheap `isExecutableFile` stat, so it stays on the main actor with
-        // the other synchronous gates rather than paying a detached hop.
-        if ClaudeCodeConfiguration.isAvailable() {
-            for model in ClaudeCodeModel.allCases {
-                options.append(.claudeCode(model))
-            }
-        }
-
         let localModels = await Task.detached(priority: .userInitiated) {
             // Exclude embedding/encoder-only bundles (e.g. potion-base-4M
             // pulled into the HF cache by the memory feature): they can't

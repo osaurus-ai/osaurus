@@ -307,6 +307,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// The address that Secure Channel was opened with: the agent (or
         /// the connect identity) the caller reaches this Mac through.
         var secureChannelAgentAddress: String?
+        /// Set by the auth gate when a local harness presented its live
+        /// agent token. Confines the request to `HarnessGrantStore.allowedRoutes`
+        /// and that agent's tools.
+        var harnessGrant: HarnessGrant?
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -481,6 +485,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.authedScopeIsMaster = false
             stateRef.value.callerHasVerifiedAccessKey = false
             stateRef.value.callerAccessKeyIsMaster = false
+            stateRef.value.harnessGrant = nil
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -643,7 +648,50 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // an access key; `AgentChannelWebhookIngress` fails closed on its own.
             let isChannelRoute = path.hasPrefix("/channels/")
             let isLoopback = isLoopbackConnection(context)
-            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isLoopback {
+
+            // A local harness presenting its agent token is authenticated by
+            // the token, even when loopback trust is off (network exposure),
+            // and confined to the inference + MCP routes.
+            if isPhysicalLoopbackConnection(context),
+                let token = HarnessGrantStore.shared.presentedToken(
+                    bridgeHeader: head.headers.first(name: HarnessGrantStore.headerName),
+                    authorization: head.headers.first(name: "Authorization")
+                ),
+                let grant = HarnessGrantStore.shared.resolve(token)
+            {
+                guard HarnessGrantStore.allowedRoutes.contains(path) else {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: stateRef.value.corsHeaders)
+                    let message = "This agent token can only call the inference and MCP routes."
+                    let errorBody =
+                        #"{"error":{"code":"harness_token_scope","message":"\#(message)","type":"permission_error"}}"#
+                    sendResponse(
+                        context: context,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: errorBody
+                    )
+                    logRequest(
+                        method: method,
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: errorBody,
+                        responseStatus: 403,
+                        startTime: startTime,
+                        errorMessage: message
+                    )
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
+                stateRef.value.harnessGrant = grant
+            }
+
+            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isLoopback
+                && stateRef.value.harnessGrant == nil
+            {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
                     authHeader.hasPrefix("Bearer ")
@@ -5143,7 +5191,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let name: String
         /// Tab / section title: "Local", "Apple Foundation", or the provider name.
         let provider: String
-        /// `foundation | local | remote | claude-code`
+        /// `foundation | local | remote`
         let source: String
         let vision: Bool
         let thinking: Bool
@@ -5152,8 +5200,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// False for local bundles the picker greys out (non-MLX format).
         let available: Bool
         let description: String?
-        /// The picker tab holding this model (`local`, `remote-<uuid>`,
-        /// `claude-code`) and its title (`Local`, the provider name).
+        /// The picker tab holding this model (`local`, `remote-<uuid>`) and its
+        /// title (`Local`, the provider name).
         let tab: String
         let tabTitle: String
         /// Key in the Mac's favourites list (source key + id).
@@ -5369,7 +5417,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 switch item.source {
                 case .foundation: source = "foundation"
                 case .local: source = "local"
-                case .claudeCode: source = "claude-code"
                 case .remote: source = "remote"
                 case .imageGeneration: source = "image"
                 }
@@ -10136,6 +10183,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                     writerBound.value.writeEnd(ctx.value)
                 }
+                return
+            }
+
+            if let harnessError = await MainActor.run(body: {
+                AgentManager.shared.harnessUnsupportedError(for: agentId)
+            }) {
+                let msg = harnessError.localizedDescription
+                hop {
+                    writerBound.value.writeError(msg, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    errorMessage: msg
+                )
                 return
             }
 
@@ -16773,6 +16840,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Minimal MCP-style endpoints (same port)
+
+    /// The harness token this request carries: the one the auth gate already
+    /// bound, or one presented on the bridge header from a loopback caller
+    /// that loopback trust let past the gate.
+    private func resolvedHarnessGrant(head: HTTPRequestHead) -> HarnessGrant? {
+        if let bound = stateRef.value.harnessGrant { return bound }
+        guard
+            let token = HarnessGrantStore.shared.presentedToken(
+                bridgeHeader: head.headers.first(name: HarnessGrantStore.headerName),
+                authorization: head.headers.first(name: "Authorization")
+            )
+        else { return nil }
+        return HarnessGrantStore.shared.resolve(token)
+    }
+
     private func handleMCPListTools(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -16787,12 +16869,40 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
+        let harnessGrant = resolvedHarnessGrant(head: head)
+        // Same contract as `/mcp/call`: a revoked token must not fall back to
+        // the unscoped loopback catalog.
+        if harnessGrant == nil, !(head.headers.first(name: HarnessGrantStore.headerName) ?? "").isEmpty {
+            let message = "This agent token is invalid or has been revoked."
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .unauthorized,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + cors,
+                body: #"{"error":"harness_token_invalid","message":"\#(message)"}"#
+            )
+            logRequest(
+                method: "GET",
+                path: "/mcp/tools",
+                userAgent: userAgent,
+                requestBody: nil,
+                responseStatus: 401,
+                startTime: startTime,
+                errorMessage: message
+            )
+            return
+        }
         runRequestTask(priority: .userInitiated) {
             // External callers never see app-only tool classes; `/mcp/call`
-            // refuses the same deny list too.
+            // refuses the same deny list too. A harness token narrows the
+            // list further to what its agent may call.
             let entries = await MainActor.run {
-                ToolRegistry.shared.listTools().filter {
-                    $0.enabled && !ToolRegistry.externallyDeniedToolNames.contains($0.name)
+                ToolRegistry.shared.listTools().filter { entry in
+                    guard entry.enabled, !ToolRegistry.externallyDeniedToolNames.contains(entry.name) else {
+                        return false
+                    }
+                    guard let harnessGrant else { return true }
+                    return HarnessGrantStore.agentPolicyAllows(harnessGrant, toolName: entry.name)
                 }
             }
             let tools = entries.map { e in
@@ -16959,6 +17069,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let toolName = req.name
+        let harnessTokenPresented = !(head.headers.first(name: HarnessGrantStore.headerName) ?? "").isEmpty
+        let harnessGrant = resolvedHarnessGrant(head: head)
         // Capture for logging
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -17054,44 +17166,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 // Restore the chat identity the process boundary dropped.
                 //
-                // A bridged Claude Code turn reaches this handler as an ordinary
+                // A harness's tool call reaches this handler as an ordinary
                 // loopback request, so the `@TaskLocal` agent id its in-process
-                // peers rely on is gone. A live grant — minted per turn, handed
-                // only to the child Osaurus spawned, revoked when the turn ends
-                // — is proof of which chat this call belongs to, so the agent it
+                // peers rely on is gone. A live token — minted per harness
+                // process, handed only to that child, revoked when it exits —
+                // is proof of which chat this call belongs to, so the agent it
                 // names is bound for the duration of this execution.
                 //
                 // `isExternalSurface` deliberately stays true: the caller is
                 // still out of process, so every other external restriction
                 // (the deny list above, unattended-prompt refusal) continues to
                 // apply. This grants attribution, not trust.
-                let bridgeGrantToken = head.headers.first(
-                    name: ClaudeCodeBridgeGrantStore.headerName
-                )
-                let bridgeGrant: ClaudeCodeBridgeGrant? = await {
-                    guard let bridgeGrantToken else { return nil }
-                    return await ClaudeCodeBridgeGrantStore.shared.resolve(bridgeGrantToken)
-                }()
+                let bridgeGrant = harnessGrant
 
                 let result: String
-                if bridgeGrantToken != nil, bridgeGrant == nil {
-                    // A caller that opts into bridge attribution must present a
-                    // live token. Falling back to ordinary loopback semantics
-                    // would let expired/revoked grants silently shed scope.
+                if harnessTokenPresented, bridgeGrant == nil {
+                    // A caller that opts into attribution must present a live
+                    // token. Falling back to ordinary loopback semantics would
+                    // let a revoked token silently shed scope.
                     result = ToolEnvelope.failure(
                         kind: .rejected,
-                        message: "This Claude Code bridge grant is invalid or expired.",
+                        message: "This agent token is invalid or has been revoked.",
                         tool: toolName,
                         retryable: false
                     )
-                } else if let bridgeGrant, !bridgeGrant.allowsTool(toolName) {
+                } else if let bridgeGrant, HarnessGrantStore.builtInLoopToolNames.contains(toolName) {
+                    let refusal = await MainActor.run {
+                        AgentManager.shared.harnessUnsupportedError(for: bridgeGrant.agentId)
+                    }
+                    result = ToolEnvelope.failure(
+                        kind: .unavailable,
+                        message: refusal?.localizedDescription
+                            ?? "Tool '\(toolName)' runs Osaurus's own agent loop and can't be called with an agent token.",
+                        tool: toolName,
+                        retryable: false
+                    )
+                } else if let bridgeGrant,
+                    !(await MainActor.run { HarnessGrantStore.agentPolicyAllows(bridgeGrant, toolName: toolName) })
+                {
                     // The stdio proxy also filters this surface, but it is not
-                    // the trust boundary: a child with Bash can make a direct
-                    // loopback request. Enforce the grant's immutable scope at
-                    // the receiving server before binding agent identity.
+                    // the trust boundary: a harness with a shell can make a
+                    // direct loopback request. Enforce the token's scope at the
+                    // receiving server before binding agent identity.
                     result = ToolEnvelope.failure(
                         kind: .rejected,
-                        message: "Tool '\(toolName)' is outside this Claude Code turn's grant.",
+                        message: "Tool '\(toolName)' is outside this agent token's scope.",
                         tool: toolName,
                         retryable: false
                     )
@@ -17099,10 +17218,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
                         try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
                             try await ChatExecutionContext.$currentAgentId.withValue(bridgeGrant?.agentId) {
-                                try await ToolRegistry.shared.execute(
-                                    name: toolName,
-                                    argumentsJSON: argsJSON
-                                )
+                                try await ChatExecutionContext.$harnessTokenAgentId.withValue(bridgeGrant?.agentId) {
+                                    try await ToolRegistry.shared.execute(
+                                        name: toolName,
+                                        argumentsJSON: argsJSON
+                                    )
+                                }
                             }
                         }
                     }

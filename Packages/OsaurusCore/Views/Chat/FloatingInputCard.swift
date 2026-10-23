@@ -289,6 +289,9 @@ struct FloatingInputCard: View {
 
     // Observe managers for reactive updates
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var harnessRuntimeStore = HarnessRuntimeStore.shared
+    @State private var showHarnessFolderWarning = false
+    @State private var pendingHarnessFolderChange: (() -> Void)?
     @ObservedObject private var recentFolders = RecentFoldersStore.shared
     // Deliberately NOT `@ObservedObject`: sandbox provisioning publishes
     // per-progress-tick during runtime downloads and the clipboard service
@@ -1165,6 +1168,24 @@ struct FloatingInputCard: View {
                     }
                 },
                 secondaryButton: .cancel("Cancel")
+            )
+            .themedAlert(
+                L("Change the working folder?"),
+                isPresented: $showHarnessFolderWarning,
+                message: String(
+                    format: L(
+                        "%@ restarts in the new folder without its earlier context, because this runtime's arguments don't resume sessions (add --session-id {chat_id}). The Osaurus transcript is kept."
+                    ),
+                    harnessRuntime?.displayName ?? L("The harness")
+                ),
+                buttons: [
+                    .cancel(L("Cancel")) { pendingHarnessFolderChange = nil },
+                    .primary(L("Change Folder")) {
+                        let change = pendingHarnessFolderChange
+                        pendingHarnessFolderChange = nil
+                        change?()
+                    },
+                ]
             )
             .themedAlert(
                 "Negative prompt",
@@ -2668,7 +2689,9 @@ extension FloatingInputCard {
 
     private var selectorRow: some View {
         HStack(spacing: 6) {
-            if !pickerItems.isEmpty || isModelPinned {
+            if isHarnessAgent {
+                harnessRuntimeChip
+            } else if !pickerItems.isEmpty || isModelPinned {
                 modelSelectorChip
             }
 
@@ -2676,7 +2699,7 @@ extension FloatingInputCard {
             // token-budget semantics — those chips would all be inert. Swap
             // the whole row for the image config controls instead so they sit
             // right beside the model that owns them.
-            if isMediaComposerActive {
+            if isMediaComposerActive && !isHarnessAgent {
                 // Scroll the config chips horizontally so a narrow (minimum-size)
                 // window can't compress them below their ideal width — that
                 // compression is what made the labels wrap character-by-character.
@@ -2856,7 +2879,7 @@ extension FloatingInputCard {
         // Bound once: every field below comes from this single pass, so the
         // chip costs one window resolution and one breakdown per render.
         let budget = contextBudget
-        if budget.displayTokens > 0 && !isRemoteAgentRun {
+        if budget.displayTokens > 0 && !isRemoteAgentRun && !isHarnessAgent {
             FloatingContextChip(
                 displayTokens: budget.displayTokens,
                 usableTokens: budget.usableTokens,
@@ -3011,6 +3034,39 @@ extension FloatingInputCard {
         } else {
             interactiveModelSelectorChip
         }
+    }
+
+    /// Stands in for the model picker when the agent runs on an external
+    /// harness, which picks its own model.
+    private var harnessRuntimeChip: some View {
+        let missing = harnessRuntime == nil
+        return Button {
+            AppDelegate.shared?.showManagementWindow(initialTab: .agentRuntimes)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: missing ? "exclamationmark.triangle.fill" : "terminal.fill")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                    .foregroundColor(missing ? theme.warningColor : theme.tertiaryText)
+                Text(harnessRuntime?.displayName ?? L("Runtime missing"))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(missing ? theme.warningColor : theme.secondaryText)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(theme.secondaryBackground.opacity(0.8)))
+            .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(
+            missing
+                ? L("This agent's runtime was deleted. Pick another one in the agent's settings.")
+                : String(
+                    format: L("This agent runs on %@, which chooses its own model and tools. Click to manage runtimes."),
+                    harnessRuntime?.displayName ?? ""
+                )
+        )
     }
 
     /// Non-interactive model label for Mode 2 (remote agent run). The model is
@@ -3536,13 +3592,18 @@ extension FloatingInputCard {
         // Defensive: the menu row is disabled for remote runs, but no folder
         // context can reach a host-executed agent, so never open the picker.
         guard !isRemoteAgentRun else { return }
+        confirmingHarnessFolderChange { performSelectFolder() }
+    }
+
+    private func performSelectFolder() {
         let window = windowId.flatMap { ChatWindowManager.shared.getNSWindow(id: $0) }
         let agentId = effectiveAgentId
         let manager = agentManager
+        let usesSandbox = !isHarnessAgent
         Task {
             guard await folderState.selectFolder(from: window) != nil else { return }
             do {
-                try await manager.disableSandboxForHostFolder(agentId: agentId)
+                if usesSandbox { try await manager.disableSandboxForHostFolder(agentId: agentId) }
                 // Sticky: the chip is the source of truth for the agent's
                 // working folder, so a successful pick is remembered on the
                 // agent and seeds every fresh chat / folder-less dispatch.
@@ -3584,8 +3645,13 @@ extension FloatingInputCard {
     /// longer resolves is dropped from the list and reported.
     private func applyRecentFolder(_ entry: RecentFoldersStore.Entry) {
         guard !isRemoteAgentRun else { return }
+        confirmingHarnessFolderChange { performApplyRecentFolder(entry) }
+    }
+
+    private func performApplyRecentFolder(_ entry: RecentFoldersStore.Entry) {
         let agentId = effectiveAgentId
         let manager = agentManager
+        let usesSandbox = !isHarnessAgent
         Task {
             guard let url = await RecentFoldersStore.resolveURL(for: entry) else {
                 recentFolders.remove(path: entry.path)
@@ -3600,7 +3666,7 @@ extension FloatingInputCard {
                 return
             }
             do {
-                try await manager.disableSandboxForHostFolder(agentId: agentId)
+                if usesSandbox { try await manager.disableSandboxForHostFolder(agentId: agentId) }
                 persistWorkingFolderToAgent()
             } catch {
                 folderState.clearFolder()
@@ -3643,8 +3709,41 @@ extension FloatingInputCard {
     /// sandbox-on invariants and restores call `folderState.clearFolder()`
     /// directly and leave the agent's remembered folder alone.
     private func clearFolderFromChip() {
-        folderState.clearFolder()
-        forgetAgentWorkingFolder()
+        confirmingHarnessFolderChange {
+            folderState.clearFolder()
+            forgetAgentWorkingFolder()
+        }
+    }
+
+    // MARK: - Harness Folder Rules
+
+    /// The harness this composer's agent runs on, when it resolves.
+    private var harnessRuntime: HarnessRuntime? {
+        guard !isRemoteAgentRun, case .resolved(let runtime)? = agentManager.effectiveHarness(for: effectiveAgentId)
+        else { return nil }
+        return runtime
+    }
+
+    private var isHarnessAgent: Bool {
+        !isRemoteAgentRun && agentManager.effectiveHarness(for: effectiveAgentId) != nil
+    }
+
+    /// A harness's working directory is fixed when its process starts, and a
+    /// running turn is never interrupted to move it.
+    private var folderLockedByHarnessTurn: Bool {
+        isHarnessAgent && isStreaming
+    }
+
+    /// Run a folder change, first confirming it when the harness would
+    /// restart without its earlier context.
+    private func confirmingHarnessFolderChange(_ change: @escaping () -> Void) {
+        guard !folderLockedByHarnessTurn else { return }
+        if let runtime = harnessRuntime, !runtime.resumesSessions, !isEmptyChat {
+            pendingHarnessFolderChange = change
+            showHarnessFolderWarning = true
+        } else {
+            change()
+        }
     }
 
     /// Folder chip tooltip makes the active execution boundary explicit.
@@ -4604,7 +4703,12 @@ extension FloatingInputCard {
             }
             .buttonStyle(.plain)
             .pointingHandCursor()
-            .help(folderChipHelp(hasFolder: hasFolder))
+            .disabled(folderLockedByHarnessTurn)
+            .help(
+                folderLockedByHarnessTurn
+                    ? Text("The folder can change after this reply finishes.", bundle: .module)
+                    : folderChipHelp(hasFolder: hasFolder)
+            )
             // The chip is icon-only in the compact state and its text is
             // decorative otherwise, so assistive tech (and the AX-driven
             // harness) saw an unnamed button. Name it and keep the folder
@@ -5950,7 +6054,9 @@ extension FloatingInputCard {
                     title: Text("Add Folder", bundle: .module),
                     disabledReason: isRemoteAgentRun
                         ? Text("Shared agents can't use folders on this Mac.", bundle: .module)
-                        : nil
+                        : folderLockedByHarnessTurn
+                            ? Text("The folder can change after this reply finishes.", bundle: .module)
+                            : nil
                 ) {
                     selectFolder()
                 },
