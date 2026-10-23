@@ -39,7 +39,7 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 ## Runtime (agent → Configure → Runtime)
 
-- **Runs on** chooses who runs the agent's chats: Osaurus (built-in), or a harness registered under Settings → Agents → **Runtimes**, such as Claude Code, Pi, or a Pi-based harness.
+- **Runs on** chooses who runs the agent's chats: Osaurus (built-in), or a harness registered under Settings → Agents → **Runtimes**, such as Claude Code, Pi, or a Pi-based harness. The chat model picker lists the same runtimes as columns, so you can switch from the composer; it changes this setting for the agent.
 - On a harness, each chat is a long-running process in the chat's folder that brings its own model, tools, and history. The agent's system prompt is passed to Claude Code, and to a Pi runtime whose arguments include `{system_prompt_file}`; Osaurus abilities, memory, and the sandbox don't apply.
 - Harness agents can't be delegated to or run through `/agents/{id}/run`, Computer Use, or AppleScript yet; those return an error naming the harness.
 

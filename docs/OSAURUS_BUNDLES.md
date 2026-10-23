@@ -26,11 +26,12 @@ Contents:
 
 ## 1. What a bundle is
 
-A bundle is a folder with an `osaurus-bundle.json` manifest at its root. It can contain three kinds of items:
+A bundle is a folder with an `osaurus-bundle.json` manifest at its root. It can contain four kinds of items:
 
-- **Agents**: custom agents with their prompt, model, capability switches, skill allow-list, exact tool list, MCP servers, sandbox and network settings.
+- **Agents**: custom agents with their prompt, model, capability switches, skill allow-list, exact tool list, MCP servers, sandbox and network settings, and the runtime they run on.
 - **Skills**: [Agent Skills](https://agentskills.io/) folders (`SKILL.md` plus optional `references/` and `assets/`).
 - **MCP servers**: HTTP or stdio MCP servers your agents use, with their credentials given as Keychain references.
+- **Harness runtimes**: external agent harnesses (Claude Code, Pi, or your own Pi-based CLI) that run an agent's chats instead of Osaurus's own loop ([section 6a](#6a-harness-runtime-reference)).
 
 A bundle **can't** contain these. Each has its own path, covered in [section 8](#8-writing-the-installer-script):
 
@@ -117,7 +118,8 @@ Only the manifest and the files it lists are copied into the queue. Your scripts
   "min_osaurus_version": "0.26.0",
   "skills": [{ "name": "triage-ticket", "path": "skills/triage-ticket" }],
   "mcp_servers": [{ "name": "Acme Tickets", "transport": "http", "url": "https://mcp.acme.example/mcp", "...": "..." }],
-  "agents": [{ "path": "agents/support-desk.json" }, { "path": "agents/release-checker.json" }]
+  "harness_runtimes": [{ "name": "Acme Pi", "kind": "pi_rpc", "executable": "pi", "...": "..." }],
+  "agents": [{ "path": "agents/support-desk.json" }, { "path": "agents/release-checker.json" }, { "path": "agents/acme-coder.json" }]
 }
 ```
 
@@ -133,9 +135,10 @@ Only the manifest and the files it lists are copied into the queue. Your scripts
 | `min_osaurus_version` | string | no | Oldest Osaurus that may install this bundle, like `0.26.0`. The CLI compares it with the installed app's version and refuses an older app. |
 | `skills` | array | no | `{ "name", "path" }`. `path` is a folder relative to the bundle root. |
 | `mcp_servers` | array | no | MCP server entries, written inline ([section 6](#6-mcp-server-reference)). |
+| `harness_runtimes` | array | no | Harness runtime entries, written inline ([section 6a](#6a-harness-runtime-reference)). |
 | `agents` | array | no | `{ "path" }`. `path` is a JSON file relative to the bundle root ([section 4](#4-agent-file-reference)). |
 
-At least one of `skills`, `mcp_servers` or `agents` must list something. Unknown keys are rejected with a did-you-mean hint, so a typo fails `validate` instead of being silently ignored.
+At least one of `skills`, `mcp_servers`, `harness_runtimes` or `agents` must list something. Unknown keys are rejected with a did-you-mean hint, so a typo fails `validate` instead of being silently ignored.
 
 **Paths** must be relative and stay inside the bundle folder. Absolute paths, `~` paths, and paths that leave the folder through `..` or a symbolic link are refused. Each JSON file (the manifest and each agent file) is capped at 512 KB.
 
@@ -222,9 +225,11 @@ All keys except `name` are optional. These are the ones a bundle is likely to us
 | `plugins` | The same, for plugins, by registry id. |
 | `sandbox` | `enabled` turns on sandboxed code execution. `network_enabled` controls network access from the sandbox, and `allowed_domains` narrows it to a list. Also `max_commands_per_turn`, `background_process_enabled`, `plugin_create`. |
 | `subagents` | Whether this agent may delegate, and to which agents (by name). |
+| `runtime` | `builtin` (Osaurus's own loop, the default) or a harness runtime's name: one from this bundle, or one already registered on the Mac such as `Claude Code`. |
+| `claude_code` | For an agent on a Claude Code runtime: `model` (`sonnet`, `opus`, `haiku` or a full model id), `mode` (`agent` or `text_only`), `allow_writes`, `allow_shell`, `allow_osaurus_tools`. |
 | `working_folder` | A path hint. macOS needs the user to grant folder access, so Osaurus asks the user to pick the folder the first time (the item reports `needs_user_action`) unless it can attach it on its own. |
 
-**How names resolve.** Agents, skills and MCP servers are referenced by name (case-insensitive; skills also by slug). Plugins are referenced by registry id. A name that isn't in your bundle must already exist on the Mac. `validate` warns about these.
+**How names resolve.** Agents, skills, MCP servers and harness runtimes are referenced by name (case-insensitive; skills also by slug). Plugins are referenced by registry id. A name that isn't in your bundle must already exist on the Mac. `validate` warns about these.
 
 ### The skill allow-list (`skills`)
 
@@ -336,9 +341,31 @@ MCP server entries go inline in the manifest's `mcp_servers` array.
 - `execution_host`: `sandbox` (the default) runs the process inside the Osaurus sandbox. `host` runs it directly on the Mac, outside the sandbox.
 - `enabled: false` installs the server switched off.
 
-**Why `--yes` is needed.** Adding an MCP server is a high-risk change: it connects Osaurus to a new endpoint or launches a local process, and `execution_host: host` runs it outside the sandbox. Agents that turn on `computer_use_enabled`, `browser_use_enabled` or `relay_enabled` are high-risk too. `osaurus import install` lists these under `risks` and refuses until you pass `--yes`, the same rule as `osaurus config apply`. Passing `--yes` in your script is your confirmation on the user's behalf. Keep the list short ([section 12](#12-security-checklist-for-authors)).
+**Why `--yes` is needed.** Adding an MCP server is a high-risk change: it connects Osaurus to a new endpoint or launches a local process, and `execution_host: host` runs it outside the sandbox. Every harness runtime is high-risk, and so is an agent that runs on one or turns on `computer_use_enabled`, `browser_use_enabled`, `relay_enabled` or `claude_code.allow_shell`. `osaurus import install` lists these under `risks` and refuses until you pass `--yes`, the same rule as `osaurus config apply`. Passing `--yes` in your script is your confirmation on the user's behalf. Keep the list short ([section 12](#12-security-checklist-for-authors)).
 
 The `transport` of an installed server can't change. To move a server from stdio to HTTP, give it a new name.
+
+## 6a. Harness runtime reference
+
+A harness runtime is an external agent harness that runs an agent's chats in place of Osaurus's own loop. It owns the model, the tools and the conversation; Osaurus starts one process per chat and relays messages. The protocol contract for harness authors is [HARNESS_RUNTIMES.md](HARNESS_RUNTIMES.md). Entries go inline in the manifest's `harness_runtimes` array:
+
+```json
+{
+  "name": "Acme Pi",
+  "kind": "pi_rpc",
+  "executable": "pi",
+  "arguments": ["--mode", "rpc", "--session-id", "{chat_id}", "--append-system-prompt", "{system_prompt_file}"],
+  "environment": { "PI_LOG_LEVEL": "info" }
+}
+```
+
+- `kind`: `pi_rpc` (Pi or a Pi-based CLI in `--mode rpc`) or `claude_code`. It can't change after install; give the runtime a new name instead.
+- `executable`: a command on the login shell's `PATH` or a path (`~` expands). Defaults to `pi` or `claude`. Your installer must install the program itself; `validate` and `install` warn when it isn't on `PATH`.
+- `arguments`: `{chat_id}`, `{agent_id}`, `{cwd}` and `{system_prompt_file}` are filled in per launch. Key Pi sessions on `{chat_id}` so a chat resumes after a restart.
+- `environment`: plain, non-secret values, stored unencrypted. `OSAURUS_*` names are reserved.
+- `builtin` is reserved and can't be a runtime name.
+
+An agent runs on a runtime with `"runtime": "Acme Pi"`. Installing that agent installs the runtime too, and removing the agent removes a runtime it pulled in once no other agent uses it. A runtime that any agent still runs on can't be removed. Users can switch an agent between runtimes and models from the chat model picker.
 
 ## 7. Secrets, step by step
 
@@ -570,7 +597,7 @@ cat ~/.osaurus/import/results/<request-id>.json   # per-item result of an applie
 ## 12. Security checklist for authors
 
 - **Sign and notarize your installer**, and verify Osaurus's signature before installing it ([8.1](#81-install-and-verify-osaurus)).
-- **Keep high-risk items to a minimum.** Every MCP server and every agent with computer use, browser use or relay is something the user didn't choose. Prefer HTTP servers you operate over local processes, and `execution_host: sandbox` over `host`.
+- **Keep high-risk items to a minimum.** Every MCP server, every harness runtime, and every agent with computer use, browser use, relay or a harness runtime is something the user didn't choose. Prefer HTTP servers you operate over local processes, and `execution_host: sandbox` over `host`.
 - **Use `https://` MCP endpoints.**
 - **Keep `allowed_domains` narrow**, and leave `network_enabled` off unless the agent needs it.
 - **Grant only the tools an agent needs**: use exact `tools.enabled` lists rather than enabling whole servers.
@@ -584,14 +611,14 @@ cat ~/.osaurus/import/results/<request-id>.json   # per-item result of an applie
 
 ```text
 osaurus import validate --from <bundle> [--json]
-osaurus import install  --from <bundle> [agent|skill|mcp] [<name> ...] [--yes] [--json]
-osaurus import update   --from <bundle> [agent|skill|mcp] [<name> ...] [--yes] [--json]
-osaurus import remove   --bundle <id> [agent|skill|mcp] [<name> ...] [--json]
+osaurus import install  --from <bundle> [agent|skill|mcp|runtime] [<name> ...] [--yes] [--json]
+osaurus import update   --from <bundle> [agent|skill|mcp|runtime] [<name> ...] [--yes] [--json]
+osaurus import remove   --bundle <id> [agent|skill|mcp|runtime] [<name> ...] [--json]
 osaurus import list     [--bundle <id>] [--json]
 ```
 
 - With no names, every item in the bundle (or everything the bundle installed, for `remove`) is processed.
-- Naming an agent also installs the skills and servers it uses from the same bundle.
+- Naming an agent also installs the skills, servers and harness runtime it uses from the same bundle.
 - When a name matches more than one kind (an agent and a skill both called "triage"), say which: `osaurus import install --from <bundle> skill triage`.
 - `--yes` confirms the high-risk changes listed under `risks`.
 - `--json` prints the result as JSON on standard output. Without it, the output is for people and may change.

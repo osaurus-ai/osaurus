@@ -34,6 +34,7 @@ enum ConfigExporter {
         var doc = OsaurusConfigDocument()
         doc.version = 1
         doc.memory = exportMemory()
+        doc.harnessRuntimes = exportHarnessRuntimes()
         doc.defaultAgent = exportDefaultAgent()
         doc.activeAgent = exportActiveAgent()
         doc.agents = exportAgents()
@@ -74,7 +75,20 @@ enum ConfigExporter {
         section.temperature = config.temperature.map { .value(Double($0)) } ?? .null
         section.maxTokens = config.maxTokens.map { .value($0) } ?? .null
         section.systemPrompt = config.systemPrompt
+        section.runtime = ConfigHarness.runtimeKey(for: config.runtime)
+        section.claudeCode = config.claudeCode.map { ConfigHarness.export($0, includeConfigWrites: true) }
         return section
+    }
+
+    private static func exportHarnessRuntimes() -> [HarnessRuntimeEntry] {
+        HarnessRuntimeStore.shared.all().map { runtime in
+            var entry = HarnessRuntimeEntry(name: runtime.displayName)
+            entry.kind = ConfigHarness.key(for: runtime.kind)
+            entry.executable = runtime.executable
+            entry.arguments = runtime.arguments
+            entry.environment = runtime.environment
+            return entry
+        }
     }
 
     /// `new_chat_agent`: the agent NEW chats open with — the persisted
@@ -147,6 +161,8 @@ enum ConfigExporter {
         entry.subagents = exportSubagents(of: agent, agents: agents)
         entry.workingFolder = agent.workingFolderPath.map { .value($0) } ?? .null
         entry.sourceTemplate = agent.sourceTemplateName
+        entry.runtime = ConfigHarness.runtimeKey(for: agent.runtime)
+        entry.claudeCode = agent.claudeCode.map { ConfigHarness.export($0, includeConfigWrites: false) }
         return entry
     }
 

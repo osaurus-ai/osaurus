@@ -1882,10 +1882,11 @@ public enum SettingsSearchIndex {
             keywords: [
                 "runtime", "agent runtime", "harness", "external harness", "claude code", "pi", "pi rpc",
                 "built-in loop", "osaurus built-in", "run agent on claude code", "spotlight", "splash",
-                "manage runtimes",
+                "manage runtimes", "switch runtime", "switch to claude code", "model picker runtime",
             ],
             disambiguation:
-                "Per-agent choice between Osaurus's own loop and a registered harness (Configure tab → Runtime). Register or test harnesses under Agents → Runtimes."
+                "Per-agent choice between Osaurus's own loop and a registered harness (Configure tab → Runtime). The chat model picker lists the same runtimes as columns; picking one there changes this setting. Register or test harnesses under Agents → Runtimes. Declarative key: `runtime` (\"builtin\" or a harness_runtimes name) on agents[] and default_agent.",
+            declarativeSection: "agents"
         ),
         .init(
             id: "agents.claudeCode.model",
@@ -1893,7 +1894,9 @@ public enum SettingsSearchIndex {
             section: "Claude Code Options",
             title: "Claude model",
             keywords: ["claude code model", "sonnet", "opus", "haiku", "model alias"],
-            disambiguation: "Shown only when the agent's runtime is Claude Code. Not the Osaurus model picker."
+            disambiguation:
+                "Shown only when the agent's runtime is Claude Code. The Claude Code column of the chat model picker sets the same value. Declarative key: `claude_code.model`.",
+            declarativeSection: "agents"
         ),
         .init(
             id: "agents.claudeCode",
@@ -1905,7 +1908,8 @@ public enum SettingsSearchIndex {
                 "allow osaurus configuration changes", "claude code permissions", "claude code tools", "mcp bridge",
             ],
             disambiguation:
-                "Claude Code permission switches on an agent whose runtime is Claude Code. File changes are scoped to the chat folder; shell commands can't be confined."
+                "Claude Code permission switches on an agent whose runtime is Claude Code. File changes are scoped to the chat folder; shell commands can't be confined. Declarative block: `claude_code` on agents[] and default_agent.",
+            declarativeSection: "agents"
         ),
         // MARK: Agent Runtimes
         .init(
@@ -1914,8 +1918,9 @@ public enum SettingsSearchIndex {
             title: "Agent Runtimes",
             keywords: [
                 "runtimes", "harness", "harnesses", "external agent", "claude code", "pi", "pi rpc", "rpc mode",
-                "spotlight", "splash", "agent backend", "pluggable",
-            ]
+                "spotlight", "splash", "agent backend", "pluggable", "harness_runtimes",
+            ],
+            declarativeSection: "harness_runtimes"
         ),
         .init(
             id: "agentRuntimes.add",
@@ -1924,7 +1929,8 @@ public enum SettingsSearchIndex {
             keywords: [
                 "new runtime", "register harness", "executable", "arguments", "environment", "protocol",
                 "session id", "chat id placeholder", "system prompt file",
-            ]
+            ],
+            declarativeSection: "harness_runtimes"
         ),
         .init(
             id: "agentRuntimes.list",
@@ -1934,7 +1940,8 @@ public enum SettingsSearchIndex {
                 "test runtime", "check harness", "get_state", "sign in", "claude code sign in", "claude login",
                 "edit runtime", "delete runtime",
             ],
-            disambiguation: "Per-runtime Test, Sign In (Claude Code), Edit, and Delete buttons in Agents → Runtimes."
+            disambiguation: "Per-runtime Test, Sign In (Claude Code), Edit, and Delete buttons in Agents → Runtimes.",
+            declarativeSection: "harness_runtimes"
         ),
         .init(
             id: "agentRuntimes.safety",

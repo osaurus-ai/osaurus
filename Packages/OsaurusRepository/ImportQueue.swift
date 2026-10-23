@@ -156,14 +156,17 @@ public struct ImportReceipt: Codable, Sendable, Equatable {
     public var agentId: String?
     public var skillDirectory: String?
     public var mcpProviderId: String?
+    public var harnessRuntimeId: String?
     /// Secret references that did not resolve when the item was applied.
     public var pendingSecrets: [String]?
     /// The last apply left something for the user to finish, so `update`
     /// applies the item again even when its content has not changed.
     public var needsUserAction: Bool?
-    /// For agents: the bundle skills and MCP servers it was installed with.
+    /// For agents: the bundle skills, MCP servers and harness runtime it
+    /// was installed with.
     public var skills: [String]?
     public var mcpServers: [String]?
+    public var harnessRuntime: String?
 
     public init(
         bundleId: String,
@@ -181,7 +184,9 @@ public struct ImportReceipt: Codable, Sendable, Equatable {
         pendingSecrets: [String]? = nil,
         needsUserAction: Bool? = nil,
         skills: [String]? = nil,
-        mcpServers: [String]? = nil
+        mcpServers: [String]? = nil,
+        harnessRuntimeId: String? = nil,
+        harnessRuntime: String? = nil
     ) {
         self.bundleId = bundleId
         self.bundleName = bundleName
@@ -199,6 +204,8 @@ public struct ImportReceipt: Codable, Sendable, Equatable {
         self.needsUserAction = needsUserAction
         self.skills = skills
         self.mcpServers = mcpServers
+        self.harnessRuntimeId = harnessRuntimeId
+        self.harnessRuntime = harnessRuntime
     }
 
     public func matches(kind: BundleItemKind, name: String) -> Bool {
@@ -389,6 +396,11 @@ extension OsaurusBundle {
             hasher.update(data: data)
         case .mcp:
             guard let raw = try? rawMCPServerEntries()[name.lowercased()],
+                let data = try? JSONSerialization.data(withJSONObject: raw, options: [.sortedKeys])
+            else { return nil }
+            hasher.update(data: data)
+        case .harnessRuntime:
+            guard let raw = try? rawHarnessRuntimeEntries()[name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()],
                 let data = try? JSONSerialization.data(withJSONObject: raw, options: [.sortedKeys])
             else { return nil }
             hasher.update(data: data)

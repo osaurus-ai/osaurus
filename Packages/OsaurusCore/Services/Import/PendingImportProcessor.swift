@@ -7,9 +7,9 @@
 //  app was closed, and on demand from the loopback `/admin/import/*`
 //  endpoints while it runs. Requests apply one at a time, oldest first.
 //
-//  Within a request, skills install first, then MCP servers, then agents,
-//  so an agent's skill allow-list and server tools exist when it is
-//  created. Removals run the other way round. Every item goes through the
+//  Within a request, skills install first, then MCP servers, then harness
+//  runtimes, then agents, so an agent's skill allow-list, server tools and
+//  runtime exist when it is created. Removals run the other way round. Every item goes through the
 //  same paths as the rest of the app (SkillManager, ConfigPlanner /
 //  ConfigApplier), and `installed.json` receipts record what each bundle
 //  owns so updates and removals never touch anything else.
@@ -184,6 +184,7 @@ public final class PendingImportProcessor {
         case .agent: return 0
         case .skill: return 1
         case .mcp: return 2
+        case .harnessRuntime: return 3
         }
     }
 
@@ -210,6 +211,7 @@ public final class PendingImportProcessor {
     private enum Payload {
         case skill(source: OsaurusBundle.Skill, existing: Skill?)
         case mcp(entry: MCPServerEntry, existingId: UUID?)
+        case harnessRuntime(entry: HarnessRuntimeEntry)
         case agent(
             entry: AgentEntry, existingId: UUID?, quickActions: [AgentQuickAction]?,
             source: OsaurusBundle.Agent)
@@ -298,6 +300,39 @@ public final class PendingImportProcessor {
                 op: op, hash: hash, receipt: receipt, decision: decision,
                 payload: .mcp(entry: entry, existingId: existing?.id))
 
+        case .harnessRuntime:
+            guard let raw = try? bundle.rawHarnessRuntimeEntries()[Self.runtimeKey(op.name)] else {
+                throw PrepareFailure(message: "Not found in the bundle.")
+            }
+            var entry: HarnessRuntimeEntry
+            do {
+                let data = try JSONSerialization.data(withJSONObject: raw)
+                entry = try JSONDecoder().decode(HarnessRuntimeEntry.self, from: data)
+            } catch {
+                throw PrepareFailure(message: "The runtime entry does not decode: \(error.localizedDescription)")
+            }
+            let owned = receipt?.bundleId == bundle.id ? receipt : nil
+            let existing =
+                owned?.harnessRuntimeId.flatMap(UUID.init(uuidString:)).flatMap {
+                    HarnessRuntimeStore.shared.runtime(id: $0)
+                } ?? ConfigHarness.runtime(named: entry.name)
+            let decision = decide(
+                op, bundle: bundle, bundleVersion: bundleVersion, hash: hash, receipt: receipt,
+                exists: existing != nil, what: "harness runtime")
+            // A runtime the user renamed keeps its name; the applier matches by it.
+            if let existing, decision == .replace { entry.name = existing.displayName }
+            var document = OsaurusConfigDocument()
+            document.version = 1
+            document.harnessRuntimes = [entry]
+            do {
+                _ = try ConfigPlanner.plan(document: document, prune: false)
+            } catch {
+                throw PrepareFailure(message: Self.describe(error))
+            }
+            return PreparedItem(
+                op: op, hash: hash, receipt: receipt, decision: decision,
+                payload: .harnessRuntime(entry: entry))
+
         case .agent:
             guard let source = bundle.agent(named: op.name) else {
                 throw PrepareFailure(message: "Not found in the bundle.")
@@ -347,6 +382,10 @@ public final class PendingImportProcessor {
             var document = OsaurusConfigDocument()
             document.version = 1
             document.agents = [planEntry]
+            // The runtime installs ahead of the agent in the same request.
+            if let runtime = source.harnessRuntime.flatMap(bundle.harnessRuntime(named:)) {
+                document.harnessRuntimes = [Self.runtimeEntry(runtime)]
+            }
             do {
                 _ = try ConfigPlanner.plan(document: document, prune: false)
             } catch {
@@ -360,6 +399,19 @@ public final class PendingImportProcessor {
             item.needsUser = needsUser
             return item
         }
+    }
+
+    private static func runtimeKey(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func runtimeEntry(_ ref: OsaurusBundleManifest.HarnessRuntimeReference) -> HarnessRuntimeEntry {
+        var entry = HarnessRuntimeEntry(name: ref.name)
+        entry.kind = ref.kind
+        entry.executable = ref.executable
+        entry.arguments = ref.arguments
+        entry.environment = ref.environment
+        return entry
     }
 
     /// Ownership rules. An item another bundle (or the user) owns is never
@@ -485,7 +537,33 @@ public final class PendingImportProcessor {
             let status: ImportItemStatus = row.status == .needsUserAction ? .needsUserAction : .done
             return result(status, row.message ?? "\(verb) MCP server.", pending: receipt.pendingSecrets, name: entry.name)
 
+        case .harnessRuntime(let entry):
+            var document = OsaurusConfigDocument()
+            document.version = 1
+            document.harnessRuntimes = [entry]
+            let rows = await ConfigApplier.apply(document: document, prune: false, options: .bundleImport)
+            guard let row = rows.first(where: { $0.section == "harness_runtimes" }) else {
+                return result(.failed, "The runtime was not applied.")
+            }
+            if row.status == .failed { return result(.failed, row.message) }
+            guard let runtime = ConfigHarness.runtime(named: entry.name) else {
+                return result(.failed, "The runtime was applied but could not be found afterwards.")
+            }
+            receipt.harnessRuntimeId = runtime.id.uuidString
+            receipt.needsUserAction = nil
+            upsert(receipt, into: &receipts)
+            return result(.done, "\(verb) harness runtime \(runtime.displayName).", name: runtime.displayName)
+
         case .agent(let entry, _, let quickActions, let source):
+            let bundleRuntime = source.harnessRuntime.flatMap(bundle.harnessRuntime(named:))
+            if let bundleRuntime,
+                !receipts.contains(where: {
+                    $0.bundleId == bundle.id && $0.matches(kind: .harnessRuntime, name: bundleRuntime.name)
+                })
+            {
+                return result(
+                    .failed, "Its harness runtime \"\(bundleRuntime.name)\" from this bundle is not installed.")
+            }
             var document = OsaurusConfigDocument()
             document.version = 1
             document.agents = [entry]
@@ -527,6 +605,7 @@ public final class PendingImportProcessor {
             receipt.agentId = agent.id.uuidString
             receipt.skills = source.skills
             receipt.mcpServers = source.mcpServers.isEmpty ? nil : source.mcpServers
+            receipt.harnessRuntime = bundleRuntime?.name
             receipt.needsUserAction = needsUser ? true : nil
             upsert(receipt, into: &receipts)
             return result(
@@ -619,6 +698,7 @@ public final class PendingImportProcessor {
         let dependencies =
             (receipt.skills ?? []).map { (BundleItemKind.skill, $0) }
             + (receipt.mcpServers ?? []).map { (BundleItemKind.mcp, $0) }
+            + (receipt.harnessRuntime.map { [(BundleItemKind.harnessRuntime, $0)] } ?? [])
         for (kind, name) in dependencies {
             guard
                 let dependency = receipts.first(where: {
@@ -640,8 +720,9 @@ public final class PendingImportProcessor {
         kind == .skill ? "skill:\(OsaurusBundle.skillSlug(for: name))" : "\(kind.rawValue):\(name.lowercased())"
     }
 
-    /// Agents that still use a skill or server: imported agents by receipt,
-    /// and any agent whose skill allow-list names the skill.
+    /// Agents that still use a skill, server or runtime: imported agents by
+    /// receipt, any agent whose skill allow-list names the skill, and any
+    /// agent running on the runtime.
     private func referencingAgents(kind: BundleItemKind, name: String, receipts: [ImportReceipt]) -> [String] {
         var users: [String] = []
         for receipt in receipts where receipt.kind == .agent {
@@ -653,10 +734,21 @@ public final class PendingImportProcessor {
                 }
             case .mcp:
                 uses = (receipt.mcpServers ?? []).contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+            case .harnessRuntime:
+                uses = receipt.harnessRuntime.map { Self.runtimeKey($0) == Self.runtimeKey(name) } ?? false
             case .agent:
                 uses = false
             }
             if uses { users.append(receipt.name) }
+        }
+        if kind == .harnessRuntime,
+            let id = receipts.first(where: { $0.matches(kind: .harnessRuntime, name: name) })?
+                .harnessRuntimeId.flatMap(UUID.init(uuidString:))
+        {
+            for agent in AgentManager.shared.agents
+            where AgentManager.shared.effectiveRuntime(for: agent.id) == .harness(id) && !users.contains(agent.name) {
+                users.append(agent.name)
+            }
         }
         if kind == .skill {
             let probe = Skill(name: name, directoryName: OsaurusBundle.skillSlug(for: name))
@@ -701,6 +793,15 @@ public final class PendingImportProcessor {
                 providers.contains(where: { $0.id == id })
             {
                 MCPProviderManager.shared.removeProvider(id: id)
+            } else {
+                gone = true
+            }
+        case .harnessRuntime:
+            if let id = receipt.harnessRuntimeId.flatMap(UUID.init(uuidString:)),
+                HarnessRuntimeStore.shared.runtime(id: id) != nil
+            {
+                HarnessRuntimeStore.shared.remove(id: id)
+                Task { await HarnessSessionManager.shared.closeIdleSessions(runtimeId: id) }
             } else {
                 gone = true
             }

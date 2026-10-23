@@ -235,7 +235,7 @@ final class OsaurusBundleTests: XCTestCase {
         let bundle = try OsaurusBundle.load(from: root)
         let found = issues { _ = try bundle.select(kind: nil, names: ["Support", "nope"]) }
         XCTAssertTrue(found.contains { $0.contains("names more than one item") }, "\(found)")
-        XCTAssertTrue(found.contains { $0.contains("no agent, skill or MCP server named \"nope\"") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("no agent, skill, MCP server or harness runtime named \"nope\"") }, "\(found)")
         XCTAssertEqual(try bundle.select(kind: .skill, names: ["Support"]).map(\.kind), [.skill])
     }
 
@@ -351,7 +351,9 @@ final class OsaurusBundleTests: XCTestCase {
         XCTAssertEqual(bundle.warnings, [])
         XCTAssertEqual(bundle.skills.map(\.name), ["triage-ticket"])
         XCTAssertEqual(bundle.mcpServers.map(\.name), ["Acme Tickets", "GitHub"])
-        XCTAssertEqual(bundle.agents.map(\.name), ["Support Desk", "Release Checker"])
+        XCTAssertEqual(bundle.agents.map(\.name), ["Support Desk", "Release Checker", "Acme Coder"])
+        XCTAssertEqual(bundle.harnessRuntimes.map(\.name), ["Acme Pi"])
+        XCTAssertEqual(bundle.agent(named: "Acme Coder")?.harnessRuntime, "Acme Pi")
 
         let support = try XCTUnwrap(bundle.agent(named: "Support Desk"))
         XCTAssertEqual(support.skills, ["triage-ticket"])
@@ -370,7 +372,69 @@ final class OsaurusBundleTests: XCTestCase {
         XCTAssertEqual(
             try bundle.select(kind: .agent, names: ["Support Desk"]).map(\.name),
             ["triage-ticket", "Acme Tickets", "Support Desk"])
-        XCTAssertEqual(bundle.risks(for: try bundle.select(kind: nil, names: [])).count, 2)
+        XCTAssertEqual(
+            try bundle.select(kind: .agent, names: ["Acme Coder"]).map(\.name), ["Acme Pi", "Acme Coder"])
+        // Two MCP servers, the runtime, and the agent that runs on it.
+        XCTAssertEqual(bundle.risks(for: try bundle.select(kind: nil, names: [])).count, 4)
+    }
+
+    // MARK: Harness runtimes
+
+    private func writeRuntimeFixture(_ runtimes: [[String: Any]], agentRuntime: String?) throws {
+        try writeFixture()
+        try manifest(["harness_runtimes": runtimes])
+        var agent: [String: Any] = ["name": "Coder"]
+        if let agentRuntime { agent["runtime"] = agentRuntime }
+        let data = try JSONSerialization.data(withJSONObject: agent)
+        try write(String(decoding: data, as: UTF8.self), to: "agents/writer.json")
+    }
+
+    func testRuntimeEntriesAreChecked() throws {
+        try writeRuntimeFixture(
+            [
+                ["name": "builtin", "kind": "pi_rpc"],
+                ["name": "Weird", "kind": "acp"],
+                ["name": "Blank", "kind": "pi_rpc", "executable": " "],
+                ["name": "Typo", "kind": "pi_rpc", "argumnts": []],
+                ["name": "Twice", "kind": "pi_rpc"],
+                ["name": "twice", "kind": "pi_rpc"],
+            ], agentRuntime: nil)
+        let found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("harness_runtimes[builtin]") && $0.contains("reserved") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("harness_runtimes[Weird].kind") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("harness_runtimes[Blank].executable") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("unknown key `argumnts`") && $0.contains("arguments") }, "\(found)")
+        XCTAssertTrue(found.contains { $0.contains("harness_runtimes[twice]: listed twice") }, "\(found)")
+    }
+
+    func testAgentRuntimeIsADependencyAndARisk() throws {
+        try writeRuntimeFixture(
+            [["name": "Spotlight", "kind": "pi_rpc", "executable": "~/.local/bin/spotlight",
+              "arguments": ["--mode", "rpc"]]],
+            agentRuntime: "spotlight")
+        let bundle = try OsaurusBundle.load(from: root)
+        XCTAssertEqual(bundle.warnings, [])
+        let refs = try bundle.select(kind: .agent, names: ["Coder"])
+        XCTAssertEqual(refs.map(\.kind), [.harnessRuntime, .agent])
+        XCTAssertEqual(refs.first?.explicit, false)
+        let risks = bundle.risks(for: refs)
+        XCTAssertTrue(risks.contains { $0.contains("~/.local/bin/spotlight --mode rpc") }, "\(risks)")
+        XCTAssertTrue(risks.contains { $0.contains("Agent \"Coder\" runs on harness runtime") }, "\(risks)")
+        XCTAssertEqual(try bundle.select(kind: .harnessRuntime, names: []).map(\.name), ["Spotlight"])
+        XCTAssertNotNil(bundle.contentHash(kind: .harnessRuntime, name: "Spotlight"))
+        XCTAssertEqual(BundleItemKind(argument: "runtime"), .harnessRuntime)
+        XCTAssertEqual(BundleItemKind(argument: "harness_runtimes"), .harnessRuntime)
+        XCTAssertTrue(BundleItemKind.harnessRuntime < .agent && BundleItemKind.mcp < .harnessRuntime)
+    }
+
+    func testAgentOnARuntimeOutsideTheBundleWarns() throws {
+        try writeRuntimeFixture([], agentRuntime: "Claude Code")
+        let bundle = try OsaurusBundle.load(from: root)
+        XCTAssertTrue(bundle.warnings.contains { $0.contains("agents[Coder].runtime") }, "\(bundle.warnings)")
+        XCTAssertEqual(try bundle.select(kind: .agent, names: ["Coder"]).map(\.kind), [.agent])
+
+        try writeRuntimeFixture([], agentRuntime: "builtin")
+        XCTAssertFalse(try OsaurusBundle.load(from: root).warnings.contains { $0.contains("runtime") })
     }
 
     func testResultExitCodes() {

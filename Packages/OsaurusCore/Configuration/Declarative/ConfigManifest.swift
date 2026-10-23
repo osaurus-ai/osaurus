@@ -123,6 +123,35 @@ public enum ConfigManifest {
             ])),
 
         ConfigSectionSpec(
+            .harnessRuntimes,
+            comment: "external agent harnesses an agent can run on (Agents → Runtimes)",
+            value: .entityList(
+                [
+                    ConfigKeySpec(
+                        "name", .scalar(.string, example: "Spotlight"),
+                        comment: "agents name it in `runtime`; \"builtin\" is reserved"),
+                    ConfigKeySpec(
+                        "kind",
+                        .scalar(.string, example: "pi_rpc", allowed: ConfigHarness.kindKeys),
+                        comment: "claude_code | pi_rpc; required to create;",
+                        moreComments: ["immutable after"]),
+                    ConfigKeySpec(
+                        "executable", .scalar(.string, example: "~/.local/bin/spotlight"),
+                        comment: "command on PATH or a path; launching it is",
+                        moreComments: ["HIGH RISK (runs a local program)"]),
+                    ConfigKeySpec(
+                        "arguments", .scalarList(.string, example: ["--mode", "rpc", "--session-id", "\"{chat_id}\""]),
+                        comment: "replaces the list; {chat_id} {agent_id} {cwd}",
+                        moreComments: ["{system_prompt_file} are filled per launch"]),
+                    ConfigKeySpec(
+                        "environment",
+                        .freeformMap(.string, exampleKey: "PI_LOG_LEVEL", exampleValue: "info"),
+                        comment: "plain values only (exported; never secrets);",
+                        moreComments: ["merge; OSAURUS_* variables always win"]),
+                ],
+                requiredKey: "name")),
+
+        ConfigSectionSpec(
             .defaultAgent,
             comment: "the built-in Default agent (the Orchestrator)",
             value: .mapping([
@@ -144,6 +173,12 @@ public enum ConfigManifest {
                 ConfigKeySpec(
                     "system_prompt", .scalar(.string, example: "\"\""),
                     comment: "the persona"),
+                ConfigKeySpec(
+                    "runtime", .scalar(.string, example: "builtin"),
+                    comment: "\"builtin\" or a harness_runtimes name"),
+                ConfigKeySpec(
+                    "claude_code", .mapping(ConfigManifest.claudeCodeKeys(includeConfigWrites: true)),
+                    comment: "used when runtime is a claude_code harness"),
             ])),
 
         ConfigSectionSpec(
@@ -290,6 +325,13 @@ public enum ConfigManifest {
                     ConfigKeySpec(
                         "source_template", .scalar(.string, example: "\"\""),
                         comment: "provenance: agent template this agent came from"),
+                    ConfigKeySpec(
+                        "runtime", .scalar(.string, example: "builtin"),
+                        comment: "\"builtin\" or a harness_runtimes name; a harness",
+                        moreComments: ["runs this agent's chats (HIGH RISK: local program)"]),
+                    ConfigKeySpec(
+                        "claude_code", .mapping(ConfigManifest.claudeCodeKeys(includeConfigWrites: false)),
+                        comment: "used when runtime is a claude_code harness"),
                 ],
                 requiredKey: "name")),
 
@@ -680,6 +722,33 @@ public enum ConfigManifest {
                 ],
                 requiredKey: "name")),
     ]
+
+    static func claudeCodeKeys(includeConfigWrites: Bool) -> [ConfigKeySpec] {
+        var keys = [
+            ConfigKeySpec(
+                "model", .scalar(.string, example: "sonnet"),
+                comment: "sonnet | opus | haiku | a full model id"),
+            ConfigKeySpec(
+                "mode", .scalar(.string, example: "agent", allowed: ConfigHarness.modeKeys),
+                comment: "agent | text_only"),
+            ConfigKeySpec(
+                "allow_writes", .scalar(.boolean, example: "false"),
+                comment: "file edits, limited to the chat folder"),
+            ConfigKeySpec(
+                "allow_shell", .scalar(.boolean, example: "false"),
+                comment: "HIGH RISK: unconfined shell on this Mac"),
+            ConfigKeySpec(
+                "allow_osaurus_tools", .scalar(.boolean, example: "false"),
+                comment: "osaurus_help / osaurus_inspect over MCP"),
+        ]
+        if includeConfigWrites {
+            keys.append(
+                ConfigKeySpec(
+                    "allow_osaurus_config_writes", .scalar(.boolean, example: "false"),
+                    comment: "HIGH RISK: osaurus_config (Default agent only)"))
+        }
+        return keys
+    }
 
     // MARK: - Derived: strict validation tables
 

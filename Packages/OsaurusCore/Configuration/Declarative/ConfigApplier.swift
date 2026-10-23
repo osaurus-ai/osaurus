@@ -98,6 +98,10 @@ enum ConfigApplier {
         if let section = document.memory {
             results.append(await applyMemory(section))
         }
+        // Before agents: `runtime:` may name a runtime this document adds.
+        if let entries = document.harnessRuntimes {
+            results.append(contentsOf: await applyHarnessRuntimes(entries, prune: prune))
+        }
         if let section = document.defaultAgent {
             results.append(await applyDefaultAgent(section, pendingModelIds: document.models ?? []))
         }
@@ -326,7 +330,28 @@ enum ConfigApplier {
         if let prompt = desired.systemPrompt {
             config.systemPrompt = prompt
         }
+        let runtimeBefore = config.runtime
+        let claudeCodeBefore = config.claudeCode
+        if let raw = desired.runtime {
+            guard let resolved = ConfigHarness.resolve(raw) else {
+                return ConfigApplyResult(
+                    section: "default_agent", target: "default_agent", status: .failed,
+                    message: "runtime: `\(raw)` is not a registered runtime.")
+            }
+            config.runtime = resolved == .builtIn ? nil : resolved
+        }
+        if let entry = desired.claudeCode {
+            var claudeCode = config.claudeCode ?? .default
+            ConfigHarness.patch(&claudeCode, from: entry)
+            config.claudeCode = claudeCode
+        }
         DefaultAgentConfigurationStore.save(config)
+        if config.runtime != runtimeBefore || config.claudeCode != claudeCodeBefore {
+            NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
+        }
+        if config.runtime != runtimeBefore {
+            Task { await HarnessSessionManager.shared.closeIdleSessions(agentId: Agent.defaultId) }
+        }
         // A name change must rebuild the published agent snapshot so the
         // picker pill and chat headers re-render with the new name.
         if nameChanged {
@@ -420,6 +445,10 @@ enum ConfigApplier {
                 if var agent = existing {
                     let outcome = patch(&agent, from: entry, options: options)
                     AgentManager.shared.update(agent)
+                    if outcome.runtimeChanged {
+                        let agentId = agent.id
+                        Task { await HarnessSessionManager.shared.closeIdleSessions(agentId: agentId) }
+                    }
                     // A patch can open a blocking gap (a folder this Mac
                     // cannot reach, a tool that is not installed) on an agent
                     // that was fine a moment ago. Creation arms the setup
@@ -458,9 +487,16 @@ enum ConfigApplier {
                     // (`AgentManager.add`), so the orchestrator can run one
                     // immediately — and same-turn: the post-apply hook stages
                     // the spawn specs for this very conversation.
-                    var message =
-                        "Created. `\(agent.name)` is spawnable now — "
-                        + "call `spawn_agent` to run a task with it."
+                    var message: String
+                    if case .resolved(let runtime)? = AgentManager.shared.effectiveHarness(for: agent.id) {
+                        message =
+                            "Created on harness runtime `\(runtime.displayName)`. Chat with `\(agent.name)` "
+                            + "directly; `spawn_agent` only runs agents on the built-in runtime."
+                    } else {
+                        message =
+                            "Created. `\(agent.name)` is spawnable now — "
+                            + "call `spawn_agent` to run a task with it."
+                    }
                     if !outcome.notes.isEmpty {
                         message += " " + outcome.notes.joined(separator: " ")
                     }
@@ -494,6 +530,7 @@ enum ConfigApplier {
         var notes: [String] = []
         /// Set when the user must finish a step in the app (pick a folder).
         var needsUserAction = false
+        var runtimeChanged = false
     }
 
     /// An UNSAVED agent record built from a document entry, for prefilling
@@ -541,9 +578,97 @@ enum ConfigApplier {
         if let source = entry.sourceTemplate {
             agent.sourceTemplateName = source.isEmpty ? nil : source
         }
+        patchRuntime(&agent, from: entry, outcome: &outcome)
         guard let caps = entry.capabilities else { return outcome }
         patchCapabilities(&agent, from: caps)
         return outcome
+    }
+
+    /// An unknown runtime only reaches here from a template draft (apply
+    /// rejects it in planning); the agent keeps its runtime and the note says
+    /// what to register.
+    @MainActor
+    private static func patchRuntime(
+        _ agent: inout Agent, from entry: AgentEntry, outcome: inout AgentPatchOutcome
+    ) {
+        if let raw = entry.runtime {
+            if let resolved = ConfigHarness.resolve(raw) {
+                let stored: AgentRuntime? = resolved == .builtIn ? nil : resolved
+                if agent.runtime != stored {
+                    agent.runtime = stored
+                    outcome.runtimeChanged = true
+                }
+            } else {
+                outcome.notes.append(
+                    "runtime: `\(raw)` is not registered on this Mac, so the agent runs on Osaurus's "
+                        + "own loop. Add it under Agents → Runtimes, then pick it in the chat model picker.")
+            }
+        }
+        if var entry = entry.claudeCode {
+            entry.allowOsaurusConfigWrites = nil
+            var config = agent.claudeCode ?? .default
+            ConfigHarness.patch(&config, from: entry)
+            agent.claudeCode = config
+        }
+    }
+
+    // MARK: - Harness runtimes
+
+    @MainActor
+    private static func applyHarnessRuntimes(
+        _ entries: [HarnessRuntimeEntry], prune: Bool
+    ) -> [ConfigApplyResult] {
+        let store = HarnessRuntimeStore.shared
+        var results: [ConfigApplyResult] = []
+        var matched = Set<UUID>()
+        for entry in entries {
+            let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let executable = entry.executable?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if var runtime = ConfigHarness.runtime(named: name) {
+                matched.insert(runtime.id)
+                let before = runtime
+                if let executable { runtime.executable = executable }
+                if let arguments = entry.arguments { runtime.arguments = arguments }
+                if let environment = entry.environment {
+                    runtime.environment.merge(environment) { _, new in new }
+                }
+                if runtime != before {
+                    store.upsert(runtime)
+                    let runtimeId = runtime.id
+                    Task { await HarnessSessionManager.shared.closeIdleSessions(runtimeId: runtimeId) }
+                }
+                results.append(
+                    ConfigApplyResult(section: "harness_runtimes", target: runtime.displayName, status: .done))
+            } else {
+                guard let kind = entry.kind.flatMap(ConfigHarness.kind(forKey:)) else {
+                    results.append(
+                        ConfigApplyResult(
+                            section: "harness_runtimes", target: name, status: .failed,
+                            message: "kind: required to add a runtime (claude_code or pi_rpc)."))
+                    continue
+                }
+                let runtime = HarnessRuntime(
+                    name: name, kind: kind, executable: executable, arguments: entry.arguments,
+                    environment: entry.environment ?? [:])
+                store.upsert(runtime)
+                matched.insert(runtime.id)
+                results.append(
+                    ConfigApplyResult(
+                        section: "harness_runtimes", target: runtime.displayName, status: .done,
+                        message: "Added. Agents run on it with `runtime: \(runtime.displayName)`, "
+                            + "or by picking it in the chat model picker."))
+            }
+        }
+        if prune {
+            for runtime in store.all() where !matched.contains(runtime.id) {
+                store.remove(id: runtime.id)
+                let runtimeId = runtime.id
+                Task { await HarnessSessionManager.shared.closeIdleSessions(runtimeId: runtimeId) }
+                results.append(
+                    ConfigApplyResult(section: "harness_runtimes", target: runtime.displayName, status: .done))
+            }
+        }
+        return results
     }
 
     /// A skill not installed yet is kept on the list (it may arrive with the

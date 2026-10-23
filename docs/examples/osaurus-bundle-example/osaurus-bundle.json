@@ -4,7 +4,7 @@
   "id": "com.example.acme-support",
   "name": "Acme Support Starter",
   "version": "1.0.0",
-  "description": "Two starter agents for the Acme support team, a ticket-triage skill, and the Acme Tickets and GitHub MCP servers.",
+  "description": "Starter agents for the Acme support team, a ticket-triage skill, the Acme Tickets and GitHub MCP servers, and the Acme Pi coding harness.",
   "publisher": { "name": "Acme Example", "url": "https://acme.example", "email": "it@acme.example" },
   "min_osaurus_version": "0.26.0",
   "skills": [
@@ -27,8 +27,18 @@
       "secret_env_refs": { "GITHUB_PERSONAL_ACCESS_TOKEN": "keychain:com.example.acme-support/github-token" }
     }
   ],
+  "harness_runtimes": [
+    {
+      "name": "Acme Pi",
+      "kind": "pi_rpc",
+      "executable": "pi",
+      "arguments": ["--mode", "rpc", "--session-id", "{chat_id}", "--append-system-prompt", "{system_prompt_file}"],
+      "environment": { "PI_LOG_LEVEL": "info" }
+    }
+  ],
   "agents": [
     { "path": "agents/support-desk.json" },
-    { "path": "agents/release-checker.json" }
+    { "path": "agents/release-checker.json" },
+    { "path": "agents/acme-coder.json" }
   ]
 }

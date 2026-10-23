@@ -27,9 +27,10 @@ struct PendingImportProcessorTests {
         var skill: String
         var agent: String
         var server: String
+        var runtime: String
     }
 
-    private func makeFixture(withServer: Bool = false) throws -> Fixture {
+    private func makeFixture(withServer: Bool = false, withRuntime: Bool = false) throws -> Fixture {
         let suffix = UUID().uuidString.prefix(8).lowercased()
         let fixture = Fixture(
             root: FileManager.default.temporaryDirectory
@@ -37,7 +38,8 @@ struct PendingImportProcessorTests {
             bundleId: "com.example.import\(suffix)",
             skill: "triage-\(suffix)",
             agent: "Support \(suffix)",
-            server: "Tickets \(suffix)")
+            server: "Tickets \(suffix)",
+            runtime: "Pi \(suffix)")
         func write(_ text: String, _ relative: String) throws {
             let url = fixture.root.appendingPathComponent(relative)
             try FileManager.default.createDirectory(
@@ -62,6 +64,16 @@ struct PendingImportProcessorTests {
                 ]
             ]
             agent["mcp_servers"] = ["enabled": [fixture.server]]
+        }
+        if withRuntime {
+            manifest["harness_runtimes"] = [
+                [
+                    "name": fixture.runtime, "kind": "pi_rpc", "executable": "/bin/cat",
+                    "arguments": ["--mode", "rpc", "--session-id", "{chat_id}"],
+                    "environment": ["PI_LOG_LEVEL": "info"],
+                ]
+            ]
+            agent["runtime"] = fixture.runtime
         }
         let manifestData = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
         try write(String(decoding: manifestData, as: UTF8.self), "osaurus-bundle.json")
@@ -167,6 +179,93 @@ struct PendingImportProcessorTests {
             #expect(rest.items.allSatisfy { $0.status == .done }, "\(rest.items)")
             #expect(SkillManager.shared.skill(named: fixture.skill) == nil)
             #expect(receipts(fixture).isEmpty)
+        }
+    }
+
+    /// Runs `body` with an empty harness runtime store.
+    private func withRuntimeStore(_ body: @MainActor () async throws -> Void) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-import-runtimes-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let previous = HarnessRuntimeStore.overrideDirectory
+        HarnessRuntimeStore.overrideDirectory = directory
+        HarnessRuntimeStore.shared.resetForTests()
+        defer {
+            HarnessRuntimeStore.overrideDirectory = previous
+            HarnessRuntimeStore.shared.resetForTests()
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try await body()
+    }
+
+    @Test
+    func harnessRuntimeInstallsWithItsAgent_needsYes_andIsRemovedOnlyWhenUnused() async throws {
+        try await exclusive {
+            try await withRuntimeStore {
+                let fixture = try makeFixture(withRuntime: true)
+                defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+                let refused = try await run(.install, fixture)
+                let refusedRuntime = try #require(refused.items.first { $0.kind == .harnessRuntime })
+                #expect(refusedRuntime.status == .failed)
+                #expect(refusedRuntime.message?.contains("--yes") == true)
+                #expect(ConfigHarness.runtime(named: fixture.runtime) == nil)
+                #expect(agent(named: fixture.agent) == nil)
+
+                let installed = try await run(.install, fixture, yes: true)
+                #expect(installed.status == .applied, "\(installed.items)")
+                #expect(installed.items.map(\.kind) == [.skill, .harnessRuntime, .agent])
+                let runtime = try #require(ConfigHarness.runtime(named: fixture.runtime))
+                #expect(runtime.kind == .piRPC)
+                #expect(runtime.executable == "/bin/cat")
+                #expect(runtime.arguments == ["--mode", "rpc", "--session-id", "{chat_id}"])
+                #expect(runtime.environment == ["PI_LOG_LEVEL": "info"])
+                let created = try #require(agent(named: fixture.agent))
+                #expect(created.runtime == .harness(runtime.id))
+                #expect(receipts(fixture).first { $0.kind == .harnessRuntime }?.harnessRuntimeId == runtime.id.uuidString)
+                #expect(receipts(fixture).first { $0.kind == .agent }?.harnessRuntime == fixture.runtime)
+
+                let again = try await run(.install, fixture, yes: true)
+                #expect(again.items.allSatisfy { $0.status == .unchanged }, "\(again.items)")
+
+                let blocked = try await run(.remove, fixture, kinds: [.harnessRuntime])
+                #expect(blocked.items.first?.status == .failed)
+                #expect(blocked.items.first?.message?.contains(fixture.agent) == true)
+                #expect(ConfigHarness.runtime(named: fixture.runtime) != nil)
+
+                let removed = try await run(.remove, fixture)
+                #expect(removed.items.allSatisfy { $0.status == .done }, "\(removed.items)")
+                #expect(ConfigHarness.runtime(named: fixture.runtime) == nil)
+                #expect(agent(named: fixture.agent) == nil)
+                #expect(receipts(fixture).isEmpty)
+            }
+        }
+    }
+
+    @Test
+    func agentPullsInItsRuntime_andRemovingTheAgentRemovesIt() async throws {
+        try await exclusive {
+            try await withRuntimeStore {
+                let fixture = try makeFixture(withRuntime: true)
+                defer { try? FileManager.default.removeItem(at: fixture.root) }
+                let bundle = try OsaurusBundle.load(from: fixture.root)
+                let refs = try bundle.select(kind: .agent, names: [fixture.agent])
+                #expect(refs.contains { $0.kind == .harnessRuntime && !$0.explicit })
+                let request = ImportRequest(
+                    bundleId: bundle.id, bundleName: nil, bundleVersion: bundle.manifest.version,
+                    operations: refs.map {
+                        ImportOperation(action: .install, kind: $0.kind, name: $0.name, explicit: $0.explicit)
+                    },
+                    confirmHighRisk: true)
+                try ImportQueue.enqueue(request, bundle: bundle)
+                let installed = try #require(await processor().process(requestId: request.id))
+                #expect(installed.status == .applied, "\(installed.items)")
+
+                let removed = try await run(.remove, fixture, kinds: [.agent])
+                #expect(removed.items.map(\.kind) == [.agent, .skill, .harnessRuntime], "\(removed.items)")
+                #expect(ConfigHarness.runtime(named: fixture.runtime) == nil)
+                #expect(receipts(fixture).isEmpty)
+            }
         }
     }
 

@@ -78285,6 +78285,9 @@
         }
       }
     },
+    "Default model" : {
+
+    },
     "Default models, permission, and load policy for the main chat are in the Images tab." : {
       "comment" : "A footnote explaining the default image settings for the main chat.",
       "extractionState" : "stale",
@@ -297095,10 +297098,13 @@
     "This agent" : {
 
     },
-    "This agent runs on %@, which chooses its own model and tools. Click to manage runtimes." : {
+    "This agent runs on %@, which uses its own tools. Click to switch runtimes or models." : {
 
     },
-    "This agent's runtime was deleted. Pick another one in the agent's settings." : {
+    "This agent's runtime was deleted. Pick another runtime or a model." : {
+
+    },
+    "Wait for the current reply to finish before switching runtimes." : {
 
     },
     "This chat has no id yet." : {

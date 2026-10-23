@@ -25,7 +25,8 @@ struct ConfigManifestDerivationTests {
         #expect(root == Set(ConfigSectionID.allNames + ["version"]))
         // Spot-check derived paths exist.
         for path in ["memory", "delegation", "agents[]", "agents[].capabilities",
-            "search_providers.providers[]"]
+            "search_providers.providers[]", "harness_runtimes[]", "agents[].claude_code",
+            "default_agent.claude_code"]
         {
             #expect(ConfigManifest.knownKeys[path] != nil, "missing knownKeys path `\(path)`")
         }
