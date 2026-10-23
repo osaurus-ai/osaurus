@@ -37,6 +37,37 @@ struct ConfigModelReferenceTests {
                 == .resolved("foundation"))
     }
 
+    /// The bridge claims these before the catalog is consulted, so they are
+    /// absent from `catalog` by construction and must resolve on their own.
+    @Test
+    func claudeCodeBridgeId_resolvesWithoutACatalogEntry() {
+        for model in ClaudeCodeModel.allCases {
+            #expect(
+                ConfigModelReference.resolve(model.pickerId, catalog: catalog)
+                    == .resolved(model.pickerId))
+        }
+    }
+
+    @Test
+    func claudeCodeBridgeId_resolvesToCanonicalCasing() {
+        #expect(
+            ConfigModelReference.resolve("Claude-Code/OPUS", catalog: catalog)
+                == .resolved("claude-code/opus"))
+    }
+
+    /// Accepting the prefix must not turn it into a wildcard: an alias the
+    /// CLI does not have should still fail the document rather than be stored
+    /// verbatim and route nowhere.
+    @Test
+    func unknownClaudeCodeAlias_isStillRejected() {
+        guard case .invalid = ConfigModelReference.resolve(
+            "claude-code/nonexistent", catalog: catalog)
+        else {
+            Issue.record("expected an unknown Claude Code alias to be invalid")
+            return
+        }
+    }
+
     @Test
     func installedLocalId_resolvesToCanonicalCasing() {
         #expect(
