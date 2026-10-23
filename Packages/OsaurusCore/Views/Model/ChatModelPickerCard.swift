@@ -468,32 +468,30 @@ struct ChatModelPickerCard: View {
                                     selectedModel = model.id
                                 }
                                 .focused($focus, equals: key)
-                                if provider?.isOsaurusCloud == true {
-                                    let saved = favorites.isFavorite(model.favoriteKey)
-                                    Button {
-                                        favorites.toggle(model.favoriteKey)
-                                    } label: {
-                                        Image(systemName: saved ? "star.fill" : "star")
-                                            .font(.system(size: 13))
-                                            .frame(width: 28, height: ChatPickerLayout.rowHeight)
-                                            .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(ModelFavoriteButtonStyle())
-                                    .focusable()
-                                    .focusEffectDisabled()
-                                    .focused($focus, equals: "favorite:\(model.id)")
-                                    .overlay {
-                                        if keyboardNavigation && focus == "favorite:\(model.id)" {
-                                            VStack {
-                                                Spacer()
-                                                Rectangle().fill(theme.secondaryText).frame(height: 1).padding(.horizontal, 6)
-                                            }
+                                let saved = favorites.isFavorite(model.favoriteKey)
+                                Button {
+                                    favorites.toggle(model.favoriteKey)
+                                } label: {
+                                    Image(systemName: saved ? "star.fill" : "star")
+                                        .font(.system(size: 13))
+                                        .frame(width: 28, height: ChatPickerLayout.rowHeight)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(ModelFavoriteButtonStyle())
+                                .focusable()
+                                .focusEffectDisabled()
+                                .focused($focus, equals: "favorite:\(model.id)")
+                                .overlay {
+                                    if keyboardNavigation && focus == "favorite:\(model.id)" {
+                                        VStack {
+                                            Spacer()
+                                            Rectangle().fill(theme.secondaryText).frame(height: 1).padding(.horizontal, 6)
                                         }
                                     }
-                                    .onKeyPress(.return) { favorites.toggle(model.favoriteKey); return .handled }
-                                    .accessibilityLabel("\(saved ? L("Remove from favorites") : L("Add to favorites")): \(model.displayName)")
-                                    .help(saved ? L("Remove from favorites") : L("Add to favorites"))
                                 }
+                                .onKeyPress(.return) { favorites.toggle(model.favoriteKey); return .handled }
+                                .accessibilityLabel("\(saved ? L("Remove from favorites") : L("Add to favorites")): \(model.displayName)")
+                                .help(saved ? L("Remove from favorites") : L("Add to favorites"))
                             }
                             .id(key)
                             .help(model.displayName)
@@ -652,10 +650,7 @@ struct ChatModelPickerCard: View {
     }
 
     private var focusColumns: [[String]] {
-        var modelKeys = models.flatMap { model in
-            provider?.isOsaurusCloud == true
-                ? ["model:\(model.id)", "favorite:\(model.id)"] : ["model:\(model.id)"]
-        }
+        var modelKeys = models.flatMap { ["model:\($0.id)", "favorite:\($0.id)"] }
         if provider?.isLocal == true || provider?.isOsaurusCloud == true { modelKeys.append("more") }
         var columns = [providers.map { "provider:\($0.id)" }, modelKeys]
         if optionsAreRevealed, let currentOptions {

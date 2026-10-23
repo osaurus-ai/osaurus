@@ -33,9 +33,13 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
     /// Pure grouping: does not connect providers, select models, or persist
     /// anything. A nil Cloud shortlist preserves the existing full catalog;
     /// a non-nil set contains exact, provider-prefixed picker model IDs.
+    /// `favoriteKeys` (`ModelPickerItem.favoriteKey`) pin favourited Local and
+    /// connected-provider models to the top of their column; Cloud favourites
+    /// are already expressed through the shortlist.
     static func groups(
         from items: [ModelPickerItem],
-        cloudModelIDs: Set<String>? = nil
+        cloudModelIDs: Set<String>? = nil,
+        favoriteKeys: Set<String> = []
     ) -> [ChatModelPickerProvider] {
         let cloudID = RemoteProviderManager.osaurusRouterProviderId
         var foundation: [ModelPickerItem] = []
@@ -70,7 +74,7 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
             }
         }
 
-        let localModels = foundation + sorted(local)
+        let localModels = favoritesFirst(foundation + sorted(local), favoriteKeys: favoriteKeys)
         let cloudCatalog = sorted(cloud)
         let cloudModels = cloudCatalog.filter { cloudModelIDs?.contains($0.id) ?? true }
         let localProvider = ChatModelPickerProvider(
@@ -88,7 +92,7 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
             availableModels: cloudCatalog
         )
         let connected = connectedOrder.map { entry in
-            let models = sorted(connectedModels[entry.id] ?? [])
+            let models = favoritesFirst(sorted(connectedModels[entry.id] ?? []), favoriteKeys: favoriteKeys)
             return ChatModelPickerProvider(
                 id: entry.id,
                 title: entry.title,
@@ -109,6 +113,17 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
     ) -> [ChatModelPickerProvider] {
         let builtIns = [local, cloud]
         return builtIns.filter(\.isActive) + connected + builtIns.filter { !$0.isActive }
+    }
+
+    /// Stable partition: favourites keep their relative order, as do the rest.
+    private static func favoritesFirst(
+        _ models: [ModelPickerItem],
+        favoriteKeys: Set<String>
+    ) -> [ModelPickerItem] {
+        guard !favoriteKeys.isEmpty else { return models }
+        let pinned = models.filter { favoriteKeys.contains($0.favoriteKey) }
+        guard !pinned.isEmpty else { return models }
+        return pinned + models.filter { !favoriteKeys.contains($0.favoriteKey) }
     }
 
     private static nonisolated func sorted(_ models: [ModelPickerItem]) -> [ModelPickerItem] {

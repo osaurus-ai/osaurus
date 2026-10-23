@@ -62,9 +62,10 @@ final class FavoriteModelsStore: ObservableObject {
     /// Seed the Osaurus Cloud starter favourites once the Router catalog is
     /// known. Idempotent and incremental:
     ///
-    /// - A user who already has favourites but was never seeded is treated as
-    ///   having curated their own list: every starter slug is recorded as
-    ///   handled and nothing is added.
+    /// - A user who already has Osaurus Cloud favourites but was never seeded
+    ///   is treated as having curated their own list: every starter slug is
+    ///   recorded as handled and nothing is added. Local and other-provider
+    ///   favourites don't count, since the starters fill the Cloud shortlist.
     /// - Otherwise each not-yet-handled starter slug present in
     ///   `routerModelIds` is favourited and recorded. Slugs the Router does
     ///   not offer yet stay pending and are picked up by a later catalog
@@ -78,8 +79,9 @@ final class FavoriteModelsStore: ObservableObject {
         let pending = Self.starterOsaurusCloudSlugs.filter { !ledgerSet.contains($0) }
         guard !pending.isEmpty else { return }
 
-        if ledger.isEmpty, !favoriteKeys.isEmpty {
-            // Existing user with their own favourites: never touch the list.
+        let routerKeyPrefix = Self.key(sourceKey: routerSourceKey, modelId: "")
+        if ledger.isEmpty, favoriteKeys.contains(where: { $0.hasPrefix(routerKeyPrefix) }) {
+            // Existing user with their own Cloud favourites: never touch the list.
             userDefaults.set(ledger + pending, forKey: starterLedgerKey)
             return
         }
