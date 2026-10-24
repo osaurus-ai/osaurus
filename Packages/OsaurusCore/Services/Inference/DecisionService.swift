@@ -1,9 +1,7 @@
 import Foundation
 import MLX
-import MLXHuggingFace
 import MLXLMCommon
 import MLXVLM
-import VMLXTokenizers
 
 /// Explicit non-generative System One requests. No conversational cache, speculative decoder,
 /// sampler or tool loop is created. All weights and transient state are dropped at request end.
@@ -14,12 +12,30 @@ actor DecisionService {
         let request = try DecisionJSON.parse(data)
         guard let name = request["model"]?.string,
             let installed = ModelManager.findInstalledMLXModel(named: name),
+            DecisionBundle.isDecisionModel(at: installed.localDirectory) else {
+            throw DecisionRuntimeError.invalid("System One requires an installed decision model")
+        }
+        // Reuse the existing auxiliary admission, ownership and residency policy.
+        // An API request has no authority to evict an unrelated chat/API model.
+        return try await AuxiliaryModelHandoff.run(targetModelName: installed.id,
+            invocation: .current(), sessionID: nil, agentID: UUID(), operationName: "decision") {
+            try await self.respondAdmitted(data: data)
+        }
+    }
+
+    private func respondAdmitted(data: Data) async throws -> Data {
+        let request = try DecisionJSON.parse(data)
+        guard let name = request["model"]?.string,
+            let installed = ModelManager.findInstalledMLXModel(named: name),
             DecisionBundle.isDecisionModel(at: installed.localDirectory),
             let questions = request["questions"]?.entries, !questions.isEmpty else {
             throw DecisionRuntimeError.invalid("System One requires an installed decision model and named questions")
         }
         guard ModelExposureStore.shared.isExposed(id: installed.id, kind: .local) else {
             throw DecisionRuntimeError.invalid("Decision model is not exposed to the API")
+        }
+        if let assets = request["assets"], !assets.isNull, assets.entries?.isEmpty != true {
+            throw DecisionRuntimeError.invalid("Asset references are not supported by this decision endpoint; use state-level images")
         }
         let directory = installed.localDirectory
         let metadata = try DecisionBundle(directory: directory)
@@ -67,24 +83,27 @@ actor DecisionService {
         defer { try? FileManager.default.removeItem(at: temporary) }
         let images = try materialize(request["images"], media: "image", directory: temporary)
         let videos = try materialize(request["videos"], media: "video", directory: temporary)
-        let model = try await D3Model.load(directory: directory, tokenizerLoader: #huggingFaceTokenizerLoader(),
+        let model = try await D3Model.load(directory: directory, tokenizerLoader: SwiftTransformersTokenizerLoader(),
             loadConfiguration: loadConfiguration)
         do {
-            var answers: [String: JSONValue] = [:]
+            var answers: [String: MLXLMCommon.JSONValue] = [:]
             var total = 0, completed = 0
             let state = request["state"] ?? .null
             for (key, raw) in questions {
                 try Task.checkCancellation()
                 if raw["type"]?.string == "box" {
                     do {
-                        let instructions = raw["instructions"].flatMap { $0.isTruthy ? $0.describe : nil }
-                            ?? "Choose the best matching option."
+                        guard let instructions = raw["instructions"]?.string,
+                            let fields = raw.entries,
+                            fields.allSatisfy({ ["type", "instructions"].contains($0.0) }) else {
+                            throw DecisionRuntimeError.invalid("This endpoint supports image Box with type and instructions; video at/track are not implemented")
+                        }
                         let result = try await model.decideBox(state: state, instructions: instructions, images: images, videos: videos)
                         total += result.inputTokens
-                        if completed > 0 { total -= result.stateTokens }
+                        if completed > 0 && metadata.configuration.attentionMode == .prefixBidirectional { total -= result.stateTokens }
                         completed += 1
                         answers[key] = .object(["type": .string("box"),
-                            "box": .object(result.box.mapValues(JSONValue.double)), "confidence": .double(result.confidence)])
+                            "box": .object(result.box.mapValues(MLXLMCommon.JSONValue.double)), "confidence": .double(result.confidence)])
                         print("[Decision] model=\(name) question=\(key) type=box input_tokens=\(result.inputTokens) output_tokens=0 prompt_tps=\(Double(result.inputTokens)/max(result.seconds,1e-9)) active_bytes=\(Memory.activeMemory) pool_bytes=\(Memory.cacheMemory) cache=none")
                     } catch is CancellationError { throw CancellationError() }
                     catch {
@@ -114,7 +133,7 @@ actor DecisionService {
                         "message": .string(error.localizedDescription)])
                 }
             }
-            let response = JSONValue.object(["model": .string(name), "answers": .object(answers),
+            let response = MLXLMCommon.JSONValue.object(["model": .string(name), "answers": .object(answers),
                 "usage": .object(["input_tokens": .int(total), "output_tokens": .int(0)])])
             let data = try JSONEncoder().encode(response)
             await model.unload()
