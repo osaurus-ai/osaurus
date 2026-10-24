@@ -12433,7 +12433,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask {
             let models: [JSONValue] = hidden ? [] : ModelManager.discoverLocalModels().filter {
-                $0.isDecision && ModelExposureStore.shared.isExposed(id: $0.id, kind: .local)
+                $0.isDecision && ModelExposureStore.shared.isExposed(
+                    id: DecisionService.exposureID(for: $0.id), kind: .local)
             }.map { model in
                 .object(["id": .string(model.id), "object": .string("model"),
                     "capabilities": .array([.string("decision")]), "generates_text": .bool(false)])

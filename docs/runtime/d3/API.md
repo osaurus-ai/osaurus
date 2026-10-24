@@ -1,6 +1,6 @@
 # D3 decision requests
 
-D3, D3 Flash and D3 Turbo are decision backbones, not text generators. Install the complete bundle, including `decision/decision_config.json` and `decision/readout.safetensors`, and expose it to the local API using the normal model settings. Installed decision bundles have a D3 badge and are excluded from chat, agent and worker pickers.
+D3, D3 Flash and D3 Turbo are decision backbones, not text generators. Install the complete bundle, including `decision/decision_config.json` and `decision/readout.safetensors`, and use the normal model settings to control API catalog visibility. Hidden models can still be requested explicitly, matching the existing server setting; authentication and memory admission still apply. Installed decision bundles have a D3 badge and are excluded from chat, agent and worker pickers.
 
 Use the normal Osaurus API authentication with `POST /v1/systemone`:
 

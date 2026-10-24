@@ -537,7 +537,8 @@ extension ModelCardContent {
             memoryNeeded: model.formattedEstimatedMemory,
             type: model.isDecision ? .decision : (model.useCase == .vision ? nil : (model.isVLM ? .vlm : .llm)),
             size: model.formattedDownloadSize,
-            params: model.parameterCount,
+            // The decision bundle slug names its quantization, not its backbone size.
+            params: model.isDecision ? nil : model.parameterCount,
             variantCount: variantCount,
             downloadsText: model.formattedDownloads,
             releaseText: model.formattedReleaseMonth

@@ -48,9 +48,6 @@ actor DecisionService {
                 "System One requires an installed decision model and named questions"
             )
         }
-        guard ModelExposureStore.shared.isExposed(id: installed.id, kind: .local) else {
-            throw DecisionRuntimeError.invalid("Decision model is not exposed to the API")
-        }
         if let assets = request["assets"], !assets.isNull, assets.entries?.isEmpty != true {
             throw DecisionRuntimeError.invalid(
                 "Asset references are not supported by this decision endpoint; use state-level images"
@@ -267,6 +264,11 @@ actor DecisionService {
             throw error
         }
     }
+    /// Match the server model-list UI; visibility does not forbid explicit requests.
+    nonisolated static func exposureID(for modelID: String) -> String {
+        modelID.split(separator: "/").last.map(String.init)?.lowercased() ?? modelID.lowercased()
+    }
+
     /// Reject extensions before constructing a semantically different question.
     nonisolated static func validateQuestionFields(_ question: DecisionJSON) throws {
         guard let fields = question.entries,

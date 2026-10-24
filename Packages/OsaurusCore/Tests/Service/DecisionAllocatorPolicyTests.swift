@@ -7,6 +7,15 @@ import MLXLMCommon
 struct DecisionAllocatorPolicyTests {
     private let gib = 1 << 30
 
+    @Test func exposureUsesTheExistingLowercaseSlugVisibilityContract() {
+        let id = DecisionService.exposureID(for: "OsaurusAI/d3-flash-JANG_4M")
+        #expect(id == "d3-flash-jang_4m")
+        #expect(DecisionService.exposureID(for: "d3-flash-JANG_4M") == id)
+        let hidden = ModelExposureSettings(overrides: [id: false])
+        #expect(!hidden.isExposed(id: id, kind: .local))
+        #expect(hidden.isExposed(id: "d3-flash-jang_6m", kind: .local))
+    }
+
     @Test func unsupportedQuestionFieldsAreNotSilentlyIgnored() throws {
         let valid = try DecisionJSON.parse(Data(#"{"type":"noul","instructions":"Is it code?"}"#.utf8))
         try DecisionService.validateQuestionFields(valid)
