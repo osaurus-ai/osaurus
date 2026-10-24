@@ -2451,7 +2451,7 @@ private struct ProviderEditSheet: View {
                                         .font(.system(size: 12, weight: .medium))
                                         .foregroundColor(themeManager.currentTheme.primaryText)
                                     Spacer()
-                                    Text("\(Int(progressHardCap / 60)) min", bundle: .module)
+                                    progressHardCapLabel
                                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                                         .foregroundColor(themeManager.currentTheme.accentColor)
                                 }
@@ -2470,6 +2470,21 @@ private struct ProviderEditSheet: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
+        }
+    }
+
+    /// Minutes, with the hour form in parentheses past an hour so long caps
+    /// stay readable ("90 min (1 h 30 min)").
+    private var progressHardCapLabel: Text {
+        let minutes = Int(progressHardCap / 60)
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        if minutes <= 60 {
+            return Text("\(minutes) min", bundle: .module)
+        } else if remainder == 0 {
+            return Text("\(minutes) min (\(hours) h)", bundle: .module)
+        } else {
+            return Text("\(minutes) min (\(hours) h \(remainder) min)", bundle: .module)
         }
     }
 
