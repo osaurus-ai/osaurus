@@ -34,6 +34,13 @@ struct MCPProviderConfigurationMigrationTests {
         #expect(provider.oauth == nil)
         #expect(provider.name == "Legacy Server")
         #expect(provider.url == "https://mcp.example.com")
+        #expect(provider.progressHardCap == MCPProvider.defaultProgressHardCap)
+    }
+
+    @Test func progressHardCapRoundTrips() throws {
+        let provider = MCPProvider(name: "Evals", url: "https://mcp.example.com", progressHardCap: 7_200)
+        let decoded = try JSONDecoder().decode(MCPProvider.self, from: JSONEncoder().encode(provider))
+        #expect(decoded.progressHardCap == 7_200)
     }
 
     @Test func newJSONRoundTripsOAuth() throws {

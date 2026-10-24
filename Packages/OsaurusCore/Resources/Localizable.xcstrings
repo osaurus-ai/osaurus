@@ -10606,6 +10606,40 @@
         }
       }
     },
+    "%lld min" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Min."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld분"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld мин"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分钟"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分鐘"
+          }
+        }
+      }
+    },
     "%lld min ago" : {
       "localizations" : {
         "de" : {
@@ -48132,6 +48166,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "透過此工作區共享代理發起的呼叫會在這裡列出供團隊查看。每次呼叫均已向發起該呼叫的 Osaurus 所屬成員扣費。"
+          }
+        }
+      }
+    },
+    "Calls that keep reporting progress can run this long. The timeout above is the longest gap between updates." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufrufe, die weiter Fortschritt melden, dürfen so lange laufen. Das Timeout oben ist die längste Pause zwischen zwei Meldungen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "진행 상황을 계속 보고하는 호출은 이 시간까지 실행할 수 있습니다. 위의 시간 초과는 업데이트 사이의 최대 간격입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вызовы, которые продолжают сообщать о прогрессе, могут выполняться столько времени. Тайм-аут выше — это максимальный интервал между обновлениями."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "持续报告进度的调用最长可运行这么久。上面的超时是两次更新之间的最长间隔。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "持續回報進度的呼叫最長可執行這麼久。上面的逾時是兩次更新之間的最長間隔。"
           }
         }
       }
@@ -139972,6 +140040,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每輪最大連續工具調用次數"
+          }
+        }
+      }
+    },
+    "Max Duration with Progress" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximale Dauer mit Fortschritt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "진행 상황 보고 시 최대 실행 시간"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Макс. длительность с прогрессом"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有进度时的最长时长"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有進度時的最長時長"
           }
         }
       }

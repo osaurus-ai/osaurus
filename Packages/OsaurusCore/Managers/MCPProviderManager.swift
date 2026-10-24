@@ -787,7 +787,8 @@ public final class MCPProviderManager: ObservableObject {
                     client: client,
                     toolName: toolName,
                     arguments: arguments,
-                    timeout: timeout
+                    timeout: timeout,
+                    progressHardCap: provider.progressHardCap
                 )
             } catch let error where Self.isRecoverableSessionError(error) {
                 result = try await reconnectAndRetry(
@@ -866,7 +867,8 @@ public final class MCPProviderManager: ObservableObject {
             client: freshClient,
             toolName: toolName,
             arguments: arguments,
-            timeout: timeout
+            timeout: timeout,
+            progressHardCap: provider.progressHardCap
         )
     }
 
@@ -911,9 +913,6 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     static let authRequiredProviderMessage = "A tool call needs you to sign in to this service."
-
-    /// Longest a single tool call may run while the server keeps reporting progress.
-    nonisolated static let progressHardCap: TimeInterval = 600
 
     nonisolated static func authRequiredToolMessage(providerName: String, authType: MCPProviderAuthType) -> String {
         let action =
@@ -988,13 +987,13 @@ public final class MCPProviderManager: ObservableObject {
     /// cancellation the server gets `notifications/cancelled` so it can stop.
     ///
     /// `timeout` is an idle budget: each `notifications/progress` for this
-    /// call's token restarts it, up to `progressHardCap` in total.
+    /// call's token restarts it, up to `progressHardCap` (per provider) in total.
     nonisolated static func callMCPTool(
         client: MCP.Client,
         toolName: String,
         arguments: [String: MCP.Value],
         timeout: TimeInterval,
-        progressHardCap: TimeInterval = MCPProviderManager.progressHardCap
+        progressHardCap: TimeInterval = MCPProvider.defaultProgressHardCap
     ) async throws -> MCP.CallTool.Result {
         let token = UUID().uuidString
         let toolCallId = ChatExecutionContext.currentToolCallId
