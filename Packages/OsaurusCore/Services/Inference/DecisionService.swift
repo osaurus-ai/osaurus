@@ -18,7 +18,7 @@ actor DecisionService {
         // Reuse the existing auxiliary admission, ownership and residency policy.
         // An API request has no authority to evict an unrelated chat/API model.
         return try await AuxiliaryModelHandoff.run(targetModelName: installed.id,
-            invocation: .current(), sessionID: nil, agentID: UUID(), operationName: "decision") {
+            invocation: .current(), sessionID: nil, agentID: UUID(), operationName: "decision") { @Sendable in
             try await self.respondAdmitted(data: data)
         }
     }
