@@ -540,6 +540,7 @@ struct FloatingInputCard: View {
     /// Set on chip tap; cleared on dismiss.
     @State private var pastedContentPreview: Attachment?
     @State private var pastedContentEdit: Attachment?
+    @State private var attachmentPickerPresented = false
     /// Pending image attachment shown full-size when its thumbnail is tapped.
     @State private var imagePreview: PendingImagePreview?
     /// Character threshold above which clipboard text is converted to a
@@ -5072,6 +5073,8 @@ extension FloatingInputCard {
     }
 
     private func pickAttachment() {
+        guard !attachmentPickerPresented else { return }
+        let window = windowId.flatMap { ChatWindowManager.shared.getNSWindow(id: $0) }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = pickerAllowedTypes
         panel.allowsMultipleSelection = true
@@ -5082,8 +5085,16 @@ extension FloatingInputCard {
             ? "Select files to attach (\(mediaCapabilities.summary) supported)"
             : "Select files to attach"
 
+        attachmentPickerPresented = true
         Task { @MainActor in
-            guard await panel.beginModal() == .OK else { return }
+            defer { attachmentPickerPresented = false }
+            let response: NSApplication.ModalResponse
+            if let window {
+                response = await panel.beginSheetModal(for: window)
+            } else {
+                response = await panel.beginModal()
+            }
+            guard response == .OK else { return }
             for url in panel.urls {
                 attachIfAllowed(url: url)
             }
