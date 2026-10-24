@@ -20,6 +20,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 
 /// Process-local proactive warm-up for locally served models.
 public enum ModelWarmup {
@@ -114,6 +115,6 @@ public enum ModelWarmup {
     }
 
     private static func log(_ message: String) {
-        FileHandle.standardError.write(Data("[osaurus] \(message)\n".utf8))
+        RuntimeDiagnostics.write(Data("[osaurus] \(message)\n".utf8))
     }
 }

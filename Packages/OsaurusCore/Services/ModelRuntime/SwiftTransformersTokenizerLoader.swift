@@ -1271,7 +1271,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         addGenerationPrompt: Bool
     ) throws -> [Int] {
         if (ProcessInfo.processInfo.environment["VMLX_CHAT_TEMPLATE_FALLBACK_LOG"] ?? "0") == "1" {
-            FileHandle.standardError.write(
+            RuntimeDiagnostics.write(
                 "[osaurus] chat-template fallback engaged: \(label)\n"
                     .data(using: .utf8)!
             )

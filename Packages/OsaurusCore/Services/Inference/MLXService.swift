@@ -121,7 +121,7 @@ actor MLXService: ToolCapableService {
                         + "tokens_per_second=\(stats.tokensPerSecond) "
                         + "prefill_tokens_per_second=\(stats.prefillTokensPerSecond ?? 0) "
                         + "stop=\(stats.stopReason ?? "unknown")\n"
-                    FileHandle.standardError.write(Data(row.utf8))
+                    RuntimeDiagnostics.write(Data(row.utf8))
                 }
                 continue
             }

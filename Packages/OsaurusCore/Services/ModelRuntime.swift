@@ -5127,8 +5127,8 @@ public actor ModelRuntime {
                 "==LOAD SPECULATION model=\(name) strategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy)) "
                     + "nativeHeadRequested=\(mtpPlan.loadConfiguration.nativeMTP) nativeHeadLoaded=\(loadedNativeHead)"
             )
-            // Same receipt on stderr, where support bundles and the 48 GB test plan read load time.
-            FileHandle.standardError.write(Data(
+            // Best-effort diagnostic receipt; a disconnected stderr must not fail the load.
+            RuntimeDiagnostics.write(Data(
                 "[ModelRuntime] model_loaded model=\(name) elapsedMs=\(elapsedMs)\n".utf8))
             let holder = SessionHolder(
                 name: name,

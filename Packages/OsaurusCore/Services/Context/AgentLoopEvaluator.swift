@@ -13,6 +13,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 
 // MARK: - Public transcript
 
@@ -617,7 +618,7 @@ public enum AgentLoopEvaluator {
     }
 
     private static func emitStepProgress(_ message: String) {
-        FileHandle.standardError.write(Data("\(message)\n".utf8))
+        RuntimeDiagnostics.write(Data("\(message)\n".utf8))
     }
 
     /// Run the canonical agent loop against a seeded `workspace` folder
