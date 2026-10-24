@@ -1,12 +1,15 @@
 import Foundation
 import Testing
+
 @testable import OsaurusCore
 
 struct DecisionModelRoutingTests {
     @Test func decisionPickerCannotChat() {
-        let item = ModelPickerItem(id: "fixture", displayName: "Decision fixture", source: .local, isDecision: true)
+        let item = ModelPickerItem(
+            id: "fixture", displayName: "Decision fixture", source: .local, isDecision: true)
         #expect(!item.isLikelyChatCapable)
-        #expect(ModelPickerItem(id: "chat", displayName: "Chat", source: .local).isLikelyChatCapable)
+        #expect(
+            ModelPickerItem(id: "chat", displayName: "Chat", source: .local).isLikelyChatCapable)
     }
 
     @Test func systemOneIsPeerInference() {
