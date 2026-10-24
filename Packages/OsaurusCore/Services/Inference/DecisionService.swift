@@ -15,7 +15,8 @@ actor DecisionService {
         guard fields.isSubset(of: supported) else {
             throw DecisionRuntimeError.invalid(
                 "Unknown decision fields: "
-                    + fields.subtracting(supported).sorted().joined(separator: ", "))
+                    + fields.subtracting(supported).sorted().joined(separator: ", ")
+            )
         }
         guard let name = request["model"]?.string,
             let installed = ModelManager.findInstalledMLXModel(named: name),
@@ -27,7 +28,10 @@ actor DecisionService {
         // An API request has no authority to evict an unrelated chat/API model.
         return try await AuxiliaryModelHandoff.run(
             targetModelName: installed.id,
-            invocation: .current(), sessionID: nil, agentID: UUID(), operationName: "decision"
+            invocation: .current(),
+            sessionID: nil,
+            agentID: UUID(),
+            operationName: "decision"
         ) { @Sendable in
             try await self.respondAdmitted(data: data)
         }
@@ -41,7 +45,8 @@ actor DecisionService {
             let questions = request["questions"]?.entries, !questions.isEmpty
         else {
             throw DecisionRuntimeError.invalid(
-                "System One requires an installed decision model and named questions")
+                "System One requires an installed decision model and named questions"
+            )
         }
         guard ModelExposureStore.shared.isExposed(id: installed.id, kind: .local) else {
             throw DecisionRuntimeError.invalid("Decision model is not exposed to the API")
@@ -54,28 +59,39 @@ actor DecisionService {
         let directory = installed.localDirectory
         let metadata = try DecisionBundle(directory: directory)
         let compatibility = ModelCompatibilityDiagnostics.report(
-            modelId: installed.id, modelName: installed.name,
-            modelTypeHint: installed.modelType, bundleURL: directory,
-            externalSource: installed.externalSource)
+            modelId: installed.id,
+            modelName: installed.name,
+            modelTypeHint: installed.modelType,
+            bundleURL: directory,
+            externalSource: installed.externalSource
+        )
         try ModelCompatibilityDiagnostics.validateLoadAllowed(
-            compatibility, modelName: installed.name)
+            compatibility,
+            modelName: installed.name
+        )
         try ModelRuntime.verifyShardManifest(at: directory, name: installed.name)
 
         let settings = ServerRuntimeSettingsStore.snapshot()
         let facts = LoadBundleFacts.inspect(bundleURL: directory)
         let estimatedWorkingSet = ModelRuntime.estimatedMemorySafetyWorkingSetBytes(
             loadFootprintBytes: Int64(clamping: facts.gpuResidentWeightBytes),
-            physicalMemoryBytes: facts.physicalMemory, modelDirectory: directory)
+            physicalMemoryBytes: facts.physicalMemory,
+            modelDirectory: directory
+        )
         let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
             for: settings,
-            baseLoadConfiguration: .osaurusProduction, bundleFacts: facts,
+            baseLoadConfiguration: .osaurusProduction,
+            bundleFacts: facts,
             host: MemoryStatus.snapshot(),
-            request: VMLXMemoryRequestEstimate(workingSetBytes: estimatedWorkingSet))
+            request: VMLXMemoryRequestEstimate(workingSetBytes: estimatedWorkingSet)
+        )
         if let issue = plan.blockingIssues.first {
             throw DecisionRuntimeError.invalid("Memory Safety: \(issue.field): \(issue.message)")
         }
         let access = try await ModelRuntime.shared.beginModelDeletionProtectedAccess(
-            modelID: installed.id, modelName: installed.name)
+            modelID: installed.id,
+            modelName: installed.name
+        )
         do {
             try await MetalGate.shared.enterDecision()
         } catch {
@@ -84,12 +100,18 @@ actor DecisionService {
         }
         do {
             let result = try await execute(
-                request: request, questions: questions, directory: directory,
-                name: installed.id, metadata: metadata, loadConfiguration: plan.loadConfiguration,
+                request: request,
+                questions: questions,
+                directory: directory,
+                name: installed.id,
+                metadata: metadata,
+                loadConfiguration: plan.loadConfiguration,
                 weightsBytes: Int64(clamping: facts.gpuResidentWeightBytes),
-                workingSetBytes: estimatedWorkingSet, budgetBytes: plan.resolvedLoadBudgetBytes,
+                workingSetBytes: estimatedWorkingSet,
+                budgetBytes: plan.resolvedLoadBudgetBytes,
                 physicalMemoryBytes: plan.resolvedPhysicalMemoryBytes,
-                explicitAllocatorBytes: settings.memorySafety.customAllocatorCacheBytes)
+                explicitAllocatorBytes: settings.memorySafety.customAllocatorCacheBytes
+            )
             Stream.gpu.synchronize()
             Memory.clearCache()
             print(
@@ -111,24 +133,37 @@ actor DecisionService {
     }
 
     private func execute(
-        request: DecisionJSON, questions: [(String, DecisionJSON)], directory: URL,
-        name: String, metadata: DecisionBundle, loadConfiguration: LoadConfiguration,
-        weightsBytes: Int64, workingSetBytes: UInt64?, budgetBytes: UInt64?,
-        physicalMemoryBytes: UInt64, explicitAllocatorBytes: UInt64?
+        request: DecisionJSON,
+        questions: [(String, DecisionJSON)],
+        directory: URL,
+        name: String,
+        metadata: DecisionBundle,
+        loadConfiguration: LoadConfiguration,
+        weightsBytes: Int64,
+        workingSetBytes: UInt64?,
+        budgetBytes: UInt64?,
+        physicalMemoryBytes: UInt64,
+        explicitAllocatorBytes: UInt64?
     ) async throws -> Data {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "osaurus-decision-" + UUID().uuidString)
+            "osaurus-decision-" + UUID().uuidString
+        )
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
         let images = try materialize(request["images"], media: "image", directory: temporary)
         let videos = try materialize(request["videos"], media: "video", directory: temporary)
         let model = try await D3Model.load(
-            directory: directory, tokenizerLoader: SwiftTransformersTokenizerLoader(),
-            loadConfiguration: loadConfiguration)
+            directory: directory,
+            tokenizerLoader: SwiftTransformersTokenizerLoader(),
+            loadConfiguration: loadConfiguration
+        )
         let previousAllocator = Memory.cacheLimit
         Memory.cacheLimit = await ModelRuntime.shared.decisionAllocatorCacheLimit(
-            weightsBytes: weightsBytes, workingSetBytes: workingSetBytes, budgetBytes: budgetBytes,
-            physicalMemoryBytes: physicalMemoryBytes, explicitAllocatorBytes: explicitAllocatorBytes
+            weightsBytes: weightsBytes,
+            workingSetBytes: workingSetBytes,
+            budgetBytes: budgetBytes,
+            physicalMemoryBytes: physicalMemoryBytes,
+            explicitAllocatorBytes: explicitAllocatorBytes
         )
         print(
             "[Decision] allocator_window model=\(name) limit_bytes=\(Memory.cacheLimit) prior_bytes=\(previousAllocator)"
@@ -153,7 +188,10 @@ actor DecisionService {
                             )
                         }
                         let result = try await model.decideBox(
-                            state: state, instructions: instructions, images: images, videos: videos
+                            state: state,
+                            instructions: instructions,
+                            images: images,
+                            videos: videos
                         )
                         total += result.inputTokens
                         if completed > 0
@@ -180,7 +218,10 @@ actor DecisionService {
                     continue
                 }
                 let q: D3Question
-                do { q = try D3Question(raw) } catch {
+                do {
+                    try Self.validateQuestionFields(raw)
+                    q = try D3Question(raw)
+                } catch {
                     answers[key] = .object([
                         "type": .string(raw["type"]?.string ?? ""),
                         "error": .string("invalid_question"),
@@ -191,10 +232,13 @@ actor DecisionService {
                 }
                 do {
                     let result = try await model.decide(
-                        state: state, question: q, images: images, videos: videos)
+                        state: state,
+                        question: q,
+                        images: images,
+                        videos: videos
+                    )
                     total += result.inputTokens
-                    if completed > 0 && metadata.configuration.attentionMode == .prefixBidirectional
-                    {
+                    if completed > 0 && metadata.configuration.attentionMode == .prefixBidirectional {
                         total -= result.stateTokens
                     }
                     completed += 1
@@ -223,27 +267,44 @@ actor DecisionService {
             throw error
         }
     }
+    /// Reject extensions before constructing a semantically different question.
+    nonisolated static func validateQuestionFields(_ question: DecisionJSON) throws {
+        guard let fields = question.entries,
+            fields.allSatisfy({ ["type", "instructions", "criteria"].contains($0.0) })
+        else {
+            throw DecisionRuntimeError.invalid(
+                "Decision questions support type, instructions and criteria; question-level media and extensions are not implemented"
+            )
+        }
+    }
+
     /// Use the existing bounded active-work policy, not a profile's temporary load cap.
     /// Explicit user maxima and the admitted budget remain hard ceilings.
     nonisolated static func allocatorReuseLimit(
-        weightsBytes: Int64, physicalMemoryBytes: UInt64,
-        admittedMemoryLimit: Int, budgetHeadroom: Int?, explicitAllocatorBytes: UInt64?,
+        weightsBytes: Int64,
+        physicalMemoryBytes: UInt64,
+        admittedMemoryLimit: Int,
+        budgetHeadroom: Int?,
+        explicitAllocatorBytes: UInt64?,
         residentCaps: [Int?] = []
     ) -> Int {
         ModelRuntime.effectiveGenerationMLXCacheLimit(
             persistentLimit: 0,
-            admittedMemoryLimit: admittedMemoryLimit, modelWeightsBytes: weightsBytes,
-            physicalMemoryBytes: physicalMemoryBytes, requiresAdmittedCeiling: true,
+            admittedMemoryLimit: admittedMemoryLimit,
+            modelWeightsBytes: weightsBytes,
+            physicalMemoryBytes: physicalMemoryBytes,
+            requiresAdmittedCeiling: true,
             configuredLimits: residentCaps + [
                 ModelRuntime.explicitAllocatorCacheLimitBytes(
-                    customAllocatorCacheBytes: explicitAllocatorBytes),
+                    customAllocatorCacheBytes: explicitAllocatorBytes
+                ),
                 ModelRuntime.allocatorCacheCapFromHeadroom(budgetHeadroom),
-            ])
+            ]
+        )
     }
 
     /// The decision endpoint accepts encoded media, never arbitrary host filesystem paths.
-    private func materialize(_ value: DecisionJSON?, media: String, directory: URL) throws -> [URL]
-    {
+    private func materialize(_ value: DecisionJSON?, media: String, directory: URL) throws -> [URL] {
         guard let value, !value.isNull else { return [] }
         guard let values = value.array else {
             throw DecisionRuntimeError.invalid(media + "s must be an array")
