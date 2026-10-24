@@ -340,15 +340,18 @@ Add arbitrary HTTP headers. Mark a header as a **secret** to store its value in 
 | **Streaming Enabled** | Use the streaming/SSE HTTP transport when the server supports it | false   |
 | **Discovery Timeout** | Timeout for tool discovery (seconds)      | 20      |
 | **Tool Call Timeout** | How long a tool call may go without any sign of progress (seconds) | 45; 120 for Legal, Investing, and Healthcare templates |
+| **Max Duration with Progress** | Longest a tool call may run while the server keeps sending progress updates (minutes) | 10 |
 
 Both timeouts are enforced at the MCP layer. Every tool call sends a
 progress token. Each `notifications/progress` update from the server restarts
-the tool-call timeout, up to a hard cap of 10 minutes per call, and the
+the tool-call timeout, up to the provider's Max Duration with Progress (10
+minutes by default, up to 4 hours), and the
 latest progress message (with a percentage when the server sends a total)
 appears on the running tool card. The timeout is also paused while the
 server is waiting for you to answer a request (see
 [Requests from a connector](#requests-from-a-connector-elicitation)); the
-10-minute cap still applies. The underlying HTTP session uses a looser idle timeout (at least the larger of the two, minimum 60s) so it
+Max Duration cap still applies. A timed-out call is reported to the model as
+not retryable, since the server may still be running it. The underlying HTTP session uses a looser idle timeout (at least the larger of the two, minimum 60s) so it
 never undercuts a long-running tool call, and it does not cap the total
 lifetime of the streaming SSE connection.
 

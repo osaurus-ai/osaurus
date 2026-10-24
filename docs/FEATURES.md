@@ -299,7 +299,7 @@ Research notes for the next local-runtime compatibility wave live in
 - API-key templates for vendors without OAuth discovery (GitHub)
 - Tool title, behavior annotations (read-only / destructive / open-world), and `outputSchema` are surfaced on discovered-tool pills; `structuredContent` is used when a result carries no text, and `resource_link` items are kept
 - Annotations pick the default approval policy: read-only tools run without asking unless they declare `openWorldHint: true`, and tools that may be destructive (including tools without hints) ask on every call with no lease or Always Allow; user-set Ask/Deny still win
-- Tool calls send a progress token; each `notifications/progress` restarts the idle timeout (hard cap 10 minutes) and shows the progress message on the running tool card; Legal, Investing and Healthcare templates default to a 120s tool-call timeout
+- Tool calls send a progress token; each `notifications/progress` restarts the idle timeout (hard cap 10 minutes by default, set per provider under Max Duration with Progress) and shows the progress message on the running tool card; Legal, Investing and Healthcare templates default to a 120s tool-call timeout
 - Elicitation (2025-11-25): form mode renders flat schemas (text, number, boolean, choice) with validation; URL mode shows the host, opens only on click, and closes on `notifications/elicitation/complete` or Done; non-interactive turns get `cancel`
 - A 401 on `tools/call` after the reconnect retry marks the provider as needing sign-in and tells the model to ask the user to sign in
 - Connector errors are shown in plain language with a Details disclosure for the raw error
