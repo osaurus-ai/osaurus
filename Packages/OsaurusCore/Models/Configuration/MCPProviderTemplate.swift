@@ -631,6 +631,10 @@ public struct MCPProviderTemplate: Identifiable, Sendable, Equatable {
             icon: "text.magnifyingglass", tagline: "Search across the work apps connected to Dash",
             subscription: true
         ),
+        .oauth(
+            "evolink", "EvoLink", "https://mcp.evolink.ai/mcp", .productivity,
+            icon: "wand.and.stars", tagline: "Generate images, video, music, and speech"
+        ),
         .open(
             "excalidraw", "Excalidraw", "https://mcp.excalidraw.com/mcp", .productivity,
             icon: "scribble.variable", tagline: "Sketch diagrams and whiteboards"
