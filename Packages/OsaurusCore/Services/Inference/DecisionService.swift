@@ -10,6 +10,13 @@ actor DecisionService {
 
     func respond(data: Data) async throws -> Data {
         let request = try DecisionJSON.parse(data)
+        let fields = Set(request.entries?.map(\.0) ?? [])
+        let supported: Set<String> = ["model", "state", "questions", "images", "videos", "assets"]
+        guard fields.isSubset(of: supported) else {
+            throw DecisionRuntimeError.invalid(
+                "Unknown decision fields: "
+                    + fields.subtracting(supported).sorted().joined(separator: ", "))
+        }
         guard let name = request["model"]?.string,
             let installed = ModelManager.findInstalledMLXModel(named: name),
             DecisionBundle.isDecisionModel(at: installed.localDirectory)
