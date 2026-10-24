@@ -101,6 +101,7 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// model2vec, etc.). Set from `MLXModel.isEmbedding` for local items so
     /// `isLikelyChatCapable` can exclude them without re-reading config.json.
     let isEmbedding: Bool
+    let isDecision: Bool
     /// Provider-scoped chat endpoint support. OpenAI's `/v1/models` listing
     /// exposes only ids, so those rows remain explicitly unknown instead of a
     /// successful listing being misrepresented as a chat capability claim.
@@ -165,6 +166,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         modelType: String? = nil,
         isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
+        isDecision: Bool = false,
         chatEndpointCapability: ModelChatEndpointCapability = .supported,
         description: String? = nil,
         externalSource: String? = nil,
@@ -191,6 +193,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.modelType = modelType
         self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
+        self.isDecision = isDecision
         self.chatEndpointCapability = chatEndpointCapability
         self.description = description
         self.externalSource = externalSource
@@ -248,6 +251,7 @@ extension ModelPickerItem {
             modelType: model.modelType,
             isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
+            isDecision: model.isDecision,
             description: model.description,
             externalSource: model.externalSource
         )
@@ -551,7 +555,7 @@ extension ModelPickerItem {
             // Non-MLX bundles can't load locally, so never auto-pick one.
             // AppleScript bundles only ever emit AppleScript (a dedicated
             // subagent model), so they are never a chat pick either.
-            return !isEmbedding && isMLXFormat && !isAppleScriptCatalogModel
+            return !isEmbedding && !isDecision && isMLXFormat && !isAppleScriptCatalogModel
         case .imageGeneration:
             // Image models produce images, not chat completions — never a
             // default chat pick (but still selectable to enter image mode).

@@ -1398,6 +1398,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path == "/systemone/models" {
+                handleDecisionModels(head: head, context: context)
+            } else if head.method == .POST, path == "/systemone" {
+                handleSystemOne(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/embeddings" || path == "/embed" {
                 handleEmbeddings(
                     head: head,
@@ -4162,7 +4166,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         guard let root = components.first else { return false }
         switch (root, components.count) {
         case ("chat", 1), ("completions", 1), ("generate", 1), ("messages", 1), ("responses", 1),
-            ("embeddings", 1), ("embed", 1):
+            ("embeddings", 1), ("embed", 1), ("systemone", 1):
             return true
         case ("chat", 2):
             return components[1] == "completions"
@@ -12419,6 +12423,62 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Embeddings
+
+    private func handleDecisionModels(head: HTTPRequestHead, context: ChannelHandlerContext) {
+        let hidden = Self.peerModelCatalogIsHidden(authedAudience: stateRef.value.authedAudience,
+            authedScopeIsMaster: stateRef.value.authedScopeIsMaster, peerInferenceEnabled: peerInferenceEnabled)
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask {
+            let models: [JSONValue] = hidden ? [] : ModelManager.discoverLocalModels().filter {
+                $0.isDecision && ModelExposureStore.shared.isExposed(id: $0.id, kind: .local)
+            }.map { model in
+                .object(["id": .string(model.id), "object": .string("model"),
+                    "capabilities": .array([.string("decision")]), "generates_text": .bool(false)])
+            }
+            let payload = JSONValue.object(["object": .string("list"), "data": .array(models)])
+            let body = String(decoding: (try? JSONEncoder().encode(payload)) ?? Data(), as: UTF8.self)
+            hop { self.sendResponse(context: ctx.value, version: head.version, status: .ok,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + cors, body: body) }
+        }
+    }
+
+    private func handleSystemOne(head: HTTPRequestHead, context: ChannelHandlerContext,
+        startTime: Date, userAgent: String?) {
+        var buffer = stateRef.value.requestBodyBuffer
+        let count = buffer?.readableBytes ?? 0
+        let data = Data(buffer?.readBytes(length: count) ?? [])
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let result = try await DecisionService.shared.respond(data: data)
+                let body = String(decoding: result, as: UTF8.self)
+                hop {
+                    self.sendResponse(context: ctx.value, version: head.version, status: .ok,
+                        headers: [("Content-Type", "application/json; charset=utf-8")] + cors, body: body)
+                }
+                self.logRequest(method: "POST", path: "/systemone", userAgent: userAgent,
+                    requestBody: String(decoding: data, as: UTF8.self), responseBody: body,
+                    responseStatus: 200, startTime: startTime)
+            } catch {
+                let payload = JSONValue.object(["error": .object(["type": .string("decision_error"),
+                    "message": .string(error.localizedDescription)])])
+                let body = String(decoding: (try? JSONEncoder().encode(payload)) ?? Data(), as: UTF8.self)
+                hop {
+                    self.sendResponse(context: ctx.value, version: head.version, status: .badRequest,
+                        headers: [("Content-Type", "application/json; charset=utf-8")] + cors, body: body)
+                }
+                self.logRequest(method: "POST", path: "/systemone", userAgent: userAgent,
+                    requestBody: nil, responseBody: body, responseStatus: 400, startTime: startTime,
+                    errorMessage: error.localizedDescription)
+            }
+        }
+    }
 
     private func handleEmbeddings(
         head: HTTPRequestHead,

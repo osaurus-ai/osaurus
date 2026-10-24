@@ -1,0 +1,151 @@
+import Foundation
+import MLX
+import MLXHuggingFace
+import MLXLMCommon
+import MLXVLM
+import VMLXTokenizers
+
+/// Explicit non-generative System One requests. No conversational cache, speculative decoder,
+/// sampler or tool loop is created. All weights and transient state are dropped at request end.
+actor DecisionService {
+    static let shared = DecisionService()
+
+    func respond(data: Data) async throws -> Data {
+        let request = try DecisionJSON.parse(data)
+        guard let name = request["model"]?.string,
+            let installed = ModelManager.findInstalledMLXModel(named: name),
+            DecisionBundle.isDecisionModel(at: installed.localDirectory),
+            let questions = request["questions"]?.entries, !questions.isEmpty else {
+            throw DecisionRuntimeError.invalid("System One requires an installed decision model and named questions")
+        }
+        guard ModelExposureStore.shared.isExposed(id: installed.id, kind: .local) else {
+            throw DecisionRuntimeError.invalid("Decision model is not exposed to the API")
+        }
+        let directory = installed.localDirectory
+        let metadata = try DecisionBundle(directory: directory)
+        let compatibility = ModelCompatibilityDiagnostics.report(modelId: installed.id, modelName: installed.name,
+            modelTypeHint: installed.modelType, bundleURL: directory, externalSource: installed.externalSource)
+        try ModelCompatibilityDiagnostics.validateLoadAllowed(compatibility, modelName: installed.name)
+        try ModelRuntime.verifyShardManifest(at: directory, name: installed.name)
+
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let facts = LoadBundleFacts.inspect(bundleURL: directory)
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(for: settings,
+            baseLoadConfiguration: .osaurusProduction, bundleFacts: facts, host: MemoryStatus.snapshot(),
+            request: VMLXMemoryRequestEstimate(workingSetBytes: facts.gpuResidentWeightBytes))
+        if let issue = plan.blockingIssues.first {
+            throw DecisionRuntimeError.invalid("Memory Safety: \(issue.field): \(issue.message)")
+        }
+        let access = try await ModelRuntime.shared.beginModelDeletionProtectedAccess(modelID: installed.id, modelName: installed.name)
+        do {
+            try await MetalGate.shared.enterDecision()
+        } catch {
+            await ModelRuntime.shared.finishModelDeletionProtectedAccess(access)
+            throw error
+        }
+        do {
+            let result = try await execute(request: request, questions: questions, directory: directory,
+                name: installed.id, metadata: metadata, loadConfiguration: plan.loadConfiguration)
+            Stream.gpu.synchronize()
+            Memory.clearCache()
+            await MetalGate.shared.exitDecision()
+            await ModelRuntime.shared.finishModelDeletionProtectedAccess(access)
+            return result
+        } catch {
+            Stream.gpu.synchronize()
+            Memory.clearCache()
+            await MetalGate.shared.exitDecision()
+            await ModelRuntime.shared.finishModelDeletionProtectedAccess(access)
+            throw error
+        }
+    }
+
+    private func execute(request: DecisionJSON, questions: [(String, DecisionJSON)], directory: URL,
+        name: String, metadata: DecisionBundle, loadConfiguration: LoadConfiguration) async throws -> Data {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("osaurus-decision-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let images = try materialize(request["images"], media: "image", directory: temporary)
+        let videos = try materialize(request["videos"], media: "video", directory: temporary)
+        let model = try await D3Model.load(directory: directory, tokenizerLoader: #huggingFaceTokenizerLoader(),
+            loadConfiguration: loadConfiguration)
+        do {
+            var answers: [String: JSONValue] = [:]
+            var total = 0, completed = 0
+            let state = request["state"] ?? .null
+            for (key, raw) in questions {
+                try Task.checkCancellation()
+                if raw["type"]?.string == "box" {
+                    do {
+                        let instructions = raw["instructions"].flatMap { $0.isTruthy ? $0.describe : nil }
+                            ?? "Choose the best matching option."
+                        let result = try await model.decideBox(state: state, instructions: instructions, images: images, videos: videos)
+                        total += result.inputTokens
+                        if completed > 0 { total -= result.stateTokens }
+                        completed += 1
+                        answers[key] = .object(["type": .string("box"),
+                            "box": .object(result.box.mapValues(JSONValue.double)), "confidence": .double(result.confidence)])
+                        print("[Decision] model=\(name) question=\(key) type=box input_tokens=\(result.inputTokens) output_tokens=0 prompt_tps=\(Double(result.inputTokens)/max(result.seconds,1e-9)) active_bytes=\(Memory.activeMemory) pool_bytes=\(Memory.cacheMemory) cache=none")
+                    } catch is CancellationError { throw CancellationError() }
+                    catch {
+                        answers[key] = .object(["type": .string("box"), "error": .string("invalid_question"),
+                            "reason": .string(error.localizedDescription), "message": .string(error.localizedDescription)])
+                    }
+                    continue
+                }
+                let q: D3Question
+                do { q = try D3Question(raw) }
+                catch {
+                    answers[key] = .object(["type": .string(raw["type"]?.string ?? ""), "error": .string("invalid_question"),
+                        "reason": .string(error.localizedDescription), "message": .string(error.localizedDescription)])
+                    continue
+                }
+                do {
+                    let result = try await model.decide(state: state, question: q, images: images, videos: videos)
+                    total += result.inputTokens
+                    if completed > 0 && metadata.configuration.attentionMode == .prefixBidirectional { total -= result.stateTokens }
+                    completed += 1
+                    answers[key] = result.answer
+                    print("[Decision] model=\(name) question=\(key) input_tokens=\(result.inputTokens) output_tokens=0 prompt_tps=\(result.promptTokensPerSecond) active_bytes=\(Memory.activeMemory) pool_bytes=\(Memory.cacheMemory) cache=none")
+                } catch is CancellationError { throw CancellationError() }
+                catch {
+                    answers[key] = .object(["type": .string(raw["type"]?.string ?? ""),
+                        "error": .string("invalid_model_output"), "reason": .string(error.localizedDescription),
+                        "message": .string(error.localizedDescription)])
+                }
+            }
+            let response = JSONValue.object(["model": .string(name), "answers": .object(answers),
+                "usage": .object(["input_tokens": .int(total), "output_tokens": .int(0)])])
+            let data = try JSONEncoder().encode(response)
+            await model.unload()
+            return data
+        } catch {
+            await model.unload()
+            throw error
+        }
+    }
+    /// The decision endpoint accepts encoded media, never arbitrary host filesystem paths.
+    private func materialize(_ value: DecisionJSON?, media: String, directory: URL) throws -> [URL] {
+        guard let value, !value.isNull else { return [] }
+        guard let values = value.array else { throw DecisionRuntimeError.invalid(media + "s must be an array") }
+        return try values.enumerated().map { index, item in
+            guard let text = item.string, let comma = text.firstIndex(of: ","),
+                text[..<comma].lowercased().hasPrefix("data:" + media + "/"),
+                text[..<comma].lowercased().hasSuffix(";base64"),
+                let bytes = Data(base64Encoded: String(text[text.index(after: comma)...])) else {
+                throw DecisionRuntimeError.invalid("Decision media must be base64 data URLs")
+            }
+            let ext: String
+            if media == "image" {
+                ext = try MediaFileValidation.detectImageFormat(bytes).rawValue
+            } else {
+                try MediaFileValidation.validateVideo(bytes)
+                ext = "mp4"
+            }
+            let url = directory.appendingPathComponent("\(media)-\(index).\(ext)")
+            try bytes.write(to: url)
+            return url
+        }
+    }
+
+}

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 import SwiftUI
 import os
 
@@ -640,6 +641,8 @@ struct MLXModel: Identifiable, Codable {
     /// the on-disk config.json; bundles that aren't on disk return false.
     /// Used to keep embedding repos imported from the HF cache / LM Studio
     /// out of chat surfaces while leaving them available to `/v1/embeddings`.
+    var isDecision: Bool { DecisionBundle.isDecisionModel(at: localDirectory) }
+
     var isEmbedding: Bool {
         EmbeddingDetection.isEmbedding(at: localDirectory)
     }

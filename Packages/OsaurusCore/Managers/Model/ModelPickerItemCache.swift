@@ -229,7 +229,7 @@ final class ModelPickerItemCache: ObservableObject {
             // `isEmbedding` here also warms its memoized verdict off the
             // main actor, like the `isVLM` warm-up below.
             let models = ModelManager.discoverLocalModels()
-                .filter { !$0.isEmbedding }
+                .filter { !$0.isEmbedding && !$0.isDecision }
             // Warm the memoized VLM + MLX-format verdicts while still off the
             // main actor: `fromMLXModel` below reads both `isVLM` and
             // `isMLXFormat` on the MainActor, and a cold cache would otherwise

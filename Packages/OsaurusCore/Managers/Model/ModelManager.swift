@@ -1493,7 +1493,7 @@ extension ModelManager {
         let models = discoverLocalModels()
         var seen: Set<String> = []
         var names: [String] = []
-        for m in models {
+        for m in models where !m.isDecision {
             let repo = m.id.split(separator: "/").last.map(String.init)?.lowercased() ?? m.id.lowercased()
             if !seen.contains(repo) {
                 seen.insert(repo)

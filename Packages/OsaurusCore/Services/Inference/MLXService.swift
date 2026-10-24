@@ -51,7 +51,8 @@ actor MLXService: ToolCapableService {
     }
 
     fileprivate nonisolated static func findModel(named name: String) -> LocalModelRef? {
-        if let found = ModelManager.findInstalledModel(named: name) {
+        if let installed = ModelManager.findInstalledMLXModel(named: name), !installed.isDecision,
+            let found = ModelManager.findInstalledModel(named: name) {
             return LocalModelRef(name: found.name, modelId: found.id)
         }
         return nil
