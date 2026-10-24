@@ -641,7 +641,7 @@ struct MLXModel: Identifiable, Codable {
     /// the on-disk config.json; bundles that aren't on disk return false.
     /// Used to keep embedding repos imported from the HF cache / LM Studio
     /// out of chat surfaces while leaving them available to `/v1/embeddings`.
-    var isDecision: Bool { DecisionBundle.isDecisionModel(at: localDirectory) }
+    var isDecision: Bool { DecisionDetection.isDecision(at: localDirectory) }
 
     var isEmbedding: Bool {
         EmbeddingDetection.isEmbedding(at: localDirectory)
@@ -919,4 +919,31 @@ enum DownloadState: Equatable {
     case paused(progress: Double)
     case completed
     case failed(error: String)
+}
+
+/// UI-only memoization. Runtime admission always revalidates the actual bundle.
+private enum DecisionDetection {
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var cache: [String: Bool] = [:]
+    private nonisolated(unsafe) static var epoch = 0
+    private nonisolated(unsafe) static var observed = false
+
+    static func isDecision(at directory: URL) -> Bool {
+        let key = directory.path
+        lock.lock()
+        if !observed {
+            observed = true
+            NotificationCenter.default.addObserver(forName: .localModelsChanged, object: nil, queue: nil) { _ in
+                lock.lock(); epoch += 1; cache.removeAll(keepingCapacity: true); lock.unlock()
+            }
+        }
+        let cached = cache[key], generation = epoch
+        lock.unlock()
+        if let cached { return cached }
+        let result = DecisionBundle.declaresDecisionModel(at: directory)
+        lock.lock()
+        if epoch == generation { cache[key] = result }
+        lock.unlock()
+        return result
+    }
 }

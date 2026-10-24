@@ -12463,7 +12463,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         headers: [("Content-Type", "application/json; charset=utf-8")] + cors, body: body)
                 }
                 self.logRequest(method: "POST", path: "/systemone", userAgent: userAgent,
-                    requestBody: String(decoding: data, as: UTF8.self), responseBody: body,
+                    requestBody: nil, responseBody: body,
                     responseStatus: 200, startTime: startTime)
             } catch {
                 let payload = JSONValue.object(["error": .object(["type": .string("decision_error"),
