@@ -10,11 +10,19 @@ import Foundation
 public struct RemoteProviderCredentialPresence: Sendable, Equatable {
     public var apiKeyPresent: Bool
     public var oauthTokensPresent: Bool
+    /// False until the Keychain check for this provider has completed. An
+    /// unchecked provider reads as "Checking", never as a missing key: a slow
+    /// or stalled Keychain is not evidence that no key exists (#3109).
+    public var isChecked: Bool
 
-    public init(apiKeyPresent: Bool = false, oauthTokensPresent: Bool = false) {
+    public init(apiKeyPresent: Bool = false, oauthTokensPresent: Bool = false, isChecked: Bool = true) {
         self.apiKeyPresent = apiKeyPresent
         self.oauthTokensPresent = oauthTokensPresent
+        self.isChecked = isChecked
     }
+
+    /// Placeholder for a provider whose credential check has not finished.
+    public static let unchecked = RemoteProviderCredentialPresence(isChecked: false)
 }
 
 public enum ProviderConnectivityStatus: String, Sendable, Equatable, CaseIterable {
@@ -313,7 +321,7 @@ public enum ProviderConnectivityCenter {
                 provider: provider,
                 state: states[provider.id],
                 proxy: proxy,
-                credentialPresence: credentialsByProvider[provider.id] ?? RemoteProviderCredentialPresence()
+                credentialPresence: credentialsByProvider[provider.id] ?? .unchecked
             )
         }
         return ProviderConnectivitySnapshot(reports: reports, proxy: proxy)
@@ -330,7 +338,8 @@ public enum ProviderConnectivityCenter {
             state: state,
             proxy: proxy,
             apiKeyPresent: credentialPresence.apiKeyPresent,
-            oauthTokensPresent: credentialPresence.oauthTokensPresent
+            oauthTokensPresent: credentialPresence.oauthTokensPresent,
+            credentialsChecked: credentialPresence.isChecked
         )
         let severity = diagnostics.rows.map(\.severity).max(by: severityLessThan) ?? .info
         let status = status(for: provider, state: state, highestSeverity: severity)

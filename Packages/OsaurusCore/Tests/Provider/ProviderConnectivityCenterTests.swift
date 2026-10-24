@@ -273,7 +273,7 @@ struct ProviderConnectivityCenterTests {
             providers: [auth, proxy, disabled],
             states: [proxy.id: proxyState],
             proxy: .invalid("Proxy host 'localhost' is reserved for local networking."),
-            credentialsByProvider: [:]
+            credentialsByProvider: [auth.id: RemoteProviderCredentialPresence()]
         )
 
         #expect(snapshot.attentionCount == 2)
@@ -287,6 +287,29 @@ struct ProviderConnectivityCenterTests {
         #expect(snapshot.filtered(by: .attention, issueKind: .requestEvidence).isEmpty)
         #expect(snapshot.filtered(by: .connected, issueKind: .proxy).map(\.provider.name) == ["Proxy warning"])
         #expect(snapshot.issueKindCounts(for: .attention) == [.authentication: 1, .proxy: 2])
+    }
+
+    /// A provider whose Keychain check has not finished reads as "Checking",
+    /// not as a missing key, and does not raise an attention badge (#3109).
+    @Test func uncheckedCredentialsShowCheckingInsteadOfMissing() throws {
+        let provider = RemoteProvider(
+            id: UUID(),
+            name: "Pending key",
+            host: "api.pending.test",
+            authType: .apiKey
+        )
+
+        let snapshot = ProviderConnectivityCenter.snapshot(
+            providers: [provider],
+            states: [:],
+            proxy: .disabled,
+            credentialsByProvider: [:]
+        )
+
+        let auth = try #require(snapshot.reports.first?.diagnostics.rows.first { $0.id == "auth" })
+        #expect(auth.value == L("Checking Keychain…"))
+        #expect(auth.severity == .info)
+        #expect(snapshot.issueKindCounts[.authentication] == nil)
     }
 
     @Test func groupedIssueExportReusesRedactedProviderDiagnostics() throws {

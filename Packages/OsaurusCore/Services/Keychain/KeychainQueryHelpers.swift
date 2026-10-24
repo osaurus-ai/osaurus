@@ -43,18 +43,57 @@ enum KeychainQueryHelpers {
     /// enumeration builds one — on the main thread that has stalled the UI for
     /// seconds. A non-interactive context carries no per-query state, so a
     /// single shared instance is safe to reuse across queries and threads.
-    static func nonInteractiveContext() -> LAContext {
-        contextLock.lock()
-        defer { contextLock.unlock() }
-        if let cached = sharedNonInteractiveContext {
-            return cached
+    ///
+    /// The context is built on one background thread and callers wait at most
+    /// `contextCreationWaitLimit` for it. When coreauthd does not answer (#3109)
+    /// this returns nil and the query runs with `kSecUseAuthenticationUISkip`
+    /// alone, which still refuses UI, instead of every Keychain read in the app
+    /// queueing forever behind one stuck `LAContext()`. A later call picks the
+    /// context up once the background creation finishes. After one caller has
+    /// timed out, later callers skip the wait until that creation finishes, so
+    /// a long coreauthd stall costs one 2 s wait instead of one per read.
+    static func nonInteractiveContext() -> LAContext? {
+        contextCondition.lock()
+        defer { contextCondition.unlock() }
+        if let cached = sharedNonInteractiveContext { return cached }
+        if contextCreationInFlight, contextCreationTimedOut { return nil }
+        if !contextCreationInFlight {
+            contextCreationInFlight = true
+            contextCreationTimedOut = false
+            Thread.detachNewThread {
+                let context = LAContext()
+                context.interactionNotAllowed = true
+                contextCondition.lock()
+                sharedNonInteractiveContext = context
+                contextCreationInFlight = false
+                contextCondition.broadcast()
+                contextCondition.unlock()
+            }
         }
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        sharedNonInteractiveContext = context
-        return context
+        let deadline = Date().addingTimeInterval(contextCreationWaitLimit)
+        while sharedNonInteractiveContext == nil {
+            guard contextCondition.wait(until: deadline) else { break }
+        }
+        if sharedNonInteractiveContext == nil { contextCreationTimedOut = true }
+        return sharedNonInteractiveContext
     }
 
-    private static let contextLock = NSLock()
+    /// Upper bound on how long a Keychain query waits for the shared context.
+    static let contextCreationWaitLimit: TimeInterval = 2
+
+    private static let contextCondition = NSCondition()
     nonisolated(unsafe) private static var sharedNonInteractiveContext: LAContext?
+    nonisolated(unsafe) private static var contextCreationInFlight = false
+    /// Set once a caller gave up waiting on the in-flight creation.
+    nonisolated(unsafe) private static var contextCreationTimedOut = false
+
+    /// The non-interactive query options. The context is added only when it
+    /// is available; `kSecUseAuthenticationUISkip` is always set.
+    static func nonInteractiveQueryOptions() -> [String: Any] {
+        var options: [String: Any] = [kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip]
+        if let context = nonInteractiveContext() {
+            options[kSecUseAuthenticationContext as String] = context
+        }
+        return options
+    }
 }
