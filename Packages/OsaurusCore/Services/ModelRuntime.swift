@@ -3010,6 +3010,20 @@ public actor ModelRuntime {
         return Int(min(UInt64(Int.max), budget - reserved))
     }
 
+    /// Request-owned decision weights are not SessionHolders. Price their active allocator
+    /// alongside registered residents using the same explicit caps and admitted scratch policy.
+    func decisionAllocatorCacheLimit(weightsBytes: Int64, workingSetBytes: UInt64?, budgetBytes: UInt64?,
+        physicalMemoryBytes: UInt64, explicitAllocatorBytes: UInt64?) -> Int {
+        let residents = Array(modelCache.values)
+        let headroom = Self.allocatorCacheBudgetHeadroom(
+            workingSets: residents.map(\.admittedWorkingSetBytes) + [workingSetBytes],
+            budgets: residents.map(\.admittedLoadBudgetBytes) + [budgetBytes])
+        return DecisionService.allocatorReuseLimit(weightsBytes: weightsBytes,
+            physicalMemoryBytes: physicalMemoryBytes, admittedMemoryLimit: Memory.memoryLimit,
+            budgetHeadroom: headroom, explicitAllocatorBytes: explicitAllocatorBytes,
+            residentCaps: residents.map(\.allocatorCacheLimitBytes))
+    }
+
     /// Native MTP and plain affine DSV4 both keep large decode intermediates
     /// live across repeated forwards. A tiny persistent MLX reuse cache makes
     /// those buffers churn without lowering physical footprint. This decision

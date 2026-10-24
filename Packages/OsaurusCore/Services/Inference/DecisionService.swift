@@ -63,11 +63,14 @@ actor DecisionService {
 
         let settings = ServerRuntimeSettingsStore.snapshot()
         let facts = LoadBundleFacts.inspect(bundleURL: directory)
+        let estimatedWorkingSet = ModelRuntime.estimatedMemorySafetyWorkingSetBytes(
+            loadFootprintBytes: Int64(clamping: facts.gpuResidentWeightBytes),
+            physicalMemoryBytes: facts.physicalMemory, modelDirectory: directory)
         let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
             for: settings,
             baseLoadConfiguration: .osaurusProduction, bundleFacts: facts,
             host: MemoryStatus.snapshot(),
-            request: VMLXMemoryRequestEstimate(workingSetBytes: facts.gpuResidentWeightBytes))
+            request: VMLXMemoryRequestEstimate(workingSetBytes: estimatedWorkingSet))
         if let issue = plan.blockingIssues.first {
             throw DecisionRuntimeError.invalid("Memory Safety: \(issue.field): \(issue.message)")
         }
@@ -82,15 +85,25 @@ actor DecisionService {
         do {
             let result = try await execute(
                 request: request, questions: questions, directory: directory,
-                name: installed.id, metadata: metadata, loadConfiguration: plan.loadConfiguration)
+                name: installed.id, metadata: metadata, loadConfiguration: plan.loadConfiguration,
+                weightsBytes: Int64(clamping: facts.gpuResidentWeightBytes),
+                workingSetBytes: estimatedWorkingSet, budgetBytes: plan.resolvedLoadBudgetBytes,
+                physicalMemoryBytes: plan.resolvedPhysicalMemoryBytes,
+                explicitAllocatorBytes: settings.memorySafety.customAllocatorCacheBytes)
             Stream.gpu.synchronize()
             Memory.clearCache()
+            print(
+                "[Decision] request_drained active_bytes=\(Memory.activeMemory) pool_bytes=\(Memory.cacheMemory)"
+            )
             await MetalGate.shared.exitDecision()
             await ModelRuntime.shared.finishModelDeletionProtectedAccess(access)
             return result
         } catch {
             Stream.gpu.synchronize()
             Memory.clearCache()
+            print(
+                "[Decision] request_drained active_bytes=\(Memory.activeMemory) pool_bytes=\(Memory.cacheMemory)"
+            )
             await MetalGate.shared.exitDecision()
             await ModelRuntime.shared.finishModelDeletionProtectedAccess(access)
             throw error
@@ -99,7 +112,9 @@ actor DecisionService {
 
     private func execute(
         request: DecisionJSON, questions: [(String, DecisionJSON)], directory: URL,
-        name: String, metadata: DecisionBundle, loadConfiguration: LoadConfiguration
+        name: String, metadata: DecisionBundle, loadConfiguration: LoadConfiguration,
+        weightsBytes: Int64, workingSetBytes: UInt64?, budgetBytes: UInt64?,
+        physicalMemoryBytes: UInt64, explicitAllocatorBytes: UInt64?
     ) async throws -> Data {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-decision-" + UUID().uuidString)
@@ -110,6 +125,16 @@ actor DecisionService {
         let model = try await D3Model.load(
             directory: directory, tokenizerLoader: SwiftTransformersTokenizerLoader(),
             loadConfiguration: loadConfiguration)
+        let previousAllocator = Memory.cacheLimit
+        Memory.cacheLimit = await ModelRuntime.shared.decisionAllocatorCacheLimit(
+            weightsBytes: weightsBytes, workingSetBytes: workingSetBytes, budgetBytes: budgetBytes,
+            physicalMemoryBytes: physicalMemoryBytes, explicitAllocatorBytes: explicitAllocatorBytes
+        )
+        print(
+            "[Decision] allocator_window model=\(name) limit_bytes=\(Memory.cacheLimit) prior_bytes=\(previousAllocator)"
+        )
+        // execute returns only after model.unload; restore before the caller releases MetalGate.
+        defer { Memory.cacheLimit = previousAllocator }
         do {
             var answers: [String: MLXLMCommon.JSONValue] = [:]
             var total = 0
@@ -198,6 +223,24 @@ actor DecisionService {
             throw error
         }
     }
+    /// Use the existing bounded active-work policy, not a profile's temporary load cap.
+    /// Explicit user maxima and the admitted budget remain hard ceilings.
+    nonisolated static func allocatorReuseLimit(
+        weightsBytes: Int64, physicalMemoryBytes: UInt64,
+        admittedMemoryLimit: Int, budgetHeadroom: Int?, explicitAllocatorBytes: UInt64?,
+        residentCaps: [Int?] = []
+    ) -> Int {
+        ModelRuntime.effectiveGenerationMLXCacheLimit(
+            persistentLimit: 0,
+            admittedMemoryLimit: admittedMemoryLimit, modelWeightsBytes: weightsBytes,
+            physicalMemoryBytes: physicalMemoryBytes, requiresAdmittedCeiling: true,
+            configuredLimits: residentCaps + [
+                ModelRuntime.explicitAllocatorCacheLimitBytes(
+                    customAllocatorCacheBytes: explicitAllocatorBytes),
+                ModelRuntime.allocatorCacheCapFromHeadroom(budgetHeadroom),
+            ])
+    }
+
     /// The decision endpoint accepts encoded media, never arbitrary host filesystem paths.
     private func materialize(_ value: DecisionJSON?, media: String, directory: URL) throws -> [URL]
     {
