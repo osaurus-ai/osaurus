@@ -77,7 +77,7 @@ struct ResponsesEvaluationDriversTests {
         )
         #expect(result.error == nil)
         #expect(result.turns.count == 2)
-        #expect(result.turns.allSatisfy(\.memoryInjected))
+        #expect(result.turns.allSatisfy { $0.memoryInjected })
         #expect(result.turns.first?.decodeTokensPerSecond == 43.123456789)
         #expect(result.turns.last?.decodeTokensPerSecond == nil)
         let requests = await engine.requests
