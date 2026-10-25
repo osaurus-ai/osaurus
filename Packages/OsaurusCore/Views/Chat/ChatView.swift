@@ -1764,6 +1764,7 @@ final class ChatSession: ObservableObject {
                 }
                 if previousSelectedFamily != refreshedSelectedFamily {
                     cachedPreviewContext = nil
+                    PreviewContextCache.shared.invalidate()
                     cachedContext = nil
                     warmupController.invalidateWarmState()
                     objectWillChange.send()
@@ -2392,13 +2393,29 @@ final class ChatSession: ObservableObject {
         // showed a smaller context than the send then composed, which read as
         // "dynamic tools appeared" when the send's manifest replaced the
         // estimate.
-        return ChatExecutionContext.$currentSessionSource.withValue(source) {
-            SystemPromptComposer.composePreviewContext(
-                agentId: effectiveId,
-                executionMode: estimatedChatExecutionMode(agentId: effectiveId),
-                model: selectedModel,
-                modelType: selectedPickerItem?.modelType
-            )
+        //
+        // Every open session recomposes on the same debounced signal; the
+        // shared cache collapses identical-input composes in one burst into
+        // a single main-thread compose (APPLE-MACOS-3E9 app hang).
+        let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
+        let model = selectedModel
+        let modelType = selectedPickerItem?.modelType
+        let key = PreviewContextCache.key(
+            agentId: effectiveId,
+            executionMode: executionMode,
+            model: model,
+            modelType: modelType,
+            source: source
+        )
+        return PreviewContextCache.shared.context(forKey: key) {
+            ChatExecutionContext.$currentSessionSource.withValue(source) {
+                SystemPromptComposer.composePreviewContext(
+                    agentId: effectiveId,
+                    executionMode: executionMode,
+                    model: model,
+                    modelType: modelType
+                )
+            }
         }
     }
 
@@ -3525,6 +3542,7 @@ final class ChatSession: ObservableObject {
         cachedContext = nil
         if !preservingPromptShapeBaseline {
             cachedPreviewContext = nil
+            PreviewContextCache.shared.invalidate()
         }
         budgetTracker.clear()
         objectWillChange.send()

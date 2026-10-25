@@ -32,6 +32,34 @@ public enum AgentDescriptionPolicy {
     /// in names. Descriptions never change authorization or execution policy.
     /// The `description` key is omitted when there is nothing to say.
     public static func routingJSON(id: String, name: String, description: String) -> String {
+        // Pure function of its inputs, but it runs for every spawn target on
+        // every (main-thread) prompt/preview compose and `JSONSerialization`
+        // is comparatively expensive, so identical inputs are memoized.
+        let key = RoutingKey(id: id, name: name, description: description)
+        routingMemoLock.lock()
+        let cached = routingMemo[key]
+        routingMemoLock.unlock()
+        if let cached { return cached }
+        let json = routingJSONImpl(id: id, name: name, description: description)
+        routingMemoLock.lock()
+        if routingMemo.count >= routingMemoLimit { routingMemo.removeAll(keepingCapacity: true) }
+        routingMemo[key] = json
+        routingMemoLock.unlock()
+        return json
+    }
+
+    private struct RoutingKey: Hashable {
+        let id: String
+        let name: String
+        let description: String
+    }
+
+    /// Bounded so renamed/edited agents can't grow the memo without limit.
+    private static let routingMemoLimit = 512
+    nonisolated(unsafe) private static var routingMemo: [RoutingKey: String] = [:]
+    private static let routingMemoLock = NSLock()
+
+    private static func routingJSONImpl(id: String, name: String, description: String) -> String {
         var object: [String: String] = ["id": id, "name": name]
         let text = normalized(description)
         if !text.isEmpty { object["description"] = text }
