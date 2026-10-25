@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Internal generation events. Text, tool previews and completion are distinct;
 /// callers never need to parse a transport sentinel or throw a tool as an error.
@@ -64,6 +65,7 @@ enum ResponsesGenerationStream {
         waitForProducerDrain: @escaping @Sendable () async -> Void = {}
     ) -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ResponsesGenerationEvent, Error>.makeStream()
+        let responseCompleted = OSAllocatedUnfairLock(initialState: false)
         let producer = Task {
             var calls: [ResponsesFunctionCall] = []
             var completed = false
@@ -103,6 +105,7 @@ enum ResponsesGenerationStream {
                         default: status = .completed
                         }
                         completed = true
+                        responseCompleted.withLock { $0 = true }
                         continuation.yield(
                             .responseCompleted(
                                 ResponsesGenerationCompletion(
@@ -144,7 +147,13 @@ enum ResponsesGenerationStream {
             }
         }
         continuation.onTermination = { termination in
-            if case .cancelled = termination { producer.cancel() }
+            // Closing a completed response to start the next tool step must
+            // not abort the previous producer's GPU/cache cleanup.
+            if case .cancelled = termination,
+                !responseCompleted.withLock({ $0 })
+            {
+                producer.cancel()
+            }
         }
         return stream
     }
