@@ -24,7 +24,8 @@ struct ResponsesPluginBatchHistoryTests {
             invocation: .init(toolName: "fixture", jsonArguments: "{}", toolCallId: "guarded"),
             callId: "guarded", result: "guard-refusal", wasDeduped: false, wasError: true
         )
-        let commit = try #require(history.complete([guarded]))
+        let completed = history.complete([guarded])
+        let commit = try #require(completed)
         #expect(commit.results.map(\.tool_call_id) == ["first", "guarded", "later"])
         #expect(commit.results.map(\.content) == ["actual-first", "guard-refusal", "actual-later"])
         #expect(commit.assistant.responses_output_items == assistant().responses_output_items)
@@ -39,7 +40,8 @@ struct ResponsesPluginBatchHistoryTests {
         try history.begin(assistant())
         history.record(callID: "first", result: "actual-first")
         #expect(history.complete([]) == nil)
-        let commit = try #require(history.finish(runExit: "cancelled"))
+        let finished = history.finish(runExit: "cancelled")
+        let commit = try #require(finished)
         #expect(commit.messages.count == 4)
         #expect(commit.results.first?.content == "actual-first")
         for row in commit.results.dropFirst() {
@@ -60,7 +62,8 @@ struct ResponsesPluginBatchHistoryTests {
         var history = ResponsesToolBatchHistory()
         try history.begin(assistant(ids: ["original"]))
         #expect(throws: ResponsesToolBatchHistory.Failure.self) { try history.begin(assistant(ids: ["replacement"])) }
-        let commit = try #require(history.finish(runExit: "endedBySurface"))
+        let finished = history.finish(runExit: "endedBySurface")
+        let commit = try #require(finished)
         #expect(commit.results.map(\.tool_call_id) == ["original"])
     }
 }
