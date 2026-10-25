@@ -2413,7 +2413,7 @@ final class PluginHostContext: @unchecked Sendable {
         PluginOnceLogger.warnOnce(
             key: "\(pluginId)|\(op)|no_agent_context",
             "[PluginHostAPI] Plugin '%@' called %@ from a thread with no resolvable agent context. "
-                + "The host fell back to the default agent. Originate plugin calls from a thread that "
+                + "No chat-bound agent context is available. Originate plugin calls from a thread that "
                 + "carries the agent (inside invoke / handle_route / on_config_changed / on_task_event). "
                 + "This warning is logged once per plugin per op per process.",
             pluginId,

@@ -110,7 +110,11 @@ struct ResponsesPluginLoopTests {
         let executions = Executions()
         let tool = ProbeTool(name: "responses_fixture_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(), executions: executions)
         ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+        ToolRegistry.shared.setEnabled(true, for: tool.name)
+        defer {
+            ToolRegistry.shared.setEnabled(false, for: tool.name)
+            ToolRegistry.shared.unregister(names: [tool.name])
+        }
         let calls = [1, 2].map { n in ResponsesFunctionCall(
             id: "fc_\(n)", callID: "call_\(n)", name: tool.name, arguments: "{\"slot\":\(n)}",
             geminiThoughtSignature: "signature-\(n)"
@@ -121,7 +125,7 @@ struct ResponsesPluginLoopTests {
         let answer = await invoke(context, body: try body(tool: tool), streaming: streaming, chunks: chunks)
         let json = try #require(try JSONSerialization.jsonObject(with: Data(answer.utf8)) as? [String: Any])
         #expect(json["error"] == nil)
-        #expect(await executions.slots == [1, 2])
+        #expect(await executions.slots.sorted() == [1, 2])
         let requests = await engine.requests
         #expect(requests.count == 2)
         let assistants = requests[1].input.filter { $0.role == "assistant" }
@@ -132,7 +136,15 @@ struct ResponsesPluginLoopTests {
         #expect(assistant.tool_calls?.map(\.geminiThoughtSignature) == ["signature-1", "signature-2"])
         #expect(assistant.responses_output_items == [raw])
         #expect(assistant.reasoning_item_id == "rs_plugin" && assistant.reasoning_encrypted == "opaque")
-        #expect(requests[1].input.filter { $0.role == "tool" }.map(\.tool_call_id) == ["call_1", "call_2"])
+        // The shared composer adds transient tool-role environment feedback
+        // to preserve Qwen's last-user reasoning/cache anchor. Those notices
+        // are not additional executions or persisted tool results.
+        let outputs = requests[1].input.filter {
+            $0.role == "tool" && !($0.content ?? "").hasPrefix("[System Notice]")
+        }
+        #expect(outputs.map(\.tool_call_id) == ["call_1", "call_2"])
+        #expect(outputs[0].content?.contains("fixture-result-1") == true)
+        #expect(outputs[1].content?.contains("fixture-result-2") == true)
         #expect((json["usage"] as? [String: Any])?["tokens_per_second"] as? Double == 33.123456789)
     }
 
