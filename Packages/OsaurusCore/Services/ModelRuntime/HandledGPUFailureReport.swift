@@ -33,7 +33,7 @@ struct HandledGPUFailureReport: Sendable, Equatable {
         var context: [String: Any] = [
             "kind": "impacting_interactivity", "stage": stage,
             "model_reference": modelReference,
-            "snapshot_stage": "terminal_after_engine_drain",
+            "snapshot_stage": "terminal_info_before_producer_drain",
         ]
         if let promptTokens { context["prompt_tokens"] = promptTokens }
         if let generatedTokens { context["generated_tokens"] = generatedTokens }

@@ -199,8 +199,8 @@ public final class CrashReportingService {
 
     /// Handled eval failures do not produce a fatal crash event. Record the
     /// known interactivity signature without the raw error, prompt or output.
-    /// Limits and occupancy are sampled separately after engine drain; none
-    /// of these readings claim to be the peak or the policy at the failed op.
+    /// Limits and occupancy are sampled when terminal info arrives. Producer
+    /// drain may still be in progress; this is neither peak nor at-fault policy.
     nonisolated static func recordHandledGPUFailure(
         _ failure: GenerationFailure, modelName: String, promptTokens: Int, generatedTokens: Int
     ) {
@@ -230,7 +230,7 @@ public final class CrashReportingService {
         // Serialize before crossing the queue: [String: Any] is not Sendable.
         // All values are the numeric/identifier allowlist constructed above.
         guard let data = try? JSONSerialization.data(withJSONObject: [
-            "saved_profile": savedProfile, "observed_after_engine_drain": observed,
+            "saved_profile": savedProfile, "observed_at_terminal_info": observed,
         ]) else { return }
         breadcrumbQueue.async {
             // Consent can be revoked while a report is queued.
