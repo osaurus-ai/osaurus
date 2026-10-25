@@ -288,6 +288,27 @@ struct ResponsesEngineTests {
         #expect(completion.cachedInputTokenCount == nil)
     }
 
+    @Test func oneShotCollectionUsesTheTypedEngineProtocolEntryPoint() async throws {
+        let capture = Capture()
+        let engine: any ResponsesEngineProtocol = ChatEngine(
+            services: [NativeService(capture: capture)],
+            installedModelsProvider: { [] },
+            remoteServicesProvider: { [] }
+        )
+        let result = try await engine.completeResponse(
+            request:
+                ResponsesInferenceRequest(model: "responses-fixture", input: []),
+            endAt: .streamEnd
+        )
+        #expect(await capture.nativeCalls == 1)
+        #expect(await capture.legacyCalls == 0)
+        #expect(result.text == "answer")
+        #expect(result.reasoning == "plan")
+        #expect(result.inputTokenCount == 517)
+        #expect(result.completion.tokensPerSecond == 21.123456789)
+        #expect(try result.completedAssistantInput().content == "answer")
+    }
+
     @Test func compatibilityLengthStopCannotDispatchParsedCalls() async throws {
         let source = AsyncThrowingStream<String, Error> { c in
             c.yield(StreamingStatsHint.encode(tokenCount: 10, tokensPerSecond: 20, stopReason: "length"))

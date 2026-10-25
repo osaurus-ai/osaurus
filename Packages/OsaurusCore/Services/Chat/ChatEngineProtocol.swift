@@ -10,6 +10,15 @@ protocol ResponsesEngineProtocol: Sendable {
         -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
 }
 
+extension ResponsesEngineProtocol {
+    func completeResponse(
+        request: ResponsesInferenceRequest,
+        endAt: ResponsesGenerationResult.EndAt = .logicalCompletion
+    ) async throws -> ResponsesGenerationResult {
+        try await ResponsesGenerationResult.collect(try await streamResponses(request: request), endAt: endAt)
+    }
+}
+
 protocol ChatEngineProtocol: ResponsesEngineProtocol {
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error>
     func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse
