@@ -69,75 +69,15 @@ struct ResponsesGenerationResult: Sendable {
         _ stream: AsyncThrowingStream<ResponsesGenerationEvent, Error>,
         endAt: EndAt = .logicalCompletion
     ) async throws -> ResponsesGenerationResult {
-        var text = ""
-        var reasoning = ""
-        var completion: ResponsesGenerationCompletion?
-        var inputTokens: Int?
-        var items: [JSONValue] = []
-        var reasoningItem: StreamingReasoningItemHint.Item?
-        var billing: RouterBillingSummary?
-        var artifacts: [RemoteRunArtifact] = []
-        var traces: [StreamingAgentToolHint.Trace] = []
-        var toolsDone: [StreamingToolHint.ToolCallDone] = []
-        var metadata: [String] = []
-        var drainStatus: DrainStatus = .notObserved
-
-        func result() throws -> ResponsesGenerationResult {
-            guard let completion else { throw CollectionError.missingCompletion }
-            return ResponsesGenerationResult(
-                text: text,
-                reasoning: reasoning,
-                completion: completion,
-                inputTokenCount: completion.inputTokenCount ?? inputTokens,
-                providerOutputItems: items,
-                reasoningItem: reasoningItem,
-                billing: billing,
-                artifacts: artifacts,
-                agentToolTraces: traces,
-                remoteToolCompletions: toolsDone,
-                compatibilityMetadata: metadata,
-                drainStatus: drainStatus
-            )
-        }
-
+        var accumulator = ResponsesGenerationAccumulator()
         for try await event in stream {
             try Task.checkCancellation()
-            switch event {
-            case .inputTokenCount(let count): inputTokens = count
-            case .outputTextDelta(let delta):
-                guard completion == nil else { throw CollectionError.outputAfterCompletion }
-                text += delta
-            case .reasoningDelta(let delta):
-                guard completion == nil else { throw CollectionError.outputAfterCompletion }
-                reasoning += delta
-            case .providerOutputItem(let item):
-                guard completion == nil else { throw CollectionError.outputAfterCompletion }
-                items.append(item)
-            case .reasoningItem(let item):
-                guard completion == nil else { throw CollectionError.outputAfterCompletion }
-                reasoningItem = item
-            case .billing(let summary): billing = summary
-            case .artifacts(let values): artifacts.append(contentsOf: values)
-            case .agentTool(let trace): traces.append(trace)
-            case .remoteToolCompleted(let tool): toolsDone.append(tool)
-            case .compatibilityMetadata(let raw): metadata.append(raw)
-            case .responseCompleted(let value):
-                guard completion == nil else { throw CollectionError.duplicateCompletion }
-                completion = value
-                if case .logicalCompletion = endAt { return try result() }
-            case .drained:
-                guard completion != nil else { throw CollectionError.drainBeforeCompletion }
-                drainStatus = .nativeProducerDrained
-            case .compatibilityStreamClosed:
-                guard completion != nil else { throw CollectionError.drainBeforeCompletion }
-                drainStatus = .compatibilityStreamClosed
-            case .drainFailed(let message): throw CollectionError.drainFailed(message)
-            case .prefillProgress, .toolEnvelopeDelta, .functionCallAdded, .functionNamePreview,
-                .functionPreviewReset, .functionArgumentsPreview:
-                break
+            try accumulator.consume(event)
+            if case .responseCompleted = event, case .logicalCompletion = endAt {
+                return try accumulator.result()
             }
         }
         try Task.checkCancellation()
-        return try result()
+        return try accumulator.result()
     }
 }

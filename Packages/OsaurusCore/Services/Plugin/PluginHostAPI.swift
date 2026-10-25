@@ -64,6 +64,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     let pluginId: String
     let database: PluginDatabase
+    private let inferenceEngineFactory: @Sendable () -> any ResponsesEngineProtocol
 
     /// Heap-allocated host API struct whose pointer is handed to the plugin at
     /// init. Must outlive the plugin because it may store the pointer rather
@@ -235,9 +236,13 @@ final class PluginHostContext: @unchecked Sendable {
         uuidString: "ffffffff-ffff-ffff-ffff-fffffffffff0"
     )!
 
-    init(pluginId: String) throws {
+    init(
+        pluginId: String,
+        inferenceEngineFactory: @escaping @Sendable () -> any ResponsesEngineProtocol = { ChatEngine(source: .plugin) }
+    ) throws {
         self.pluginId = pluginId
         self.database = PluginDatabase(pluginId: pluginId)
+        self.inferenceEngineFactory = inferenceEngineFactory
         // NOTE: deliberately do NOT call `database.open()` here.
         // Most plugins never call `db.exec` / `db.query`, so eagerly
         // opening every plugin's SQLCipher database at host-api init
@@ -800,7 +805,7 @@ final class PluginHostContext: @unchecked Sendable {
     private struct PreparedInference {
         let enriched: EnrichedInference
         let options: InferenceOptions
-        let engine: ChatEngine
+        let engine: any ResponsesEngineProtocol
         let budgetManager: ContextBudgetManager?
         let agentId: UUID?
         let executionMode: ExecutionMode
@@ -841,7 +846,8 @@ final class PluginHostContext: @unchecked Sendable {
         request: ChatCompletionRequest,
         rawJSON: [String: Any],
         pluginId: String? = nil,
-        activeAgentId: UUID? = nil
+        activeAgentId: UUID? = nil,
+        engineFactory: @Sendable () -> any ResponsesEngineProtocol = { ChatEngine(source: .plugin) }
     ) async -> PreparedInference {
         let options = InferenceOptions(from: rawJSON)
         let requestedModel = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -919,7 +925,7 @@ final class PluginHostContext: @unchecked Sendable {
         // `capabilities_load` path as chat, so the universal skill library
         // never bloats plugin requests.
 
-        let engine = ChatEngine(source: .plugin)
+        let engine = engineFactory()
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
         return PreparedInference(
             enriched: enriched,
@@ -1468,17 +1474,12 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: complete (non-streaming)
 
-    /// Internal abort signals thrown out of the shared-loop hooks so the
-    /// plugin entrypoints can map them to their historical error envelopes.
-    private enum PluginLoopAbort: Error {
-        case noChoices
-    }
-
     func complete(requestJSON: String) -> String {
         guard tryEnterInflightInference() else {
             return Self.pluginBusyJSON(kind: "complete")
         }
         let pid = self.pluginId
+        let engineFactory = inferenceEngineFactory
         // Capture host-enforced agent scope on the calling thread before
         // crossing into `Self.blockingAsync` — TLS does not survive the
         // `Task.detached` hop. See `dispatch` for the full rationale.
@@ -1507,7 +1508,8 @@ final class PluginHostContext: @unchecked Sendable {
                 request: request,
                 rawJSON: rawJSON,
                 pluginId: pid,
-                activeAgentId: activeAgent
+                activeAgentId: activeAgent,
+                engineFactory: engineFactory
             )
             var messages = prep.enriched.request.input
             var toolCallsExecuted: [[String: String]] = []
@@ -1531,7 +1533,7 @@ final class PluginHostContext: @unchecked Sendable {
             // The final model response, stashed by the modelStep hook when the
             // completion carries no executable tool calls (or the iteration
             // budget says to stop executing).
-            var finalResponse: ChatCompletionResponse?
+            var finalResponse: ResponsesGenerationResult?
             // Set when a successful `complete`/`clarify` intercept ends the
             // run (`endRun` → driver `.endedBySurface`), so the terminal
             // handler below can build the matching envelope. Parity with
@@ -1562,42 +1564,17 @@ final class PluginHostContext: @unchecked Sendable {
                         messages: effective,
                         tools: toolSpecs
                     )
-                    let response = try await prep.engine.completeChat(request: iterReq.chatCompletionsCompatibilityRequest())
-                    guard let choice = response.choices.first else {
-                        throw PluginLoopAbort.noChoices
-                    }
-
-                    if let calls = choice.message.tool_calls, !calls.isEmpty,
-                        choice.finish_reason == "tool_calls"
-                    {
-                        // The non-streaming path appends the full assistant
-                        // message (with all tool_calls) once; the per-call
-                        // hooks then append only the tool-result messages.
-                        // Recorded history gets the secret-safe argument view
-                        // so sandbox_secret_set values never re-enter the
-                        // multi-turn context; execution still uses the raw
-                        // invocations built from the model's original args.
-                        // The iteration cap is owned by the DRIVER (same
-                        // taxonomy as the HTTP surface): the final
-                        // iteration's calls still execute, then the loop
-                        // exits `.iterationCapReached`.
-                        messages.append(
-                            SecretArgumentScrubber.recordedAssistantMessage(choice.message)
-                        )
-                        return .toolCalls(
-                            calls.map {
-                                ServiceToolInvocation(
-                                    toolName: $0.function.name,
-                                    jsonArguments: $0.function.arguments,
-                                    toolCallId: $0.id
-                                )
-                            }
-                        )
-                    }
-
-                    // Final answer.
+                    let response = try await prep.engine.completeResponse(request: iterReq)
                     finalResponse = response
-                    return .finalResponse
+                    let step = try PluginResponsesCompatibility.classify(
+                        response, toolsWereOffered: toolSpecs?.isEmpty == false
+                    )
+                    if case .toolCalls = step {
+                        messages.append(SecretArgumentScrubber.recordedAssistantMessage(
+                            try response.completedAssistantInput()
+                        ))
+                    }
+                    return step
                 },
                 onDedupedResult: { _, callId, held in
                     // Dedupe a still-fresh re-read: replay the exact held
@@ -1612,8 +1589,7 @@ final class PluginHostContext: @unchecked Sendable {
                         toolName: inv.toolName,
                         argumentsJSON: inv.jsonArguments,
                         callId: callId,
-                        priorAssistantContent: "",
-                        prep: prep
+                            prep: prep
                     )
                     // assistantMessage from processToolCall is unused here
                     // because choice.message already represents the full
@@ -1649,8 +1625,6 @@ final class PluginHostContext: @unchecked Sendable {
                     hooks: hooks
                 )
                 exit = runResult.exit
-            } catch PluginLoopAbort.noChoices {
-                return Self.jsonString(["error": "inference_error", "message": "No choices returned"])
             } catch {
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
             }
@@ -1682,6 +1656,14 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
+            if exit == .incompleteReasoningExhausted {
+                return Self.jsonString([
+                    "error": "incomplete_response",
+                    "message": "The model did not complete a visible response with closed reasoning.",
+                    "tool_calls_executed": toolCallsExecuted, "shared_artifacts": sharedArtifacts,
+                ])
+            }
+
             // A successful `complete`/`clarify` intercept ended the run
             // (`.endedBySurface`): build the matching terminal envelope
             // instead of falling through to `max_iterations_reached`.
@@ -1708,21 +1690,10 @@ final class PluginHostContext: @unchecked Sendable {
                 // `complete`: synthesize a normal chat-completion response
                 // whose content is the model's verified summary.
                 let summary = CompleteTool.parseSummary(from: intercept.args) ?? "Task completed."
-                let synthesized = ChatCompletionResponse(
-                    id: "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))",
-                    created: Int(Date().timeIntervalSince1970),
-                    model: prep.enriched.request.model,
-                    choices: [
-                        ChatChoice(
-                            index: 0,
-                            message: ChatMessage(role: "assistant", content: summary),
-                            finish_reason: "stop"
-                        )
-                    ],
-                    usage: Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0)
-                )
-                guard let encoded = try? JSONEncoder.osaurusCanonical().encode(synthesized),
-                    var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
+                guard let response = finalResponse,
+                    var json = try? PluginResponsesCompatibility.response(
+                        response, model: prep.enriched.request.model, contentOverride: summary
+                    )
                 else {
                     return Self.jsonString([
                         "error": "serialization_error", "message": "Failed to serialize response",
@@ -1734,7 +1705,7 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             guard exit == .finalResponse, let response = finalResponse,
-                let choice = response.choices.first
+                let assistant = try? response.completedAssistantInput()
             else {
                 // Driver-owned iteration cap (same taxonomy as HTTP): the
                 // final iteration's tool calls executed, but the model
@@ -1751,7 +1722,7 @@ final class PluginHostContext: @unchecked Sendable {
             // Persist the final assistant turn into the chat-history
             // SQLite so this conversation is browsable in the sidebar.
             var persistedMessages = messages
-            persistedMessages.append(choice.message)
+            persistedMessages.append(SecretArgumentScrubber.recordedAssistantMessage(assistant))
             Self.persistInference(
                 pluginId: pid,
                 agentId: prep.agentId,
@@ -1760,8 +1731,9 @@ final class PluginHostContext: @unchecked Sendable {
                 model: prep.enriched.request.model
             )
 
-            guard let encoded = try? JSONEncoder.osaurusCanonical().encode(response),
-                var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
+            guard var json = try? PluginResponsesCompatibility.response(
+                response, model: prep.enriched.request.model
+            )
             else {
                 return Self.jsonString([
                     "error": "serialization_error", "message": "Failed to serialize response",
@@ -1790,6 +1762,7 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnNullChunkCallbackOnce(pluginId: pluginId)
         }
         let pid = self.pluginId
+        let engineFactory = inferenceEngineFactory
         // Capture host-enforced agent scope on the calling thread before
         // crossing into `Self.blockingAsync` — TLS does not survive the
         // `Task.detached` hop. See `dispatch` for the full rationale.
@@ -1854,7 +1827,8 @@ final class PluginHostContext: @unchecked Sendable {
                 request: request,
                 rawJSON: rawJSON,
                 pluginId: pid,
-                activeAgentId: activeAgent
+                activeAgentId: activeAgent,
+                engineFactory: engineFactory
             )
             let cid = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
             var messages = prep.enriched.request.input
@@ -1941,89 +1915,59 @@ final class PluginHostContext: @unchecked Sendable {
                         messages: effective,
                         tools: toolSpecs
                     )
-                    do {
-                        let stream = try await prep.engine.streamChat(request: iterReq.chatCompletionsCompatibilityRequest())
-                        var iterContent = ""
-                        var iterFinishReason = "stop"
-
-                        for try await delta in stream {
-                            // Cancellation check: plugin called `complete_cancel`
-                            // with our stream id. Emit a final chunk with
-                            // `finish_reason: "cancelled"` and stash the
-                            // cancelled envelope as the terminal result.
-                            if isCancelled(streamId) {
-                                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
-                                persistPartial(lastContent)
-                                terminalEnvelope = Self.cancelledStreamEnvelope(
-                                    id: cid,
-                                    streamId: streamId,
-                                    model: prep.enriched.request.model,
-                                    partialContent: lastContent,
-                                    toolCallsExecuted: toolCallsExecuted,
-                                    sharedArtifacts: sharedArtifacts,
-                                    usage: lastUsage
-                                )
-                                return .finalResponse
-                            }
-                            // Reasoning and stats sentinels must be decoded
-                            // BEFORE the generic `isSentinel` filter, otherwise
-                            // these payloads get dropped together with tool
-                            // hints and the plugin loses both reasoning text
-                            // and token-usage metering.
-                            if let reasoning = StreamingReasoningHint.decode(delta) {
-                                emit(Self.chunkPayload(id: cid, delta: ["reasoning_content": reasoning]))
-                                continue
-                            }
-                            if let stats = StreamingStatsHint.decode(delta) {
-                                // Forward usage to the plugin as an OpenAI-style
-                                // usage delta and remember it for the aggregated
-                                // return so non-stream and stream paths surface
-                                // the same metering shape.
-                                if let stopReason = stats.stopReason {
-                                    iterFinishReason = stopReason
-                                }
-                                let usage: [String: Any] = [
-                                    "completion_tokens": stats.tokenCount,
-                                    "tokens_per_second": stats.tokensPerSecond,
-                                    "unclosed_reasoning": stats.unclosedReasoning,
-                                ]
-                                lastUsage = usage
-                                emit(Self.chunkPayload(id: cid, delta: ["usage": usage]))
-                                continue
-                            }
-                            if StreamingToolHint.isSentinel(delta) { continue }
-                            iterContent += delta
-                            lastContent += delta
-                            emit(Self.chunkPayload(id: cid, delta: ["content": delta]))
+                    let stream = try await prep.engine.streamResponses(request: iterReq)
+                    var accumulator = ResponsesGenerationAccumulator()
+                    modelStream: for try await event in stream {
+                        // The shared driver owns the one terminal cancel
+                        // envelope. Closing here cancels preterminal native work.
+                        if isCancelled(streamId) { return .finalResponse }
+                        try Task.checkCancellation()
+                        try accumulator.consume(event)
+                        switch event {
+                        case .outputTextDelta(let text):
+                            lastContent += text
+                            emit(Self.chunkPayload(id: cid, delta: ["content": text]))
+                        case .reasoningDelta(let reasoning):
+                            emit(Self.chunkPayload(id: cid, delta: ["reasoning_content": reasoning]))
+                        case .responseCompleted:
+                            let completed = try accumulator.result()
+                            let usage = PluginResponsesCompatibility.reportedUsage(completed)
+                            lastUsage = usage
+                            emit(Self.chunkPayload(id: cid, delta: [
+                                "usage": usage, "model_response_id": completed.completion.responseID,
+                            ]))
+                            // Whole completed batches dispatch immediately;
+                            // the native producer still owns its cache drain.
+                            break modelStream
+                        default: break
                         }
-
-                        if !iterContent.isEmpty {
-                            messages.append(ChatMessage(role: "assistant", content: iterContent))
-                        }
-                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: iterFinishReason))
+                    }
+                    if isCancelled(streamId) { return .finalResponse }
+                    try Task.checkCancellation()
+                    let response = try accumulator.result()
+                    let step = try PluginResponsesCompatibility.classify(
+                        response, toolsWereOffered: toolSpecs?.isEmpty == false
+                    )
+                    if case .toolCalls = step {
+                        messages.append(SecretArgumentScrubber.recordedAssistantMessage(
+                            try response.completedAssistantInput()
+                        ))
+                        return step
+                    }
+                    if case .finalResponse = step {
+                        messages.append(SecretArgumentScrubber.recordedAssistantMessage(
+                            try response.completedAssistantInput()
+                        ))
+                        let finish = response.completion.stopReason ?? "stop"
+                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: finish))
                         persistPartial("")
                         terminalEnvelope = Self.buildStreamResult(
-                            id: cid,
-                            model: prep.enriched.request.model,
-                            content: lastContent,
-                            toolCallsExecuted: toolCallsExecuted,
-                            sharedArtifacts: sharedArtifacts,
-                            usage: lastUsage,
-                            finishReason: iterFinishReason
+                            id: cid, model: prep.enriched.request.model, content: lastContent,
+                            toolCallsExecuted: toolCallsExecuted, sharedArtifacts: sharedArtifacts,
+                            usage: lastUsage, finishReason: finish
                         )
-                        return .finalResponse
-
-                    } catch let invs as ServiceToolInvocations {
-                        // The iteration cap is owned by the DRIVER (same
-                        // taxonomy as the HTTP surface): the final
-                        // iteration's calls still execute, then the loop
-                        // exits `.iterationCapReached` and the terminal
-                        // handler below emits the honest stop chunk.
-                        return .toolCalls(invs.invocations)
-
-                    } catch let inv as ServiceToolInvocation {
-                        return .toolCalls([inv])
                     }
+                    return step
                 },
                 willProcessCall: { inv, callId in
                     // Surface the tool call to the plugin before the dedupe
@@ -2045,27 +1989,12 @@ final class PluginHostContext: @unchecked Sendable {
                 },
                 onDedupedResult: { inv, callId, held in
                     // Dedupe a still-fresh re-read: replay the exact held
-                    // envelope instead of re-running the read. Still pair an
-                    // assistant tool_call message with the tool result so
-                    // history stays valid. Arguments on the recorded
-                    // assistant message are the secret-safe view.
+                    // envelope instead of re-running the read. The complete
+                    // secret-safe assistant batch is already in history.
                     emit(
                         Self.chunkPayload(
                             id: cid,
                             delta: ["role": "tool", "tool_call_id": callId, "content": held]
-                        )
-                    )
-                    messages.append(
-                        ChatMessage(
-                            role: "assistant",
-                            content: lastContent.isEmpty ? nil : lastContent,
-                            tool_calls: [
-                                SecretArgumentScrubber.recordedToolCall(
-                                    id: callId,
-                                    invocation: inv
-                                )
-                            ],
-                            tool_call_id: nil
                         )
                     )
                     messages.append(
@@ -2078,7 +2007,6 @@ final class PluginHostContext: @unchecked Sendable {
                         toolName: inv.toolName,
                         argumentsJSON: inv.jsonArguments,
                         callId: callId,
-                        priorAssistantContent: lastContent,
                         prep: prep
                     )
                     if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
@@ -2093,7 +2021,6 @@ final class PluginHostContext: @unchecked Sendable {
                     )
 
                     toolCallsExecuted.append(processed.toolCallExecuted)
-                    messages.append(processed.assistantMessage)
                     messages.append(processed.toolMessage)
                     // Only the FIRST invocation in the batch consumes the
                     // streamed assistant prose — subsequent calls in the same
@@ -2150,6 +2077,18 @@ final class PluginHostContext: @unchecked Sendable {
                 )
                 exit = runResult.exit
             } catch {
+                if let envelope = terminalEnvelope { return envelope }
+                if isCancelled(streamId) {
+                    emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
+                    persistPartial(lastContent)
+                    return Self.cancelledStreamEnvelope(
+                        id: cid, streamId: streamId, model: prep.enriched.request.model,
+                        partialContent: lastContent, toolCallsExecuted: toolCallsExecuted,
+                        sharedArtifacts: sharedArtifacts, usage: lastUsage
+                    )
+                }
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "error"))
+                persistPartial(lastContent)
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
             }
 
@@ -2186,6 +2125,21 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
+            if exit == .incompleteReasoningExhausted {
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "incomplete"))
+                persistPartial(lastContent)
+                return Self.jsonString([
+                    "error": "incomplete_response",
+                    "message": "The model did not complete a visible response with closed reasoning.",
+                    "tool_calls_executed": toolCallsExecuted, "shared_artifacts": sharedArtifacts,
+                ])
+            }
+
+            // A callback may request cancel after seeing the final chunk.
+            // A committed run terminal is authoritative; do not emit a second
+            // cancelled terminal or relabel that completed response.
+            if let envelope = terminalEnvelope { return envelope }
+
             if exit == .cancelled {
                 // Cancellation detected at an iteration boundary (between
                 // tool calls) rather than mid-stream. Emit the same final
@@ -2201,10 +2155,6 @@ final class PluginHostContext: @unchecked Sendable {
                     sharedArtifacts: sharedArtifacts,
                     usage: lastUsage
                 )
-            }
-
-            if let envelope = terminalEnvelope {
-                return envelope
             }
 
             // Iteration budget exhausted while the model was still requesting
@@ -2227,14 +2177,13 @@ final class PluginHostContext: @unchecked Sendable {
     /// stays in sync between the two paths.
     private struct ToolCallProcessing {
         let result: String
-        let assistantMessage: ChatMessage
         let toolMessage: ChatMessage
         let toolCallExecuted: [String: String]
         let artifactDict: [String: Any]?
     }
 
-    /// Execute one tool call, post-process the result, and produce the
-    /// assistant + tool ChatMessages to append to the running history.
+    /// Execute one call and produce its result message. The model-step hook
+    /// records the complete, secret-safe assistant batch once before dispatch.
     ///
     /// Execution receives the original `argumentsJSON`. The assistant
     /// tool-call message that re-enters multi-turn history uses the
@@ -2246,7 +2195,6 @@ final class PluginHostContext: @unchecked Sendable {
         toolName: String,
         argumentsJSON: String,
         callId: String,
-        priorAssistantContent: String,
         prep: PreparedInference
     ) async -> ToolCallProcessing {
         // Execution seam: original arguments, including any secret value.
@@ -2263,22 +2211,6 @@ final class PluginHostContext: @unchecked Sendable {
         )
         result = postProcessed.result
 
-        // Recording seam: secret-safe args for history / model re-feed.
-        let material = ToolCallArgumentMaterial.split(
-            toolName: toolName,
-            argumentsJSON: argumentsJSON
-        )
-        let toolCall = ToolCall(
-            id: callId,
-            type: "function",
-            function: ToolCallFunction(name: toolName, arguments: material.forRecording)
-        )
-        let assistantMessage = ChatMessage(
-            role: "assistant",
-            content: priorAssistantContent.isEmpty ? nil : priorAssistantContent,
-            tool_calls: [toolCall],
-            tool_call_id: nil
-        )
         let toolMessage = ChatMessage(
             role: "tool",
             content: result,
@@ -2287,7 +2219,6 @@ final class PluginHostContext: @unchecked Sendable {
         )
         return ToolCallProcessing(
             result: result,
-            assistantMessage: assistantMessage,
             toolMessage: toolMessage,
             toolCallExecuted: ["name": toolName, "tool_call_id": callId],
             artifactDict: postProcessed.artifactDict
