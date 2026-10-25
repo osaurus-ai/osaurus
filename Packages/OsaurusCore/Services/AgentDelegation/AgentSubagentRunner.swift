@@ -35,6 +35,9 @@ enum SubagentCancelCause: String, Sendable {
     case deadline
     /// The surrounding task (parent chat turn / HTTP request) was cancelled.
     case parentTask = "parent_task"
+    /// The model/provider reported cancellation while the local caller was
+    /// still active. Do not attribute this to the user, parent or deadline.
+    case upstream
 }
 
 /// Aggregated model usage across every iteration of one subagent run.
@@ -530,7 +533,7 @@ enum AgentSubagentRunner {
                         continue
                     case .responseCompleted(let completion):
                         if case .cancelled = completion.status {
-                            throw RunCancelled(cause: cancelCause() ?? .parentTask)
+                            throw RunCancelled(cause: cancelCause() ?? .upstream)
                         }
                         if let count = completion.tokenCount {
                             sawStats = true

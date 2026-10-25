@@ -272,8 +272,8 @@ struct ResidencyIntentTests {
         let runner = try Self.source(
             "Services/AgentDelegation/AgentSubagentRunner.swift"
         )
-        #expect(runner.contains("request.backgroundModelLoad = true"))
-        #expect(runner.contains("request.preserveExistingResidencyOwner = true"))
+        #expect(runner.contains("request.context.backgroundModelLoad = true"))
+        #expect(runner.contains("request.context.preserveExistingResidencyOwner = true"))
 
         let handoff = try Self.source(
             "Services/AgentDelegation/ChatResidencyHandoff.swift"

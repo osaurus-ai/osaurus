@@ -1423,7 +1423,7 @@ final class TextSubagentKind:
         return SubagentResult(payload: payload, summary: capped)
     }
 
-    /// Honest exit mapping for a `.cancelled` runner exit: the three cancel
+    /// Honest exit mapping for a `.cancelled` runner exit: the cancel
     /// causes get DISTINCT copy (a user stop is not a "time budget" failure).
     /// Pure — unit-testable without a live runner.
     static func cancelError(
@@ -1437,6 +1437,11 @@ final class TextSubagentKind:
         case .parentTask:
             return .executionFailed(
                 message: "Subagent '\(label)' was cancelled with the parent run.",
+                retryable: false
+            )
+        case .upstream:
+            return .executionFailed(
+                message: "Subagent '\(label)' was cancelled by its model or provider.",
                 retryable: false
             )
         case .deadline, .none:

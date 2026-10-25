@@ -20,12 +20,18 @@ struct ResponsesSubagentRunnerTests {
             ]),
             .object([
                 "type": .string("message"), "id": .string("msg_fixture"),
-                "phase": .string("commentary"), "future": .bool(true),
+                "phase": .string("commentary"), "status": .string("completed"), "role": .string("assistant"),
+                "content": .array([
+                    .object([
+                        "type": .string("output_text"), "text": .string("Checking."),
+                        "annotations": .array([]),
+                    ])
+                ]), "future": .bool(true),
             ]),
             .object([
                 "type": .string("function_call"), "id": .string("fc_fixture"),
                 "call_id": .string("call_fixture"), "name": .string("lookup"),
-                "arguments": .string(#"{"key":"a"}"#), "future": .bool(true),
+                "arguments": .string(#"{"key":"a"}"#), "status": .string("completed"), "future": .bool(true),
             ]),
         ]
 
@@ -177,5 +183,49 @@ struct ResponsesSubagentRunnerTests {
         #expect(result.digest == nil)
         #expect(await script.executions.isEmpty)
         #expect(await script.requests.count == 1)
+    }
+
+    @Test func providerCancellationIsNotAttributedToUserParentOrDeadline() async throws {
+        let result = try await AgentSubagentRunner.run(
+            modelName: "responses-spawn-fixture",
+            seedMessages: [ChatMessage(role: "user", content: "Answer.")],
+            maxTokens: 64,
+            maxIterations: 1,
+            deadline: Date().addingTimeInterval(5),
+            sessionId: "responses-spawn-cancelled",
+            responsesStreamProvider: { _ in
+                AsyncThrowingStream { c in
+                    c.yield(
+                        .responseCompleted(
+                            .init(
+                                responseID: "resp_cancelled",
+                                status: .cancelled,
+                                functionCalls: [],
+                                tokenCount: 0,
+                                tokensPerSecond: nil,
+                                unclosedReasoning: false,
+                                stopReason: "cancelled",
+                                promptTokensPerSecond: nil,
+                                mtp: nil
+                            )
+                        )
+                    )
+                    c.yield(.drained)
+                    c.finish()
+                }
+            }
+        )
+        #expect(result.exit == .cancelled)
+        #expect(result.cancelCause == .upstream)
+        #expect(result.digest == nil)
+        let error = TextSubagentKind.cancelError(cause: result.cancelCause, label: "fixture", maxElapsedSeconds: 5)
+        if case .executionFailed(let message, let retryable) = error {
+            #expect(message.contains("model or provider"))
+            #expect(!message.contains("parent"))
+            #expect(!message.contains("time budget"))
+            #expect(!retryable)
+        } else {
+            Issue.record("Expected upstream cancellation error")
+        }
     }
 }
