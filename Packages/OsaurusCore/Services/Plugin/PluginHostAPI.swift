@@ -1484,7 +1484,7 @@ final class PluginHostContext: @unchecked Sendable {
         return (result, nil)
     }
 
-    private static func executeToolCall(
+    static func executeToolCall(
         name: String,
         argumentsJSON: String,
         agentId: UUID? = nil,
