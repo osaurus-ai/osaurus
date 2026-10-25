@@ -777,7 +777,7 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
-    private struct InferenceOptions {
+    struct InferenceOptions {
         let maxIterations: Int
         let wantsAgentTools: Bool
 
@@ -788,7 +788,7 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
-    private struct EnrichedInference {
+    struct EnrichedInference {
         var request: ChatCompletionRequest
         let tools: [Tool]?
         /// (key, prefix) for the memory block injected into this request's
@@ -1061,7 +1061,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Request Enrichment
 
-    private static func enrichRequest(
+    static func enrichRequest(
         _ request: ChatCompletionRequest,
         context: AgentContext?,
         options: InferenceOptions,
@@ -1128,7 +1128,7 @@ final class PluginHostContext: @unchecked Sendable {
         )
     }
 
-    private static func iterationRequest(
+    static func iterationRequest(
         from base: ChatCompletionRequest,
         messages: [ChatMessage],
         tools: [Tool]?
@@ -1303,7 +1303,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Merge a set of resolved tool specs into an inference request, replacing
     /// any existing spec with the same name, then sort into canonical order.
-    private static func applyResolvedTools(
+    static func applyResolvedTools(
         _ specs: [Tool],
         to inference: EnrichedInference
     ) async -> EnrichedInference {
