@@ -5,6 +5,11 @@ import Foundation
 /// lifecycle/indices are never replaced by synthetic transport events.
 enum RemoteResponsesPrivacyStream {
     static let maxPendingBytes = 1_048_576
+    struct PendingFrameLimitError: Error, LocalizedError {
+        var errorDescription: String? {
+            "Privacy restoration exceeded its bounded pending-frame buffer while waiting for a split placeholder. The stream was stopped without replay."
+        }
+    }
 
     static func wrap(_ upstream: AsyncThrowingStream<ResponsesGenerationEvent, Error>, map: RedactionMap?,
         pendingByteLimit: Int = maxPendingBytes
@@ -18,9 +23,18 @@ enum RemoteResponsesPrivacyStream {
                         try Task.checkCancellation()
                         for restored in try await state.consume(event) { continuation.yield(restored) }
                     }
-                    for restored in try await state.finish() { continuation.yield(restored) }
+                    for restored in await state.finish() { continuation.yield(restored) }
                     continuation.finish()
-                } catch { continuation.finish(throwing: error) }
+                } catch {
+                    // An upstream failure does not erase already received
+                    // frames. Flush literal unmatched suffixes on those same
+                    // frames, then preserve the original terminal error. The
+                    // over-budget path deliberately never drains its queue.
+                    if !(error is PendingFrameLimitError) {
+                        for restored in await state.finish() { continuation.yield(restored) }
+                    }
+                    continuation.finish(throwing: error)
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -42,6 +56,7 @@ enum RemoteResponsesPrivacyStream {
         var queued: [ResponsesGenerationEvent] = []
         var heldBytes = 0
         var currentKeys: [String: String] = [:]
+        var currentVisibleKey: String?
         init(map: RedactionMap, limit: Int) { self.map = map; self.limit = limit }
 
         func rail(_ key: String) async -> Rail {
@@ -75,6 +90,7 @@ enum RemoteResponsesPrivacyStream {
                     if let kind {
                         let key = "\(kind):\(index):\(part)"
                         currentKeys[kind] = key
+                        if kind == "text" || kind == "refusal" { currentVisibleKey = key }
                         let value = await rail(key)
                         if type.hasSuffix(".delta"), case .string(let delta) = object["delta"] {
                             object["delta"] = .string(await value.native.push(delta))
@@ -92,7 +108,7 @@ enum RemoteResponsesPrivacyStream {
                     event = .providerEvent(await PrivacyFilterPipeline.unscrubInboundJSON(.object(object), map: map))
                 } else { event = .providerEvent(await PrivacyFilterPipeline.unscrubInboundJSON(value, map: map)) }
             case .outputTextDelta(let delta):
-                let value = await rail(currentKeys["text"] ?? "text:portable:0")
+                let value = await rail(currentVisibleKey ?? "text:portable:0")
                 event = .outputTextDelta(await value.portable.push(delta)); portableRail = value
             case .reasoningDelta(let delta):
                 let value = await rail(currentKeys["reasoning"] ?? "reasoning:portable:0")
@@ -125,15 +141,12 @@ enum RemoteResponsesPrivacyStream {
                 return drainIfReady() + [event]
             }
             let index = queued.count
+            let bytes = Self.estimatedBytes(event)
+            guard bytes <= limit - heldBytes else { throw PendingFrameLimitError() }
             queued.append(event)
             rawRail?.rawIndex = index
             portableRail?.portableIndex = index
-            heldBytes += Self.estimatedBytes(event)
-            guard heldBytes <= limit else {
-                throw RemoteProviderServiceError.streamingError(
-                    "Privacy restoration exceeded its bounded pending-frame buffer while waiting for a split placeholder. The stream was stopped without replay."
-                )
-            }
+            heldBytes += bytes
             return []
         }
 
@@ -164,7 +177,7 @@ enum RemoteResponsesPrivacyStream {
             heldBytes = queued.reduce(0) { $0 + Self.estimatedBytes($1) }
         }
         private func flushAll() async { for rail in rails.values { await flush(rail) } }
-        func finish() async throws -> [ResponsesGenerationEvent] {
+        func finish() async -> [ResponsesGenerationEvent] {
             await flushAll()
             return drainIfReady()
         }

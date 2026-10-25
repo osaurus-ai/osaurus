@@ -61,6 +61,52 @@ struct ResponsesNativeProviderTests {
         #expect(value.tokenCount == nil && value.inputTokenCount == nil)
     }
 
+    @Test(arguments: ["delta", "done", "terminal"])
+    func actualRefusalIsVisibleExactlyOnceWithoutReplacingNativeItems(_ path: String) async throws {
+        let captured = Capture()
+        let stream = RemoteResponsesNativeStream { captured.add($0) }
+        let refusal = "I cannot help with that request."
+        let message: [String: Any] = ["type": "message", "id": "msg_refusal", "role": "assistant",
+            "status": "completed", "content": [["type": "refusal", "refusal": refusal, "future": true]]]
+        if path == "delta" {
+            _ = try stream.consume(json(["type": "response.refusal.delta", "output_index": 0,
+                "content_index": 0, "item_id": "msg_refusal", "delta": refusal]))
+        }
+        if path != "terminal" {
+            _ = try stream.consume(json(["type": "response.refusal.done", "output_index": 0,
+                "content_index": 0, "item_id": "msg_refusal", "refusal": refusal]))
+            _ = try stream.consume(json(["type": "response.output_item.done", "output_index": 0, "item": message]))
+        }
+        _ = try stream.consume(json(["type": "response.completed", "response": ["id": "resp_refusal",
+            "status": "completed", "output": [message]]]))
+        let events = captured.events.withLock { $0 }
+        let result = try await ResponsesGenerationResult.collect(AsyncThrowingStream { c in
+            events.forEach { c.yield($0) }; c.finish()
+        })
+        #expect(result.text == refusal, "A real refusal must not appear empty to shared retry classification")
+        #expect(result.completion.dispatchableFunctionCalls.isEmpty)
+        #expect(result.providerOutputItems.count == 1)
+        if case .object(let item) = result.providerOutputItems.first,
+            case .array(let content) = item["content"], case .object(let part) = content.first {
+            #expect(part["type"] == .string("refusal") && part["future"] == .bool(true))
+        } else { Issue.record("Expected unchanged native refusal Item") }
+        #expect(events.firstIndex { if case .providerEvent = $0 { return true }; return false }!
+            < events.firstIndex { if case .outputTextDelta = $0 { return true }; return false }!)
+    }
+
+    @Test func textAndRefusalRailsRemainIndependent() throws {
+        let captured = Capture()
+        let stream = RemoteResponsesNativeStream { captured.add($0) }
+        _ = try stream.consume(json(["type": "response.output_text.delta", "output_index": 0,
+            "content_index": 0, "delta": "Actual text. "]))
+        _ = try stream.consume(json(["type": "response.refusal.delta", "output_index": 0,
+            "content_index": 0, "delta": "Actual refusal."]))
+        let text = captured.events.withLock { $0 }.compactMap { event -> String? in
+            if case .outputTextDelta(let value) = event { return value }; return nil
+        }.joined()
+        #expect(text == "Actual text. Actual refusal.")
+    }
+
     @Test func unsupportedRouteClassifierNeverUsesModelAuthRateOrAmbiguousErrors() {
         let endpoint = URL(string: "https://example.test/v1/responses")!
         for (status, body) in [
@@ -174,6 +220,28 @@ struct ResponsesNativeProviderTests {
             Issue.record("Expected native stream error")
         } catch {}
         #expect(text == "partial")
+        #expect(ResponsesProviderURLProtocol.state.withLock { $0.requests.count } == 1)
+        await service.invalidateSession()
+    }
+
+    @Test func refusalOnlyResponseUsesOneWireRequestAndNonemptyPortableOutput() async throws {
+        let refusal = "Actual provider refusal."
+        let body = sse([
+            try json(["type": "response.refusal.delta", "output_index": 0, "content_index": 0, "delta": refusal]),
+            try json(["type": "response.completed", "response": ["id": "resp_refusal", "status": "completed",
+                "output": [["type": "message", "id": "msg_refusal", "role": "assistant", "status": "completed",
+                    "content": [["type": "refusal", "refusal": refusal]]]]]]),
+        ])
+        ResponsesProviderURLProtocol.state.withLock { $0 = .init(responses: [(200, body)]) }
+        let service = service()
+        let result = try await ChatExecutionContext.$voiceCallPrivacy.withValue(.off) {
+            let stream = try await service.streamResponses(messages: [.init(role: "user", content: "fixture")],
+                parameters: .init(temperature: nil, maxTokens: 64), stopSequences: [], tools: [], toolChoice: nil,
+                requestedModel: "wire-fixture/fixture")
+            return try await ResponsesGenerationResult.collect(stream, endAt: .streamEnd)
+        }
+        #expect(result.text == refusal)
+        #expect(result.completion.responseID == "resp_refusal")
         #expect(ResponsesProviderURLProtocol.state.withLock { $0.requests.count } == 1)
         await service.invalidateSession()
     }

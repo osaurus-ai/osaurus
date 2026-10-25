@@ -13,6 +13,7 @@ final class RemoteResponsesNativeStream: RemoteNativeStreamConsumer, @unchecked 
         var emittedItemIDs: Set<String> = []
         var emittedItemIndices: Set<Int> = []
         var textRails: Set<String> = []
+        var refusalRails: Set<String> = []
         var reasoningRails: Set<String> = []
         var calls: [Int: ResponsesFunctionCall] = [:]
     }
@@ -44,11 +45,16 @@ final class RemoteResponsesNativeStream: RemoteNativeStreamConsumer, @unchecked 
             case "response.output_text.delta":
                 state.textRails.insert(rail)
                 if let delta = event["delta"]?.string { yield(.outputTextDelta(delta)) }
+            case "response.refusal.delta":
+                state.refusalRails.insert(rail)
+                if let delta = event["delta"]?.string { yield(.outputTextDelta(delta)) }
             case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
                 state.reasoningRails.insert(rail)
                 if let delta = event["delta"]?.string { yield(.reasoningDelta(delta)) }
             case "response.output_text.done":
                 if state.textRails.insert(rail).inserted, let text = event["text"]?.string { yield(.outputTextDelta(text)) }
+            case "response.refusal.done":
+                if state.refusalRails.insert(rail).inserted, let text = event["refusal"]?.string { yield(.outputTextDelta(text)) }
             case "response.reasoning_summary_text.done", "response.reasoning_text.done":
                 if state.reasoningRails.insert(rail).inserted, let text = event["text"]?.string { yield(.reasoningDelta(text)) }
             case "response.output_item.added":
@@ -160,6 +166,9 @@ final class RemoteResponsesNativeStream: RemoteNativeStreamConsumer, @unchecked 
                 let rail = "\(index):\(part)"
                 if content.object?["type"]?.string == "output_text",
                     state.textRails.insert(rail).inserted, let text = content.object?["text"]?.string
+                { yield(.outputTextDelta(text)) }
+                if content.object?["type"]?.string == "refusal",
+                    state.refusalRails.insert(rail).inserted, let text = content.object?["refusal"]?.string
                 { yield(.outputTextDelta(text)) }
             }
         default: break

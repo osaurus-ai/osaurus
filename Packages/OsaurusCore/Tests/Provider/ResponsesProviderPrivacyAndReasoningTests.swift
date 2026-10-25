@@ -83,7 +83,77 @@ struct ResponsesProviderPrivacyAndReasoningTests {
         do {
             for try await _ in RemoteResponsesPrivacyStream.wrap(source, map: map, pendingByteLimit: 512) { count += 1 }
             Issue.record("Expected bounded restoration error")
-        } catch { #expect(count == 0) }
+        } catch {
+            #expect(error is RemoteResponsesPrivacyStream.PendingFrameLimitError)
+            #expect(count == 0)
+        }
+    }
+
+    private enum UpstreamFailure: Error { case transport }
+
+    @Test(arguments: [false, true])
+    func upstreamErrorOrCancellationFlushesReceivedFramesWithoutCompletion(_ cancelled: Bool) async throws {
+        let map = RedactionMap(conversationID: UUID())
+        _ = await map.intern("Eric", as: .person)
+        let source = AsyncThrowingStream<ResponsesGenerationEvent, Error> { c in
+            c.yield(raw("literal [", sequence: 17))
+            c.yield(.outputTextDelta("literal ["))
+            c.finish(throwing: cancelled ? CancellationError() : UpstreamFailure.transport)
+        }
+        var events: [ResponsesGenerationEvent] = []
+        do {
+            for try await event in RemoteResponsesPrivacyStream.wrap(source, map: map) { events.append(event) }
+            Issue.record("Expected original upstream terminal error")
+        } catch {
+            if cancelled { #expect(error is CancellationError) }
+            else { #expect(error is UpstreamFailure) }
+        }
+        #expect(events.count == 2, "No completion or transport-success event is invented")
+        if case .providerEvent(.object(let frame)) = events.first {
+            #expect(frame["sequence_number"] == .number(17))
+            #expect(frame["delta"] == .string("literal ["))
+        } else { Issue.record("Expected original native frame first") }
+        if case .outputTextDelta(let text) = events.last { #expect(text == "literal [") }
+        else { Issue.record("Expected matching portable frame") }
+    }
+
+    @Test func consumerCancellationTerminatesUpstreamInsteadOfReplaying() async throws {
+        let map = RedactionMap(conversationID: UUID())
+        let termination = AsyncStream<Void>.makeStream()
+        let source = AsyncThrowingStream<ResponsesGenerationEvent, Error> { c in
+            c.onTermination = { _ in termination.continuation.yield(()); termination.continuation.finish() }
+        }
+        let wrapped = RemoteResponsesPrivacyStream.wrap(source, map: map)
+        let consumer = Task { for try await _ in wrapped {} }
+        consumer.cancel()
+        var iterator = termination.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        _ = await consumer.result
+    }
+
+    @Test func refusalPlaceholdersUseTheirOwnPortableRailAndPreserveRawFrames() async throws {
+        let map = RedactionMap(conversationID: UUID())
+        let token = await map.intern("Eric", as: .person).token
+        let cut = token.index(token.startIndex, offsetBy: 4)
+        let first = String(token[..<cut]), second = String(token[cut...])
+        let source = stream([
+            raw("Prior text. ", sequence: 1), .outputTextDelta("Prior text. "),
+            raw(first, type: "response.refusal.delta", sequence: 2), .outputTextDelta(first),
+            raw(second, type: "response.refusal.delta", sequence: 3), .outputTextDelta(second),
+            .providerEvent(.object(["type": .string("response.refusal.done"), "refusal": .string(token),
+                "output_index": .number(0), "content_index": .number(0)])),
+        ])
+        var native = "", portable = "", sequences: [Int] = []
+        for try await event in RemoteResponsesPrivacyStream.wrap(source, map: map) {
+            if case .providerEvent(.object(let frame)) = event {
+                if case .string(let delta) = frame["delta"] { native += delta }
+                if case .number(let value) = frame["sequence_number"] { sequences.append(Int(value)) }
+                if case .string(let refusal) = frame["refusal"] { #expect(refusal == "Eric") }
+            }
+            if case .outputTextDelta(let text) = event { portable += text }
+        }
+        #expect(native == "Prior text. Eric" && portable == native)
+        #expect(sequences == [1, 2, 3])
     }
 
     @Test func realAnthropicThinkingAndSignatureSurviveTypedResultAndHistory() async throws {
