@@ -1852,6 +1852,62 @@ struct AgentTaskStateTests {
         #expect(state.nextStepBias() == nil, "the interleaved read reset the same-name run")
     }
 
+    // MARK: - Pending-job polling
+
+    private func pollResult(_ status: String) -> String {
+        ToolEnvelope.success(tool: "evals_job_status", text: #"{"job_id":"j1","status":"\#(status)","progress":0.4}"#)
+    }
+
+    /// Identical status polls on a job that is still running are waiting,
+    /// not a loop: neither the identical-call nor the dynamic-run nudge arms.
+    @Test func pendingJobPolls_doNotNudge() {
+        let state = AgentTaskState()
+        state.dynamicToolClassifier = { $0 == "evals_job_status" }
+        for _ in 1 ... 8 {
+            state.record(name: "evals_job_status", argsJSON: #"{"job_id":"j1"}"#, result: pollResult("running"))
+            #expect(state.nextStepBias() == nil)
+        }
+    }
+
+    /// Once the job reports a finished state, polling it again counts as usual.
+    @Test func finishedJobPolls_stillNudge() {
+        let state = AgentTaskState()
+        state.dynamicToolClassifier = { $0 == "evals_job_status" }
+        for _ in 1 ... 4 {
+            state.record(name: "evals_job_status", argsJSON: #"{"job_id":"j1"}"#, result: pollResult("completed"))
+        }
+        #expect(state.nextStepBias()?.contains("evals_job_status") == true)
+    }
+
+    /// Chat never sets `dynamicToolClassifier`, so the exemption must not
+    /// depend on it.
+    @Test func pendingJobPolls_doNotNudgeWithoutClassifier() {
+        let state = AgentTaskState()
+        for _ in 1 ... 4 {
+            state.record(name: "evals_job_status", argsJSON: #"{"job_id":"j1"}"#, result: pollResult("running"))
+        }
+        #expect(state.nextStepBias() == nil)
+    }
+
+    /// Exec output is arbitrary text, so a "running" status in it does not
+    /// exempt a repeated shell command.
+    @Test func pendingStatusInExecOutputStillNudges() {
+        let state = AgentTaskState()
+        for _ in 1 ... 3 {
+            state.record(name: "shell_run", argsJSON: #"{"command":"cat job.json"}"#, result: pollResult("running"))
+        }
+        #expect(state.nextStepBias() != nil)
+    }
+    }
+
+    @Test func reportsPendingJob_readsTextAndNestedJob() {
+        #expect(AgentTaskState.reportsPendingJob(["text": #"{"state":"QUEUED"}"#]))
+        #expect(AgentTaskState.reportsPendingJob(["job": ["status": "in_progress"]]))
+        #expect(!AgentTaskState.reportsPendingJob(["text": #"{"status":"failed"}"#]))
+        #expect(!AgentTaskState.reportsPendingJob(["text": "status: running"]))
+        #expect(!AgentTaskState.reportsPendingJob(nil))
+    }
+
     /// An identical-args repeat past `repeatedCallThreshold` gets the
     /// (stronger) identical-args notice, never both nudges for one call —
     /// the identical-args check returns first in `nextStepBias`.

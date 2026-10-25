@@ -256,6 +256,15 @@ public final class AgentTaskState {
     /// always executes.
     private static let dynamicToolRunThreshold = 4
 
+    /// Job states a status tool reports while its work is still in flight.
+    /// Polling one that answers with one of these is waiting, not a loop, so
+    /// it arms neither the identical-call nor the dynamic-run nudge (exec
+    /// tools excluded). A finished, failed, or unrecognized status counts as
+    /// usual.
+    private static let pendingJobStatuses: Set<String> = [
+        "running", "pending", "queued", "in_progress", "working", "processing", "started", "submitted",
+    ]
+
     /// Consecutive `invalid_args` rejections of ONE tool name (arguments
     /// ignored) before the argument-rejection notice fires. Every existing
     /// loop-breaker keys on identical arguments or on a same-name run of a
@@ -869,7 +878,10 @@ public final class AgentTaskState {
         // design (it may legitimately differ) — so count it, and once the
         // model has issued the same call `repeatedCallThreshold` times,
         // arm the bias nudge. Any different call disarms it.
-        if Self.readLikeTools.contains(name) {
+        // Exec output is arbitrary program text, so only structured tool
+        // results (MCP, plugin, built-in) may claim a pending job.
+        let pollsPendingJob = !Self.execLikeTools.contains(name) && Self.reportsPendingJob(successPayload)
+        if Self.readLikeTools.contains(name) || pollsPendingJob {
             repeatedCallName = nil
         } else {
             let count = (nonReadCallCounts[sig] ?? 0) + 1
@@ -905,7 +917,10 @@ public final class AgentTaskState {
         // interleaved different tool resets the run — consecutive varied
         // calls to ONE dynamic name are the stuck signal, alternating tools
         // are work. Advisory only; the call always executes.
-        if dynamicToolClassifier(name) {
+        if pollsPendingJob {
+            dynamicRunName = nil
+            dynamicRunCount = 0
+        } else if dynamicToolClassifier(name) {
             dynamicRunCount = (previousToolName == name) ? dynamicRunCount + 1 : 1
             dynamicRunName = dynamicRunCount >= Self.dynamicToolRunThreshold ? name : nil
         } else {
@@ -1117,6 +1132,28 @@ public final class AgentTaskState {
     }
 
     // MARK: - Classification
+
+    /// Whether a success payload reports a background job that is still in
+    /// flight: a JSON object (the payload itself, or MCP text under `text`)
+    /// whose top-level or `job` `status`/`state` is in `pendingJobStatuses`.
+    static func reportsPendingJob(_ payload: [String: Any]?) -> Bool {
+        guard let payload else { return false }
+        var object = payload
+        if let text = payload["text"] as? String,
+            text.first == "{",
+            let data = text.data(using: .utf8),
+            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            object = parsed
+        }
+        let candidates = [object, object["job"] as? [String: Any]].compactMap { $0 }
+        return candidates.contains { candidate in
+            ["status", "state"].contains { key in
+                guard let value = candidate[key] as? String else { return false }
+                return pendingJobStatuses.contains(value.lowercased())
+            }
+        }
+    }
 
     /// Classify a result envelope into a `ToolResultClass`. Pure function so
     /// it can be unit-tested independently of any loop.
