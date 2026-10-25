@@ -52,6 +52,37 @@ struct HandledGPUFailureReportTests {
         #expect(report.context["generated_tokens"] == nil)
     }
 
+    @Test func defaultSavedProfileDoesNotInventCustomCaps() {
+        let context = HandledGPUFailureReport.savedProfileContext(VMLXMemorySafetySettings())
+        #expect(context["mode"] as? String == "safe_auto")
+        #expect(context["slider"] as? Int == 2)
+        #expect(context["custom_physical_memory_fraction"] == nil)
+        #expect(context["custom_allocator_max_bytes"] == nil)
+        #expect(context["custom_default_max_kv_tokens"] == nil)
+        #expect(context["custom_max_concurrent_sequences"] == nil)
+    }
+
+    @Test func everyExplicitRAMOverrideIsRetainedWithoutResolvingNewLimits() {
+        var saved = VMLXMemorySafetySettings()
+        saved.mode = .strict
+        saved.keepModelInMemory = false
+        saved.failClosedWhenEstimateUnknown = true
+        saved.customPhysicalMemoryFraction = 0.2625
+        saved.customAllocatorCacheBytes = 67_108_864
+        saved.customDefaultMaxKVSize = 8192
+        saved.customMaxConcurrentSequences = 2
+        let context = HandledGPUFailureReport.savedProfileContext(saved)
+        #expect(context["mode"] as? String == "strict")
+        #expect(context["slider"] as? Int == 3)
+        #expect(context["keep_model_in_memory"] as? Bool == false)
+        #expect(context["fail_closed_when_estimate_unknown"] as? Bool == true)
+        #expect(context["custom_physical_memory_fraction"] as? Double == 0.2625)
+        #expect(context["custom_allocator_max_bytes"] as? UInt64 == 67_108_864)
+        #expect(context["custom_default_max_kv_tokens"] as? Int == 8192)
+        #expect(context["custom_max_concurrent_sequences"] as? Int == 2)
+        #expect(context["memory_limit_bytes"] == nil)
+    }
+
     @Test func eventKeepsSavedPolicySeparateFromObservedOccupancyAndLimits() throws {
         let report = try #require(HandledGPUFailureReport(
             failure: GenerationFailure(stage: .decoding, cause: signature),
@@ -59,6 +90,7 @@ struct HandledGPUFailureReportTests {
         let memory: [String: Any] = [
             "saved_profile": ["mode": "safe_auto", "slider": 2],
             "observed_after_engine_drain": [
+                "gpu_architecture": "applegpu_g17s",
                 "allocator_cache_limit_bytes": 8_589_934_592,
                 "mlx_cached_bytes": 134_217_728,
                 "phys_footprint_bytes": 38_000_000_000,
@@ -69,11 +101,12 @@ struct HandledGPUFailureReportTests {
         #expect(event.fingerprint == ["handled-metal-gpu-failure", "impacting-interactivity"])
         #expect(event.tags?["gpu.stage"] == "decoding")
         let snapshot = try #require(event.context?["gpu_memory_snapshot"] as? [String: Any])
-        let observed = try #require(snapshot["observed_after_engine_drain"] as? [String: Int])
-        #expect(observed["allocator_cache_limit_bytes"] == 8_589_934_592)
-        #expect(observed["mlx_cached_bytes"] == 134_217_728)
-        #expect(observed["phys_footprint_bytes"] == 38_000_000_000)
-        #expect(observed["rss_bytes"] == 37_000_000_000)
+        let observed = try #require(snapshot["observed_after_engine_drain"] as? [String: Any])
+        #expect(observed["gpu_architecture"] as? String == "applegpu_g17s")
+        #expect(observed["allocator_cache_limit_bytes"] as? Int == 8_589_934_592)
+        #expect(observed["mlx_cached_bytes"] as? Int == 134_217_728)
+        #expect(observed["phys_footprint_bytes"] as? Int == 38_000_000_000)
+        #expect(observed["rss_bytes"] as? Int == 37_000_000_000)
         #expect(JSONSerialization.isValidJSONObject(snapshot))
     }
 }

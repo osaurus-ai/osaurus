@@ -221,15 +221,12 @@ public final class CrashReportingService {
             "mlx_active_bytes": allocator.activeMemory,
             "mlx_cached_bytes": allocator.cacheMemory,
             "host_memory_pressure": SubagentMemoryPressure.sampled().rawValue,
+            "gpu_architecture": MLX.GPU.deviceInfo().architecture,
         ]
         if let footprint = ProcessMemoryProbe.currentPhysFootprintMB() {
             observed["phys_footprint_bytes"] = UInt64(footprint * 1024 * 1024)
         }
-        var savedProfile: [String: Any] = [
-            "mode": saved.mode.rawValue, "slider": saved.slider,
-            "keep_model_in_memory": saved.keepModelInMemory,
-        ]
-        if let cap = saved.customAllocatorCacheBytes { savedProfile["custom_allocator_max_bytes"] = cap }
+        let savedProfile = HandledGPUFailureReport.savedProfileContext(saved)
         // Serialize before crossing the queue: [String: Any] is not Sendable.
         // All values are the numeric/identifier allowlist constructed above.
         guard let data = try? JSONSerialization.data(withJSONObject: [

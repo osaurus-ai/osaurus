@@ -2828,6 +2828,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func memoryStatusJSONObject(_ status: MemoryStatus) -> [String: Any] {
         let allocator = MLX.Memory.snapshot()
         return [
+            "gpu_architecture": MLX.GPU.deviceInfo().architecture,
             "memory_limit": status.memoryLimit,
             "cache_limit": status.cacheLimit,
             "recommended_working_set_bytes": status.recommendedWorkingSetBytes as Any? ?? NSNull(),

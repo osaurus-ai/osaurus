@@ -39,4 +39,17 @@ struct HandledGPUFailureReport: Sendable, Equatable {
         if let generatedTokens { context["generated_tokens"] = generatedTokens }
         return context
     }
+
+    static func savedProfileContext(_ saved: VMLXMemorySafetySettings) -> [String: Any] {
+        var context: [String: Any] = [
+            "mode": saved.mode.rawValue, "slider": saved.slider,
+            "keep_model_in_memory": saved.keepModelInMemory,
+            "fail_closed_when_estimate_unknown": saved.failClosedWhenEstimateUnknown,
+        ]
+        if let value = saved.customPhysicalMemoryFraction { context["custom_physical_memory_fraction"] = value }
+        if let value = saved.customAllocatorCacheBytes { context["custom_allocator_max_bytes"] = value }
+        if let value = saved.customDefaultMaxKVSize { context["custom_default_max_kv_tokens"] = value }
+        if let value = saved.customMaxConcurrentSequences { context["custom_max_concurrent_sequences"] = value }
+        return context
+    }
 }

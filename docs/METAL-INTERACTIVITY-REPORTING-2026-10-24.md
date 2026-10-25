@@ -15,15 +15,19 @@ model reference. Canonical publisher--repository identifiers are retained;
 other local names/paths are hashed. Raw error text, prompts, generated output,
 and file paths are not copied into the report.
 
-Saved RAM settings are named separately from observed process-wide limits
+All explicit saved RAM overrides (physical fraction, allocator cap, KV cap,
+concurrency and fail-closed choice) are retained; absent overrides are not
+invented as limits. Saved settings are named separately from observed process-wide limits
 and occupancy. The snapshot is sampled after engine drain, with its own
 timestamp. It includes actual allocator/memory ceilings, MLX active/cached
-bytes, process physical footprint, RSS and current host memory pressure.
+bytes, process physical footprint, RSS, actual raw Metal architecture and
+current host memory pressure. The read-only memory-status API exposes the
+same architecture identifier so local diagnostics can verify it.
 These are neither the failed operation's peak nor proof of OOM, and the
 allocator ceiling is not presented as allocated memory. No policy, sampler,
 retry or GPU-reset behavior changes.
 
-Local validation: 44 focused tests across three suites pass, covering payload
+Local validation: 46 focused tests across three suites pass, covering payload
 classification/privacy, unavailable counts, distinct limits/occupancy/RSS/
 physical-footprint fields, once-only reporting with original-error transport
 and producer drain, plus existing crash-reporting lifecycle/consent behavior.
