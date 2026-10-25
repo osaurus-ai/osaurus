@@ -789,7 +789,7 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     struct EnrichedInference {
-        var request: ChatCompletionRequest
+        var request: ResponsesInferenceRequest
         var tools: [Tool]?
         /// (key, prefix) for the memory block injected into this request's
         /// latest user message, when the session ledger should record it.
@@ -890,7 +890,7 @@ final class PluginHostContext: @unchecked Sendable {
                 PluginInstructionsResolver.instructions(pluginId: pid, agentId: agentCtx?.agentId)
             }
             if let instructions {
-                SystemPromptComposer.appendSystemContent(instructions, into: &enriched.request.messages)
+                SystemPromptComposer.appendSystemContent(instructions, into: &enriched.request.input)
             }
         }
         // No silent Default-agent fallback: when the plugin has no chat-bound
@@ -928,7 +928,7 @@ final class PluginHostContext: @unchecked Sendable {
             budgetManager: budgetMgr,
             agentId: agentCtx?.agentId,
             executionMode: execMode,
-            contextId: enriched.request.session_id ?? UUID().uuidString
+            contextId: enriched.request.sessionID ?? UUID().uuidString
         )
     }
 
@@ -1068,7 +1068,7 @@ final class PluginHostContext: @unchecked Sendable {
         frozenUserPrefixes: [String: String] = [:]
     ) -> EnrichedInference {
         guard let ctx = context else {
-            return EnrichedInference(request: request, tools: request.tools)
+            return EnrichedInference(request: ResponsesInferenceRequest(chatCompletion: request), tools: request.tools)
         }
 
         var model = request.model
@@ -1105,12 +1105,12 @@ final class PluginHostContext: @unchecked Sendable {
         // Copy the complete external request at this boundary. Reconstructing
         // selected fields loses output-limit aliases, sampling and host-only
         // admission/residency controls before the canonical model step.
-        var enrichedWithRuntimeOptions = request
+        var enrichedWithRuntimeOptions = ResponsesInferenceRequest(chatCompletion: request)
         enrichedWithRuntimeOptions.model = model
-        enrichedWithRuntimeOptions.messages = messages
-        enrichedWithRuntimeOptions.temperature = request.temperature ?? ctx.temperature
+        enrichedWithRuntimeOptions.input = messages
+        enrichedWithRuntimeOptions.generation.temperature = request.temperature ?? ctx.temperature
         if request.resolvedMaxTokens == nil {
-            enrichedWithRuntimeOptions.max_tokens = ctx.maxTokens
+            enrichedWithRuntimeOptions.generation.maxOutputTokens = ctx.maxTokens
         }
         enrichedWithRuntimeOptions.tools = effectiveTools
         return EnrichedInference(
@@ -1121,14 +1121,14 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     static func iterationRequest(
-        from base: ChatCompletionRequest,
+        from base: ResponsesInferenceRequest,
         messages: [ChatMessage],
         tools: [Tool]?
-    ) -> ChatCompletionRequest {
+    ) -> ResponsesInferenceRequest {
         var request = base
-        request.messages = messages
+        request.input = messages
         request.tools = tools
-        request.isAgentRequest = base.isAgentRequest || tools?.isEmpty == false
+        request.context.isAgentRequest = base.context.isAgentRequest || tools?.isEmpty == false
         return request
     }
 
@@ -1203,7 +1203,7 @@ final class PluginHostContext: @unchecked Sendable {
         }
 
         // Auto mode (Design C): always-loaded hot set + session-loaded tools.
-        if let sid = inference.request.session_id {
+        if let sid = inference.request.sessionID {
             // Drop the cache if the (mode, toolMode) signature changed
             // since last turn — same rule as the chat send path.
             let liveFp = SessionToolState.fingerprint(
@@ -1260,7 +1260,7 @@ final class PluginHostContext: @unchecked Sendable {
         let builtInTools = await MainActor.run {
             ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
         }
-        if let sid = inference.request.session_id {
+        if let sid = inference.request.sessionID {
             let builtInNames = Set(builtInTools.map { $0.function.name })
             let fp = SessionToolState.fingerprint(
                 executionMode: executionMode,
@@ -1302,7 +1302,7 @@ final class PluginHostContext: @unchecked Sendable {
         let effectiveTools = tools.isEmpty ? nil : tools
         var resolved = inference
         resolved.request.tools = effectiveTools
-        resolved.request.isAgentRequest = inference.request.isAgentRequest || effectiveTools?.isEmpty == false
+        resolved.request.context.isAgentRequest = inference.request.context.isAgentRequest || effectiveTools?.isEmpty == false
         resolved.tools = effectiveTools
         return resolved
     }
@@ -1324,13 +1324,13 @@ final class PluginHostContext: @unchecked Sendable {
         let toolTokens = await MainActor.run {
             ToolRegistry.shared.totalEstimatedTokens(for: inf.tools ?? [])
         }
-        let sysChars = inf.request.messages.first(where: { $0.role == "system" })?.content?.count ?? 0
+        let sysChars = inf.request.input.first(where: { $0.role == "system" })?.content?.count ?? 0
 
         return AgentLoopBudget.makeBudgetManager(
             contextWindow: contextLength,
             systemPromptChars: sysChars,
             toolTokens: toolTokens,
-            maxResponseTokens: inf.request.max_tokens
+            maxResponseTokens: inf.request.generation.maxOutputTokens
         )
     }
 
@@ -1361,7 +1361,7 @@ final class PluginHostContext: @unchecked Sendable {
             // `session_id` composes their full schemas in.
             let newTools = await CapabilityLoadBuffer.shared.drain()
             guard !newTools.isEmpty else { return (result, nil) }
-            if let sid = prep.enriched.request.session_id {
+            if let sid = prep.enriched.request.sessionID {
                 recordSessionLoadedTools(
                     sessionId: sid,
                     names: newTools.map { $0.function.name }
@@ -1509,7 +1509,7 @@ final class PluginHostContext: @unchecked Sendable {
                 pluginId: pid,
                 activeAgentId: activeAgent
             )
-            var messages = prep.enriched.request.messages
+            var messages = prep.enriched.request.input
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
             // Frozen for the whole run (deferred-schema policy): the tool
@@ -1562,7 +1562,7 @@ final class PluginHostContext: @unchecked Sendable {
                         messages: effective,
                         tools: toolSpecs
                     )
-                    let response = try await prep.engine.completeChat(request: iterReq)
+                    let response = try await prep.engine.completeChat(request: iterReq.chatCompletionsCompatibilityRequest())
                     guard let choice = response.choices.first else {
                         throw PluginLoopAbort.noChoices
                     }
@@ -1689,7 +1689,7 @@ final class PluginHostContext: @unchecked Sendable {
                 Self.persistInference(
                     pluginId: pid,
                     agentId: prep.agentId,
-                    externalSessionKey: prep.enriched.request.session_id,
+                    externalSessionKey: prep.enriched.request.sessionID,
                     finalMessages: messages,
                     model: prep.enriched.request.model
                 )
@@ -1755,7 +1755,7 @@ final class PluginHostContext: @unchecked Sendable {
             Self.persistInference(
                 pluginId: pid,
                 agentId: prep.agentId,
-                externalSessionKey: prep.enriched.request.session_id,
+                externalSessionKey: prep.enriched.request.sessionID,
                 finalMessages: persistedMessages,
                 model: prep.enriched.request.model
             )
@@ -1857,7 +1857,7 @@ final class PluginHostContext: @unchecked Sendable {
                 activeAgentId: activeAgent
             )
             let cid = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
-            var messages = prep.enriched.request.messages
+            var messages = prep.enriched.request.input
             var lastContent = ""
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
@@ -1897,7 +1897,7 @@ final class PluginHostContext: @unchecked Sendable {
                 Self.persistStreamingInference(
                     pluginId: pid,
                     agentId: prep.agentId,
-                    externalSessionKey: prep.enriched.request.session_id,
+                    externalSessionKey: prep.enriched.request.sessionID,
                     priorMessages: messages,
                     assistantContent: assistantContent,
                     model: prep.enriched.request.model
@@ -1942,7 +1942,7 @@ final class PluginHostContext: @unchecked Sendable {
                         tools: toolSpecs
                     )
                     do {
-                        let stream = try await prep.engine.streamChat(request: iterReq)
+                        let stream = try await prep.engine.streamChat(request: iterReq.chatCompletionsCompatibilityRequest())
                         var iterContent = ""
                         var iterFinishReason = "stop"
 
