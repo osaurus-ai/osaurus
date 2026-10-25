@@ -1373,6 +1373,13 @@ struct MLXBatchAdapter {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
             }
+            // DeepSeek-V4.1: an explicit thinking-off request selects the chat rail
+            // even when an effort is also present (a profile default or a stale
+            // option must not reopen thinking). DSV4-0731 keeps effort precedence.
+            if disableThinking == true, ModelFamilyNames.isDSV41Family(modelName) {
+                context["enable_thinking"] = false
+                return context
+            }
             if let normalizedReasoningEffort {
                 if let effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort) {
                     switch effort {

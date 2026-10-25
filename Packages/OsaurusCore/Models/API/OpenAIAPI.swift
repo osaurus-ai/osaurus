@@ -874,6 +874,12 @@ struct ChatCompletionRequest: Codable, Sendable {
         case osaurus_session_id, osaurus_create_session, osaurus_run_id, osaurus_voice_call, osaurus_privacy
     }
 
+    /// vLLM / SGLang / vmlx-py carry template switches in `chat_template_kwargs`.
+    /// Decoded only (never forwarded); see `init(from:)` for which keys apply.
+    private enum TemplateKwargsCodingKeys: String, CodingKey {
+        case chat_template_kwargs
+    }
+
     func withModel(_ newModel: String) -> ChatCompletionRequest {
         var copy = ChatCompletionRequest(
             model: newModel,
@@ -1011,6 +1017,29 @@ extension ChatCompletionRequest {
         top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
         enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
         reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
+        // DeepSeek-V4.1: clients written for vmlx-py / vLLM switch thinking with
+        // `chat_template_kwargs.enable_thinking` (or DeepSeek's `thinking`) and
+        // the effort with `chat_template_kwargs.reasoning_effort`. Without this the
+        // kwargs were dropped and an explicit `false` still rendered the thinking
+        // rail. The top-level fields win when both are sent. Other families keep
+        // their request contract unchanged.
+        if ModelFamilyNames.isDSV41Family(model) {
+            let kwargsContainer = try decoder.container(keyedBy: TemplateKwargsCodingKeys.self)
+            if let kwargs = try? kwargsContainer.decodeIfPresent(
+                [String: JSONValue].self, forKey: .chat_template_kwargs)
+            {
+                if enable_thinking == nil {
+                    if case .bool(let enabled)? = kwargs["enable_thinking"] {
+                        enable_thinking = enabled
+                    } else if case .bool(let enabled)? = kwargs["thinking"] {
+                        enable_thinking = enabled
+                    }
+                }
+                if reasoning_effort == nil, case .string(let effort)? = kwargs["reasoning_effort"] {
+                    reasoning_effort = effort
+                }
+            }
+        }
         let osaurus = try decoder.container(keyedBy: OsaurusCodingKeys.self)
         osaurus_session_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_session_id)
         osaurus_create_session = try osaurus.decodeIfPresent(Bool.self, forKey: .osaurus_create_session)
