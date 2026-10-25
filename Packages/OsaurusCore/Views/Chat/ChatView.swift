@@ -875,6 +875,10 @@ final class ChatSession: ObservableObject {
     /// over the user's in-flight load). A manual pick outranks the agent
     /// default for as long as it remains a valid option.
     private var lastManualModelSelection: String?
+    /// A restored window can hydrate before its model reaches the picker.
+    /// Retain its choice across discovery without changing the agent default.
+    /// A later manual pick or a different conversation replaces this intent.
+    private var restoredWindowModelSelection: String?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
     /// Observer for `.modelOptionsChanged`: the paired phone stored a model
@@ -1235,6 +1239,7 @@ final class ChatSession: ObservableObject {
                     self.modelSwitchContinuityWarning = nil
                 }
                 self.lastManualModelSelection = model
+                self.restoredWindowModelSelection = nil
                 let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
                 // agent's own model. Don't write that pin into the LOCAL agent's
@@ -1787,6 +1792,10 @@ final class ChatSession: ObservableObject {
             newOptionIds.contains(manual)
         {
             newSelected = manual
+        } else if source == .chat, let restored = restoredWindowModelSelection,
+            newOptionIds.contains(restored)
+        {
+            newSelected = restored
         } else if let model = effectiveModel, newOptionIds.contains(model) {
             newSelected = model
         } else if let prev = selectedModel, newOptionIds.contains(prev) {
@@ -3087,6 +3096,8 @@ final class ChatSession: ObservableObject {
     func reset() {
         stashDraft()
         stop()
+        lastManualModelSelection = nil
+        restoredWindowModelSelection = nil
         turns.removeAll()
         input = ""
         pendingAttachments = []
@@ -3672,6 +3683,7 @@ final class ChatSession: ObservableObject {
         // fall back to the agent's preferred model. `isLoadingModel`
         // suppresses the auto-persist sink so a load doesn't look like
         // the user just picked a model.
+        lastManualModelSelection = nil
         restorePersistedModelSelection(data.selectedModel)
 
         // Folded so a chat written from raw messages before its tool results
@@ -3721,6 +3733,7 @@ final class ChatSession: ObservableObject {
     /// Restore only model selection after picker discovery, without loading a
     /// second copy of the transcript or resetting an attached window's draft.
     func restorePersistedModelSelection(_ savedModel: String?) {
+        restoredWindowModelSelection = source == .chat ? savedModel : nil
         if let savedModel, pickerItems.contains(where: { $0.id == savedModel }) {
             isLoadingModel = true
             selectedModel = savedModel
