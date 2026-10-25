@@ -119,7 +119,7 @@ struct ResponsesItemPrivacyTests {
         let opaque: JSONValue = .object([
             "type": .string("redacted_thinking"), "data": .string("opaque-alice@example.com"),
         ])
-        var message = ChatMessage(role: "assistant", content: nil)
+        var message = ChatMessage(role: "assistant", content: nil, tool_calls: nil, tool_call_id: nil)
         message.anthropic_thinking_blocks = [signed, opaque]
         let approved = await detection()
         #expect([message].scrubbableTexts().contains("Contact alice@example.com"))
