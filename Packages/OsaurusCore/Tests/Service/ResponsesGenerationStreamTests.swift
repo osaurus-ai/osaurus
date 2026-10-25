@@ -12,6 +12,7 @@ struct ResponsesGenerationStreamTests {
         var ended = false
         var failed = false
         var cancelledUpstream = false
+        var producerDrainWasCancelled: Bool?
 
         func append(_ event: ResponsesGenerationEvent) {
             switch event {
@@ -28,6 +29,7 @@ struct ResponsesGenerationStreamTests {
         }
         func end(failed: Bool = false) { ended = true; self.failed = failed }
         func cancel() { cancelledUpstream = true }
+        func drained(cancelled: Bool) { producerDrainWasCancelled = cancelled }
     }
 
     private actor Gate {
@@ -210,5 +212,30 @@ struct ResponsesGenerationStreamTests {
         #expect(try await waitFor { await observed.cancelledUpstream })
         #expect(await observed.completions.isEmpty)
         producer.finish()
+    }
+
+    @Test func consumerClosingAfterCompletionPreservesProducerDrain() async throws {
+        let (upstream, producer) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
+        let observed = Observation()
+        producer.onTermination = { termination in
+            if case .cancelled = termination { Task { await observed.cancel() } }
+        }
+        let consumer = consume(
+            upstream,
+            observed: observed,
+            drain: {
+                await observed.drained(cancelled: Task.isCancelled)
+            }
+        )
+        producer.yield(completion("stop"))
+        #expect(try await waitFor { await observed.completions.count == 1 })
+        // A UI/tool-loop consumer may end its task at logical completion while
+        // the cache-owning producer is still awaiting its final upstream EOF.
+        consumer.cancel()
+        await consumer.value
+        producer.finish()
+        #expect(try await waitFor { await observed.producerDrainWasCancelled != nil })
+        #expect(await observed.producerDrainWasCancelled == false)
+        #expect(await observed.cancelledUpstream == false)
     }
 }
