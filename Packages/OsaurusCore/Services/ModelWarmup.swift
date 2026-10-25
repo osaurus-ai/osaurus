@@ -66,6 +66,20 @@ public enum ModelWarmup {
     /// `false` when it was a coalesced no-op or the warm-up failed.
     @discardableResult
     public static func warmUp(modelId: String) async -> Bool {
+        // Local services only — warm-up never reaches out to remote providers.
+        await warmUp(
+            modelId: modelId,
+            engine: ChatEngine(
+                services: [FoundationModelService(), MLXService()],
+                installedModelsProvider: { MLXService.getAvailableModels() },
+                remoteServicesProvider: { [] }
+            )
+        )
+    }
+
+    /// Shared production path with an injected engine for lifecycle regression
+    /// tests. The public entry point always constructs a local-only engine.
+    static func warmUp(modelId: String, engine: any ResponsesEngineProtocol) async -> Bool {
         let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         guard claimSlot(trimmed) else { return false }
@@ -81,12 +95,6 @@ public enum ModelWarmup {
             generation: ResponsesGenerationOptions(temperature: 0.0, maxOutputTokens: 8)
         )
 
-        // Local services only — warm-up never reaches out to remote providers.
-        let engine = ChatEngine(
-            services: [FoundationModelService(), MLXService()],
-            installedModelsProvider: { MLXService.getAvailableModels() },
-            remoteServicesProvider: { [] }
-        )
         let startedAt = Date()
         log("warm-up start model=\(trimmed) (compiling kernels off the request path)")
         do {
