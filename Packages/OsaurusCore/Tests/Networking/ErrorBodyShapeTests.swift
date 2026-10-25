@@ -18,6 +18,23 @@ import Testing
 
 @Suite
 struct ErrorBodyShapeTests {
+    @Test func toolChoiceContractKeeps422AcrossWireFlavors() throws {
+        let error = ResponsesToolChoiceContract.failure("The named tool is not declared.")
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 422)
+        #expect(HTTPHandler.openAIErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.openResponsesErrorCode(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.anthropicErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.ollamaErrorType(for: error) == "invalid_request_error")
+        let body = HTTPHandler.errorBody(.ollama(type: HTTPHandler.ollamaErrorType(for: error)),
+            message: error.localizedDescription)
+        let object = try #require(decode(body))
+        #expect((object["error"] as? [String: Any])?["type"] as? String == "invalid_request_error")
+        #expect(object["done"] as? Bool == true)
+        let unrelated = NSError(domain: "OtherToolFailure", code: 422,
+            userInfo: [NSLocalizedDescriptionKey: error.localizedDescription])
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: unrelated).code == 500)
+    }
+
     @Test func nativeReasoningContractMappingDoesNotMatchErrorText() {
         let typed = K2HorizonTemplateContract.ContractError.unsupportedReasoningMode(expectedEffort: "high")
         let unrelated = NSError(

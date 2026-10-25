@@ -309,7 +309,13 @@ public struct OpenResponsesMessageItem: Codable, Sendable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        if let originalJSON { try originalJSON.encode(to: encoder); return }
+        if case .object(var fields) = originalJSON {
+            // Easy input messages may omit this discriminator. Normalize
+            // that omission while retaining every provider-authored field.
+            if fields["type"] == nil { fields["type"] = .string(type) }
+            try JSONValue.object(fields).encode(to: encoder)
+            return
+        }
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(type, forKey: .type)
         try values.encode(role, forKey: .role)
@@ -1380,6 +1386,23 @@ extension OpenResponsesRequest {
 }
 
 extension ResponsesGenerationResult {
+    /// Optional measurements stay sparse independently of the complete
+    /// token-count tuple required by the Chat Completions usage object.
+    var reportedGenerationMetrics: [String: JSONValue] {
+        var metrics: [String: JSONValue] = ["unclosed_reasoning": .bool(completion.unclosedReasoning)]
+        if let count = inputTokenCount { metrics["prompt_tokens"] = .number(Double(count)) }
+        if let count = completion.tokenCount { metrics["completion_tokens"] = .number(Double(count)) }
+        if let input = inputTokenCount, let output = completion.tokenCount {
+            metrics["total_tokens"] = .number(Double(input + output))
+        }
+        if let rate = completion.tokensPerSecond { metrics["tokens_per_second"] = .number(rate) }
+        if let rate = completion.promptTokensPerSecond { metrics["prefill_tokens_per_second"] = .number(rate) }
+        if let cached = completion.cachedInputTokenCount {
+            metrics["prompt_tokens_details"] = .object(["cached_tokens": .number(Double(cached))])
+        }
+        return metrics
+    }
+
     var reportedChatUsage: Usage? {
         guard let inputTokenCount, let output = completion.tokenCount else { return nil }
         return Usage(prompt_tokens: inputTokenCount, completion_tokens: output,
@@ -1425,6 +1448,8 @@ extension ResponsesGenerationResult {
         var object: [String: Any] = ["id": completion.responseID, "object": "chat.completion",
             "created": Int(Date().timeIntervalSince1970), "model": model,
             "choices": [["index": 0, "message": message, "finish_reason": finish]]]
+        object["generation_metrics"] = try JSONSerialization.jsonObject(
+            with: JSONEncoder.osaurusCanonical().encode(reportedGenerationMetrics))
         if let reportedChatUsage {
             object["usage"] = try JSONSerialization.jsonObject(with: JSONEncoder.osaurusCanonical().encode(reportedChatUsage))
         }

@@ -88,6 +88,19 @@ struct HTTPResponsesNativeTests {
         #expect(choice.function.name == "different")
     }
 
+    @Test func easyMessageNormalizationPreservesNativeFields() throws {
+        let original = Data(#"{"model":"fixture","input":[{"role":"assistant","id":"msg_original","phase":"commentary","content":[{"type":"output_text","text":"Checking."}],"future":{"nested":[1,"retain"]}}]}"#.utf8)
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: original)
+        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder.osaurusCanonical().encode(request)) as? [String: Any])
+        let item = try #require((object["input"] as? [[String: Any]])?.first)
+        #expect(item["type"] as? String == "message")
+        #expect(item["id"] as? String == "msg_original" && item["phase"] as? String == "commentary")
+        let before = try #require((JSONSerialization.jsonObject(with: original) as? [String: Any])?["input"] as? [[String: Any]])
+        var normalized = before[0]
+        normalized["type"] = "message"
+        #expect(NSDictionary(dictionary: item).isEqual(to: normalized))
+    }
+
     @Test func nativeOutputProjectionRetainsRawFieldsAndUnknownItemKinds() throws {
         let raw: [JSONValue] = [
             .object(["type": .string("message"), "id": .string("msg_native"), "phase": .string("final_answer"),
@@ -226,6 +239,74 @@ extension HTTPResponsesNativeTests {
         #expect(await engine.requests.count == 1)
         let request = try #require(await engine.requests.first)
         #expect(request.generation.temperature == nil && request.generation.topK == nil)
+    }
+
+    @Test(arguments: [true, false])
+    func chatNonstreamKeepsSparseMeasuredMetrics(_ reportsInput: Bool) async throws {
+        let completion = ResponsesGenerationCompletion(responseID: "resp_sparse", status: .completed,
+            functionCalls: [], tokenCount: 77, tokensPerSecond: 12.5, unclosedReasoning: false,
+            stopReason: "stop", promptTokensPerSecond: nil, mtp: nil,
+            inputTokenCount: reportsInput ? 257 : nil)
+        let engine = Engine([[.outputTextDelta("actual answer"), .responseCompleted(completion)]])
+        let server = try await startChatStreamingTestServer(with: engine)
+        defer { Task { await server.shutdown() } }
+        let (status, body) = try await post(server, path: "/chat/completions", body: ["model": "fixture",
+            "stream": false, "messages": [["role": "user", "content": "go"]]])
+        #expect(status == 200)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let metrics = try #require(object["generation_metrics"] as? [String: Any])
+        #expect(metrics["completion_tokens"] as? Int == 77)
+        #expect(metrics["tokens_per_second"] as? Double == 12.5)
+        let usage = object["usage"] as? [String: Any]
+        if reportsInput {
+            #expect(usage?["prompt_tokens"] as? Int == 257)
+            #expect(usage?["completion_tokens"] as? Int == 77)
+            #expect(usage?["total_tokens"] as? Int == 334)
+        } else {
+            #expect(usage == nil && metrics["prompt_tokens"] == nil && metrics["total_tokens"] == nil)
+        }
+        #expect(await engine.requests.count == 1)
+    }
+
+    @Test(arguments: [true, false])
+    func anthropicHTTPPreservesActualSignedAndRedactedOutput(_ streaming: Bool) async throws {
+        let signed: JSONValue = .object(["type": .string("thinking"), "thinking": .string("actual chain"),
+            "signature": .string("provider-signature"), "future": .bool(true)])
+        let redacted: JSONValue = .object(["type": .string("redacted_thinking"),
+            "data": .string("opaque-redacted"), "future": .string("retained")])
+        let engine = Engine([[.inputTokenCount(113), .reasoningDelta("actual chain"),
+            .anthropicThinkingBlock(signed), .anthropicThinkingBlock(redacted),
+            .outputTextDelta("actual answer"), terminal()]])
+        let server = try await startChatStreamingTestServer(with: engine)
+        defer { Task { await server.shutdown() } }
+        let (status, body) = try await post(server, path: "/messages", body: ["model": "fixture",
+            "max_tokens": 16, "stream": streaming, "messages": [["role": "user", "content": "go"]]])
+        #expect(status == 200)
+        if streaming {
+            let frames = try body.components(separatedBy: .newlines).filter { $0.hasPrefix("data: ") }
+                .map { try #require(JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8)) as? [String: Any]) }
+            let starts = frames.filter { $0["type"] as? String == "content_block_start" }
+            #expect(starts.compactMap { $0["index"] as? Int } == [0, 1, 2])
+            let hidden = try #require(starts.first { ($0["content_block"] as? [String: Any])?["type"] as? String == "redacted_thinking" })
+            let opaque = try #require(hidden["content_block"] as? [String: Any])
+            #expect(opaque["data"] as? String == "opaque-redacted" && opaque["future"] as? String == "retained")
+            let deltas = frames.compactMap { $0["delta"] as? [String: Any] }
+            #expect(deltas.compactMap { $0["thinking"] as? String }.joined() == "actual chain")
+            #expect(deltas.compactMap { $0["signature"] as? String } == ["provider-signature"])
+            #expect(deltas.compactMap { $0["text"] as? String }.joined() == "actual answer")
+            #expect(frames.filter { $0["type"] as? String == "message_stop" }.count == 1)
+            #expect(frames.filter { $0["type"] as? String == "content_block_stop" }.compactMap { $0["index"] as? Int } == [0, 1, 2])
+        } else {
+            let object = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+            let blocks = try #require(object["content"] as? [[String: Any]])
+            #expect(blocks.compactMap { $0["type"] as? String } == ["thinking", "redacted_thinking", "text"])
+            #expect(blocks[0]["thinking"] as? String == "actual chain" && blocks[0]["signature"] as? String == "provider-signature")
+            #expect(blocks[0]["future"] as? Bool == true)
+            #expect(blocks[1]["data"] as? String == "opaque-redacted" && blocks[1]["future"] as? String == "retained")
+            #expect(blocks[2]["text"] as? String == "actual answer")
+        }
+        #expect(!body.contains("\"error\""))
+        #expect(await engine.requests.count == 1)
     }
 
     @Test func unknownPreviousResponseFailsBeforeInference() async throws {

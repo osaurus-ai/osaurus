@@ -4530,7 +4530,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             clientTools: request.tools
         )
         let resolvedToolChoice: ToolChoiceOption? = {
-            guard let mergedTools, !mergedTools.isEmpty else { return nil }
+            guard let mergedTools, !mergedTools.isEmpty else { return request.tool_choice }
             return request.tool_choice ?? .auto
         }()
         return enriched.withContext(
@@ -14413,6 +14413,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return "http-\(UUID().uuidString)"
     }
 
+    /// Choice admission uses the same side-effect-free canonical gate as the
+    /// engine, before any streaming headers or inference slot are committed.
+    private func rejectInvalidHTTPToolChoice(
+        _ request: ResponsesInferenceRequest, head: HTTPRequestHead,
+        context: ChannelHandlerContext, flavor: HTTPErrorFlavor,
+        path: String, startTime: Date, userAgent: String?, requestBody: String?
+    ) -> Bool {
+        do { try ResponsesToolChoiceContract.preflight(request); return false }
+        catch {
+            let status = Self.localRuntimeHTTPStatus(for: error)
+            sendResponse(context: context, version: head.version, status: status,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + stateRef.value.corsHeaders,
+                body: Self.errorBody(flavor, message: error.localizedDescription))
+            logRequest(method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
+                responseStatus: Int(status.code), startTime: startTime, model: request.model,
+                finishReason: .error, errorMessage: error.localizedDescription)
+            return true
+        }
+    }
+
     private func handleChatCompletions(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -14485,6 +14505,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+
+        if rejectInvalidHTTPToolChoice(ResponsesInferenceRequest(chatCompletion: req), head: head,
+            context: context, flavor: .openai(type: "invalid_request_error"), path: "/chat/completions",
+            startTime: startTime, userAgent: userAgent, requestBody: requestBodyString) { return }
 
         let accept = head.headers.first(name: "Accept") ?? ""
         let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
@@ -14704,6 +14728,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let finish = Self.openResponsesFinishReason(completion).rawValue
                     let includeUsage = req.stream_options?.include_usage == true
                     let usage = response.reportedChatUsage
+                    let generationMetrics = response.reportedGenerationMetrics
                     if let count = response.inputTokenCount { httpTrace.set("http_prompt_tokens", count) }
                     if let count = completion.tokenCount { httpTrace.set("http_completion_tokens", count) }
                     if !calls.isEmpty { markSemanticDeltaIfConnected(); httpTrace.markFirstSemanticDelta("tool_calls") }
@@ -14714,6 +14739,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 writer: writerBound.value, model: model, responseId: responseId, created: created, context: ctx.value)
                         }
                         writerBound.value.writeFinishWithReason(finish, model: model, responseId: responseId, created: created, context: ctx.value)
+                        if includeUsage {
+                            writerBound.value.writeGenerationMetrics(generationMetrics, model: model,
+                                responseId: responseId, created: created, context: ctx.value)
+                        }
                         if includeUsage, let usage {
                             writerBound.value.writeUsageChunk(promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
                                 tokensPerSecond: usage.tokens_per_second, model: model, responseId: responseId, created: created, context: ctx.value)
@@ -14998,6 +15027,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         decodedReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
         let req = decodedReq
+
+        if rejectInvalidHTTPToolChoice(ResponsesInferenceRequest(chatCompletion: req), head: head,
+            context: context, flavor: .ollama(type: "invalid_request_error"), path: "/chat",
+            startTime: startTime, userAgent: userAgent, requestBody: requestBodyString) { return }
 
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
@@ -16927,6 +16960,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        if rejectInvalidHTTPToolChoice(internalReq, head: head, context: context,
+            flavor: .anthropic(errorType: "invalid_request_error"), path: "/messages",
+            startTime: startTime, userAgent: userAgent, requestBody: requestBodyString) { return }
+
         // Generate response ID
         let messageId = Self.shortId(prefix: "msg_")
         let model = anthropicReq.model
@@ -17595,6 +17632,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
             return
         }
+
+        if rejectInvalidHTTPToolChoice(internalReq, head: head, context: context,
+            flavor: .openResponses(code: "invalid_request_error"), path: "/responses",
+            startTime: startTime, userAgent: userAgent, requestBody: requestBodyString) { return }
 
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false

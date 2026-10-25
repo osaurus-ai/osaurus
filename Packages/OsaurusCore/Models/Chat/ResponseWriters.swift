@@ -564,6 +564,24 @@ final class SSEResponseWriter: ResponseWriter {
         writeSSEChunk(chunk, context: context)
     }
 
+    /// Osaurus extension for measurements that do not form a complete
+    /// protocol usage tuple. No missing count or rate is synthesized.
+    func writeGenerationMetrics(
+        _ metrics: [String: JSONValue], model: String, responseId: String,
+        created: Int, context: ChannelHandlerContext
+    ) {
+        struct Chunk: Encodable {
+            let id: String
+            let object = "chat.completion.chunk"
+            let created: Int
+            let model: String
+            let choices: [StreamChoice] = []
+            let generation_metrics: [String: JSONValue]
+        }
+        writeSSEChunk(Chunk(id: responseId, created: created, model: model,
+            generation_metrics: metrics), context: context)
+    }
+
     /// Emit the `osaurus_artifacts` extension chunk of a hosted shared-agent
     /// run (empty `choices`; see `RemoteRunArtifacts`).
     func writeArtifactsChunk(
@@ -1223,6 +1241,8 @@ final class OpenResponsesSSEWriter {
     private var responseId: String = ""
     private var model: String = ""
     private var createdAt: Int = 0
+    private var proxyingProviderEvents = false
+    private var hasProviderResponseSnapshot = false
     private var inputTokens: Int?
     private var outputTokens: Int?
     private var tokensPerSecond: Double?
@@ -1609,6 +1629,22 @@ final class OpenResponsesSSEWriter {
             throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
                 userInfo: [NSLocalizedDescriptionKey: "Native Responses event is missing its type."])
         }
+        proxyingProviderEvents = true
+        func integer(_ value: JSONValue?) -> Int? {
+            guard case .number(let number) = value, number.isFinite, number >= 0,
+                number < Double(Int.max), number.rounded(.towardZero) == number else { return nil }
+            return Int(number)
+        }
+        if let sequence = integer(fields["sequence_number"]) { sequenceNumber = max(sequenceNumber, sequence) }
+        if case .string(let id) = fields["response_id"], !id.isEmpty { responseId = id }
+        if case .object(let response) = fields["response"] {
+            if case .string(let id) = response["id"], !id.isEmpty { responseId = id }
+            if case .string(let name) = response["model"] { model = name }
+            if let timestamp = integer(response["created_at"]) { createdAt = timestamp }
+            if !responseId.isEmpty, !model.isEmpty, integer(response["created_at"]) != nil {
+                hasProviderResponseSnapshot = true
+            }
+        }
         writeSSEEvent(type, payload: value, context: context)
     }
 
@@ -1629,6 +1665,11 @@ final class OpenResponsesSSEWriter {
     }
 
     func writeErrorFromThrown(_ error: Error, context: ChannelHandlerContext) {
+        if proxyingProviderEvents, responseId.isEmpty,
+            let actualID = (error as NSError).userInfo["response_id"] as? String,
+            !actualID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            responseId = actualID
+        }
         if let pfError = error as? PrivacyFilterPipelineError {
             writeStructuredOpenResponsesError(
                 message: pfError.localizedDescription,
@@ -1649,6 +1690,22 @@ final class OpenResponsesSSEWriter {
         code: String,
         context: ChannelHandlerContext
     ) {
+        if proxyingProviderEvents && !hasProviderResponseSnapshot {
+            // An early upstream failure may never supply a complete response
+            // snapshot. Emit the protocol error event, carrying only known
+            // identity rather than inventing a failed response object.
+            struct Event: Encodable {
+                let type = "error"
+                let sequence_number: Int
+                let code: String
+                let message: String
+                let param: JSONValue = .null
+                let response_id: String?
+            }
+            writeSSEEvent("error", payload: Event(sequence_number: nextSequenceNumber(), code: code,
+                message: message, response_id: responseId.isEmpty ? nil : responseId), context: context)
+            return
+        }
         let response = OpenResponsesResponse(
             id: responseId,
             createdAt: createdAt,

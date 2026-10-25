@@ -31,6 +31,8 @@ extension HTTPHandler {
         /// `{"error":{"type":"error","code":"<code>","message":"..."}}` —
         /// the OpenAI Responses API shape.
         case openResponses(code: String)
+        /// Existing Ollama-compatible Osaurus error envelope and terminal bit.
+        case ollama(type: String)
     }
 
     /// Build the JSON body string for `flavor`. Pure: returns the body
@@ -47,6 +49,8 @@ extension HTTPHandler {
         case .openResponses(let code):
             return
                 #"{"error":{"type":"error","code":"\#(code)","message":"\#(escaped)"}}"#
+        case .ollama(let type):
+            return #"{"error":{"message":"\#(escaped)","type":"\#(type)"},"done":true}"#
         }
     }
 
@@ -75,7 +79,7 @@ extension HTTPHandler {
             return .badRequest
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
-            return .badRequest
+            return .unprocessableEntity
         }
         return .internalServerError
     }

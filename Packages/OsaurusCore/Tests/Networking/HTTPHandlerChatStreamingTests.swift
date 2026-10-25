@@ -676,8 +676,18 @@ struct HTTPHandlerChatStreamingTests {
         #expect(status == 200)
         #expect(body.contains("\"tool_calls\""))
         #expect(body.contains("\"function\":{\"name\":\"get_weather\""))
-        #expect(body.contains("\\\"count\\\":7"))
-        #expect(!body.contains("\\\"count\\\":\\\"7\\\""))
+        let chunks = try body.components(separatedBy: .newlines)
+            .filter { $0.hasPrefix("data: ") && $0 != "data: [DONE]" }
+            .map { try #require(JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8)) as? [String: Any]) }
+        let calls = chunks.flatMap { $0["choices"] as? [[String: Any]] ?? [] }
+            .compactMap { $0["delta"] as? [String: Any] }
+            .flatMap { $0["tool_calls"] as? [[String: Any]] ?? [] }
+        #expect(calls.allSatisfy { $0["index"] as? Int == 0 })
+        let arguments = calls.compactMap { ($0["function"] as? [String: Any])?["arguments"] as? String }.joined()
+        #expect(arguments == #"{"city":"SF","count":"7"}"#)
+        let decoded = try #require(JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any])
+        #expect(decoded["count"] as? String == "7")
+        #expect(decoded["count"] as? Int == nil)
         #expect(body.contains("\"finish_reason\":\"tool_calls\""))
     }
     @Test func sse_path_emits_reasoning_content_field() async throws {
@@ -741,12 +751,15 @@ struct HTTPHandlerChatStreamingTests {
         #expect(!body.contains("\u{FFFE}"))
     }
 
-    @Test func sse_path_uses_engine_stats_for_usage_chunk() async throws {
+    @Test(arguments: [true, false])
+    func sse_path_uses_engine_stats_for_usage_chunk(_ reportsInput: Bool) async throws {
         struct StatsEngine: ChatEngineProtocol {
+            let reportsInput: Bool
             func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    if reportsInput { continuation.yield(StreamingInputTokenHint.encode(257)) }
                     continuation.yield("hello")
                     continuation.yield(
                         StreamingStatsHint.encode(
@@ -763,7 +776,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startChatStreamingTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine(reportsInput: reportsInput))
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -783,8 +796,22 @@ struct HTTPHandlerChatStreamingTests {
         let body = String(decoding: data, as: UTF8.self)
         #expect(status == 200)
         #expect(body.contains("\"content\":\"hello\""))
-        #expect(body.contains("\"completion_tokens\":77"))
-        #expect(body.contains("\"tokens_per_second\":12.5"))
+        let chunks = try body.components(separatedBy: .newlines)
+            .filter { $0.hasPrefix("data: ") && $0 != "data: [DONE]" }
+            .map { try #require(JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8)) as? [String: Any]) }
+        let usage = chunks.compactMap { $0["usage"] as? [String: Any] }
+        let metrics = try #require(chunks.compactMap { $0["generation_metrics"] as? [String: Any] }.first)
+        #expect(metrics["completion_tokens"] as? Int == 77)
+        #expect(metrics["tokens_per_second"] as? Double == 12.5)
+        #expect(usage.count == (reportsInput ? 1 : 0))
+        if reportsInput {
+            #expect(usage.first?["prompt_tokens"] as? Int == 257)
+            #expect(usage.first?["completion_tokens"] as? Int == 77)
+            #expect(usage.first?["total_tokens"] as? Int == 334)
+            #expect(usage.first?["tokens_per_second"] as? Double == 12.5)
+        } else {
+            #expect(metrics["prompt_tokens"] == nil && metrics["total_tokens"] == nil)
+        }
         #expect(body.contains("\"finish_reason\":\"length\""))
         #expect(!body.contains("\u{FFFE}"))
     }
