@@ -1,6 +1,42 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Checking Keychain…" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Checking Keychain…" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Checking Keychain…" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Checking Keychain…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在检查钥匙串…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在檢查鑰匙圈…" } }
+      }
+    },
+    "Osaurus is still reading the saved credentials for this provider." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Osaurus is still reading the saved credentials for this provider." } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Osaurus is still reading the saved credentials for this provider." } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Osaurus is still reading the saved credentials for this provider." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Osaurus 仍在读取此提供方已保存的凭据。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Osaurus 仍在讀取此提供者已儲存的憑證。" } }
+      }
+    },
+    "Credentials not saved yet" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Credentials not saved yet" } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Credentials not saved yet" } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Credentials not saved yet" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "凭据尚未保存" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "憑證尚未儲存" } }
+      }
+    },
+    "The Keychain has not responded for %@. Try saving again in a few minutes." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "needs_review", "value" : "The Keychain has not responded for %@. Try saving again in a few minutes." } },
+        "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "The Keychain has not responded for %@. Try saving again in a few minutes." } },
+        "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "The Keychain has not responded for %@. Try saving again in a few minutes." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "钥匙串尚未响应 %@ 的请求。请过几分钟后再试一次保存。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "鑰匙圈尚未回應 %@ 的請求。請過幾分鐘後再試一次儲存。" } }
+      }
+    },
     "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size without a free-space cap. This is a maximum cache size, not reserved space. Saving updates loaded models without unloading them; a lower cap applies on the next cache write." : {
       "localizations" : {
         "de" : {

@@ -332,12 +332,7 @@ enum Keychain {
         var query = baseQuery(service: service, account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query.merge(
-            [
-                kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-                kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-            ]
-        ) { _, new in new }
+        query.merge(KeychainQueryHelpers.nonInteractiveQueryOptions()) { _, new in new }
 
         // Ledger entry (main thread only): `SecItemCopyMatching` is a
         // securityd XPC round-trip that has stalled the main thread for
@@ -380,9 +375,8 @@ enum Keychain {
             kSecAttrService as String: service,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
+        query.merge(KeychainQueryHelpers.nonInteractiveQueryOptions()) { _, new in new }
         if returnData { query[kSecReturnData as String] = true }
 
         let (status, result) = backend.copyMatching(query)

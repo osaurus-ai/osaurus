@@ -2053,6 +2053,9 @@ extension ModelManager {
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
+    /// Upper bound for `awaitLocalModelsCacheReadyForDispatch`.
+    private static nonisolated let localModelsDispatchWaitLimit: TimeInterval = 60
+    nonisolated(unsafe) static var localModelsDispatchWaitLimitOverrideForTests: TimeInterval?
     nonisolated(unsafe) static var localModelsScanFinishedForTests: (@Sendable () -> Void)?
     nonisolated(unsafe) static var localModelsDispatchWaitingForTests: (@Sendable () -> Void)?
 
@@ -2094,17 +2097,29 @@ extension ModelManager {
     /// not treat the ordinary 10-second UI protection timeout as an
     /// authoritative empty catalog. It is used only when a request must
     /// validate an already-persisted explicit model option before generation.
+    ///
+    /// Bounded by `localModelsDispatchWaitLimit`, far above a normal scan, so a
+    /// scan stuck on a slow or unreachable volume cannot hold every send
+    /// forever (#3109). Past the limit the turn proceeds on a cold cache, which
+    /// at worst skips a saved Thinking choice for that one turn.
     nonisolated static func awaitLocalModelsCacheReadyForDispatch() async {
         if isLocalModelsCacheWarm { return }
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
+                let limit = localModelsDispatchWaitLimitOverrideForTests ?? localModelsDispatchWaitLimit
+                let deadline = Date().addingTimeInterval(limit)
                 localModelsCacheCondition.lock()
                 while cachedLocalModels == nil {
                     if !localModelsScanInFlight {
                         startLocalModelsScanLocked()
                     }
                     localModelsDispatchWaitingForTests?()
-                    localModelsCacheCondition.wait()
+                    if !localModelsCacheCondition.wait(until: deadline) {
+                        discoveryLog.warning(
+                            "Local model scan still running after \(limit, privacy: .public)s; dispatching on a cold cache"
+                        )
+                        break
+                    }
                 }
                 localModelsCacheCondition.unlock()
                 continuation.resume()
