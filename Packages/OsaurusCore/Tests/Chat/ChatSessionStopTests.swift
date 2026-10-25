@@ -63,7 +63,7 @@ struct ChatSessionStopTests {
             await sendTask.value
             await engine.finishAnswer()
             let assistantContents = session.turns.filter { $0.role == .assistant }.map(\.content)
-            #expect(assistantContents.allSatisfy(\.isEmpty), "Actual assistant contents after Stop: \(assistantContents)")
+            #expect(assistantContents.allSatisfy { $0.isEmpty }, "Actual assistant contents after Stop: \(assistantContents)")
             #expect(session.lastStreamError == nil)
             #expect(session.turns.last?.terminalStopReason == "cancelled")
             #expect(!session.isSendActiveForComposer)
