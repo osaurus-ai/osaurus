@@ -4652,7 +4652,9 @@ struct RemoteChatRequestEncodingTests {
                         assertNonWhitespace(textBlock.text)
                     case .toolResult(let result):
                         assertNonWhitespace(result.content?.plainText ?? "")
-                    case .toolUse, .image:
+                    case .toolUse, .image, .thinking, .redactedThinking:
+                        // Opaque/signed reasoning is not a text/tool-result
+                        // payload. Its dedicated continuity tests own it.
                         break
                     }
                 }
