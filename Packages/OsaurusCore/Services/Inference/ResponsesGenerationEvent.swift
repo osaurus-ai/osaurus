@@ -32,6 +32,20 @@ enum ResponsesGenerationEvent: Sendable {
     /// A cache/cleanup failure after logical completion must stay observable,
     /// without replacing the already delivered response with a second terminal.
     case drainFailed(String)
+
+    /// First-output timing is driven by actual generated content, reasoning
+    /// or tool syntax. Prefill/accounting/lifecycle metadata is not a token.
+    var isGeneratedOutput: Bool {
+        switch self {
+        case .outputTextDelta(let text), .reasoningDelta(let text), .toolEnvelopeDelta(let text),
+            .functionNamePreview(let text), .functionArgumentsPreview(let text):
+            return !text.isEmpty
+        case .functionCallAdded(let call):
+            return !call.name.isEmpty || !call.arguments.isEmpty
+        default:
+            return false
+        }
+    }
 }
 
 struct ResponsesFunctionCall: Sendable {
