@@ -12,6 +12,7 @@ struct ResponsesGenerationAccumulator: Sendable {
     var inputTokens: Int?
     var items: [JSONValue] = []
     var reasoningItem: StreamingReasoningItemHint.Item?
+    var anthropicThinkingBlocks: [JSONValue] = []
     var billing: RouterBillingSummary?
     var artifacts: [RemoteRunArtifact] = []
     var traces: [StreamingAgentToolHint.Trace] = []
@@ -33,7 +34,8 @@ struct ResponsesGenerationAccumulator: Sendable {
             agentToolTraces: traces,
             remoteToolCompletions: toolsDone,
             compatibilityMetadata: metadata,
-            drainStatus: drainStatus
+            drainStatus: drainStatus,
+            anthropicThinkingBlocks: anthropicThinkingBlocks
         )
     }
 
@@ -49,6 +51,9 @@ struct ResponsesGenerationAccumulator: Sendable {
         case .providerOutputItem(let item):
             guard completion == nil else { throw CollectionError.outputAfterCompletion }
             items.append(item)
+        case .anthropicThinkingBlock(let block):
+            guard completion == nil else { throw CollectionError.outputAfterCompletion }
+            anthropicThinkingBlocks.append(block)
         case .reasoningItem(let item):
             guard completion == nil else { throw CollectionError.outputAfterCompletion }
             reasoningItem = item

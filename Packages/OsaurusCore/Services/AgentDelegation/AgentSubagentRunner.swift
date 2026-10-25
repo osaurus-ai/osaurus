@@ -146,6 +146,7 @@ enum AgentSubagentRunner {
         /// input-token or completion event. `nil` when the provider reported neither.
         var promptTokens: Int?
         var providerOutputItems: [JSONValue] = []
+        var anthropicThinkingBlocks: [JSONValue] = []
         var reasoningItemID: String?
         var reasoningEncrypted: String?
         var stopReason: String?
@@ -334,7 +335,8 @@ enum AgentSubagentRunner {
                             reasoning_item_id: outcome.reasoningItemID,
                             reasoning_encrypted: outcome.reasoningEncrypted,
                             responses_output_items: outcome.providerOutputItems.isEmpty
-                                ? nil : outcome.providerOutputItems
+                                ? nil : outcome.providerOutputItems,
+                            anthropic_thinking_blocks: outcome.anthropicThinkingBlocks.isEmpty ? nil : outcome.anthropicThinkingBlocks
                         )
                     )
                     return .toolCalls(
@@ -553,6 +555,9 @@ enum AgentSubagentRunner {
                         }
                         onProgress?(outcome.completionTokens, outcome.tokensPerSecond)
                         if !outcome.toolCalls.isEmpty { break responseLoop }
+                        continue
+                    case .anthropicThinkingBlock(let block):
+                        outcome.anthropicThinkingBlocks.append(block)
                         continue
                     case .providerOutputItem(let item):
                         outcome.providerOutputItems.append(item)

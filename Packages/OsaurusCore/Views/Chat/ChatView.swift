@@ -2485,13 +2485,17 @@ final class ChatSession: ObservableObject {
         if isLastTurn,
             turn.contentIsBlank,
             turn.thinkingIsBlank,
-            turn.toolCalls == nil
+            turn.toolCalls == nil,
+            turn.responsesOutputItems.isEmpty,
+            turn.anthropicThinkingBlocks.isEmpty
         {
             return nil
         }
         if turn.contentIsBlank,
             turn.thinkingIsBlank,
-            (turn.toolCalls == nil || turn.toolCalls!.isEmpty)
+            (turn.toolCalls == nil || turn.toolCalls!.isEmpty),
+            turn.responsesOutputItems.isEmpty,
+            turn.anthropicThinkingBlocks.isEmpty
         {
             return nil
         }
@@ -2505,7 +2509,8 @@ final class ChatSession: ObservableObject {
             reasoning_item_id: turn.reasoningItemId,
             reasoning_encrypted: turn.reasoningEncrypted,
             responses_output_items: turn.responsesOutputItems.isEmpty
-                ? nil : turn.responsesOutputItems
+                ? nil : turn.responsesOutputItems,
+            anthropic_thinking_blocks: turn.anthropicThinkingBlocks.isEmpty ? nil : turn.anthropicThinkingBlocks
         )
     }
 
@@ -5272,7 +5277,7 @@ final class ChatSession: ObservableObject {
                 }
                 if receivedCompletion {
                     switch event {
-                    case .outputTextDelta, .reasoningDelta, .providerOutputItem, .reasoningItem:
+                    case .outputTextDelta, .reasoningDelta, .providerOutputItem, .reasoningItem, .anthropicThinkingBlock:
                         throw ResponsesGenerationResult.CollectionError.outputAfterCompletion
                     default: break
                     }
@@ -5446,6 +5451,10 @@ final class ChatSession: ObservableObject {
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).
+                if case .anthropicThinkingBlock(let block) = event {
+                    currentTurn.anthropicThinkingBlocks.append(block)
+                    continue
+                }
                 if case .reasoningItem(let reasoningItem) = event {
                     uiReasoningItemCount += 1
                     currentTurn.reasoningItemId = reasoningItem.id

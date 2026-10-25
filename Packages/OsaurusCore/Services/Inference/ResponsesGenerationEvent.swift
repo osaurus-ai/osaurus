@@ -19,6 +19,8 @@ enum ResponsesGenerationEvent: Sendable {
     case providerEvent(JSONValue)
     case providerOutputItem(JSONValue)
     case reasoningItem(StreamingReasoningItemHint.Item)
+    /// Provider-tagged signed/redacted reasoning. Never a Responses Item.
+    case anthropicThinkingBlock(JSONValue)
     case billing(RouterBillingSummary)
     case artifacts([RemoteRunArtifact])
     case agentTool(StreamingAgentToolHint.Trace)

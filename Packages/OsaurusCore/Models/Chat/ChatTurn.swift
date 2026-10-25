@@ -320,6 +320,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// the flattened ChatTurn fields cannot represent (notably assistant
     /// commentary/final phase and future typed item fields).
     var responsesOutputItems: [JSONValue] = []
+    /// Exact provider-tagged signed/redacted Anthropic blocks for history.
+    var anthropicThinkingBlocks: [JSONValue] = []
     /// Provider-reported prompt usage for this assistant response, including
     /// the subset served from OpenAI's prompt cache when available.
     var inputTokenCount: Int? = nil
@@ -714,6 +716,7 @@ extension ChatTurn {
         let toolCallId: String?
         var injectedContextPrefix: String? = nil
         var modelContextExcluded: Bool? = nil
+        var anthropicThinkingBlocks: [JSONValue]? = nil
     }
 
     /// Converts this turn to a persistable representation
@@ -727,7 +730,8 @@ extension ChatTurn {
             toolResults: toolResults.isEmpty ? nil : toolResults,
             toolCallId: toolCallId,
             injectedContextPrefix: injectedContextPrefix,
-            modelContextExcluded: modelContextExcluded ? true : nil
+            modelContextExcluded: modelContextExcluded ? true : nil,
+            anthropicThinkingBlocks: anthropicThinkingBlocks.isEmpty ? nil : anthropicThinkingBlocks
         )
     }
 
@@ -750,6 +754,7 @@ extension ChatTurn {
         turn.toolCallId = p.toolCallId
         turn.injectedContextPrefix = p.injectedContextPrefix
         turn.modelContextExcluded = p.modelContextExcluded ?? false
+        turn.anthropicThinkingBlocks = p.anthropicThinkingBlocks ?? []
 
         return turn
     }

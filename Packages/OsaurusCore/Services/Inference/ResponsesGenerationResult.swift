@@ -35,6 +35,7 @@ struct ResponsesGenerationResult: Sendable {
     let remoteToolCompletions: [StreamingToolHint.ToolCallDone]
     let compatibilityMetadata: [String]
     let drainStatus: DrainStatus
+    var anthropicThinkingBlocks: [JSONValue] = []
 
     /// Rendering input for the next model step. Preserve native reasoning,
     /// original provider Items and IDs; an incomplete response is not silently
@@ -61,7 +62,8 @@ struct ResponsesGenerationResult: Sendable {
             reasoning_content: reasoning.isEmpty ? nil : reasoning,
             reasoning_item_id: reasoningItem?.id,
             reasoning_encrypted: reasoningItem?.encryptedContent,
-            responses_output_items: providerOutputItems.isEmpty ? nil : providerOutputItems
+            responses_output_items: providerOutputItems.isEmpty ? nil : providerOutputItems,
+            anthropic_thinking_blocks: anthropicThinkingBlocks.isEmpty ? nil : anthropicThinkingBlocks
         )
     }
 
