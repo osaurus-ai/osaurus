@@ -85,12 +85,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.chatHistory())
-            try openConnection()
             do {
+                try openConnection()
                 try runMigrations()
                 setOpenFlag(true)
                 didOpenNow = true
             } catch {
+                // Report initial connection/key/pragma failures as well as
+                // migration failures so the recovery UI can offer Retry.
                 // Don't leave a live, half-migrated connection: `db` is set by
                 // `openConnection()`, and a non-nil `db` makes every later
                 // `open()` no-op-succeed (`guard db == nil`), running the app
