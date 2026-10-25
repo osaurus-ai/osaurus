@@ -638,6 +638,8 @@ public actor ModelRuntime {
     /// long-lived app must not retain up to the full RAM-admission budget after
     /// the request ends.
     private var admittedAllocatorWindows = GenerationAllocatorWindows()
+    private static let traceAllocatorWindows =
+        ProcessInfo.processInfo.environment["OSAURUS_ALLOCATOR_WINDOW_TRACE"] == "1"
 
     /// Last request source (chat UI / HTTP API / plugin / P2P) that generated
     /// against each resident model. Read by the chat-window-close path so it
@@ -3119,6 +3121,11 @@ public actor ModelRuntime {
         guard usesAdmittedCeiling else { return nil }
         let window = admittedAllocatorWindows.begin()
         Memory.cacheLimit = generationAllocatorCacheLimit(holder: holder, requestStrategy: requestStrategy)
+        if Self.traceAllocatorWindows {
+            genLog.info(
+                "allocator_window begin id=\(window.traceID, privacy: .public) active=\(self.admittedAllocatorWindows.activeWindowCount) memory_limit=\(Memory.memoryLimit) cache_limit=\(Memory.cacheLimit)"
+            )
+        }
         return window
     }
 
@@ -3144,7 +3151,14 @@ public actor ModelRuntime {
     }
 
     private func finishGenerationAllocatorWindowIfNeeded(_ window: GenerationAllocatorWindows.Window?) {
-        guard admittedAllocatorWindows.end(window) else { return }
+        let activeBefore = admittedAllocatorWindows.activeWindowCount
+        let returnsBuffers = admittedAllocatorWindows.end(window)
+        if Self.traceAllocatorWindows {
+            genLog.info(
+                "allocator_window end id=\(window?.traceID ?? "none", privacy: .public) active_before=\(activeBefore) active_after=\(self.admittedAllocatorWindows.activeWindowCount) returns_buffers=\(returnsBuffers) memory_limit=\(Memory.memoryLimit) cache_limit=\(Memory.cacheLimit)"
+            )
+        }
+        guard returnsBuffers else { return }
         // Every producer has reached its engine-owned terminal fence before
         // this wrapper completes. Drain once more, return only freed buffers,
         // then restore the persistent user-visible ceiling. Resident weights,
@@ -3152,6 +3166,11 @@ public actor ModelRuntime {
         Stream.gpu.synchronize()
         Memory.clearCache()
         Memory.cacheLimit = mlxCacheLimit()
+        if Self.traceAllocatorWindows {
+            genLog.info(
+                "allocator_window returned id=\(window?.traceID ?? "none", privacy: .public) memory_limit=\(Memory.memoryLimit) cache_limit=\(Memory.cacheLimit) cached_bytes=\(Memory.cacheMemory)"
+            )
+        }
     }
 
     /// Flexible-mode resident-weights soft cap. Also read by

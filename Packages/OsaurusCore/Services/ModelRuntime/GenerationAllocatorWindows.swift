@@ -5,9 +5,11 @@ import Foundation
 struct GenerationAllocatorWindows {
     struct Window: Hashable, Sendable {
         private let id = UUID()
+        var traceID: String { id.uuidString }
     }
 
     private var active: Set<Window> = []
+    var activeWindowCount: Int { active.count }
 
     mutating func begin() -> Window {
         let window = Window()
