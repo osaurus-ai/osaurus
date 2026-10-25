@@ -44,6 +44,24 @@ struct AgentLoopRubricTranscriptTests {
         }
     }
 
+    @Test func successfulWarmupEvidenceRemainsExplicitlyRetainableWithoutRubric() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let previous = EvalTranscriptStore.directory
+        EvalTranscriptStore.configure(directory: directory)
+        defer {
+            EvalTranscriptStore.configure(directory: previous)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let transcript = AgentLoopTranscript(toolCalls: [], finalText: "original warmup answer", iterations: 1,
+            exit: "finalResponse", systemPrompt: "system", toolSchemaNames: [], error: nil)
+        let report = EvalCaseReport(id: "warmup.success", label: "fixture", domain: "agent_loop",
+            outcome: .passed, notes: [], modelId: "injected", latencyMs: 1)
+        _ = EvalRunner.persistAgentLoopTranscript(transcript, for: report, query: "warmup", includeSuccessful: true)
+        let file = directory.appendingPathComponent("warmup.success.json")
+        let stored = try JSONDecoder().decode(EvalCaseTranscript.self, from: Data(contentsOf: file))
+        #expect(stored.finalText == transcript.finalText && stored.outcome == "passed")
+    }
+
     @Test func rubricRetentionStillRequiresExplicitTranscriptOptIn() throws {
         let previous = EvalTranscriptStore.directory
         EvalTranscriptStore.configure(directory: nil)

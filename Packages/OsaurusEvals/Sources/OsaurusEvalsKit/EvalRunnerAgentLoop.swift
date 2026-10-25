@@ -792,7 +792,8 @@ extension EvalRunner {
         _ transcript: AgentLoopTranscript,
         for report: EvalCaseReport,
         query: String,
-        expectations: EvalCase.AgentLoopExpectations
+        expectations: EvalCase.AgentLoopExpectations? = nil,
+        includeSuccessful: Bool = false
     ) -> EvalCaseReport {
         EvalTranscriptStore.persistIfEnabled(
             EvalCaseTranscript(
@@ -839,9 +840,10 @@ extension EvalRunner {
                     )
                 },
                 error: transcript.error
-            ), includeSuccessful: expectations.spawnSummaries != nil
-                || expectations.spawnWave != nil
-                || !(expectations.rubric?.isEmpty ?? true)
+            ), includeSuccessful: includeSuccessful
+                || expectations?.spawnSummaries != nil
+                || expectations?.spawnWave != nil
+                || !(expectations?.rubric?.isEmpty ?? true)
         )
         return report
     }
