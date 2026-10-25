@@ -875,7 +875,9 @@ enum PrivacyFilterPipeline {
         let mapping = Dictionary(approved.filter { $0.approved }.map { ($0.original, $0.placeholder.token) }, uniquingKeysWith: { _, last in last })
         let order = mapping.keys.sorted { $0.count > $1.count }
         if messages.contains(where: {
-            ResponsesItemPayload.signedThinkingWouldChange($0.anthropic_thinking_blocks ?? [], mapping: mapping, order: order)
+            ResponsesItemPayload.signedThinkingWouldChange(
+                ($0.responses_output_items ?? []) + ($0.anthropic_thinking_blocks ?? []), mapping: mapping, order: order
+            )
         }) { throw PrivacyFilterPipelineError.signedReasoningRedactionUnsupported }
         return messages.applyingScrub(approved: approved)
     }

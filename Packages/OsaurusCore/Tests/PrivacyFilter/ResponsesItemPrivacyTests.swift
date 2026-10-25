@@ -166,4 +166,39 @@ struct ResponsesItemPrivacyTests {
         #expect(text == original)
     }
 
+
+    @Test func rawAndNestedSignedStateAlsoRefusesCarryOverRedaction() async throws {
+        let signed: JSONValue = .object([
+            "type": .string("thinking"), "thinking": .string("Contact alice@example.com"),
+            "signature": .string("actual-signature"),
+        ])
+        let nested: JSONValue = .object([
+            "type": .string("response.completed"),
+            "response": .object(["object": .string("response"), "output": .array([signed])]),
+        ])
+        let approved = await detection()
+        for item in [signed, nested] {
+            let message = ChatMessage(role: "assistant", content: nil, tool_calls: nil, tool_call_id: nil,
+                responses_output_items: [item])
+            #expect(throws: PrivacyFilterPipelineError.signedReasoningRedactionUnsupported) {
+                try PrivacyFilterPipeline.scrubOutboundMessages([message], approved: [approved])
+            }
+        }
+    }
+
+    @Test func unrelatedRedactionPreservesArgumentBytesAndEscapes() async throws {
+        let arguments = #"{ "z" : "unaffected\u0040example.com", "a" : 3 }"#
+        let raw: JSONValue = .object([
+            "type": .string("function_call"), "id": .string("fc_stable"), "call_id": .string("call_stable"),
+            "name": .string("fixture"), "arguments": .string(arguments),
+        ])
+        let before = [ChatMessage(role: "assistant", content: "Contact alice@example.com",
+            tool_calls: [.init(id: "call_stable", type: "function", function: .init(name: "fixture", arguments: arguments))],
+            tool_call_id: nil, responses_output_items: [raw])]
+        let after = before.applyingScrub(approved: [await detection()])
+        #expect(after.first?.tool_calls?.first?.function.arguments == arguments)
+        #expect(after.first?.responses_output_items == [raw])
+        #expect(after.first?.content == "Contact [EMAIL_1]")
+    }
+
 }

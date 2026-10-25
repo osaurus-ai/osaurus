@@ -1946,6 +1946,10 @@ final class PluginHostContext: @unchecked Sendable {
                     ]))
                 }
                 messages += commit.messages
+                // A guarded-only batch never calls executeTool/onDedupedResult.
+                // Its narration belongs to the committed assistant snapshot,
+                // not the next model step's final visible answer.
+                lastContent = ""
             }
 
             // Terminal envelope stashed by the modelStep hook (natural finish,

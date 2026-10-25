@@ -388,6 +388,9 @@ extension ChatMessage {
             return substitute(raw, mapping: mapping, order: order)
         }
         let scrubbed = scrubJSONValue(value, mapping: mapping, order: order)
+        // A privacy map on another field must not rewrite unaffected argument
+        // bytes and break the next turn's exact template/prefix match.
+        if (value as? NSObject)?.isEqual(scrubbed) == true { return raw }
         guard
             let outData = try? JSONSerialization.data(
                 withJSONObject: scrubbed,
@@ -451,12 +454,25 @@ enum ResponsesItemPayload {
     }
 
     static func signedThinkingWouldChange(_ items: [JSONValue], mapping: [String: String], order: [String]) -> Bool {
-        items.contains { item in
-            guard case .object(let fields) = item, fields["type"] == .string("thinking"),
-                case .string(let signature) = fields["signature"], !signature.isEmpty,
-                case .string(let text) = fields["thinking"] else { return false }
-            return ChatMessage.substitute(text, mapping: mapping, order: order) != text
+        func containsChange(_ value: JSONValue) -> Bool {
+            switch value {
+            case .object(let fields):
+                if fields["type"] == .string("redacted_thinking") { return false }
+                if fields["type"] == .string("thinking"),
+                    case .string(let signature) = fields["signature"], !signature.isEmpty {
+                    let changed = transform(value, root: true, scanning: true) { text, arguments in
+                        arguments
+                            ? ChatMessage.substituteJSONArguments(text, mapping: mapping, order: order)
+                            : ChatMessage.substitute(text, mapping: mapping, order: order)
+                    }
+                    if changed != value { return true }
+                }
+                return fields.values.contains(where: containsChange)
+            case .array(let values): return values.contains(where: containsChange)
+            default: return false
+            }
         }
+        return items.contains(where: containsChange)
     }
 
     static func applyingScrub(_ items: [JSONValue], mapping: [String: String], order: [String]) -> [JSONValue] {
