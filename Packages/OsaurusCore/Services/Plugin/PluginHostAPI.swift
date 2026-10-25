@@ -1577,6 +1577,7 @@ final class PluginHostContext: @unchecked Sendable {
             // completion carries no executable tool calls (or the iteration
             // budget says to stop executing).
             var finalResponse: ResponsesGenerationResult?
+            var batchHistory = ResponsesToolBatchHistory()
             // Set when a successful `complete`/`clarify` intercept ends the
             // run (`endRun` → driver `.endedBySurface`), so the terminal
             // handler below can build the matching envelope. Parity with
@@ -1613,7 +1614,7 @@ final class PluginHostContext: @unchecked Sendable {
                         response, toolsWereOffered: toolSpecs?.isEmpty == false
                     )
                     if case .toolCalls = step {
-                        messages.append(SecretArgumentScrubber.recordedAssistantMessage(
+                        try batchHistory.begin(SecretArgumentScrubber.recordedAssistantMessage(
                             try response.completedAssistantInput()
                         ))
                     }
@@ -1623,9 +1624,7 @@ final class PluginHostContext: @unchecked Sendable {
                     // Dedupe a still-fresh re-read: replay the exact held
                     // envelope instead of re-running the read. The assistant
                     // message with the tool_calls is already in history.
-                    messages.append(
-                        ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
-                    )
+                    batchHistory.record(callID: callId, result: held)
                 },
                 executeTool: { inv, callId in
                     let processed = await Self.processToolCall(
@@ -1634,16 +1633,14 @@ final class PluginHostContext: @unchecked Sendable {
                         callId: callId,
                             prep: prep
                     )
-                    // assistantMessage from processToolCall is unused here
-                    // because choice.message already represents the full
-                    // assistant turn for this iteration.
+                    // Stage results until the whole model batch can be
+                    // committed in its original call order.
                     if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
-                    messages.append(processed.toolMessage)
+                    batchHistory.record(callID: callId, result: processed.result)
                     toolCallsExecuted.append(processed.toolCallExecuted)
                     // Agent-loop intercepts: a successful `complete`/`clarify`
-                    // ends the run cleanly instead of riding to the iteration
-                    // cap. The tool turn is already in `messages` (above), so
-                    // history stays paired.
+                    // ends the run cleanly. The terminal handler commits this
+                    // result and explicit unstarted outcomes before persistence.
                     if AgentToolLoop.isSuccessfulIntercept(
                         toolName: inv.toolName,
                         result: processed.result
@@ -1652,6 +1649,9 @@ final class PluginHostContext: @unchecked Sendable {
                         return AgentLoopToolExecution(result: processed.result, endRun: true)
                     }
                     return AgentLoopToolExecution(result: processed.result)
+                },
+                onBatchComplete: { outcomes in
+                    if let commit = batchHistory.complete(outcomes) { messages += commit.messages }
                 }
             )
 
@@ -1669,7 +1669,21 @@ final class PluginHostContext: @unchecked Sendable {
                 )
                 exit = runResult.exit
             } catch {
+                if let commit = batchHistory.finish(runExit: "inference_error") { messages += commit.messages }
+                Self.persistInference(
+                    pluginId: pid, agentId: prep.agentId,
+                    externalSessionKey: prep.enriched.request.sessionID,
+                    finalMessages: messages, model: prep.enriched.request.model
+                )
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+            }
+            if let commit = batchHistory.finish(runExit: String(describing: exit)) { messages += commit.messages }
+            if exit != .finalResponse && exit != .endedBySurface {
+                Self.persistInference(
+                    pluginId: pid, agentId: prep.agentId,
+                    externalSessionKey: prep.enriched.request.sessionID,
+                    finalMessages: messages, model: prep.enriched.request.model
+                )
             }
 
             // Even fully-compacted history can't fit the window — the
@@ -1905,9 +1919,33 @@ final class PluginHostContext: @unchecked Sendable {
             // usage block, and so the last `usage` delta the plugin sees
             // is also reflected in the aggregated return value.
             var lastUsage: [String: Any]?
+            var batchHistory = ResponsesToolBatchHistory()
+            var emittedResultIDs: Set<String> = []
+            var emittedCallIDs: Set<String> = []
+            var interceptedTerminal: (text: String, finishReason: String)?
 
             let emit: ([String: Any]) -> Void = { payload in
                 Self.emitChunk(payload, callback: onChunk, userData: userData)
+            }
+
+            // A single commit includes guarded and unstarted calls as well
+            // as actual execution results. Stream each result once.
+            let appendCommit: (ResponsesToolBatchHistory.Commit?) -> Void = { commit in
+                guard let commit else { return }
+                for call in commit.assistant.tool_calls ?? [] where !emittedCallIDs.contains(call.id) {
+                    emittedCallIDs.insert(call.id)
+                    emit(Self.chunkPayload(id: cid, delta: ["tool_calls": [[
+                        "id": call.id,
+                        "function": ["name": call.function.name, "arguments": call.function.arguments],
+                    ]]], finishReason: "tool_calls"))
+                }
+                for row in commit.results {
+                    guard let id = row.tool_call_id, emittedResultIDs.insert(id).inserted else { continue }
+                    emit(Self.chunkPayload(id: cid, delta: [
+                        "role": "tool", "tool_call_id": id, "content": row.content ?? "",
+                    ]))
+                }
+                messages += commit.messages
             }
 
             // Terminal envelope stashed by the modelStep hook (natural finish,
@@ -1998,9 +2036,11 @@ final class PluginHostContext: @unchecked Sendable {
                         response, toolsWereOffered: toolSpecs?.isEmpty == false
                     )
                     if case .toolCalls = step {
-                        messages.append(SecretArgumentScrubber.recordedAssistantMessage(
+                        try batchHistory.begin(SecretArgumentScrubber.recordedAssistantMessage(
                             try response.completedAssistantInput()
                         ))
+                        emittedResultIDs.removeAll(keepingCapacity: true)
+                        emittedCallIDs.removeAll(keepingCapacity: true)
                         return step
                     }
                     if case .finalResponse = step {
@@ -2034,21 +2074,20 @@ final class PluginHostContext: @unchecked Sendable {
                             ]
                         ]
                     ]
-                    emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
+                    if emittedCallIDs.insert(callId).inserted {
+                        emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
+                    }
                 },
                 onDedupedResult: { inv, callId, held in
                     // Dedupe a still-fresh re-read: replay the exact held
                     // envelope instead of re-running the read. The complete
                     // secret-safe assistant batch is already in history.
-                    emit(
-                        Self.chunkPayload(
-                            id: cid,
-                            delta: ["role": "tool", "tool_call_id": callId, "content": held]
-                        )
-                    )
-                    messages.append(
-                        ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
-                    )
+                    batchHistory.record(callID: callId, result: held)
+                    if emittedResultIDs.insert(callId).inserted {
+                        emit(Self.chunkPayload(id: cid, delta: [
+                            "role": "tool", "tool_call_id": callId, "content": held,
+                        ]))
+                    }
                     lastContent = ""
                 },
                 executeTool: { inv, callId in
@@ -2060,22 +2099,16 @@ final class PluginHostContext: @unchecked Sendable {
                     )
                     if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
 
-                    emit(
-                        Self.chunkPayload(
-                            id: cid,
-                            delta: [
-                                "role": "tool", "tool_call_id": callId, "content": processed.result,
-                            ]
-                        )
-                    )
+                    if emittedResultIDs.insert(callId).inserted {
+                        emit(Self.chunkPayload(id: cid, delta: [
+                            "role": "tool", "tool_call_id": callId, "content": processed.result,
+                        ]))
+                    }
 
                     toolCallsExecuted.append(processed.toolCallExecuted)
-                    messages.append(processed.toolMessage)
-                    // Only the FIRST invocation in the batch consumes the
-                    // streamed assistant prose — subsequent calls in the same
-                    // completion share the same response, so we clear
-                    // lastContent after the first tool to avoid duplicating
-                    // prose into every assistant tool-call message.
+                    batchHistory.record(callID: callId, result: processed.result)
+                    // The staged assistant batch owns its original prose.
+                    // Subsequent final content starts a fresh visible buffer.
                     lastContent = ""
                     // Agent-loop intercepts: a successful `complete`/`clarify`
                     // ends the run cleanly (`endRun` → `.endedBySurface`)
@@ -2091,25 +2124,12 @@ final class PluginHostContext: @unchecked Sendable {
                             isComplete
                             ? (CompleteTool.parseSummary(from: inv.jsonArguments) ?? "Task completed.")
                             : (ClarifyTool.parse(argumentsJSON: inv.jsonArguments)?.question ?? "")
-                        if !text.isEmpty {
-                            emit(Self.chunkPayload(id: cid, delta: ["content": text]))
-                        }
-                        let finishReason = isComplete ? "stop" : "clarify"
-                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: finishReason))
-                        persistPartial(text)
-                        terminalEnvelope = Self.buildStreamResult(
-                            id: cid,
-                            model: prep.enriched.request.model,
-                            content: text,
-                            toolCallsExecuted: toolCallsExecuted,
-                            sharedArtifacts: sharedArtifacts,
-                            usage: lastUsage,
-                            finishReason: finishReason
-                        )
+                        interceptedTerminal = (text, isComplete ? "stop" : "clarify")
                         return AgentLoopToolExecution(result: processed.result, endRun: true)
                     }
                     return AgentLoopToolExecution(result: processed.result)
-                }
+                },
+                onBatchComplete: { outcomes in appendCommit(batchHistory.complete(outcomes)) }
             )
 
             let exit: AgentToolLoop.Exit
@@ -2126,6 +2146,7 @@ final class PluginHostContext: @unchecked Sendable {
                 )
                 exit = runResult.exit
             } catch {
+                appendCommit(batchHistory.finish(runExit: "inference_error"))
                 if let envelope = terminalEnvelope { return envelope }
                 if isCancelled(streamId) {
                     emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
@@ -2139,6 +2160,20 @@ final class PluginHostContext: @unchecked Sendable {
                 emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "error"))
                 persistPartial(lastContent)
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+            }
+
+            appendCommit(batchHistory.finish(runExit: String(describing: exit)))
+            if exit == .endedBySurface, let terminal = interceptedTerminal {
+                if !terminal.text.isEmpty {
+                    emit(Self.chunkPayload(id: cid, delta: ["content": terminal.text]))
+                }
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: terminal.finishReason))
+                persistPartial(terminal.text)
+                return Self.buildStreamResult(
+                    id: cid, model: prep.enriched.request.model, content: terminal.text,
+                    toolCallsExecuted: toolCallsExecuted, sharedArtifacts: sharedArtifacts,
+                    usage: lastUsage, finishReason: terminal.finishReason
+                )
             }
 
             if exit == .overBudget {
@@ -2219,11 +2254,8 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Inference Helpers
 
-    /// Outcome of executing a single model-emitted tool call. Shared between
-    /// `complete` (non-streaming, walks each item in `choice.message.tool_calls`)
-    /// and `complete_stream` (each `ServiceToolInvocation`) so the per-call
-    /// behaviour — execute, post-process, append assistant + tool messages —
-    /// stays in sync between the two paths.
+    /// Actual execution/post-processing shared by both plugin entrypoints.
+    /// Ordered batch history is committed separately from this per-call work.
     private struct ToolCallProcessing {
         let result: String
         let toolMessage: ChatMessage
@@ -2232,7 +2264,7 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     /// Execute one call and produce its result message. The model-step hook
-    /// records the complete, secret-safe assistant batch once before dispatch.
+    /// stages the complete, secret-safe assistant batch before dispatch.
     ///
     /// Execution receives the original `argumentsJSON`. The assistant
     /// tool-call message that re-enters multi-turn history uses the

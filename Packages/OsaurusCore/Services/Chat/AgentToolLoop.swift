@@ -556,8 +556,10 @@ struct AgentLoopHooks {
     var executeBatch:
         ((_ calls: [(invocation: ServiceToolInvocation, callId: String)]) async -> [AgentLoopToolExecution])?
 
-    /// Called after a full batch is processed (and on batch-mode early
-    /// stops via `finishBatch`), with outcomes in original model order.
+    /// Called once after a full batch or an early serial/batch stop, with
+    /// processed outcomes in original model order. Unexecuted calls are not
+    /// represented as executed outcomes; surface intercepts retain ownership
+    /// of their own terminal result.
     /// HTTP appends its assistant `tool_calls` message + tool results
     /// here; chat persists its hidden tool turns here so transcript order
     /// always matches the model's call order.
@@ -3155,6 +3157,7 @@ enum AgentToolLoop {
                     var batchHasPrecedingParseableTodo = false
                     for invocation in invocations {
                         if await hooks.isCancelled() {
+                            await hooks.onBatchComplete(outcomes)
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
                         let callId = Self.callId(for: invocation)
@@ -3309,6 +3312,7 @@ enum AgentToolLoop {
                                     return RunResult(
                                         exit: .finalResponse, iterations: iteration, wrapUpNotice: notice)
                                 }
+                                await hooks.onBatchComplete(outcomes)
                                 await emitToolRejection(outcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)
                             }
@@ -3337,6 +3341,7 @@ enum AgentToolLoop {
                         // run before the call is recorded — the intercept already
                         // wrote its own history.
                         if execution.endRun {
+                            await hooks.onBatchComplete(outcomes)
                             return RunResult(exit: .endedBySurface, iterations: iteration)
                         }
 
@@ -3363,11 +3368,13 @@ enum AgentToolLoop {
                         )
 
                         if await hooks.isCancelled() {
+                            await hooks.onBatchComplete(outcomes)
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
                         if policy.stopOnToolRejection,
                             Self.shouldStopAfterToolOutcome(outcomes[outcomes.count - 1])
                         {
+                            await hooks.onBatchComplete(outcomes)
                             await emitToolRejection(outcomes[outcomes.count - 1])
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }
