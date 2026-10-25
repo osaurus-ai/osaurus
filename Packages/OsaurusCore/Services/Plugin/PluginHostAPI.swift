@@ -790,7 +790,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     struct EnrichedInference {
         var request: ChatCompletionRequest
-        let tools: [Tool]?
+        var tools: [Tool]?
         /// (key, prefix) for the memory block injected into this request's
         /// latest user message, when the session ledger should record it.
         var recordedUserPrefix: (key: String, prefix: String)? = nil
@@ -1102,25 +1102,17 @@ final class PluginHostContext: @unchecked Sendable {
             effectiveTools = nil
         }
 
-        let enriched = ChatCompletionRequest(
-            model: model,
-            messages: messages,
-            temperature: request.temperature ?? ctx.temperature,
-            max_tokens: request.max_tokens ?? ctx.maxTokens,
-            stream: request.stream,
-            top_p: request.top_p,
-            frequency_penalty: request.frequency_penalty,
-            presence_penalty: request.presence_penalty,
-            stop: request.stop,
-            n: request.n,
-            tools: effectiveTools,
-            tool_choice: request.tool_choice,
-            session_id: request.session_id
-        )
-        var enrichedWithRuntimeOptions = enriched
-        enrichedWithRuntimeOptions.enable_thinking = request.enable_thinking
-        enrichedWithRuntimeOptions.reasoning_effort = request.reasoning_effort
-        enrichedWithRuntimeOptions.modelOptions = request.modelOptions
+        // Copy the complete external request at this boundary. Reconstructing
+        // selected fields loses output-limit aliases, sampling and host-only
+        // admission/residency controls before the canonical model step.
+        var enrichedWithRuntimeOptions = request
+        enrichedWithRuntimeOptions.model = model
+        enrichedWithRuntimeOptions.messages = messages
+        enrichedWithRuntimeOptions.temperature = request.temperature ?? ctx.temperature
+        if request.resolvedMaxTokens == nil {
+            enrichedWithRuntimeOptions.max_tokens = ctx.maxTokens
+        }
+        enrichedWithRuntimeOptions.tools = effectiveTools
         return EnrichedInference(
             request: enrichedWithRuntimeOptions,
             tools: effectiveTools,
@@ -1133,24 +1125,9 @@ final class PluginHostContext: @unchecked Sendable {
         messages: [ChatMessage],
         tools: [Tool]?
     ) -> ChatCompletionRequest {
-        var request = ChatCompletionRequest(
-            model: base.model,
-            messages: messages,
-            temperature: base.temperature,
-            max_tokens: base.max_tokens,
-            stream: nil,
-            top_p: base.top_p,
-            frequency_penalty: base.frequency_penalty,
-            presence_penalty: base.presence_penalty,
-            stop: base.stop,
-            n: base.n,
-            tools: tools,
-            tool_choice: base.tool_choice,
-            session_id: base.session_id
-        )
-        request.enable_thinking = base.enable_thinking
-        request.reasoning_effort = base.reasoning_effort
-        request.modelOptions = base.modelOptions
+        var request = base
+        request.messages = messages
+        request.tools = tools
         request.isAgentRequest = base.isAgentRequest || tools?.isEmpty == false
         return request
     }
@@ -1322,28 +1299,12 @@ final class PluginHostContext: @unchecked Sendable {
             tools = await SystemPromptComposer.canonicalToolOrder(tools)
         }
 
-        let messages = inference.request.messages
         let effectiveTools = tools.isEmpty ? nil : tools
-        var request = ChatCompletionRequest(
-            model: inference.request.model,
-            messages: messages,
-            temperature: inference.request.temperature,
-            max_tokens: inference.request.max_tokens,
-            stream: inference.request.stream,
-            top_p: inference.request.top_p,
-            frequency_penalty: inference.request.frequency_penalty,
-            presence_penalty: inference.request.presence_penalty,
-            stop: inference.request.stop,
-            n: inference.request.n,
-            tools: effectiveTools,
-            tool_choice: inference.request.tool_choice,
-            session_id: inference.request.session_id
-        )
-        request.enable_thinking = inference.request.enable_thinking
-        request.reasoning_effort = inference.request.reasoning_effort
-        request.modelOptions = inference.request.modelOptions
-        request.isAgentRequest = inference.request.isAgentRequest || effectiveTools?.isEmpty == false
-        return EnrichedInference(request: request, tools: effectiveTools)
+        var resolved = inference
+        resolved.request.tools = effectiveTools
+        resolved.request.isAgentRequest = inference.request.isAgentRequest || effectiveTools?.isEmpty == false
+        resolved.tools = effectiveTools
+        return resolved
     }
 
     // MARK: Context Budget
