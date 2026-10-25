@@ -5156,9 +5156,13 @@ public actor ModelRuntime {
                 admittedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
                 // Store the load-time DSV4 fact. Native MTP is resolved per
                 // request so toggling MTP Off cannot keep using the enlarged
-                // request allocator window.
+                // request allocator window. DeepSeek-V4.1 affine JANG needs the
+                // same window: a 2048-token prefill chunk's scratch exceeds the
+                // persistent pool, so buffers were freed and re-created inside
+                // every chunk (reference serving: 4 GB pool 475 pp/s, 16 GB 769).
                 requiresAdmittedMLXAllocatorCeiling:
                     loadBundleFacts.isPlainDeepseekV4AffineJANG
+                    || loadBundleFacts.isDeepseekV41AffineJANG
             )
 
             // Install the cache coordinator before the coalesced load task
