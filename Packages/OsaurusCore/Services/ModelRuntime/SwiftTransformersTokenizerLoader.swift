@@ -1159,13 +1159,20 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             effort = nil
         }
 
-        var prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
+        // DeepSeek-V4.1 bundles use their own prompt contract (numeric
+        // `Reasoning Effort: N` inside <｜System｜>, V4.1 DSML tool tags);
+        // everything else stays on the DSV4-0731 contract.
+        let family = MLXLMCommon.DeepseekV4ChatFamily(modelType: modelType)
+        var prompt = MLXLMCommon.DeepseekV4ChatEncoder(family: family).encode(
             messages: dsv4Messages,
             thinkingMode: thinkingMode,
             reasoningEffort: effort,
             dropEarlierReasoning: true,
             toolChoiceRequired: toolChoiceRequired,
-            toolChoiceName: toolChoiceName
+            toolChoiceName: toolChoiceName,
+            reasoningBudget: family == .deepseekV41 && thinkingMode == .thinking
+                ? MLXLMCommon.DeepseekV4ChatEncoder.reasoningBudget(from: additionalContext)
+                : nil
         )
         if !addGenerationPrompt,
             let lastRole = dsv4Messages.last?.role,
