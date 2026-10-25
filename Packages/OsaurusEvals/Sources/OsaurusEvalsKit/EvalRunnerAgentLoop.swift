@@ -780,19 +780,19 @@ extension EvalRunner {
                 context: transcript.contextAttribution
             ),
             query: resolvedQuery,
-            includeSuccessful: exp.spawnSummaries != nil || exp.spawnWave != nil
+            expectations: exp
         )
     }
 
     /// Hand the full loop transcript to the transcript store (a no-op
-    /// unless `--transcripts` configured it). RAM/batch proof callers retain
-    /// successful rows too. Returns the report unchanged so call sites
+    /// unless `--transcripts` configured it). Rubric and RAM/batch proof
+    /// retain successful rows too, so grades remain auditable. Returns the report unchanged so call sites
     /// stay single-expression returns.
-    private static func persistAgentLoopTranscript(
+    static func persistAgentLoopTranscript(
         _ transcript: AgentLoopTranscript,
         for report: EvalCaseReport,
         query: String,
-        includeSuccessful: Bool = false
+        expectations: EvalCase.AgentLoopExpectations
     ) -> EvalCaseReport {
         EvalTranscriptStore.persistIfEnabled(
             EvalCaseTranscript(
@@ -839,7 +839,9 @@ extension EvalRunner {
                     )
                 },
                 error: transcript.error
-            ), includeSuccessful: includeSuccessful
+            ), includeSuccessful: expectations.spawnSummaries != nil
+                || expectations.spawnWave != nil
+                || !(expectations.rubric?.isEmpty ?? true)
         )
         return report
     }
