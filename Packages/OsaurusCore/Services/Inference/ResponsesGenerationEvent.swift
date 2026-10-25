@@ -19,6 +19,9 @@ enum ResponsesGenerationEvent: Sendable {
     case artifacts([RemoteRunArtifact])
     case agentTool(StreamingAgentToolHint.Trace)
     case remoteToolCompleted(StreamingToolHint.ToolCallDone)
+    /// Opaque reserved metadata from an older service extension. Preserve it
+    /// for diagnostics; it is never model text or an executable tool call.
+    case compatibilityMetadata(String)
     case responseCompleted(ResponsesGenerationCompletion)
     /// The producer has drained and released its generation lease. This is
     /// distinct from response completion and is not a disk durability receipt.

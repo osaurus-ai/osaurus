@@ -27,7 +27,7 @@ struct ResponsesGenerationStreamTests {
             case .compatibilityStreamClosed: order.append("compatibilityClosed")
             case .drainFailed: order.append("drainFailed")
             case .functionNamePreview, .functionPreviewReset, .functionArgumentsPreview, .providerOutputItem,
-                .reasoningItem, .billing, .artifacts, .agentTool, .remoteToolCompleted:
+                .reasoningItem, .billing, .artifacts, .agentTool, .remoteToolCompleted, .compatibilityMetadata:
                 order.append("metadata")
             }
         }

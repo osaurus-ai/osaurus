@@ -13,10 +13,6 @@ extension ResponsesGenerationStream {
         var mtp: MTPStatsSummary?
     }
 
-    enum CompatibilityError: Error {
-        case unrecognizedMetadata
-    }
-
     /// Boundary for an explicitly selected legacy service/provider. This does
     /// not retry a request or choose a second wire protocol after a failure.
     /// Native MLX uses `native` and never passes through this string decoder.
@@ -68,7 +64,7 @@ extension ResponsesGenerationStream {
                     } else if let args = StreamingToolHint.decodeArgs(delta) {
                         continuation.yield(.functionArgumentsPreview(args))
                     } else if StreamingToolHint.isSentinel(delta) {
-                        throw CompatibilityError.unrecognizedMetadata
+                        continuation.yield(.compatibilityMetadata(delta))
                     } else {
                         continuation.yield(.outputTextDelta(delta))
                     }

@@ -303,17 +303,21 @@ struct ResponsesEngineTests {
         #expect(completion.stopReason == "length")
     }
 
-    @Test func unknownCompatibilityMetadataCannotLeakAsVisibleOutput() async {
+    @Test func unknownCompatibilityMetadataStaysOpaqueAndNeverBecomesVisibleOutput() async throws {
+        let raw = "\u{FFFE}unknown:private protocol payload"
         let source = AsyncThrowingStream<String, Error> { c in
-            c.yield("\u{FFFE}unknown:private protocol payload")
+            c.yield(raw)
+            c.yield(StreamingInputTokenHint.encode(2072))
             c.finish()
         }
-        do {
-            for try await _ in ResponsesGenerationStream.compatibility(source) {
-                Issue.record("Unknown metadata must not become visible output or success")
-            }
-            Issue.record("Expected unsupported metadata error")
-        } catch is ResponsesGenerationStream.CompatibilityError {
-        } catch { Issue.record("Unexpected error: \(error)") }
+        var metadata: [String] = []
+        var inputTokens: Int?
+        for try await event in ResponsesGenerationStream.compatibility(source) {
+            if case .compatibilityMetadata(let value) = event { metadata.append(value) }
+            if case .inputTokenCount(let count) = event { inputTokens = count }
+            if case .outputTextDelta = event { Issue.record("Reserved metadata became visible output") }
+        }
+        #expect(metadata == [raw])
+        #expect(inputTokens == 2072)
     }
 }

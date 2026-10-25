@@ -1225,8 +1225,8 @@ struct RuntimePolicySourceTests {
         #expect(api.components(separatedBy: "copy.inferenceContext = inferenceContext").count - 1 == 2)
         #expect(!api.contains("case cacheStableSystemPrefix"))
         #expect(chatEngine.contains("cacheStableSystemPrefix: request.context.cacheStableSystemPrefix"))
-        #expect(chatView.contains("req.cacheStableSystemPrefix ="))
-        #expect(chatView.contains("finalReq.cacheStableSystemPrefix ="))
+        #expect(chatView.contains("req.context.cacheStableSystemPrefix ="))
+        #expect(chatView.contains("finalReq.context.cacheStableSystemPrefix ="))
         #expect(chatView.contains("self.isRemoteAgentTarget ? nil : context.staticPrefix"))
         // Lazy loading: no chat warm-up request exists any more; the real
         // send (above) is the only chat producer of the stable-prefix hint.
@@ -1788,7 +1788,7 @@ struct RuntimePolicySourceTests {
         #expect(agentRun.contains("tool_choice: resolvedToolChoice"))
         #expect(!chatView.contains("finalizingPostToolChoice"))
         #expect(chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve("))
-        #expect(chatView.contains("tool_choice: requestedToolChoice"))
+        #expect(chatView.contains("toolChoice: requestedToolChoice"))
     }
 
     @Test("OpenAI chat completions endpoint does not inject agent context")
@@ -2914,12 +2914,12 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("StreamingReasoningHint.encode(s)"))
     }
 
-    @Test("Chat UI routes parsed reasoning only through the reasoning sentinel")
+    @Test("Chat UI routes parsed reasoning only through the typed reasoning event")
     func chatUIRoutesParsedReasoningOnlyThroughReasoningSentinel() throws {
         let chatView = try Self.source("Views/Chat/ChatView.swift")
         let processor = try Self.source("Utils/StreamingDeltaProcessor.swift")
 
-        let reasoningDecode = try #require(chatView.range(of: "StreamingReasoningHint.decode(delta)"))
+        let reasoningDecode = try #require(chatView.range(of: "case .reasoningDelta(let reasoning) = event"))
         let receiveReasoning = try #require(chatView.range(of: "processor.receiveReasoning(reasoning)"))
         let contentDelta = try #require(chatView.range(of: "processor.receiveDelta(delta)"))
         #expect(reasoningDecode.lowerBound < receiveReasoning.lowerBound)
@@ -3389,8 +3389,8 @@ struct RuntimePolicySourceTests {
         let chatView = try Self.source("Views/Chat/ChatView.swift")
 
         let buildMessages = try #require(chatView.range(of: "func buildMessages() -> [ChatMessage]"))
-        let streamRequest = try #require(chatView.range(of: "var req = ChatCompletionRequest("))
-        let implicitSampling = try #require(chatView.range(of: "req.samplingParametersAreImplicit = true"))
+        let streamRequest = try #require(chatView.range(of: "var req = ResponsesInferenceRequest("))
+        let implicitSampling = try #require(chatView.range(of: "req.context.samplingParametersAreImplicit = true"))
 
         #expect(
             chatView.contains("for (index, t) in turns.enumerated()"),
@@ -3428,7 +3428,7 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
-                && chatView.contains("tool_choice: requestedToolChoice"),
+                && chatView.contains("toolChoice: requestedToolChoice"),
             "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
         )
         #expect(
@@ -3438,7 +3438,7 @@ struct RuntimePolicySourceTests {
             "Chat UI tool-choice policy must see the current iteration tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
         )
         #expect(
-            chatView.contains("finalReq.samplingParametersAreImplicit = true"),
+            chatView.contains("finalReq.context.samplingParametersAreImplicit = true"),
             "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
         )
         #expect(
