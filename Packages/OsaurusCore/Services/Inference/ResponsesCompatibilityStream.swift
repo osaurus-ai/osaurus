@@ -64,7 +64,7 @@ extension ResponsesGenerationStream {
                     } else if let tool = StreamingToolHint.decodeDone(delta) {
                         continuation.yield(.remoteToolCompleted(tool))
                     } else if let name = StreamingToolHint.decode(delta) {
-                        continuation.yield(.functionNamePreview(name))
+                        continuation.yield(name.isEmpty ? .functionPreviewReset : .functionNamePreview(name))
                     } else if let args = StreamingToolHint.decodeArgs(delta) {
                         continuation.yield(.functionArgumentsPreview(args))
                     } else if StreamingToolHint.isSentinel(delta) {

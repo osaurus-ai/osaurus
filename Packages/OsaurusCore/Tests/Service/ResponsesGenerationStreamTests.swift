@@ -26,7 +26,7 @@ struct ResponsesGenerationStreamTests {
             case .drained: order.append("drained")
             case .compatibilityStreamClosed: order.append("compatibilityClosed")
             case .drainFailed: order.append("drainFailed")
-            case .functionNamePreview, .functionArgumentsPreview, .providerOutputItem,
+            case .functionNamePreview, .functionPreviewReset, .functionArgumentsPreview, .providerOutputItem,
                 .reasoningItem, .billing, .artifacts, .agentTool, .remoteToolCompleted:
                 order.append("metadata")
             }
@@ -241,5 +241,27 @@ struct ResponsesGenerationStreamTests {
         #expect(try await waitFor { await observed.producerDrainWasCancelled != nil })
         #expect(await observed.producerDrainWasCancelled == false)
         #expect(await observed.cancelledUpstream == false)
+    }
+
+    @Test func nextToolEnvelopeResetsThePreviousCanonicalPreviewOnce() async throws {
+        let source = AsyncThrowingStream<ModelRuntimeEvent, Error> { c in
+            c.yield(.toolInvocation(name: "first", argsJSON: "{}"))
+            c.yield(.toolCallProgress("second-start"))
+            c.yield(.toolCallProgress("second-tail"))
+            c.yield(.toolInvocation(name: "second", argsJSON: "{}"))
+            c.yield(completion())
+            c.finish()
+        }
+        var order: [String] = []
+        for try await event in ResponsesGenerationStream.native(source) {
+            switch event {
+            case .functionCallAdded(let call): order.append(call.name)
+            case .functionPreviewReset: order.append("reset")
+            case .toolEnvelopeDelta(let delta): order.append(delta)
+            case .responseCompleted(let value): #expect(value.functionCalls.map(\.name) == ["first", "second"])
+            default: break
+            }
+        }
+        #expect(order == ["first", "reset", "second-start", "second-tail", "second"])
     }
 }

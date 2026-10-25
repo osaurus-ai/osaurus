@@ -151,7 +151,7 @@ struct ResponsesEngineTests {
     @Test(arguments: [false, true])
     func nativeRoutePreservesInputAndParametersWithoutLegacySerialization(_ disableTools: Bool) async throws {
         let capture = Capture()
-        let engine = ChatEngine(
+        let engine: any ChatEngineProtocol = ChatEngine(
             services: [NativeService(capture: capture)],
             installedModelsProvider: { [] },
             remoteServicesProvider: { [] }

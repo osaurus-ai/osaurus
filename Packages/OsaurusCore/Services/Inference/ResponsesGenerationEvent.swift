@@ -11,6 +11,7 @@ enum ResponsesGenerationEvent: Sendable {
     case toolEnvelopeDelta(String)
     case functionCallAdded(ResponsesFunctionCall)
     case functionNamePreview(String)
+    case functionPreviewReset
     case functionArgumentsPreview(String)
     case providerOutputItem(JSONValue)
     case reasoningItem(StreamingReasoningItemHint.Item)
@@ -84,6 +85,7 @@ enum ResponsesGenerationStream {
             var calls: [ResponsesFunctionCall] = []
             var inputTokens: Int?
             var completed = false
+            var hasCompletedToolPreview = false
             do {
                 for try await event in upstream {
                     // Reach next() after cancellation even when a buffered event
@@ -101,6 +103,10 @@ enum ResponsesGenerationStream {
                     case .prefillProgress(let progress):
                         continuation.yield(.prefillProgress(progress))
                     case .toolCallProgress(let delta):
+                        if hasCompletedToolPreview {
+                            continuation.yield(.functionPreviewReset)
+                            hasCompletedToolPreview = false
+                        }
                         continuation.yield(.toolEnvelopeDelta(delta))
                     case .toolInvocation(let name, let arguments):
                         // The native parser has no transport ID. Assign it once
@@ -112,6 +118,7 @@ enum ResponsesGenerationStream {
                             arguments: arguments
                         )
                         calls.append(call)
+                        hasCompletedToolPreview = true
                         continuation.yield(.functionCallAdded(call))
                     case .completionInfo(let count, let speed, let unclosed, let reason, let prefill, let mtp):
                         let status: ResponsesGenerationCompletion.Status

@@ -75,4 +75,10 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
         request.enable_thinking = enableThinking
         request.reasoning_effort = reasoningEffort
     }
+
+    func apply(to request: inout ResponsesInferenceRequest) {
+        request.context.modelOptions = modelOptions
+        request.generation.enableThinking = enableThinking
+        request.generation.reasoningEffort = reasoningEffort
+    }
 }

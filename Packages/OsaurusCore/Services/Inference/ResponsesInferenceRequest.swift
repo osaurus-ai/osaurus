@@ -35,6 +35,34 @@ struct ResponsesGenerationOptions: Sendable, Encodable {
 }
 
 extension ResponsesInferenceRequest {
+    /// Boundary adapter for an older injected engine/client implementation.
+    /// The builtin engine overrides the typed entry point and never uses this.
+    func chatCompletionsCompatibilityRequest() -> ChatCompletionRequest {
+        var request = ChatCompletionRequest(
+            model: model,
+            messages: input,
+            temperature: generation.temperature,
+            max_tokens: generation.maxOutputTokens,
+            stream: true,
+            top_p: generation.topP,
+            top_k: generation.topK,
+            frequency_penalty: generation.frequencyPenalty,
+            presence_penalty: generation.presencePenalty,
+            stop: generation.stop,
+            n: nil,
+            tools: tools,
+            tool_choice: toolChoice,
+            session_id: sessionID,
+            seed: generation.seed,
+            response_format: generation.outputFormat
+        )
+        request.min_p = generation.minP
+        request.enable_thinking = generation.enableThinking
+        request.reasoning_effort = generation.reasoningEffort
+        request.inferenceContext = context
+        return request
+    }
+
     /// Compatibility entry point only. Store values directly rather than
     /// encode/decode: JSON would discard live audio and provider output Items.
     init(chatCompletion request: ChatCompletionRequest) {

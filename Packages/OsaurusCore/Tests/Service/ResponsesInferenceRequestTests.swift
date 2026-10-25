@@ -98,6 +98,10 @@ struct ResponsesInferenceRequestTests {
         #expect(request.input[1].reasoning_item_id == "rs_1")
         #expect(request.input[1].reasoning_encrypted == "opaque")
         #expect(request.input[1].responses_output_items == [raw])
+        let compatibility = request.chatCompletionsCompatibilityRequest()
+        #expect(compatibility.messages[0].localAudioSamples == [samples])
+        #expect(compatibility.messages[1].responses_output_items == [raw])
+        #expect(compatibility.messages[1].reasoning_content == "native chain")
     }
 
     @Test func contextAndExplicitOptionsAreCopiedIndependently() {
@@ -129,5 +133,13 @@ struct ResponsesInferenceRequestTests {
         #expect(request.generation.enableThinking == false)
         #expect(request.generation.reasoningEffort == "high")
         #expect(request.sessionID == "session")
+        let compatibility = request.chatCompletionsCompatibilityRequest()
+        #expect(compatibility.admissionPositionLimit == 8192)
+        #expect(compatibility.admissionOutputTokensAreImplicit)
+        #expect(compatibility.backgroundModelLoad)
+        #expect(compatibility.cacheStableSystemPrefix == "byte-exact prefix")
+        #expect(compatibility.top_k == 37)
+        #expect(compatibility.min_p == 0.03)
+        #expect(compatibility.enable_thinking == false)
     }
 }

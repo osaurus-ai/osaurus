@@ -5142,7 +5142,7 @@ final class ChatSession: ObservableObject {
     /// resolved to nil, the fresh assistant turn rendered as finished (no
     /// typing indicator during its load/prefill, so no "Loading Model..."),
     /// and every delta took the non-streaming table path (per-token height
-    /// notes — the visible jump). Clear it BEFORE awaiting `streamChat`, which
+    /// notes — the visible jump). Clear it BEFORE awaiting `streamResponses`, which
     /// may span the whole model load, so the indicator covers that wait.
     private func beginModelStep() -> Date {
         if outputComplete {
@@ -5153,7 +5153,7 @@ final class ChatSession: ObservableObject {
     }
 
     private func processStreamDeltas(
-        stream: AsyncThrowingStream<String, Error>,
+        stream: AsyncThrowingStream<ResponsesGenerationEvent, Error>,
         assistantTurn: ChatTurn,
         runId: UUID,
         streamStartTime: Date,
@@ -5179,7 +5179,7 @@ final class ChatSession: ObservableObject {
         // Same contract for the session-level flag: the previous step's
         // relay completion set it, and `isStreaming` (which resets it) stays
         // true across the whole run. Callers already reset it before awaiting
-        // `streamChat` (see `beginModelStep`); this covers any path that
+        // `streamResponses` (see `beginModelStep`); this covers any path that
         // reaches the processor without it.
         if outputComplete {
             outputComplete = false
@@ -5282,21 +5282,21 @@ final class ChatSession: ObservableObject {
                     // chip / finishing indicator) while the engine tail
                     // drains — only the cursor and live-content path end here.
                     self.rebuildVisibleBlocks()
-                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail, finishing indicator shown)")
+                    print(
+                        "[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail, finishing indicator shown)"
+                    )
                 }
             }
         defer { outputCompleteSub.cancel() }
 
-        // The engine surfaces parsed tool calls by *throwing* a
-        // `ServiceToolInvocation` (or `ServiceToolInvocations`) at end-of-
-        // stream. Catch them so this function can return them as data —
-        // letting the throw escape would surface as an "Error: …
-        // ServiceToolInvocation error 1" string in the UI.
+        // Parsed calls are previews until the typed response completion
+        // publishes the complete ordered batch. Tool execution is data, never
+        // an exception that can be mistaken for a failed model response.
         var capturedInvocations: [ServiceToolInvocation] = []
 
         debugLog("send: got stream, entering delta loop")
         do {
-            for try await delta in stream {
+            responseLoop: for try await event in stream {
                 noteRunProgress(.stream)
                 if !isRunActive(runId) {
                     await processor.finalize()
@@ -5304,6 +5304,19 @@ final class ChatSession: ObservableObject {
                     // shimmering forever — settle any still-running rows.
                     currentTurn.finalizeRemoteToolActivity()
                     return ([], currentTurn)
+                }
+                if case .functionPreviewReset = event {
+                    currentTurn.pendingToolName = nil
+                    currentTurn.clearPendingToolArgs()
+                    continue
+                }
+                if case .functionCallAdded(let call) = event {
+                    uiToolSentinelCount += 1
+                    currentTurn.pendingToolName = call.name
+                    currentTurn.clearPendingToolArgs()
+                    currentTurn.appendToolArgFragment(call.arguments)
+                    rebuildVisibleBlocks()
+                    continue
                 }
                 // Mode 2 (remote agent run): the remote device executes the
                 // tools and streams back only a sanitized trace (name + phase +
@@ -5313,7 +5326,7 @@ final class ChatSession: ObservableObject {
                 // (running → done/failed), instead of a chip that vanished the
                 // instant the tool finished. The activity is display-only and is
                 // never re-sent as history (see `ChatTurn.remoteToolActivity`).
-                if let trace = StreamingAgentToolHint.decode(delta) {
+                if case .agentTool(let trace) = event {
                     let callKey =
                         (trace.callId?.isEmpty == false) ? trace.callId! : trace.name
                     switch trace.phase {
@@ -5339,7 +5352,7 @@ final class ChatSession: ObservableObject {
                     continue
                 }
                 // Server-side tool call complete: add the call card + result turn to the chat log
-                if let done = StreamingToolHint.decodeDone(delta) {
+                if case .remoteToolCompleted(let done) = event {
                     uiToolSentinelCount += 1
                     await processor.finalize()
                     let call = ToolCall(
@@ -5366,7 +5379,7 @@ final class ChatSession: ObservableObject {
                     rebuildVisibleBlocks()
                     continue
                 }
-                if let toolName = StreamingToolHint.decode(delta) {
+                if case .functionNamePreview(let toolName) = event {
                     uiToolSentinelCount += 1
                     // Local models stream the raw envelope as args fragments
                     // BEFORE the parsed call's name hint. When the hint lands
@@ -5403,7 +5416,7 @@ final class ChatSession: ObservableObject {
                 // the real tool name once the envelope closes. The raw envelope
                 // text itself is intentionally NOT rendered (it isn't parsed args
                 // and could be any format), so it never leaks as message text.
-                if let envelopeDelta = StreamingToolCallProgressHint.decode(delta) {
+                if case .toolEnvelopeDelta(let envelopeDelta) = event {
                     uiToolSentinelCount += 1
                     // Also accumulate the raw envelope: the live diff preview
                     // extracts path/content from it mid-stream, and the tool
@@ -5433,20 +5446,20 @@ final class ChatSession: ObservableObject {
                 // Preserve the complete provider-authored Responses output Item
                 // for exact stateless replay (phase, ids, reasoning, and future
                 // fields), independently of the flattened visible transcript.
-                if let responseItem = StreamingResponsesOutputItemHint.decode(delta) {
+                if case .providerOutputItem(let responseItem) = event {
                     currentTurn.responsesOutputItems.append(responseItem)
                     continue
                 }
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).
-                if let reasoningItem = StreamingReasoningItemHint.decode(delta) {
+                if case .reasoningItem(let reasoningItem) = event {
                     uiReasoningItemCount += 1
                     currentTurn.reasoningItemId = reasoningItem.id
                     currentTurn.reasoningEncrypted = reasoningItem.encryptedContent
                     continue
                 }
-                if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                if case .functionArgumentsPreview(let argFragment) = event {
                     uiToolSentinelCount += 1
                     currentTurn.appendToolArgFragment(argFragment)
                     // Envelope-first flow (local models): the tool name rides
@@ -5469,11 +5482,11 @@ final class ChatSession: ObservableObject {
                         lastToolArgRebuildAt = now
                         rebuildVisibleBlocks()
                     }
-                } else if let inputTokenCount = StreamingInputTokenHint.decode(delta) {
+                } else if case .inputTokenCount(let inputTokenCount) = event {
                     // Prepared input is metadata, not the first output token.
                     // Keep it out of text/history and the TTFT/rolling-rate path.
                     currentTurn.inputTokenCount = inputTokenCount
-                } else if let stats = StreamingStatsHint.decode(delta) {
+                } else if case .responseCompleted(let stats) = event {
                     uiStatsHintCount += 1
                     // Final stats from vmlx — captured for the post-loop stamp.
                     // We do NOT overwrite the live rolling rate here: while the
@@ -5484,10 +5497,10 @@ final class ChatSession: ObservableObject {
                     // available for replies too short for the window to converge
                     // — the case that used to be filled in with an average over
                     // the delivery burst and render as `2397.3 tok/s • 7 tokens`.
-                    if stats.tokensPerSecond.isFinite, stats.tokensPerSecond > 0 {
-                        engineTokensPerSecond = stats.tokensPerSecond
+                    if let rate = stats.tokensPerSecond, rate.isFinite, rate > 0 {
+                        engineTokensPerSecond = rate
                     }
-                    currentTurn.generationTokenCount = stats.tokenCount
+                    currentTurn.generationTokenCount = stats.tokenCount ?? currentTurn.generationTokenCount
                     currentTurn.terminalStopReason = stats.stopReason
                     currentTurn.inputTokenCount = stats.inputTokenCount ?? currentTurn.inputTokenCount
                     currentTurn.cachedInputTokenCount = stats.cachedInputTokenCount ?? currentTurn.cachedInputTokenCount
@@ -5496,7 +5509,19 @@ final class ChatSession: ObservableObject {
                     // renderer can surface a one-line banner suggesting
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
-                } else if let billing = StreamingBillingHint.decode(delta) {
+                    if case .cancelled = stats.status { throw CancellationError() }
+                    capturedInvocations = stats.dispatchableFunctionCalls.map {
+                        ServiceToolInvocation(
+                            toolName: $0.name,
+                            jsonArguments: $0.arguments,
+                            toolCallId: $0.callID,
+                            geminiThoughtSignature: $0.geminiThoughtSignature
+                        )
+                    }
+                    // Execute the complete ordered batch at logical completion;
+                    // the engine keeps draining its GPU/cache lease independently.
+                    if !capturedInvocations.isEmpty { break responseLoop }
+                } else if case .billing(let billing) = event {
                     uiBillingHintCount += 1
                     // Osaurus Router billed this turn. Stamp it so the run can't
                     // silently drop a billed-but-empty turn (see
@@ -5504,10 +5529,10 @@ final class ChatSession: ObservableObject {
                     // explain the charge. Adopt the server-authoritative output
                     // token count over our rolling estimate.
                     recordRouterBilling(billing, on: currentTurn)
-                } else if let progress = StreamingPrefillProgressHint.decode(delta) {
+                } else if case .prefillProgress(let progress) = event {
                     uiPrefillHintCount += 1
                     InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
-                } else if let remoteArtifacts = StreamingArtifactHint.decode(delta) {
+                } else if case .artifacts(let remoteArtifacts) = event {
                     // A teammate's host returned the small files its agent
                     // shared: import them into THIS session's store and show
                     // them on the turn exactly like local `share_artifact`
@@ -5515,7 +5540,9 @@ final class ChatSession: ObservableObject {
                     // from `sharedArtifacts` afterwards.
                     if let sid = sessionId {
                         let imported = SharedArtifact.importRemoteArtifacts(
-                            remoteArtifacts, contextId: sid.uuidString)
+                            remoteArtifacts,
+                            contextId: sid.uuidString
+                        )
                         if !imported.isEmpty {
                             currentTurn.sharedArtifacts.append(contentsOf: imported)
                             for artifact in imported {
@@ -5523,7 +5550,7 @@ final class ChatSession: ObservableObject {
                             }
                         }
                     }
-                } else if let reasoning = StreamingReasoningHint.decode(delta) {
+                } else if case .reasoningDelta(let reasoning) = event {
                     uiReasoningDeltaCount += 1
                     let now = Date()
                     if firstDeltaTime == nil {
@@ -5546,11 +5573,13 @@ final class ChatSession: ObservableObject {
                     )
                     currentTurn.lastOutputAt = now
                     processor.receiveReasoning(reasoning)
-                } else if StreamingToolHint.isSentinel(delta) {
-                    // Other reserved stream metadata must never become model
-                    // output merely because this client does not consume it.
-                    continue
-                } else if !delta.isEmpty {
+                } else if case .drainFailed(let message) = event {
+                    throw NSError(
+                        domain: "OsaurusResponseDrain",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: message]
+                    )
+                } else if case .outputTextDelta(let delta) = event, !delta.isEmpty {
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
@@ -5587,10 +5616,6 @@ final class ChatSession: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_000_000)
                 }
             }
-        } catch let invs as ServiceToolInvocations {
-            capturedInvocations = invs.invocations
-        } catch let inv as ServiceToolInvocation {
-            capturedInvocations = [inv]
         }
 
         // Flush any remaining buffered content (including partial tags).
@@ -5616,7 +5641,7 @@ final class ChatSession: ObservableObject {
         if let first = firstDeltaTime {
             // Split cold model load out of TTFT.
             //
-            // `streamStartTime` is stamped immediately before `streamChat`, and
+            // `streamStartTime` is stamped immediately before `streamResponses`, and
             // no delta can arrive until the weights are resident — so a cold
             // container load lands inside this window and used to be reported
             // as time-to-first-token. A 64 GB M3 Max showed "TTFT 215.61s" on a
@@ -5629,7 +5654,9 @@ final class ChatSession: ObservableObject {
             // slow turn into a reassuring fast one.
             let wallClock = first.timeIntervalSince(streamStartTime)
             let loadSeconds = InferenceProgressManager.shared.modelLoadSeconds(
-                from: streamStartTime, to: first)
+                from: streamStartTime,
+                to: first
+            )
             currentTurn.modelLoadSeconds = loadSeconds > 0 ? loadSeconds : nil
             currentTurn.timeToFirstToken = max(0, wallClock - loadSeconds)
             // Stamp the steady-state tok/s. Single source of truth across
@@ -8059,29 +8086,26 @@ final class ChatSession: ObservableObject {
                                 attempt: attempt
                             )
                             forcedToolGate.arm(requestedToolChoice)
-                            var req = ChatCompletionRequest(
+                            var req = ResponsesInferenceRequest(
                                 // Mode 2: the wire omits the model and routing is
                                 // by provider id, so don't pass the local
                                 // `selectedModel` — it can lag the async agent pin
                                 // and would only leak a stale prefix internally.
                                 model: self.isRemoteAgentTarget
                                     ? "default" : (turnModelId ?? "default"),
-                                messages: msgs,
-                                temperature: effectiveTemp,
-                                max_tokens: effectiveMaxTokensForAgent,
-                                stream: true,
-                                top_p: chatCfg.topPOverride,
-                                frequency_penalty: nil,
-                                presence_penalty: nil,
-                                stop: nil,
-                                n: nil,
+                                input: msgs,
+                                generation: ResponsesGenerationOptions(
+                                    temperature: effectiveTemp,
+                                    maxOutputTokens: effectiveMaxTokensForAgent,
+                                    topP: chatCfg.topPOverride
+                                ),
                                 tools: iterationToolSpecs.isEmpty ? nil : iterationToolSpecs,
-                                tool_choice: requestedToolChoice,
-                                session_id: self.sessionId?.uuidString
+                                toolChoice: requestedToolChoice,
+                                sessionID: self.sessionId?.uuidString
                             )
-                            req.admissionPositionLimit = self.delegationBudget?.contextPositions
-                            req.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
-                            req.samplingParametersAreImplicit = true
+                            req.context.admissionPositionLimit = self.delegationBudget?.contextPositions
+                            req.context.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
+                            req.context.samplingParametersAreImplicit = true
                             // Mode 2 routing signal: tells `RemoteProviderService`
                             // to target the peer's `/agents/{address}/run`
                             // endpoint (remote agent runs fully server-side). The
@@ -8090,8 +8114,8 @@ final class ChatSession: ObservableObject {
                             // peer resolves its own live effective model. False =
                             // Mode 1 (plain remote inference via
                             // `/chat/completions`).
-                            req.runAsRemoteAgent = self.isRemoteAgentTarget
-                            req.cacheStableSystemPrefix =
+                            req.context.runAsRemoteAgent = self.isRemoteAgentTarget
+                            req.context.cacheStableSystemPrefix =
                                 self.isRemoteAgentTarget ? nil : context.staticPrefix
                             // Mode 2 routing: target the selected agent's
                             // provider directly (by id), so a stale
@@ -8099,29 +8123,29 @@ final class ChatSession: ObservableObject {
                             // different local provider. `ChatEngine` resolves
                             // the service from this id and ignores the model
                             // string for agent runs.
-                            req.remoteAgentProviderId = self.remoteAgentProviderId
+                            req.context.remoteAgentProviderId = self.remoteAgentProviderId
                             // Insights fidelity: in Mode 2 the wire omits the
                             // model, so log the agent's live effective model
                             // instead of the local prefixed fallback.
-                            req.remoteAgentLogModel =
+                            req.context.remoteAgentLogModel =
                                 self.isRemoteAgentTarget ? self.remoteAgentEffectiveModel : nil
                             // Freeze agent semantics for the whole logical run.
                             // Tool schemas stay present on ordinary iterations,
                             // but the cap finalizer below intentionally removes
                             // them; the explicit marker keeps both paths on the
                             // same reasoning policy.
-                            req.isAgentRequest =
+                            req.context.isAgentRequest =
                                 !iterationToolSpecs.isEmpty || self.isRemoteAgentTarget
                             turnGenerationControls.apply(to: &req)
-                            req.backgroundModelLoad = (self.loadIntent == .background)
+                            req.context.backgroundModelLoad = (self.loadIntent == .background)
                             // Only the first inference of this direct Send. Tool
                             // continuations and parent restoration cannot authorize repair.
-                            req.alignmentRepairModel = attempt == 1 ? alignmentRepairModel : nil
-                            req.ttftTrace = ttftTrace
+                            req.context.alignmentRepairModel = attempt == 1 ? alignmentRepairModel : nil
+                            req.context.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
                             // assistant turn, so the per-message "Insights" button can
                             // open this exact response.
-                            req.turnId = assistantTurn.id
+                            req.context.turnId = assistantTurn.id
                             // Stable per-logical-step idempotency token. The
                             // agent loop holds `attempt` constant across
                             // transient retries (it decrements then re-increments
@@ -8136,7 +8160,7 @@ final class ChatSession: ObservableObject {
                             // IDEMPOTENCY_CONFLICT — the body fingerprint suffix
                             // keys those as distinct requests while identical
                             // retryWithoutCharge re-POSTs still dedupe.
-                            req.idempotencyKey =
+                            req.context.idempotencyKey =
                                 "\(runId.uuidString):\(attempt):"
                                 + AgentToolLoop.recoveryAwareIdempotencySuffix(
                                     messages: msgs,
@@ -8144,7 +8168,7 @@ final class ChatSession: ObservableObject {
                                         incompleteReasoningRetryOrdinal
                                 )
                             debugLog(
-                                "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
+                                "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.sessionID ?? "nil")"
                             )
                             // Cache-fingerprint diagnostic: one `[Cache]` log line +
                             // matching TTFT fields per send so we can audit KV reuse
@@ -8166,7 +8190,7 @@ final class ChatSession: ObservableObject {
                             do {
                                 let streamStartTime = self.beginModelStep()
                                 let (invocations, finalTurn) = try await self.processStreamDeltas(
-                                    stream: try await engine.streamChat(request: req),
+                                    stream: try await engine.streamResponses(request: req),
                                     assistantTurn: assistantTurn,
                                     runId: runId,
                                     streamStartTime: streamStartTime,
@@ -8625,51 +8649,48 @@ final class ChatSession: ObservableObject {
                                         [notice],
                                         to: trimmedFinalMessages
                                     )
-                                var finalReq = ChatCompletionRequest(
-                                    model: turnModelId ?? "default",
-                                    // Same watermark-trimmed view of history the
-                                    // loop iterations used — the raw array can
-                                    // exceed the window precisely when the cap
-                                    // hits after heavy tool traffic.
-                                    messages: finalMessages,
+                            var finalReq = ResponsesInferenceRequest(
+                                model: turnModelId ?? "default",
+                                // Same watermark-trimmed view of history the
+                                // loop iterations used — the raw array can
+                                // exceed the window precisely when the cap
+                                // hits after heavy tool traffic.
+                                input: finalMessages,
+                                generation: ResponsesGenerationOptions(
                                     temperature: effectiveTemp,
-                                    max_tokens: effectiveMaxTokensForAgent,
-                                    stream: true,
-                                    top_p: chatCfg.topPOverride,
-                                    frequency_penalty: nil,
-                                    presence_penalty: nil,
-                                    stop: nil,
-                                    n: nil,
-                                    tools: nil,
-                                    tool_choice: nil,
-                                    session_id: sessionId?.uuidString
+                                    maxOutputTokens: effectiveMaxTokensForAgent,
+                                    topP: chatCfg.topPOverride
+                                ),
+                                tools: nil,
+                                toolChoice: nil,
+                                sessionID: sessionId?.uuidString
                                 )
-                                finalReq.admissionPositionLimit = self.delegationBudget?.contextPositions
-                                finalReq.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
-                                finalReq.samplingParametersAreImplicit = true
-                                finalReq.runAsRemoteAgent = isRemoteAgentTarget
-                                finalReq.cacheStableSystemPrefix =
+                                finalReq.context.admissionPositionLimit = self.delegationBudget?.contextPositions
+                                finalReq.context.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
+                                finalReq.context.samplingParametersAreImplicit = true
+                                finalReq.context.runAsRemoteAgent = isRemoteAgentTarget
+                                finalReq.context.cacheStableSystemPrefix =
                                     isRemoteAgentTarget ? nil : context.staticPrefix
                                 // Carry the agent provider id on this path too so
                                 // the route-by-provider invariant holds for *every*
                                 // Mode 2 request — a `runAsRemoteAgent` send with no
                                 // provider id would fall back to model-string
                                 // routing (the exact mis-route this fix removes).
-                                finalReq.remoteAgentProviderId = remoteAgentProviderId
-                                finalReq.remoteAgentLogModel =
+                                finalReq.context.remoteAgentProviderId = remoteAgentProviderId
+                                finalReq.context.remoteAgentLogModel =
                                     isRemoteAgentTarget ? remoteAgentEffectiveModel : nil
-                                finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
+                                finalReq.context.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
                                 turnGenerationControls.apply(to: &finalReq)
-                                finalReq.backgroundModelLoad = (loadIntent == .background)
-                                finalReq.turnId = assistantTurn.id
+                                finalReq.context.backgroundModelLoad = (loadIntent == .background)
+                                finalReq.context.turnId = assistantTurn.id
                                 // Distinct logical step (the post-cap summarizing
                                 // call) so it bills once and dedupes on its own
                                 // connect-phase retry without colliding with the
                                 // loop's per-iteration keys.
-                                finalReq.idempotencyKey = "\(runId.uuidString):final"
+                                finalReq.context.idempotencyKey = "\(runId.uuidString):final"
 
                                 // Route the capped-run wrap-up through the exact
-                                // same typed sentinel decoder as every ordinary
+                                // same typed event consumer as every ordinary
                                 // chat step. Feeding this stream directly into a
                                 // StreamingDeltaProcessor leaked U+FFFE prefill and
                                 // stats envelopes into ChatTurn.content (and then
@@ -8677,7 +8698,7 @@ final class ChatSession: ObservableObject {
                                 // its iteration cap.
                                 let finalStreamStartTime = beginModelStep()
                                 let (_, finalTurn) = try await processStreamDeltas(
-                                    stream: try await engine.streamChat(request: finalReq),
+                                    stream: try await engine.streamResponses(request: finalReq),
                                     assistantTurn: assistantTurn,
                                     runId: runId,
                                     streamStartTime: finalStreamStartTime,
