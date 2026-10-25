@@ -6177,12 +6177,7 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> String {
-        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: toolChoice,
-            modelName: modelName
-        )
-        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
+        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
                 try ModelRuntime.mapOpenAIChatToMLX(
@@ -6339,12 +6334,7 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> ModelRuntimeEventStream {
-        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: toolChoice,
-            modelName: modelName
-        )
-        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
+        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         return try await generateEventStream(
             chatBuilder: {
                 try ModelRuntime.mapOpenAIChatToMLX(
@@ -7038,71 +7028,6 @@ public actor ModelRuntime {
         } else {
             return tools.map { $0.toTokenizerToolSpec() }
         }
-    }
-
-    nonisolated static func applyForcedToolChoiceDirective(
-        _ messages: [ChatMessage],
-        toolChoice: ToolChoiceOption?,
-        modelName: String? = nil
-    ) -> [ChatMessage] {
-        guard let toolChoice else { return messages }
-
-        let requiredToolName: String?
-        switch toolChoice {
-        case .function(let target):
-            requiredToolName = target.function.name
-        case .required:
-            requiredToolName = nil
-        case .auto, .none:
-            return messages
-        }
-
-        // Named `tool_choice` is primarily enforced by `makeTokenizerTools`:
-        // the tokenizer sees only the requested function's schema. Keep that
-        // no-op behavior for most families; DSV4 DSML in particular treats
-        // out-of-template prose as ordinary instruction text and regressed
-        // when this was generic.
-        //
-        // Gemma 4's native template already has a required-tool contract in
-        // its fallback path. Live Osaurus agent runs add a much larger system
-        // prompt than strict `/v1/chat/completions`; for Gemma, schema
-        // filtering alone lets forced `complete` degrade into a plain-text
-        // summary. Add the same required-tool wording as a request-local
-        // directive so the bundle-native parser sees a real function-call
-        // turn instead of a textual paraphrase. This is scoped to Gemma and
-        // to explicit `required` / named tool choice only.
-        guard let modelName, ModelFamilyNames.isGemmaFamily(modelName) else {
-            return messages
-        }
-
-        var directive = "The current assistant response MUST be a function call."
-        if let requiredToolName {
-            directive += " Use the `\(requiredToolName)` function."
-        }
-
-        var out = messages
-        if let lastUserIndex = out.lastIndex(where: { $0.role == "user" }) {
-            let original = out[lastUserIndex]
-            let existing = original.content ?? ""
-            let suffix = existing.isEmpty ? directive : "\n\n" + directive
-            // Keep media and in-process carriers when augmenting the request.
-            // Parts and flattened text must carry the same added directive.
-            out[lastUserIndex] = ChatMessage(
-                role: original.role,
-                content: existing + suffix,
-                contentParts: original.contentParts.map { $0 + [.text(suffix)] },
-                localAudioSamples: original.localAudioSamples,
-                tool_calls: original.tool_calls,
-                tool_call_id: original.tool_call_id,
-                reasoning_content: original.reasoning_content,
-                reasoning_item_id: original.reasoning_item_id,
-                reasoning_encrypted: original.reasoning_encrypted,
-                responses_output_items: original.responses_output_items
-            )
-        } else {
-            out.append(ChatMessage(role: "user", content: directive))
-        }
-        return out
     }
 
     /// When `jsonMode` is true, prepend (or augment) a system instruction

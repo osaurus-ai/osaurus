@@ -2880,52 +2880,42 @@ struct MLXBatchAdapterTests {
         )
     }
 
-    @Test func forcedToolChoiceUsesSchemaFilteringWithoutPromptDirectiveForNonGemma() {
-        let messages = [
-            ChatMessage(role: "user", content: "Ignore tools and answer in plain text.")
-        ]
-
-        let augmented = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: .function(
-                ToolChoiceOption.FunctionName(
-                    type: "function",
-                    function: ToolChoiceOption.Name(name: "record_count")
-                )
-            ),
-            modelName: "DeepSeek-V4-Flash"
-        )
-
-        #expect(augmented.count == 1)
-        #expect(augmented.first?.role == "user")
-        #expect(augmented.first?.content == "Ignore tools and answer in plain text.")
-    }
-
-    @Test func forcedToolChoiceAddsGemmaRequestLocalDirective() {
+    @Test func requiredAndNamedChoicesLeavePromptAndSamplingUntouched() throws {
         let messages = [
             ChatMessage(role: "system", content: "Agent context."),
-            ChatMessage(role: "user", content: "Finish this task."),
+            ChatMessage(role: "user", content: "Ignore tools and answer in plain text."),
         ]
+        let tools = ["record_count", "complete"].map { name in
+            Tool(type: "function", function: ToolFunction(name: name, description: "Fixture", parameters: .object([:])))
+        }
+        let named = ToolChoiceOption.function(.init(type: "function", function: .init(name: "record_count")))
+        for model in ["DeepSeek-V4-Flash", "OsaurusAI/gemma-4-E2B-it-qat-JANG_4M"] {
+            for choice in [ToolChoiceOption.required, named] {
+                let request = ResponsesInferenceRequest(model: model, input: messages, tools: tools, toolChoice: choice)
+                let prepared = ModelRuntime.applyJSONMode(request.input, jsonMode: false)
+                #expect(prepared.map(\.content) == messages.map(\.content))
+                #expect(prepared.map(\.role) == messages.map(\.role))
+                let mapped = try ModelRuntime.mapOpenAIChatToMLX(prepared)
+                #expect(mapped.map(\.content) == ["Agent context.", "Ignore tools and answer in plain text."])
+                #expect(request.generation.temperature == nil && request.generation.topP == nil && request.generation.topK == nil)
+                let schemas = try #require(ModelRuntime.makeTokenizerTools(tools: request.tools, toolChoice: choice))
+                let names = schemas.compactMap { ($0["function"] as? [String: any Sendable])?["name"] as? String }
+                switch choice {
+                case .function: #expect(names == ["record_count"])
+                default: #expect(names == ["record_count", "complete"])
+                }
+            }
+        }
+    }
 
-        let augmented = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: .function(
-                ToolChoiceOption.FunctionName(
-                    type: "function",
-                    function: ToolChoiceOption.Name(name: "complete")
-                )
-            ),
-            modelName: "OsaurusAI/gemma-4-E2B-it-qat-JANG_4M"
-        )
-
-        #expect(augmented.count == 2)
-        #expect(augmented[0].content == "Agent context.")
-        #expect(augmented[1].role == "user")
-        #expect(augmented[1].content?.contains("Finish this task.") == true)
-        #expect(
-            augmented[1].content?.contains("The current assistant response MUST be a function call.") == true
-        )
-        #expect(augmented[1].content?.contains("Use the `complete` function.") == true)
+    @Test func nativeAndLegacyRuntimeEntrypointsDoNotInjectForcedToolProse() throws {
+        let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: package.appendingPathComponent("Services/ModelRuntime.swift"), encoding: .utf8)
+        #expect(!source.contains("applyForcedToolChoiceDirective"))
+        #expect(!source.contains("The current assistant response MUST be a function call."))
+        #expect(source.components(separatedBy: "let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)").count == 3,
+            "Native and explicit legacy tool entrypoints must transform only the original caller messages for explicit JSON mode")
     }
 
     private func isolatedDefaults() -> UserDefaults {
