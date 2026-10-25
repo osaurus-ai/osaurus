@@ -4814,6 +4814,7 @@ final class ChatSession: ObservableObject {
     private func markUnfinishedToolCallsInterrupted() {
         guard stopRequested || lastStreamError != nil else { return }
         for turn in turns where turn.role == .assistant {
+            turn.finalizeRemoteToolActivity(endedBy: stopRequested ? .cancelled : .failed)
             // A tool the model was still naming/arguing (or whose parsed
             // invocation was withheld by the engine tail) never became a
             // call. Drop the ephemeral placeholder: with the run closed the
@@ -5176,8 +5177,9 @@ final class ChatSession: ObservableObject {
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
         currentTurn.lastOutputAt = nil
+        currentTurn.prefillProgress = nil
         // Same contract for the session-level flag: the previous step's
-        // relay completion set it, and `isStreaming` (which resets it) stays
+        // typed completion set it, and `isStreaming` (which resets it) stays
         // true across the whole run. Callers already reset it before awaiting
         // `streamResponses` (see `beginModelStep`); this covers any path that
         // reaches the processor without it.
@@ -5185,15 +5187,19 @@ final class ChatSession: ObservableObject {
             outputComplete = false
             rebuildVisibleBlocks()
         }
-        // Output-complete relay: the adapter announces the instant vmlx's
-        // terminal info arrives (before the cache-store tail it withholds the
-        // stream end for). Stop the cursor and stamp completion right then.
+        // The request's ordered typed completion separates finished output
+        // from the producer/cache tail without a process-wide relay.
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
         // can't persist on the finalized turn. No-op for real pending calls
         // (the committed `\u{FFFE}tool:` name overwrites the sentinel first).
-        defer { Self.clearPendingToolCallProgressPlaceholder(on: currentTurn) }
+        defer {
+            currentTurn.prefillProgress = nil
+            currentTurn.finalizeThinkingDuration()
+            currentTurn.finalizeRemoteToolActivity()
+            Self.clearPendingToolCallProgressPlaceholder(on: currentTurn)
+        }
         var uiDeltaCount = 0
         var uiReasoningDeltaCount = 0
         var uiToolSentinelCount = 0
@@ -5242,52 +5248,11 @@ final class ChatSession: ObservableObject {
         var processor = StreamingDeltaProcessor(turn: currentTurn) { [weak self] in
             self?.rebuildVisibleBlocks()
         }
-        // The relay fires when the ENGINE is done; the last deltas may still
-        // be in flight to this loop and the smooth-streaming pacer may still be
-        // painting them (live: "…247 248 249 2" shown as complete for the
-        // whole tail — the "50" was in the pacing buffer). So completion is
-        // settled, not stamped: wait for a quiet window with no new delta,
-        // drain the processor so every character is painted, THEN stop the
-        // cursor and stamp. No engine output can follow `.info`, so the quiet
-        // window only ever waits on delivery, never on generation.
-        var lastDeltaAt = Date()
-        // Only THIS session's own (non-utility) generation may complete this
-        // step. The relay is process-wide, and the previous turn's title /
-        // follow-up / memory jobs queue behind the same solo lease, so they
-        // finish right after a new send starts — a bare timestamp filter let
-        // them mark this turn complete before its model emitted a token.
-        let relaySessionId = sessionId?.uuidString
-        let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
-            .compactMap { $0 }
-            .filter { $0.matches(sessionId: relaySessionId, startedAt: streamStartTime) }
-            .first()
-            .receive(on: RunLoop.main)
-            .sink { [weak self, weak currentTurn] completion in
-                guard let self else { return }
-                Task { @MainActor [weak self, weak currentTurn] in
-                    let quiet: TimeInterval = 0.15
-                    var waited: TimeInterval = 0
-                    while Date().timeIntervalSince(lastDeltaAt) < quiet, waited < 3 {
-                        try? await Task.sleep(nanoseconds: 50_000_000); waited += 0.05
-                    }
-                    await processor.finalize()
-                    guard let self, self.activeRunId == runId else { return }
-                    let at = Date()
-                    if let turn = currentTurn {
-                        if turn.completedAt == nil { turn.completedAt = at }
-                        if turn.lastOutputAt == nil { turn.lastOutputAt = at }
-                    }
-                    self.outputComplete = true
-                    // The rebuild keeps the last turn "active" (pending tool
-                    // chip / finishing indicator) while the engine tail
-                    // drains — only the cursor and live-content path end here.
-                    self.rebuildVisibleBlocks()
-                    print(
-                        "[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail, finishing indicator shown)"
-                    )
-                }
-            }
-        defer { outputCompleteSub.cancel() }
+        defer { processor.finishImmediately() }
+        // Completion is ordered in this request's typed event stream. A
+        // process-wide relay plus a quiet-time guess can run ahead of buffered
+        // content/reasoning, or finish a different step in the same session.
+        var receivedCompletion = false
 
         // Parsed calls are previews until the typed response completion
         // publishes the complete ordered batch. Tool execution is data, never
@@ -5302,15 +5267,43 @@ final class ChatSession: ObservableObject {
                     await processor.finalize()
                     // Cancelled mid-run: don't leave a remote tool chip
                     // shimmering forever — settle any still-running rows.
-                    currentTurn.finalizeRemoteToolActivity()
+                    currentTurn.finalizeRemoteToolActivity(endedBy: .cancelled)
                     return ([], currentTurn)
                 }
+                if receivedCompletion {
+                    switch event {
+                    case .outputTextDelta, .reasoningDelta, .providerOutputItem, .reasoningItem:
+                        throw ResponsesGenerationResult.CollectionError.outputAfterCompletion
+                    default: break
+                    }
+                } else {
+                    switch event {
+                    case .drained, .compatibilityStreamClosed:
+                        throw ResponsesGenerationResult.CollectionError.drainBeforeCompletion
+                    default: break
+                    }
+                }
+                if event.isGeneratedOutput {
+                    currentTurn.prefillProgress = nil
+                    let now = Date()
+                    if firstDeltaTime == nil {
+                        firstDeltaTime = now
+                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
+                        ttftTrace?.mark("first_generated_delta")
+                        ttftTrace?.set("model", selectedModel ?? "unknown")
+                        ttftTrace?.emit()
+                    }
+                    currentTurn.lastOutputAt = now
+                }
                 if case .functionPreviewReset = event {
+                    let hadPreview = currentTurn.pendingToolName != nil || currentTurn.pendingToolArgSize > 0
                     currentTurn.pendingToolName = nil
                     currentTurn.clearPendingToolArgs()
+                    if hadPreview { rebuildVisibleBlocks() }
                     continue
                 }
                 if case .functionCallAdded(let call) = event {
+                    currentTurn.finalizeThinkingDuration()
                     uiToolSentinelCount += 1
                     currentTurn.pendingToolName = call.name
                     currentTurn.clearPendingToolArgs()
@@ -5487,6 +5480,10 @@ final class ChatSession: ObservableObject {
                     // Keep it out of text/history and the TTFT/rolling-rate path.
                     currentTurn.inputTokenCount = inputTokenCount
                 } else if case .responseCompleted(let stats) = event {
+                    guard !receivedCompletion else {
+                        throw ResponsesGenerationResult.CollectionError.duplicateCompletion
+                    }
+                    receivedCompletion = true
                     uiStatsHintCount += 1
                     // Final stats from vmlx — captured for the post-loop stamp.
                     // We do NOT overwrite the live rolling rate here: while the
@@ -5509,6 +5506,20 @@ final class ChatSession: ObservableObject {
                     // renderer can surface a one-line banner suggesting
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
+                    // Paint every already-delivered character before removing
+                    // the cursor. The producer's independent drain is still
+                    // represented by the finishing row and live Stop control.
+                    if stats.dispatchableFunctionCalls.isEmpty {
+                        await processor.finalize()
+                    } else {
+                        // A ready tool must not wait for a decorative text
+                        // reveal. Paint its received preamble now, then let
+                        // the complete batch dispatch without a pacing tail.
+                        processor.finishImmediately()
+                    }
+                    guard isRunActive(runId) else { throw CancellationError() }
+                    currentTurn.finalizeThinkingDuration()
+                    currentTurn.prefillProgress = nil
                     if case .cancelled = stats.status { throw CancellationError() }
                     capturedInvocations = stats.dispatchableFunctionCalls.map {
                         ServiceToolInvocation(
@@ -5518,6 +5529,17 @@ final class ChatSession: ObservableObject {
                             geminiThoughtSignature: $0.geminiThoughtSignature
                         )
                     }
+                    // A parsed preview that was not in the completed batch
+                    // must not leave a live chip. Keep a length-truncated
+                    // argument buffer until the outer loop records its exact
+                    // truncated-tool diagnostic.
+                    if stats.stopReason != "length" {
+                        currentTurn.pendingToolName = nil
+                        currentTurn.clearPendingToolArgs()
+                    }
+                    if currentTurn.completedAt == nil { currentTurn.completedAt = Date() }
+                    outputComplete = true
+                    rebuildVisibleBlocks()
                     // Execute the complete ordered batch at logical completion;
                     // the engine keeps draining its GPU/cache lease independently.
                     if !capturedInvocations.isEmpty { break responseLoop }
@@ -5531,7 +5553,10 @@ final class ChatSession: ObservableObject {
                     recordRouterBilling(billing, on: currentTurn)
                 } else if case .prefillProgress(let progress) = event {
                     uiPrefillHintCount += 1
-                    InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
+                    if !receivedCompletion {
+                        currentTurn.prefillProgress = progress.stage == .complete ? nil : progress
+                        rebuildVisibleBlocks()
+                    }
                 } else if case .artifacts(let remoteArtifacts) = event {
                     // A teammate's host returned the small files its agent
                     // shared: import them into THIS session's store and show
@@ -5553,13 +5578,6 @@ final class ChatSession: ObservableObject {
                 } else if case .reasoningDelta(let reasoning) = event {
                     uiReasoningDeltaCount += 1
                     let now = Date()
-                    if firstDeltaTime == nil {
-                        firstDeltaTime = now
-                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
-                        ttftTrace?.mark("first_text_delta")
-                        ttftTrace?.set("model", selectedModel ?? "unknown")
-                        ttftTrace?.emit()
-                    }
                     // Reasoning tokens count toward the rolling rate so
                     // thinking-ON and thinking-OFF show the same decode
                     // rate at steady state. See RollingTokenRate doc.
@@ -5581,15 +5599,8 @@ final class ChatSession: ObservableObject {
                     )
                 } else if case .outputTextDelta(let delta) = event, !delta.isEmpty {
                     let now = Date()
-                    if firstDeltaTime == nil {
-                        firstDeltaTime = now
-                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
-                        ttftTrace?.mark("first_text_delta")
-                        ttftTrace?.set("model", selectedModel ?? "unknown")
-                        ttftTrace?.emit()
-                    }
+                    currentTurn.finalizeThinkingDuration(at: now)
                     uiDeltaCount += 1
-                    lastDeltaAt = now
                     // Content delta — counted uniformly with reasoning.
                     let tokens = ContextBudgetManager.estimateTokens(for: delta)
                     rollingRate.observe(tokens: tokens, at: now)
@@ -5616,8 +5627,16 @@ final class ChatSession: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_000_000)
                 }
             }
+        } catch {
+            currentTurn.finalizeRemoteToolActivity(
+                endedBy: error is CancellationError ? .cancelled : .failed
+            )
+            throw error
         }
 
+        guard receivedCompletion else {
+            throw ResponsesGenerationResult.CollectionError.missingCompletion
+        }
         // Flush any remaining buffered content (including partial tags).
         // In smooth-streaming mode this awaits until the pacing tail
         // finishes typing out — keeping the processor alive past
@@ -5639,26 +5658,13 @@ final class ChatSession: ObservableObject {
         }
 
         if let first = firstDeltaTime {
-            // Split cold model load out of TTFT.
-            //
-            // `streamStartTime` is stamped immediately before `streamResponses`, and
-            // no delta can arrive until the weights are resident — so a cold
-            // container load lands inside this window and used to be reported
-            // as time-to-first-token. A 64 GB M3 Max showed "TTFT 215.61s" on a
-            // ~1.8k-token prompt: no machine prefills 1.8k tokens in 215s, so
-            // the number was measuring a 27 GB load and reading as an engine
-            // fault. Both halves are kept; neither is hidden.
-            //
-            // `modelLoadSeconds` is clamped to the window by the manager, so
-            // the subtraction cannot go negative and cannot turn an honest
-            // slow turn into a reassuring fast one.
-            let wallClock = first.timeIntervalSince(streamStartTime)
-            let loadSeconds = InferenceProgressManager.shared.modelLoadSeconds(
-                from: streamStartTime,
-                to: first
-            )
-            currentTurn.modelLoadSeconds = loadSeconds > 0 ? loadSeconds : nil
-            currentTurn.timeToFirstToken = max(0, wallClock - loadSeconds)
+            // TTFT spans this request's setup, queue, load and prefill up to
+            // its first generated event. Global model-load intervals can
+            // belong to another chat/background request, so subtracting them
+            // would manufacture a shorter number. A load-excluded metric
+            // requires request-correlated runtime timing, not a global union.
+            currentTurn.modelLoadSeconds = nil
+            currentTurn.timeToFirstToken = max(0, first.timeIntervalSince(streamStartTime))
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //

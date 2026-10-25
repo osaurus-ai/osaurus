@@ -32,6 +32,9 @@ final class BlockMemoizer {
         /// content delta, like the stats above.
         let lastOutputAt: Date?
         let completedAt: Date?
+        let prefillProgress: PrefillProgressState?
+        let isReasoningActive: Bool
+        let thinkingDuration: TimeInterval?
 
         init(_ turn: ChatTurn) {
             ttft = turn.timeToFirstToken
@@ -41,6 +44,9 @@ final class BlockMemoizer {
             modelLoad = turn.modelLoadSeconds
             lastOutputAt = turn.lastOutputAt
             completedAt = turn.completedAt
+            prefillProgress = turn.prefillProgress
+            isReasoningActive = turn.isReasoningActive
+            thinkingDuration = turn.thinkingDuration
         }
     }
     private var lastGenerationStats: GenerationStatsKey?
