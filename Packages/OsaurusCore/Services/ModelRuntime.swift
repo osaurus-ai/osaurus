@@ -637,7 +637,7 @@ public actor ModelRuntime {
     /// admitted MLX freed-buffer ceiling. The ceiling is request-scoped: a
     /// long-lived app must not retain up to the full RAM-admission budget after
     /// the request ends.
-    private var admittedAllocatorGenerationCount = 0
+    private var admittedAllocatorWindows = GenerationAllocatorWindows()
 
     /// Last request source (chat UI / HTTP API / plugin / P2P) that generated
     /// against each resident model. Read by the chat-window-close path so it
@@ -3111,15 +3111,15 @@ public actor ModelRuntime {
     private func beginGenerationAllocatorWindowIfNeeded(
         holder: SessionHolder,
         requestStrategy: MLXLMCommon.DraftStrategy?
-    ) -> Bool {
+    ) -> GenerationAllocatorWindows.Window? {
         let usesAdmittedCeiling = Self.requiresAdmittedMLXAllocatorCeiling(
             isPlainDeepseekV4AffineJANG: holder.requiresAdmittedMLXAllocatorCeiling,
             usesNativeMTP: requestStrategy?.usesNativeMTP == true
         )
-        guard usesAdmittedCeiling else { return false }
-        admittedAllocatorGenerationCount += 1
+        guard usesAdmittedCeiling else { return nil }
+        let window = admittedAllocatorWindows.begin()
         Memory.cacheLimit = generationAllocatorCacheLimit(holder: holder, requestStrategy: requestStrategy)
-        return true
+        return window
     }
 
     /// Shared by generation and resident-child admission. The allocator is
@@ -3143,10 +3143,8 @@ public actor ModelRuntime {
         )
     }
 
-    private func finishGenerationAllocatorWindowIfNeeded(_ active: Bool) {
-        guard active else { return }
-        admittedAllocatorGenerationCount = max(0, admittedAllocatorGenerationCount - 1)
-        guard admittedAllocatorGenerationCount == 0 else { return }
+    private func finishGenerationAllocatorWindowIfNeeded(_ window: GenerationAllocatorWindows.Window?) {
+        guard admittedAllocatorWindows.end(window) else { return }
         // Every producer has reached its engine-owned terminal fence before
         // this wrapper completes. Drain once more, return only freed buffers,
         // then restore the persistent user-visible ceiling. Resident weights,
