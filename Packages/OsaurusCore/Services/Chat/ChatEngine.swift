@@ -1213,6 +1213,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         var calls: [ResponsesFunctionCall] = []
     }
 
+    /// Provider type alone cannot identify the wire path: model/request
+    /// routing may choose Responses, a dynamic Gemini path or a peer run.
+    /// Prefer the built URLRequest captured at that boundary.
+    static func inferenceLogDestination(
+        connection: RequestConnectionInfo?, path: String, endpointURL: URL?
+    ) -> (connection: RequestConnectionInfo?, path: String) {
+        guard let endpointURL else { return (connection, path) }
+        var observed = connection
+        observed?.remoteEndpoint = endpointURL.absoluteString
+        return (observed, endpointURL.path)
+    }
+
     private enum StreamLogEvent: Sendable {
         case inputTokens(Int)
         case stats(StreamLogStats)
@@ -1596,6 +1608,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 // `/agents/{addr}/run` body with `model:"default"`. nil for
                 // local routes (no probe).
                 let wireSnapshot = wireProbe?.snapshot()
+                let destination = Self.inferenceLogDestination(
+                    connection: connection, path: logPath ?? "/chat/completions",
+                    endpointURL: wireProbe?.requestEndpointURL
+                )
 
                 InsightsService.logInference(
                     source: source,
@@ -1622,8 +1638,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                         parsedToolNames: parsedToolNames,
                         secretToolWasExposed: secretToolWasExposed
                     ),
-                    connection: connection,
-                    path: logPath ?? "/chat/completions",
+                    connection: destination.connection,
+                    path: destination.path,
                     privacy: wireProbe?.privacyOutcome,
                     agentId: attribution.agentId,
                     agentName: attribution.agentName,

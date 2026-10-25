@@ -62,6 +62,7 @@ public final class WireTransportProbe: @unchecked Sendable {
     /// instead of two.
     private struct Bodies {
         var req: Data?
+        var endpointURL: URL?
         var resp: Data
         var truncated: Bool
         var privacy: PrivacyOutcome?
@@ -84,7 +85,7 @@ public final class WireTransportProbe: @unchecked Sendable {
     public static let maxResponseBytes: Int = 1_048_576  // 1 MiB
 
     private let bodies = OSAllocatedUnfairLock<Bodies>(
-        initialState: Bodies(req: nil, resp: Data(), truncated: false, privacy: nil)
+        initialState: Bodies(req: nil, endpointURL: nil, resp: Data(), truncated: false, privacy: nil)
     )
 
     /// Record the Privacy Filter outcome for this request. Last write wins
@@ -112,9 +113,18 @@ public final class WireTransportProbe: @unchecked Sendable {
     /// novel request can't balloon process memory; the Insights UI
     /// only renders head/tail anyway, so the trimmed bytes carry
     /// the same diagnostic value.
-    public func recordRequestBody(_ data: Data) {
+    public func recordRequestBody(_ data: Data, endpointURL: URL? = nil) {
+        // Endpoint metadata only: never store credentials or query values.
+        // Keep it paired with the first built request, just like its body.
+        var endpoint = endpointURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        endpoint?.user = nil
+        endpoint?.password = nil
+        endpoint?.query = nil
+        endpoint?.fragment = nil
+        let sanitizedEndpoint = endpoint?.url
         bodies.withLock { state in
             if state.req == nil {
+                state.endpointURL = sanitizedEndpoint
                 if data.count <= Self.maxResponseBytes {
                     state.req = data
                 } else {
@@ -123,6 +133,12 @@ public final class WireTransportProbe: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// The selected first URLRequest's endpoint, stripped of credentials and
+    /// query/fragment values. Construction alone does not prove network send.
+    var requestEndpointURL: URL? {
+        bodies.withLock { $0.endpointURL }
     }
 
     /// Append a chunk of raw inbound bytes. Called from inside the

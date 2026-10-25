@@ -4054,7 +4054,7 @@ public actor RemoteProviderService: ToolCapableService {
         // probe (only the first write wins) so request retries
         // don't stomp the original snapshot. No-op when no probe
         // is set (every non-chatUI path).
-        WireTransportProbe.current?.recordRequestBody(bodyData)
+        WireTransportProbe.current?.recordRequestBody(bodyData, endpointURL: urlRequest.url)
         return urlRequest
     }
 

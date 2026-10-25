@@ -28,6 +28,7 @@ struct WireTransportProbeTests {
         #expect(snap.request == nil)
         #expect(snap.response.isEmpty)
         #expect(snap.truncated == false)
+        #expect(probe.requestEndpointURL == nil)
     }
 
     @Test func recordRequestBody_isIdempotent() {
@@ -39,6 +40,29 @@ struct WireTransportProbeTests {
         // overwriting the original (we always want the verbatim
         // body the cloud first saw).
         #expect(snap.request == "first".data(using: .utf8))
+    }
+
+    @Test func endpointIsSanitizedAndPairedWithTheFirstBuiltRequest() throws {
+        let probe = WireTransportProbe()
+        probe.recordRequestBody(Data("first".utf8), endpointURL: try #require(
+            URL(string: "https://user:fixture@example.test/v1/responses?key=fixture&alt=sse#fragment")
+        ))
+        probe.recordRequestBody(Data("retry".utf8), endpointURL: URL(string: "https://other.test/chat/completions"))
+        #expect(probe.requestEndpointURL?.absoluteString == "https://example.test/v1/responses")
+        #expect(probe.snapshot().request == Data("first".utf8))
+        let providerID = UUID()
+        let destination = ChatEngine.inferenceLogDestination(
+            connection: RequestConnectionInfo(
+                providerId: providerID, remoteEndpoint: "https://example.test/chat/completions",
+                transport: .direct, mode: .remoteInference
+            ),
+            path: "/chat/completions", endpointURL: probe.requestEndpointURL
+        )
+        #expect(destination.path == "/v1/responses")
+        #expect(destination.connection?.remoteEndpoint == "https://example.test/v1/responses")
+        #expect(destination.connection?.providerId == providerID)
+        #expect(destination.connection?.transport == .direct)
+        #expect(destination.connection?.mode == .remoteInference)
     }
 
     @Test func appendResponseChunk_accumulatesInOrder() {
