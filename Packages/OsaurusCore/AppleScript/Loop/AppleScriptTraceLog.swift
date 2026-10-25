@@ -92,8 +92,8 @@ enum AppleScriptTraceLog {
     /// Record one model step: request message shapes + the full raw response
     /// surface (content, tool-call arguments, finish reason, usage).
     static func record(
-        request: ChatCompletionRequest,
-        response: ChatCompletionResponse,
+        request: ResponsesInferenceRequest,
+        response: ResponsesGenerationResult,
         elapsedSeconds: TimeInterval? = nil
     ) {
         guard isEnabled else { return }
@@ -101,18 +101,18 @@ enum AppleScriptTraceLog {
         let stamp = ISO8601DateFormatter().string(from: Date())
         let elapsed = elapsedSeconds.map { String(format: " elapsed=%.1fs", $0) } ?? ""
         let sampling =
-            request.samplingParametersAreImplicit
+            request.context.samplingParametersAreImplicit
             ? ""
-            : (request.temperature.map { String(format: " temp=%.2f(explicit)", $0) } ?? "")
+            : (request.generation.temperature.map { String(format: " temp=%.2f(explicit)", $0) } ?? "")
         lines.append(
             "==== applescript model step \(stamp) model=\(request.model) "
-                + "requested_enable_thinking=\(String(reflecting: request.enable_thinking))"
+                + "requested_enable_thinking=\(String(reflecting: request.generation.enableThinking))"
                 + "\(sampling)\(elapsed) ===="
         )
         // Request shape: role + size per message (content stays out of the
         // trace by default to keep the file readable; the last tool result is
         // included verbatim because it is the step's distinguishing input).
-        let messages = request.messages
+        let messages = request.input
         lines.append("request: \(messages.count) message(s)")
         for (index, message) in messages.enumerated() {
             let chars = message.content?.count ?? 0
@@ -125,24 +125,20 @@ enum AppleScriptTraceLog {
             }
             lines.append(line)
         }
-        let usage = response.usage
-        let finish = response.choices.first.map(\.finish_reason) ?? "(no choice)"
         lines.append(
-            "response: finish=\(finish) prompt_tokens=\(usage.prompt_tokens) "
-                + "completion_tokens=\(usage.completion_tokens)"
-                + (usage.tokens_per_second.map { String(format: " tok/s=%.1f", $0) } ?? "")
+            "response: id=\(response.completion.responseID) status=\(response.completion.status) "
+                + "stop=\(String(reflecting: response.completion.stopReason)) "
+                + "prompt_tokens=\(String(reflecting: response.inputTokenCount)) "
+                + "completion_tokens=\(String(reflecting: response.completion.tokenCount))"
+                + (response.completion.tokensPerSecond.map { " tok/s=\(String(reflecting: $0))" } ?? " tok/s=unreported")
         )
-        if let message = response.choices.first?.message {
-            // `String(reflecting:)` escapes control characters so pads /
-            // markers / empty output are unambiguous in the trace.
-            lines.append("content: \(String(reflecting: message.content ?? ""))")
-            lines.append("reasoning_chars: \(message.reasoning_content?.count ?? 0)")
-            for (index, call) in (message.tool_calls ?? []).enumerated() {
-                lines.append(
-                    "tool_call[\(index)]: name=\(call.function.name) "
-                        + "arguments=\(String(reflecting: call.function.arguments))"
-                )
-            }
+        lines.append("content: \(String(reflecting: response.text))")
+        lines.append("reasoning_chars: \(response.reasoning.count) provider_items=\(response.providerOutputItems.count)")
+        for (index, call) in response.completion.functionCalls.enumerated() {
+            lines.append(
+                "tool_call[\(index)]: id=\(call.id) call_id=\(call.callID) name=\(call.name) "
+                    + "arguments=\(String(reflecting: call.arguments))"
+            )
         }
         write(lines.joined(separator: "\n"))
     }

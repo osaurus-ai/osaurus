@@ -9,8 +9,8 @@
 //  and after, so the harness can assert the KV-prefix / SSM-companion /
 //  disk-L2 deltas that are telemetry-only everywhere else.
 //
-//  Lives in OsaurusCore (not the evals kit) because the streaming hint
-//  decoders are internal runtime surface and the snapshot topology fields
+//  Lives in OsaurusCore (not the evals kit) because typed Responses events
+//  are an internal runtime surface and the snapshot topology fields
 //  (hybrid model counts) drive the AGENTS.md cache rules: a KV hit alone
 //  is not a pass on hybrid-SSM models.
 //
@@ -64,10 +64,21 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
     /// Every typed progress frame in stream order. Optional so transcripts
     /// recorded before this field was introduced remain decodable.
     public let prefillProgressEvents: [CacheProofProgressEvent]?
-    /// This turn's decode rate from the stats sentinel. Optional so older
+    /// This turn's authoritative typed runtime decode rate. Optional so older
     /// recorded transcripts remain decodable. Sustained-speed gates compare
     /// the final turn's value against the first turn's.
     public let decodeTokensPerSecond: Double?
+    /// Optional for compatibility with older saved diagnostic transcripts.
+    public let modelResponseID: String?
+    public let terminalStatus: String?
+    public let completionTokenCount: Int?
+    /// True means tool history was synthesized by the cache-shape fixture.
+    /// It is not evidence of actual tool execution or model tool choice.
+    public let scriptedToolDiagnostic: Bool?
+    public let originalFunctionCallIDs: [String]?
+    public let cachedInputTokenCount: Int?
+    /// Native producer drain, legacy closure and no observed fence are distinct.
+    public let producerDrainStatus: String?
 
     public init(
         turnNumber: Int,
@@ -83,7 +94,14 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
         visibleCharacterCount: Int,
         reasoningCharacterCount: Int,
         prefillProgressEvents: [CacheProofProgressEvent]? = nil,
-        decodeTokensPerSecond: Double? = nil
+        decodeTokensPerSecond: Double? = nil,
+        modelResponseID: String? = nil,
+        terminalStatus: String? = nil,
+        completionTokenCount: Int? = nil,
+        scriptedToolDiagnostic: Bool? = nil,
+        originalFunctionCallIDs: [String]? = nil,
+        cachedInputTokenCount: Int? = nil,
+        producerDrainStatus: String? = nil
     ) {
         self.turnNumber = turnNumber
         self.sessionNumber = sessionNumber
@@ -99,6 +117,13 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
         self.reasoningCharacterCount = reasoningCharacterCount
         self.prefillProgressEvents = prefillProgressEvents
         self.decodeTokensPerSecond = decodeTokensPerSecond
+        self.modelResponseID = modelResponseID
+        self.terminalStatus = terminalStatus
+        self.completionTokenCount = completionTokenCount
+        self.scriptedToolDiagnostic = scriptedToolDiagnostic
+        self.originalFunctionCallIDs = originalFunctionCallIDs
+        self.cachedInputTokenCount = cachedInputTokenCount
+        self.producerDrainStatus = producerDrainStatus
     }
 }
 
@@ -127,10 +152,10 @@ public struct CacheProofTranscript: Sendable, Codable {
     /// True when the resolved engine set contains a hybrid-SSM model —
     /// the harness must then require companion hits, not just KV hits.
     public let hybridTopology: Bool
-    /// Token-weighted decode speed across turns, when reported — keeps
-    /// every generation row carrying token/s per the runtime proof rules.
+    /// Last observed terminal turn's reported decode speed. Missing rates
+    /// remain nil instead of borrowing an earlier turn's measurement.
     public let decodeTokensPerSecond: Double?
-    /// Physical footprint (MB) sampled after EACH completed turn, in turn
+    /// Physical footprint (MB) sampled after each observed turn, in turn
     /// order. The multi-turn growth signal: a bounded companion/KV plan
     /// shows a plateau here; monotonic growth back toward the model's
     /// on-disk size is the Bonsai-class failure this exists to catch.
@@ -193,6 +218,20 @@ public struct CacheProofTranscript: Sendable, Codable {
 @MainActor
 public enum CacheProofEvaluator {
 
+    /// This explicit fixture replaces the model's actual calls with scripted
+    /// cache-shape calls. Opaque/native provider Items cannot be replayed with
+    /// those substituted identities; ordinary turns keep the full snapshot.
+    static func scriptedDiagnosticAssistant(
+        _ response: ResponsesGenerationResult, calls: [ToolCall]?
+    ) -> ChatMessage {
+        ChatMessage(
+            role: "assistant", content: response.text.isEmpty ? nil : response.text,
+            tool_calls: calls, tool_call_id: nil,
+            reasoning_content: response.reasoning.isEmpty ? nil : response.reasoning
+        )
+    }
+
+
     /// Run `queries` as consecutive user turns and return the diagnostics
     /// deltas across the whole exchange. By default turn 2+ shares turn 1's
     /// prefix in one conversation. `startNewSessionBeforeTurns` clears
@@ -226,11 +265,34 @@ public enum CacheProofEvaluator {
         startNewSessionBeforeTurns: [Int] = [],
         toolResultFollowUps: [String]? = nil
     ) async -> CacheProofTranscript {
+        await runConversation(
+            queries: queries,
+            model: model,
+            maxTokens: maxTokens,
+            thinkingPerTurn: thinkingPerTurn,
+            systemPrompt: systemPrompt,
+            systemPromptsPerSession: systemPromptsPerSession,
+            startNewSessionBeforeTurns: startNewSessionBeforeTurns,
+            toolResultFollowUps: toolResultFollowUps,
+            engine: ChatEngine()
+        )
+    }
+
+    static func runConversation(
+        queries: [String],
+        model: String? = nil,
+        maxTokens: Int = 128,
+        thinkingPerTurn: [Bool]? = nil,
+        systemPrompt: String? = nil,
+        systemPromptsPerSession: [String]? = nil,
+        startNewSessionBeforeTurns: [Int] = [],
+        toolResultFollowUps: [String]? = nil,
+        engine: any ResponsesEngineProtocol
+    ) async -> CacheProofTranscript {
         let resolvedModel =
             model
             ?? ChatConfigurationStore.load().coreModelIdentifier
             ?? "foundation"
-        let engine = ChatEngine()
         let residentRequirement = residentSafetensorsRequirement(
             for: resolvedModel
         )
@@ -307,23 +369,16 @@ public enum CacheProofEvaluator {
             } else {
                 history.append(ChatMessage(role: "user", content: query))
             }
-            var request = ChatCompletionRequest(
-                model: resolvedModel,
-                messages: history,
-                temperature: nil,
-                max_tokens: maxTokens,
-                stream: true,
-                top_p: nil,
-                frequency_penalty: nil,
-                presence_penalty: nil,
-                stop: nil,
-                n: nil,
-                tools: scriptedToolLoop ? [probeTool] : nil,
-                tool_choice: nil,
-                session_id: sessionId
-            )
+            var request = ResponsesInferenceRequest(model: resolvedModel, input: history)
+            // Explicit short cache-shape diagnostic budget, not a quality or
+            // natural-completion qualification of this model family.
+            request.generation.maxOutputTokens = maxTokens
+            request.tools = scriptedToolLoop ? [probeTool] : nil
+            request.sessionID = sessionId
+            request.context.samplingParametersAreImplicit = true
+            request.context.isAgentRequest = scriptedToolLoop
             if let thinkingPerTurn, turnIndex < thinkingPerTurn.count {
-                request.enable_thinking = thinkingPerTurn[turnIndex]
+                request.generation.enableThinking = thinkingPerTurn[turnIndex]
             }
             var visible = ""
             var reasoning = ""
@@ -337,88 +392,63 @@ public enum CacheProofEvaluator {
             var stopReason: String?
             var unclosedReasoning = false
             var prefillProgressEvents: [CacheProofProgressEvent] = []
+            var modelResponse: ResponsesGenerationResult?
+            var observedCompletion: ResponsesGenerationCompletion?
             do {
-                let stream = try await engine.streamChat(request: request)
-                for try await delta in stream {
-                    if let progress = StreamingPrefillProgressHint.decode(delta) {
-                        prefillProgressEvents.append(
-                            CacheProofProgressEvent(
-                                stage: progress.stage.rawValue,
-                                completedUnitCount: progress.completedUnitCount,
-                                totalUnitCount: progress.totalUnitCount,
-                                detail: progress.detail
-                            )
-                        )
-                        if progress.totalUnitCount > 0 {
-                            promptTokenCount = max(
-                                promptTokenCount ?? 0,
-                                progress.totalUnitCount
-                            )
-                        }
-                        if progress.stage == .cacheRestore,
-                            progress.completedUnitCount > 0
-                        {
-                            cacheRestoredTokens = max(
-                                cacheRestoredTokens ?? 0,
-                                progress.completedUnitCount
-                            )
-                            cacheRestoreDetail = progress.detail
-                        }
-                        continue
-                    }
-                    if let fragment = StreamingReasoningHint.decode(delta) {
-                        if firstModelOutputAt == nil {
-                            firstModelOutputAt = CFAbsoluteTimeGetCurrent()
-                        }
-                        reasoning += fragment
-                        continue
-                    }
-                    if let stats = StreamingStatsHint.decode(delta) {
-                        if stats.tokensPerSecond > 0 {
-                            lastDecodeTps = stats.tokensPerSecond
-                            turnDecodeTps = stats.tokensPerSecond
-                        }
-                        if let prefill = stats.prefillTokensPerSecond, prefill > 0 {
-                            prefillTokensPerSecond = prefill
-                        }
-                        stopReason = stats.stopReason
-                        unclosedReasoning = stats.unclosedReasoning
-                        continue
-                    }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if !delta.isEmpty, firstModelOutputAt == nil {
+                let response = try await ResponsesEvaluationStep.collect(
+                    engine: engine, request: request, endAt: .streamEnd
+                ) { event in
+                    if firstModelOutputAt == nil, event.isGeneratedOutput {
                         firstModelOutputAt = CFAbsoluteTimeGetCurrent()
                     }
-                    visible += delta
+                    switch event {
+                    case .prefillProgress(let progress):
+                        prefillProgressEvents.append(CacheProofProgressEvent(
+                            stage: progress.stage.rawValue,
+                            completedUnitCount: progress.completedUnitCount,
+                            totalUnitCount: progress.totalUnitCount, detail: progress.detail
+                        ))
+                        if progress.stage == .cacheRestore, progress.completedUnitCount > 0 {
+                            cacheRestoredTokens = max(cacheRestoredTokens ?? 0, progress.completedUnitCount)
+                            cacheRestoreDetail = progress.detail
+                        }
+                    case .inputTokenCount(let count): promptTokenCount = count
+                    case .responseCompleted(let terminal):
+                        observedCompletion = terminal
+                        turnDecodeTps = terminal.tokensPerSecond
+                        prefillTokensPerSecond = terminal.promptTokensPerSecond
+                        stopReason = terminal.stopReason
+                        unclosedReasoning = terminal.unclosedReasoning
+                    case .outputTextDelta(let text): visible += text
+                    case .reasoningDelta(let text): reasoning += text
+                    default: break
+                    }
                 }
-            } catch let batch as ServiceToolInvocations {
-                // Batch form first — see the ServiceToolInvocations note:
-                // some provider paths still throw the single form.
-                guard scriptedToolLoop else {
-                    runError =
-                        "turn \(visibleTurns.count + 1)/\(effectiveQueries.count) failed: "
-                        + "unexpected tool invocation batch "
-                        + "(\(batch.invocations.map(\.toolName).joined(separator: ",")))"
-                    break
+                modelResponse = response
+                visible = response.text
+                reasoning = response.reasoning
+                promptTokenCount = response.inputTokenCount
+                turnDecodeTps = response.completion.tokensPerSecond
+                lastDecodeTps = turnDecodeTps
+                prefillTokensPerSecond = response.completion.promptTokensPerSecond
+                stopReason = response.completion.stopReason
+                unclosedReasoning = response.completion.unclosedReasoning
+                switch response.completion.status {
+                case .cancelled:
+                    runError = "turn \(turnNumber) cancelled by upstream model/provider"
+                case .incomplete:
+                    runError = "turn \(turnNumber) is an incomplete cache diagnostic (\(stopReason ?? "unknown reason")); not a natural-completion pass"
+                case .completed:
+                    if unclosedReasoning || stopReason == "length" {
+                        runError = "turn \(turnNumber) ended with unfinished reasoning/output; not a completion pass"
+                    }
                 }
-                if stopReason == nil { stopReason = "tool_call" }
-            } catch let invocation as ServiceToolInvocation {
-                // The model called a tool. In the scripted loop this is the
-                // expected end of a turn — the script supplies the next tool
-                // result regardless of what the model asked for, so record
-                // the turn and continue. Outside the scripted loop it is a
-                // genuine surprise and fails the run as before.
-                guard scriptedToolLoop else {
-                    runError =
-                        "turn \(visibleTurns.count + 1)/\(effectiveQueries.count) failed: "
-                        + "unexpected tool invocation \(invocation.toolName)"
-                    break
+                if !scriptedToolLoop, !response.completion.functionCalls.isEmpty {
+                    runError = "turn \(turnNumber) produced unexpected tool calls: \(response.completion.functionCalls.map(\.name).joined(separator: ","))"
                 }
-                if stopReason == nil { stopReason = "tool_call" }
             } catch {
-                runError =
-                    "turn \(visibleTurns.count + 1)/\(effectiveQueries.count) failed: \(error)"
-                break
+                lastDecodeTps = turnDecodeTps
+                runError = "turn \(turnNumber)/\(effectiveQueries.count) failed: \(error)"
             }
             visibleTurns.append(visible)
             let remainingPrefillTokens: Int?
@@ -444,38 +474,41 @@ public enum CacheProofEvaluator {
                     visibleCharacterCount: visible.count,
                     reasoningCharacterCount: reasoning.count,
                     prefillProgressEvents: prefillProgressEvents,
-                    decodeTokensPerSecond: turnDecodeTps
+                    decodeTokensPerSecond: turnDecodeTps,
+                    modelResponseID: observedCompletion?.responseID,
+                    terminalStatus: observedCompletion.map { String(describing: $0.status) }
+                        ?? (runError == nil ? nil : "stream_failed"),
+                    completionTokenCount: observedCompletion?.tokenCount,
+                    scriptedToolDiagnostic: scriptedToolLoop,
+                    originalFunctionCallIDs: observedCompletion?.functionCalls.map(\.callID),
+                    cachedInputTokenCount: observedCompletion?.cachedInputTokenCount,
+                    producerDrainStatus: modelResponse.map { response in
+                        switch response.drainStatus {
+                        case .nativeProducerDrained: return "native_producer_drained"
+                        case .compatibilityStreamClosed: return "compatibility_stream_closed"
+                        case .notObserved: return "not_observed"
+                        }
+                    }
                 )
             )
             if let footprint = ProcessMemoryProbe.currentPhysFootprintMB() {
                 footprintAfterTurnMb.append(footprint)
             }
-            // In the scripted tool loop, the assistant reply that precedes a
-            // tool result carries the scripted `tool_calls` — one assistant
-            // message with content + tool_calls, exactly the shape the real
-            // agent loop records before executing a tool.
-            let nextScriptedCall: [ToolCall]? =
-                scriptedToolLoop && turnIndex + 1 < effectiveQueries.count
-                ? [
-                    ToolCall(
-                        id: "call_eval_probe_\(turnIndex + 1)",
-                        type: "function",
-                        function: ToolCallFunction(
-                            name: "eval_probe",
-                            arguments: "{\"step\": \(turnIndex + 1)}"
-                        )
-                    )
-                ]
-                : nil
-            history.append(
-                ChatMessage(
-                    role: "assistant",
-                    content: visible.isEmpty ? nil : visible,
-                    tool_calls: nextScriptedCall,
-                    tool_call_id: nil,
-                    reasoning_content: reasoning.isEmpty ? nil : reasoning
-                )
-            )
+            // Keep failed/capped rows diagnostic and stop before inventing a
+            // completed history turn or feeding another request from it.
+            if runError != nil { break }
+            guard let modelResponse else { break }
+            if scriptedToolLoop {
+                let nextCall: [ToolCall]? = turnIndex + 1 < effectiveQueries.count ? [ToolCall(
+                    id: "call_eval_probe_\(turnIndex + 1)", type: "function",
+                    function: ToolCallFunction(name: "eval_probe", arguments: "{\"step\": \(turnIndex + 1)}")
+                )] : nil
+                history.append(scriptedDiagnosticAssistant(modelResponse, calls: nextCall))
+            } else {
+                do { history.append(try modelResponse.completedAssistantInput()) }
+                catch { runError = "turn \(turnNumber) history projection failed: \(error)"; break }
+            }
+
         }
 
         let after = await ModelRuntime.batchDiagnosticsSnapshot()
@@ -485,8 +518,11 @@ public enum CacheProofEvaluator {
             return CacheProofTranscript(
                 visibleTurns: visibleTurns,
                 error: runError,
-                skipReason:
-                    "no local MLX engine resolved for '\(resolvedModel)'; cache telemetry unavailable",
+                skipReason: runError == nil
+                    ? "no local MLX engine resolved for '\(resolvedModel)'; cache telemetry unavailable" : nil,
+                decodeTokensPerSecond: lastDecodeTps,
+                footprintAfterTurnMb: footprintAfterTurnMb,
+                turnMetrics: turnMetrics,
                 requiredResidentSafetensorsBytes: residentRequirement?.bytes,
                 requiredResidentSafetensorsAttribution: residentRequirement?.attribution
             )
