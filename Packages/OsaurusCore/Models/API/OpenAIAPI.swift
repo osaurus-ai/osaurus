@@ -910,6 +910,8 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
         copy.cacheStableSystemPrefix = cacheStableSystemPrefix
+        copy.admissionPositionLimit = admissionPositionLimit
+        copy.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
         // Must be copied with the other local-only flags. Dropping it silently
         // promotes a background request back to interactive — and an interactive
         // request is allowed to evict the model someone is using.
@@ -961,6 +963,8 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
         copy.cacheStableSystemPrefix = cacheStableSystemPrefix
+        copy.admissionPositionLimit = admissionPositionLimit
+        copy.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
         // Must be copied with the other local-only flags. Dropping it silently
         // promotes a background request back to interactive — and an interactive
         // request is allowed to evict the model someone is using.
