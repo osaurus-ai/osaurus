@@ -81,6 +81,11 @@ public final class StreamingUnscrubber {
 
     private var buffer: String = ""
 
+    /// The current rail has an ambiguous trailing placeholder fragment.
+    /// Read by its stream owner to preserve native event order while holding
+    /// only the frames needed to resolve that fragment.
+    public var hasPendingFragment: Bool { !buffer.isEmpty }
+
     /// Character offset (from `buffer.startIndex`) up to which the
     /// buffer has already been scanned for complete placeholder
     /// tokens. The next `replaceCompletedTokens` pass only re-scans

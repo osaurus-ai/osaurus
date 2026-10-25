@@ -872,7 +872,7 @@ enum PrivacyFilterPipeline {
     /// so the caller's no-op detection still triggers on the
     /// suspicious case AND the leak scan won't accidentally treat the
     /// shorter array as fully clean.
-    private static func diffMessages(
+    static func diffMessages(
         before: [ChatMessage],
         after: [ChatMessage]
     ) -> (changedCount: Int, dirtyIndices: Set<Int>) {
@@ -885,6 +885,11 @@ enum PrivacyFilterPipeline {
         for (idx, pair) in zip(before, after).enumerated() {
             let (a, b) = pair
             if a.content != b.content {
+                changedCount += 1
+                dirty.insert(idx)
+                continue
+            }
+            if a.responses_output_items != b.responses_output_items {
                 changedCount += 1
                 dirty.insert(idx)
                 continue
@@ -1084,6 +1089,19 @@ enum PrivacyFilterPipeline {
             resolvedCalls = out
         }
         return (resolvedContent, resolvedCalls)
+    }
+
+    /// Restore a complete provider-native Item/event through the same payload
+    /// view used for outbound scanning. Identity, opaque reasoning and media
+    /// bytes remain untouched. Delta fragments need a per-item streaming
+    /// unscrubber before this full-object helper, not stateless replacement.
+    static func unscrubInboundJSON(_ value: JSONValue, map: RedactionMap?) async -> JSONValue {
+        guard let map else { return value }
+        let entries = await map.snapshot()
+        let mapping = Dictionary(uniqueKeysWithValues: entries.map { ($0.0.token, $0.1) })
+        guard !mapping.isEmpty else { return value }
+        let order = mapping.keys.sorted { $0.count > $1.count }
+        return ResponsesItemPayload.applyingScrub([value], mapping: mapping, order: order)[0]
     }
 
     // MARK: - One-shot placeholder replacement

@@ -159,6 +159,9 @@ extension ChatMessage {
         if let reasoning_content, !reasoning_content.isEmpty {
             ChatMessage.appendCapped(reasoning_content, into: &out)
         }
+        for text in ResponsesItemPayload.scrubbableTexts(responses_output_items ?? []) {
+            ChatMessage.appendCapped(text, into: &out)
+        }
     }
 
     /// Split `text` at `maxSegmentChars` boundaries and append each
@@ -210,40 +213,31 @@ extension ChatMessage {
         }
         let newReasoning = reasoning_content.map { Self.substitute($0, mapping: mapping, order: order) }
 
-        // The `init(role:content:contentParts:)` and
-        // `init(role:content:tool_calls:tool_call_id:reasoning_content:)`
-        // overloads exist but neither carries both contentParts and
-        // tool_calls. Use the encode-side memberwise representation
-        // by reaching through a Codable round-trip when the message
-        // has both — extremely rare in practice (assistant tool-call
-        // turn doesn't use multimodal content).
-        if newParts != nil && newToolCalls != nil {
-            return ChatMessage(
-                role: role,
-                content: newContent,
-                tool_calls: newToolCalls,
-                tool_call_id: tool_call_id,
-                reasoning_content: newReasoning,
-                reasoning_item_id: reasoning_item_id,
-                reasoning_encrypted: reasoning_encrypted,
-                // Raw provider Items may contain the pre-redaction text.
-                // Drop them so privacy filtering can never replay secrets.
-                responses_output_items: nil
-            )
-        }
-        if newParts != nil {
-            return ChatMessage(role: role, content: newContent, contentParts: newParts)
+        let newItems = responses_output_items.map { items in
+            ResponsesItemPayload.applyingScrub(items, mapping: mapping, order: order)
         }
         return ChatMessage(
-            role: role,
-            content: newContent,
-            tool_calls: newToolCalls,
-            tool_call_id: tool_call_id,
-            reasoning_content: newReasoning,
-            reasoning_item_id: reasoning_item_id,
-            reasoning_encrypted: reasoning_encrypted,
-            responses_output_items: nil
+            scrubbing: self, content: newContent, parts: newParts,
+            calls: newToolCalls, reasoning: newReasoning, providerItems: newItems
         )
+    }
+
+    /// Preserve every in-process field, including media/audio and opaque
+    /// provider identity, while replacing only the scanned payload fields.
+    private init(
+        scrubbing source: ChatMessage, content: String?, parts: [MessageContentPart]?,
+        calls: [ToolCall]?, reasoning: String?, providerItems: [JSONValue]?
+    ) {
+        self.role = source.role
+        self.content = content
+        self.contentParts = parts
+        self.localAudioSamples = source.localAudioSamples
+        self.tool_calls = calls
+        self.tool_call_id = source.tool_call_id
+        self.reasoning_content = reasoning
+        self.reasoning_item_id = source.reasoning_item_id
+        self.reasoning_encrypted = source.reasoning_encrypted
+        self.responses_output_items = providerItems
     }
 
     /// Single-pass substitution. Builds one alternation regex from
@@ -421,6 +415,73 @@ extension ChatMessage {
             return substitute(str, mapping: mapping, order: order)
         default:
             return value
+        }
+    }
+}
+
+
+/// Payload traversal shared by privacy detection and substitution. Provider
+/// identity/discriminators/encrypted blobs and binary media are not language.
+/// Unknown payload fields are walked rather than silently bypassing scanning.
+enum ResponsesItemPayload {
+    private static let rootIdentity: Set<String> = [
+        "id", "type", "role", "status", "phase", "call_id", "name", "encrypted_content",
+    ]
+    private static let mediaTypes: Set<String> = [
+        "input_image", "image_url", "input_audio", "audio_input", "input_video", "video_url", "input_file",
+    ]
+    private static let mediaPayload: Set<String> = [
+        "image_url", "audio_url", "video_url", "file_url", "url", "data", "file_data", "file_id", "format", "detail",
+    ]
+
+    static func scrubbableTexts(_ items: [JSONValue]) -> [String] {
+        var strings: [String] = []
+        for item in items {
+            _ = transform(item, root: true) { text, arguments in
+                strings += arguments ? ChatMessage.jsonStringLeaves(text) : [text]
+                return text
+            }
+        }
+        return strings.filter { !$0.isEmpty }
+    }
+
+    static func applyingScrub(_ items: [JSONValue], mapping: [String: String], order: [String]) -> [JSONValue] {
+        items.map { item in
+            transform(item, root: true) { text, arguments in
+                arguments
+                    ? ChatMessage.substituteJSONArguments(text, mapping: mapping, order: order)
+                    : ChatMessage.substitute(text, mapping: mapping, order: order)
+            }
+        }
+    }
+
+    private static func transform(
+        _ value: JSONValue, root: Bool,
+        payload: (String, Bool) -> String
+    ) -> JSONValue {
+        switch value {
+        case .string(let text): return .string(payload(text, false))
+        case .array(let values): return .array(values.map { transform($0, root: root, payload: payload) })
+        case .object(let fields):
+            let type: String? = { if case .string(let value) = fields["type"] { return value }; return nil }()
+            let media = type.map { mediaTypes.contains($0) } ?? false
+            var updated = fields
+            for key in fields.keys.sorted() {
+                guard let value = fields[key] else { continue }
+                if root && rootIdentity.contains(key) { continue }
+                if type != nil && key == "type" { continue }
+                if media && mediaPayload.contains(key) { continue }
+                if root && ((type == "function_call" && key == "arguments")
+                    || (type == "function_call_output" && key == "output")), case .string(let text) = value {
+                    updated[key] = .string(payload(text, true))
+                } else {
+                    let childIsItem = root && (key == "item" || key == "response"
+                        || (key == "output" && fields["object"] == .string("response")))
+                    updated[key] = transform(value, root: childIsItem, payload: payload)
+                }
+            }
+            return .object(updated)
+        default: return value
         }
     }
 }
