@@ -2871,13 +2871,19 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         try await refreshXAIOAuthIfNeeded()
         let initialURLRequest = try await buildURLRequest(for: request)
         let configuredType = provider.providerType
-        let capabilityFallback: (@Sendable () async throws -> URLRequest)? = configuredType == .openResponses ? { [weak self] in
-            guard let self else { throw CancellationError() }
-            try RemoteResponsesCapabilityFallback.validatePortableOptions(parameters.responsesProviderOptions)
-            var fallback = request
-            fallback.streamOptions = StreamOptions(include_usage: true)
-            return try await self.buildURLRequest(for: fallback, providerTypeOverride: .openaiLegacy)
-        } : nil
+        let capabilityFallback: (@Sendable () async throws -> URLRequest)?
+        if configuredType == .openResponses {
+            let fallbackRequest = request
+            capabilityFallback = { @Sendable [weak self, fallbackRequest] in
+                guard let self else { throw CancellationError() }
+                try RemoteResponsesCapabilityFallback.validatePortableOptions(parameters.responsesProviderOptions)
+                var fallback = fallbackRequest
+                fallback.streamOptions = StreamOptions(include_usage: true)
+                return try await self.buildURLRequest(for: fallback, providerTypeOverride: .openaiLegacy)
+            }
+        } else {
+            capabilityFallback = nil
+        }
         let currentSession = self.session
         let initialProviderType = Self.effectiveRequestProviderType(
             configuredProviderType: self.provider.providerType,
