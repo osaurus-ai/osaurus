@@ -67,7 +67,7 @@ struct ResponsesGenerationAccumulator: Sendable {
             guard completion != nil else { throw CollectionError.drainBeforeCompletion }
             drainStatus = .compatibilityStreamClosed
         case .drainFailed(let message): throw CollectionError.drainFailed(message)
-        case .prefillProgress, .toolEnvelopeDelta, .functionCallAdded, .functionNamePreview,
+        case .providerEvent, .prefillProgress, .toolEnvelopeDelta, .functionCallAdded, .functionNamePreview,
             .functionPreviewReset, .functionArgumentsPreview:
             break
         }

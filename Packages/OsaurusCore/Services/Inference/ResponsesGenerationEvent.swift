@@ -13,6 +13,10 @@ enum ResponsesGenerationEvent: Sendable {
     case functionNamePreview(String)
     case functionPreviewReset
     case functionArgumentsPreview(String)
+    /// Ordered provider-native SSE lifecycle event, emitted before its
+    /// portable projections. Retains response/item IDs and content indices
+    /// for a Responses wire proxy; portable consumers ignore this metadata.
+    case providerEvent(JSONValue)
     case providerOutputItem(JSONValue)
     case reasoningItem(StreamingReasoningItemHint.Item)
     case billing(RouterBillingSummary)
