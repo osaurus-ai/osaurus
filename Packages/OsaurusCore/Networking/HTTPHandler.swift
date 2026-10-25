@@ -14776,6 +14776,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 var authoritativeInputTokens: Int?
                 var authoritativeCompletionTokens: Int?
                 var authoritativeTokensPerSecond: Double?
+                var authoritativeCachedInputTokens: Int?
                 var accumulatedContent = ""
                 var accumulatedReasoning = ""
                 do {
@@ -14863,6 +14864,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             authoritativeInputTokens = stats.inputTokenCount ?? authoritativeInputTokens
                             authoritativeCompletionTokens = stats.tokenCount
                             authoritativeTokensPerSecond = stats.tokensPerSecond
+                            authoritativeCachedInputTokens =
+                                stats.cachedInputTokenCount ?? authoritativeCachedInputTokens
                             if let stopReason = stats.stopReason {
                                 streamFinishReason = stopReason
                             }
@@ -14939,6 +14942,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.set("http_completion_tokens", completionTokens)
                     let finalStreamFinishReason = streamFinishReason
                     let finalTokensPerSecond = authoritativeTokensPerSecond
+                    let finalCachedInputTokens = authoritativeCachedInputTokens
                     hop {
                         writerBound.value.writeFinishWithReason(
                             finalStreamFinishReason,
@@ -14952,6 +14956,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 promptTokens: promptTokens,
                                 completionTokens: completionTokens,
                                 tokensPerSecond: finalTokensPerSecond,
+                                cachedPromptTokens: finalCachedInputTokens,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -15024,6 +15029,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             + invs.invocations.map { $0.toolName + $0.jsonArguments }.joined()
                     )
                     let finalTokensPerSecond = authoritativeTokensPerSecond
+                    let finalCachedInputTokens = authoritativeCachedInputTokens
                     hop {
                         for (idx, inv) in invs.invocations.enumerated() {
                             self.writeOpenAIToolCallSSE(
@@ -15049,6 +15055,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 promptTokens: promptTokens,
                                 completionTokens: completionTokens,
                                 tokensPerSecond: finalTokensPerSecond,
+                                cachedPromptTokens: finalCachedInputTokens,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -15102,6 +15109,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         accumulatedContent + accumulatedReasoning + inv.toolName + inv.jsonArguments
                     )
                     let finalTokensPerSecond = authoritativeTokensPerSecond
+                    let finalCachedInputTokens = authoritativeCachedInputTokens
                     hop {
                         self.writeOpenAIToolCallSSE(
                             inv,
@@ -15125,6 +15133,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 promptTokens: promptTokens,
                                 completionTokens: completionTokens,
                                 tokensPerSecond: finalTokensPerSecond,
+                                cachedPromptTokens: finalCachedInputTokens,
                                 model: model,
                                 responseId: responseId,
                                 created: created,

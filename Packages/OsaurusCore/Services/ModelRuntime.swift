@@ -6210,7 +6210,7 @@ public actor ModelRuntime {
         // call, so iterating to natural EOS captures all of them).
         for try await ev in events {
             switch ev {
-            case .inputTokenCount:
+            case .inputTokenCount, .cachedInputTokenCount:
                 break
             case .tokens(let s):
                 accumulated += s
@@ -6262,14 +6262,20 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
+            var cachedInputTokens: Int?
             do {
                 for try await ev in events {
+                    if case .cachedInputTokenCount(let count) = ev {
+                        cachedInputTokens = count
+                        continue
+                    }
                     // Terminal usage must survive cancellation just as it does
                     // in streamWithTools; only generated deltas are suppressed.
                     if case .completionInfo(let count, let rate, let unclosed, let stop, let prefill, let mtp) = ev {
                         continuation.yield(StreamingStatsHint.encode(
                             tokenCount: count, tokensPerSecond: rate, unclosedReasoning: unclosed,
-                            stopReason: stop, prefillTokensPerSecond: prefill, mtp: mtp
+                            stopReason: stop, prefillTokensPerSecond: prefill,
+                            cachedInputTokenCount: cachedInputTokens, mtp: mtp
                         ))
                         continue
                     }
@@ -6351,6 +6357,7 @@ public actor ModelRuntime {
             var publishedTerminal = false
             var completedTools: [ServiceToolInvocation] = []
             var terminalStopReason: String?
+            var cachedInputTokens: Int?
             var hasCompletedToolPreview = false
             let traceID = PrefillDebugLog.shared.isEnabled ? UUID().uuidString : ""
 
@@ -6381,6 +6388,10 @@ public actor ModelRuntime {
                     // cleanup after it still owns its generation/cache lease.
                     if publishedTerminal { continue }
 
+                    if case .cachedInputTokenCount(let count) = ev {
+                        cachedInputTokens = count
+                        continue
+                    }
                     if case .completionInfo(
                         let tokenCount,
                         let tokensPerSecond,
@@ -6397,6 +6408,7 @@ public actor ModelRuntime {
                                 unclosedReasoning: unclosedReasoning,
                                 stopReason: stopReason,
                                 prefillTokensPerSecond: promptTokensPerSecond,
+                                cachedInputTokenCount: cachedInputTokens,
                                 mtp: mtp
                             )
                         )
@@ -6452,6 +6464,8 @@ public actor ModelRuntime {
                             hasCompletedToolPreview = true
                         }
                     case .completionInfo:
+                        continue
+                    case .cachedInputTokenCount:
                         continue
                     }
                 }

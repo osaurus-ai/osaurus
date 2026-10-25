@@ -175,6 +175,15 @@ enum GenerationEventMapper {
                     if recordMTPLastRun, !suppressProgressUI, let mtp {
                         Task { await MLXBatchAdapter.recordLastMTPStats(modelName: modelName, stats: mtp) }
                     }
+                    // Prefix-cache reuse for the usage block: what `.cacheRestore`
+                    // reported, never more than the prompt itself.
+                    if cacheRestoredTokens > 0 {
+                        let promptTokens = info.promptTokenCount > 0
+                            ? info.promptTokenCount : prefillPromptTokens
+                        let cached = promptTokens > 0
+                            ? min(cacheRestoredTokens, promptTokens) : cacheRestoredTokens
+                        continuation.yield(.cachedInputTokenCount(cached))
+                    }
                     continuation.yield(
                         .completionInfo(
                             tokenCount: info.generationTokenCount,

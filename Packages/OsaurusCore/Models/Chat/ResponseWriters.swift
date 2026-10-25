@@ -543,6 +543,7 @@ final class SSEResponseWriter: ResponseWriter {
         promptTokens: Int,
         completionTokens: Int,
         tokensPerSecond: Double? = nil,
+        cachedPromptTokens: Int? = nil,
         model: String,
         responseId: String,
         created: Int,
@@ -559,7 +560,9 @@ final class SSEResponseWriter: ResponseWriter {
             prompt_tokens: promptTokens,
             completion_tokens: completionTokens,
             total_tokens: promptTokens + completionTokens,
-            tokens_per_second: tokensPerSecond
+            tokens_per_second: tokensPerSecond,
+            prompt_tokens_details: Usage.cachedPromptDetails(
+                cachedPromptTokens, promptTokens: promptTokens)
         )
         writeSSEChunk(chunk, context: context)
     }

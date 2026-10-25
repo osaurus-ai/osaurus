@@ -1118,6 +1118,15 @@ struct Usage: Codable, Sendable {
         self.prompt_tokens_details = prompt_tokens_details
     }
 
+    /// `prompt_tokens_details` for a local response whose prompt prefix was
+    /// restored from the runtime's prefix cache: `cached_tokens` clamped to
+    /// `[0, promptTokens]`. `nil` (field omitted, wire unchanged) for a cold
+    /// prompt.
+    static func cachedPromptDetails(_ cachedTokens: Int?, promptTokens: Int) -> PromptTokensDetails? {
+        guard let cachedTokens, cachedTokens > 0 else { return nil }
+        return PromptTokensDetails(cached_tokens: min(cachedTokens, max(0, promptTokens)))
+    }
+
     /// Provider-reported prompt-cache hits, clamped to `[0, prompt_tokens]`.
     /// `nil` when the provider sent no `prompt_tokens_details.cached_tokens`.
     var cachedPromptTokens: Int? {
