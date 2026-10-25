@@ -1888,10 +1888,9 @@ public final class ToolRegistry: ObservableObject {
         )
     }
 
-    /// Default per-tool wall-clock cap (seconds). Mirrors
-    /// `PluginHostAPI.toolExecutionTimeout` so the chat-side and plugin-side
-    /// loops have matching semantics. Tools that need a tighter or looser
-    /// budget (e.g. sandbox shell, MCP provider) still set their own.
+    /// Default per-tool wall-clock cap (seconds), shared by chat, plugin,
+    /// HTTP and bridge callers. Streaming-aware tools opt out through
+    /// `bypassRegistryTimeout` and own their wait/termination lifecycle.
     public static let defaultToolTimeoutSeconds: TimeInterval = 120
 
     /// Trampoline that executes the tool outside of MainActor isolation,

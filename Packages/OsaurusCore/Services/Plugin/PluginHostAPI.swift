@@ -797,7 +797,6 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Inference Callbacks
 
-    private static let toolExecutionTimeout: UInt64 = 120
     // Plugin-host completions are used by agent/tool surfaces. A one-shot
     // default turns any omitted `max_iterations` into "stop before executing
     // the first model-emitted tool call", which is especially visible on
@@ -1494,37 +1493,25 @@ final class PluginHostContext: @unchecked Sendable {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
 
-        return await withTaskGroup(of: String?.self) { group in
-            group.addTask {
-                do {
-                    return try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-                        // The combined-mode host-read scope + secret-read
-                        // policy are bound centrally inside
-                        // ToolRegistry.execute (keyed off the agent in
-                        // context), so this path inherits them uniformly.
-                        try await ToolRegistry.shared.execute(
-                            name: name,
-                            argumentsJSON: argumentsJSON
-                        )
-                    }
-                } catch {
-                    return ToolEnvelope.fromError(error, tool: name)
-                }
+        // ToolRegistry owns per-tool timeout/bypass policy and cancellation
+        // cleanup. A second race here both overrides streaming tools' policy
+        // and can label a cancelled sleep as a retryable timeout.
+        do {
+            return try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                try await ToolRegistry.shared.execute(
+                    name: name,
+                    argumentsJSON: argumentsJSON
+                )
             }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: toolExecutionTimeout * 1_000_000_000)
-                return nil
-            }
-            let timeoutEnvelope = ToolErrorEnvelope(
-                kind: .timeout,
-                reason: "Tool did not complete within \(toolExecutionTimeout)s.",
-                toolName: name
-            ).toJSONString()
-            guard let first = await group.next() else {
-                return timeoutEnvelope
-            }
-            group.cancelAll()
-            return first ?? timeoutEnvelope
+        } catch is CancellationError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: L("Tool '\(name)' was cancelled."),
+                tool: name,
+                retryable: false
+            )
+        } catch {
+            return ToolEnvelope.fromError(error, tool: name)
         }
     }
 
