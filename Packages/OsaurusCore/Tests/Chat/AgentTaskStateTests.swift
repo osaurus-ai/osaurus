@@ -1898,7 +1898,6 @@ struct AgentTaskStateTests {
         }
         #expect(state.nextStepBias() != nil)
     }
-    }
 
     @Test func reportsPendingJob_readsTextAndNestedJob() {
         #expect(AgentTaskState.reportsPendingJob(["text": #"{"state":"QUEUED"}"#]))
