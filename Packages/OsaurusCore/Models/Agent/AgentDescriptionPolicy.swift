@@ -13,7 +13,7 @@ public enum AgentDescriptionPolicy {
     /// Trims and collapses the text to a single line.
     public static func normalized(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.contains(where: { $0.isNewline }) else { return trimmed }
+        guard trimmed.rangeOfCharacter(from: .newlines) != nil else { return trimmed }
         return trimmed
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }

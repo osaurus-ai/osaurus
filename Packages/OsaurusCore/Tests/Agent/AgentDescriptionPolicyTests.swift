@@ -4,6 +4,16 @@ import Testing
 
 @Suite("Agent description contract")
 struct AgentDescriptionPolicyTests {
+    @Test func normalizationFastPathOnLongSingleLineString() {
+        // Regression guard: a long string with no newlines must not trigger
+        // the slow per-character Character.isNewline scan. The fast path via
+        // rangeOfCharacter(from: .newlines) returns immediately.
+        let long = String(repeating: "a", count: 10_000)
+        #expect(AgentDescriptionPolicy.normalized(long) == long)
+        let longUnicode = String(repeating: "é", count: 10_000)
+        #expect(AgentDescriptionPolicy.normalized(longUnicode) == longUnicode)
+    }
+
     @Test func normalizationIsOneLineAndTrimmed() {
         #expect(AgentDescriptionPolicy.normalized("  Reviews Swift changes.  ") == "Reviews Swift changes.")
         #expect(AgentDescriptionPolicy.normalized("review\ncode\n\n  and docs ") == "review code and docs")
