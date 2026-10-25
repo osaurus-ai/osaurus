@@ -258,7 +258,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         var seen = Set<String>()
         return
             roots
-            .map { ($0.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).standardizingPath }
+            .map { String(($0.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).standardizingPath) }
             .filter { !$0.isEmpty && !$0.contains("..") && seen.insert($0).inserted }
     }
 

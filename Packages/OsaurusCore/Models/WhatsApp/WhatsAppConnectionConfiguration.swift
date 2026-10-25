@@ -197,7 +197,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
         var seen = Set<String>()
         return
             roots
-            .map { ($0 as NSString).standardizingPath }
+            .map { String(($0 as NSString).standardizingPath) }
             .filter { !$0.isEmpty && $0 != "/" && seen.insert($0).inserted }
     }
 
