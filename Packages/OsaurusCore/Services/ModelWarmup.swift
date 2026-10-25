@@ -98,8 +98,19 @@ public enum ModelWarmup {
         let startedAt = Date()
         log("warm-up start model=\(trimmed) (compiling kernels off the request path)")
         do {
-            let stream = try await engine.streamResponses(request: request)
-            for try await _ in stream { /* discard — warm-up output is irrelevant */  }
+            let result = try await engine.completeResponse(request: request, endAt: .streamEnd)
+            switch result.completion.status {
+            case .cancelled:
+                throw CancellationError()
+            case .incomplete:
+                // The explicit eight-token JIT diagnostic may reach its cap;
+                // that compiles kernels but is never a coherent-chat pass.
+                guard result.completion.stopReason == "length" else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(result.completion.stopReason)
+                }
+            case .completed:
+                break
+            }
             let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
             log("warm-up done  model=\(trimmed) elapsedMs=\(ms) (one-time JIT now off the request path)")
             return true
