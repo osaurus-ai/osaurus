@@ -18,8 +18,8 @@ and file paths are not copied into the report.
 All explicit saved RAM overrides (physical fraction, allocator cap, KV cap,
 concurrency and fail-closed choice) are retained; absent overrides are not
 invented as limits. Saved settings are named separately from observed process-wide limits
-and occupancy. The snapshot is sampled after engine drain, with its own
-timestamp. It includes actual allocator/memory ceilings, MLX active/cached
+and occupancy. The snapshot is sampled at terminal completion info, before
+the adapter finishes draining its producer, with its own timestamp. It includes actual allocator/memory ceilings, MLX active/cached
 bytes, process physical footprint, RSS, actual raw Metal architecture and
 current host memory pressure. The read-only memory-status API exposes the
 same architecture identifier so local diagnostics can verify it.
@@ -37,3 +37,7 @@ Release app qualification remains pending. This is an observability repair,
 not a reproduction or fix of the unknown user's GPU workload. Errors before
 the mapped engine stream (for example, input preparation or model loading)
 are outside this first reporting change.
+
+Source review caught and corrected an earlier after-drain label: native `.info`
+is deliberately emitted before GPU/cache cleanup finishes. Reporting remains
+at that existing terminal-info boundary and does not delay the caller error.

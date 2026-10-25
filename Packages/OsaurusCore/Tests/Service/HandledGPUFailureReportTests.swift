@@ -20,7 +20,7 @@ struct HandledGPUFailureReportTests {
         #expect(!encoded.contains("private-user"))
         #expect(!encoded.contains("secret.cpp"))
         #expect(!encoded.contains(signature))
-        #expect(report.context["snapshot_stage"] as? String == "terminal_after_engine_drain")
+        #expect(report.context["snapshot_stage"] as? String == "terminal_info_before_producer_drain")
     }
 
     @Test(arguments: ["", "Out of memory", "kIOGPUCommandBufferCallbackErrorTimeout",
@@ -89,7 +89,7 @@ struct HandledGPUFailureReportTests {
             modelName: "public--model", promptTokens: 128, generatedTokens: 10))
         let memory: [String: Any] = [
             "saved_profile": ["mode": "safe_auto", "slider": 2],
-            "observed_after_engine_drain": [
+            "observed_at_terminal_info": [
                 "gpu_architecture": "applegpu_g17s",
                 "allocator_cache_limit_bytes": 8_589_934_592,
                 "mlx_cached_bytes": 134_217_728,
@@ -101,7 +101,7 @@ struct HandledGPUFailureReportTests {
         #expect(event.fingerprint == ["handled-metal-gpu-failure", "impacting-interactivity"])
         #expect(event.tags?["gpu.stage"] == "decoding")
         let snapshot = try #require(event.context?["gpu_memory_snapshot"] as? [String: Any])
-        let observed = try #require(snapshot["observed_after_engine_drain"] as? [String: Any])
+        let observed = try #require(snapshot["observed_at_terminal_info"] as? [String: Any])
         #expect(observed["gpu_architecture"] as? String == "applegpu_g17s")
         #expect(observed["allocator_cache_limit_bytes"] as? Int == 8_589_934_592)
         #expect(observed["mlx_cached_bytes"] as? Int == 134_217_728)
