@@ -10,10 +10,21 @@ enum ResponsesGenerationEvent: Sendable {
     case prefillProgress(PrefillProgressState)
     case toolEnvelopeDelta(String)
     case functionCallAdded(ResponsesFunctionCall)
+    case functionNamePreview(String)
+    case functionArgumentsPreview(String)
+    case providerOutputItem(JSONValue)
+    case reasoningItem(StreamingReasoningItemHint.Item)
+    case billing(RouterBillingSummary)
+    case artifacts([RemoteRunArtifact])
+    case agentTool(StreamingAgentToolHint.Trace)
+    case remoteToolCompleted(StreamingToolHint.ToolCallDone)
     case responseCompleted(ResponsesGenerationCompletion)
     /// The producer has drained and released its generation lease. This is
     /// distinct from response completion and is not a disk durability receipt.
     case drained
+    /// The legacy service stream closed. Its protocol exposes no producer
+    /// lease or cache-durability fence; do not equate this with native drain.
+    case compatibilityStreamClosed
     /// A cache/cleanup failure after logical completion must stay observable,
     /// without replacing the already delivered response with a second terminal.
     case drainFailed(String)
@@ -24,6 +35,7 @@ struct ResponsesFunctionCall: Sendable {
     let callID: String
     let name: String
     let arguments: String
+    var geminiThoughtSignature: String? = nil
 }
 
 struct ResponsesGenerationCompletion: Sendable {
@@ -36,12 +48,14 @@ struct ResponsesGenerationCompletion: Sendable {
     let responseID: String
     let status: Status
     let functionCalls: [ResponsesFunctionCall]
-    let tokenCount: Int
-    let tokensPerSecond: Double
+    let tokenCount: Int?
+    let tokensPerSecond: Double?
     let unclosedReasoning: Bool
     let stopReason: String?
-    let promptTokensPerSecond: Double
+    let promptTokensPerSecond: Double?
     let mtp: MTPStatsSummary?
+    var inputTokenCount: Int? = nil
+    var cachedInputTokenCount: Int? = nil
 
     /// Previewed calls are never actionable until the whole response completes.
     /// In particular a length/cancellation boundary cannot execute partial work.
@@ -68,6 +82,7 @@ enum ResponsesGenerationStream {
         let responseCompleted = OSAllocatedUnfairLock(initialState: false)
         let producer = Task {
             var calls: [ResponsesFunctionCall] = []
+            var inputTokens: Int?
             var completed = false
             do {
                 for try await event in upstream {
@@ -77,6 +92,7 @@ enum ResponsesGenerationStream {
                     if completed { continue }
                     switch event {
                     case .inputTokenCount(let count):
+                        inputTokens = count
                         continuation.yield(.inputTokenCount(count))
                     case .tokens(let text):
                         continuation.yield(.outputTextDelta(text))
@@ -117,7 +133,8 @@ enum ResponsesGenerationStream {
                                     unclosedReasoning: unclosed,
                                     stopReason: reason,
                                     promptTokensPerSecond: prefill,
-                                    mtp: mtp
+                                    mtp: mtp,
+                                    inputTokenCount: inputTokens
                                 )
                             )
                         )

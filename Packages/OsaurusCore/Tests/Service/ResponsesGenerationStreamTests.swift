@@ -24,7 +24,11 @@ struct ResponsesGenerationStreamTests {
             case .functionCallAdded(let call): previews.append(call); order.append("preview")
             case .responseCompleted(let completion): completions.append(completion); order.append("complete")
             case .drained: order.append("drained")
+            case .compatibilityStreamClosed: order.append("compatibilityClosed")
             case .drainFailed: order.append("drainFailed")
+            case .functionNamePreview, .functionArgumentsPreview, .providerOutputItem,
+                .reasoningItem, .billing, .artifacts, .agentTool, .remoteToolCompleted:
+                order.append("metadata")
             }
         }
         func end(failed: Bool = false) { ended = true; self.failed = failed }

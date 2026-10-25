@@ -8,7 +8,7 @@
 import Foundation
 import os
 
-actor ChatEngine: Sendable, ChatEngineProtocol {
+actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
     private let services: [ModelService]
     private let installedModelsProvider: @Sendable () -> [String]
     private let remoteServicesProvider: @Sendable () async -> [ModelService]
@@ -452,16 +452,26 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         effectiveModel: String,
         stream: Bool
     ) {
+        emitMessageSentIfPrimaryTurn(request: ResponsesInferenceRequest(chatCompletion: request),
+            service: service, effectiveModel: effectiveModel, stream: stream)
+    }
+
+    private func emitMessageSentIfPrimaryTurn(
+        request: ResponsesInferenceRequest,
+        service: ModelService,
+        effectiveModel: String,
+        stream: Bool
+    ) {
         // Warmup prefills replay conversation history to heat the KV cache;
         // they are not a user message even when that history happens to end
         // with a user turn.
-        guard !request.warmupPrefill else { return }
-        guard FeatureTelemetry.isPrimaryUserTurn(request.messages) else { return }
+        guard !request.context.warmupPrefill else { return }
+        guard FeatureTelemetry.isPrimaryUserTurn(request.input) else { return }
         let info = FeatureTelemetry.messageInfo(
             service: service,
             effectiveModel: effectiveModel,
             source: inferenceSource,
-            isAgent: request.isAgentRequest,
+            isAgent: request.context.isAgentRequest,
             stream: stream
         )
         Task { @MainActor in FeatureTelemetry.messageSent(info) }
@@ -851,6 +861,110 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return response
     }
 
+    /// Canonical internal entry point. A typed native service receives the
+    /// original input snapshot; only legacy provider/service boundaries decode
+    /// their existing transport stream. No request is replayed on failure.
+    func streamResponses(request: ResponsesInferenceRequest) async throws
+        -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
+    {
+        let trace = request.context.ttftTrace
+        trace?.mark("chatengine_start")
+        let dispatch = try await prepareDispatch(request: request, trace: trace)
+        guard case .service(let service, let effectiveModel) = dispatch.route else {
+            if request.context.runAsRemoteAgent, request.context.remoteAgentProviderId != nil {
+                throw EngineError(kind: .remoteAgentUnavailable)
+            }
+            throw EngineError(kind: .modelNotFound(requested: request.model))
+        }
+        try checkRouterSpendAuthorization(service: service)
+        emitMessageSentIfPrimaryTurn(request: request, service: service,
+            effectiveModel: effectiveModel, stream: true)
+        let source = loggedSource
+        let shouldLog = Self.shouldLogInferenceToInsights(source: source,
+            warmupPrefill: request.context.warmupPrefill)
+        let attribution = InsightsService.ActivityAttribution.current()
+        let connection = shouldLog
+            ? Self.remoteConnectionInfo(for: service, runAsRemoteAgent: dispatch.params.runAsRemoteAgent) : nil
+        let probe: WireTransportProbe? = connection != nil ? WireTransportProbe() : nil
+        let inner: AsyncThrowingStream<ResponsesGenerationEvent, Error>
+        if let probe {
+            inner = try await WireTransportProbe.$current.withValue(probe) {
+                try await self.openResponsesInnerStream(request: request, service: service, params: dispatch.params)
+            }
+        } else {
+            inner = try await openResponsesInnerStream(request: request, service: service, params: dispatch.params)
+        }
+        let turnID = request.context.turnId ?? ChatExecutionContext.currentAssistantTurnId
+        let parentTurnID: UUID? = {
+            guard ChatExecutionContext.currentSessionSource == .delegation,
+                let parent = ChatExecutionContext.currentAssistantTurnId,
+                parent != request.context.turnId
+            else { return nil }
+            return parent
+        }()
+        let loggedModel = connection?.info.mode == .remoteAgentRun
+            ? request.context.remoteAgentLogModel?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        return wrapStreamWithLogging(inner, logEvent: Self.responsesLogEvent,
+            source: source, turnId: turnID, parentTurnId: parentTurnID,
+            requestId: request.context.idempotencyKey,
+            model: loggedModel?.isEmpty == false ? loggedModel! : effectiveModel,
+            inputTokens: estimateInputTokens(request.input),
+            temperature: request.generation.temperature,
+            maxTokens: request.generation.maxOutputTokens ?? 16384,
+            requestBodyJSON: shouldLog ? Self.serializeResponseRequestForLog(request) : nil,
+            connection: connection?.info, logPath: connection?.path ?? "/responses",
+            wireProbe: probe,
+            secretToolWasExposed: request.tools?.contains {
+                SecretArgumentScrubber.isSecretSetToolName($0.function.name)
+            } ?? false,
+            warmupPrefill: request.context.warmupPrefill,
+            attribution: attribution)
+    }
+
+    private func openResponsesInnerStream(
+        request: ResponsesInferenceRequest,
+        service: ModelService,
+        params: GenerationParameters
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+        let tools = Self.allowsLocalToolDispatch(request.toolChoice) ? (request.tools ?? []) : []
+        let choice = Self.localToolChoiceForDispatch(request.toolChoice, tools: tools)
+        if let typed = service as? ResponsesGenerationService {
+            return try await typed.streamResponses(messages: request.input, parameters: params,
+                stopSequences: request.generation.stop ?? [], tools: tools, toolChoice: choice,
+                requestedModel: request.model)
+        }
+        let legacy: AsyncThrowingStream<String, Error>
+        if !tools.isEmpty, let capable = service as? ToolCapableService {
+            legacy = try await capable.streamWithTools(messages: request.input, parameters: params,
+                stopSequences: request.generation.stop ?? [], tools: tools, toolChoice: choice,
+                requestedModel: request.model)
+        } else {
+            legacy = try await service.streamDeltas(messages: request.input, parameters: params,
+                requestedModel: request.model, stopSequences: request.generation.stop ?? [])
+        }
+        return ResponsesGenerationStream.compatibility(legacy)
+    }
+
+    /// The app-owned input snapshot, not an assertion about provider wire JSON.
+    /// WireTransportProbe records the actual post-adapter provider body.
+    private static func serializeResponseRequestForLog(_ request: ResponsesInferenceRequest) -> String? {
+        struct Body: Encodable {
+            let model: String
+            let input: [ChatMessage]
+            let generation: ResponsesGenerationOptions
+            let tools: [Tool]?
+            let toolChoice: ToolChoiceOption?
+            let sessionID: String?
+            let providerOutputItems: [[JSONValue]?]
+        }
+        let body = Body(model: request.model, input: request.input, generation: request.generation,
+            tools: request.tools, toolChoice: request.toolChoice, sessionID: request.sessionID,
+            providerOutputItems: request.input.map(\.responses_output_items))
+        let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: true)
+        guard let data = try? encoder.encode(body) else { return nil }
+        return redactInlineImagePayloads(in: String(decoding: data, as: UTF8.self))
+    }
+
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
         debugLog("[ChatEngine] streamChat: start model=\(request.model)")
         let trace = request.ttftTrace
@@ -959,6 +1073,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             return wrapStreamWithLogging(
                 innerStream,
+                logEvent: Self.legacyLogEvent,
                 source: source,
                 turnId: turnId,
                 parentTurnId: parentTurnId,
@@ -1091,11 +1206,59 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return m
     }
 
+    private struct StreamLogStats: Sendable {
+        let tokenCount: Int?
+        let inputTokenCount: Int?
+        let stopReason: String?
+        var calls: [ResponsesFunctionCall] = []
+    }
+
+    private enum StreamLogEvent: Sendable {
+        case inputTokens(Int)
+        case stats(StreamLogStats)
+        case reasoning(String)
+        case text(String)
+        case billing, prefill, artifact, control
+        case drainFailure(String)
+    }
+
+    private nonisolated static func legacyLogEvent(_ delta: String) -> StreamLogEvent {
+        if let count = StreamingInputTokenHint.decode(delta) { return .inputTokens(count) }
+        if let stats = StreamingStatsHint.decode(delta) {
+            return .stats(StreamLogStats(tokenCount: stats.tokenCount,
+                inputTokenCount: stats.inputTokenCount, stopReason: stats.stopReason))
+        }
+        if let text = StreamingReasoningHint.decode(delta) { return .reasoning(text) }
+        if StreamingBillingHint.decode(delta) != nil { return .billing }
+        if StreamingPrefillProgressHint.decode(delta) != nil { return .prefill }
+        if StreamingArtifactHint.decode(delta) != nil { return .artifact }
+        if StreamingToolHint.isSentinel(delta) { return .control }
+        return .text(delta)
+    }
+
+    private nonisolated static func responsesLogEvent(_ event: ResponsesGenerationEvent) -> StreamLogEvent {
+        switch event {
+        case .inputTokenCount(let count): return .inputTokens(count)
+        case .outputTextDelta(let text): return .text(text)
+        case .reasoningDelta(let text): return .reasoning(text)
+        case .prefillProgress: return .prefill
+        case .billing: return .billing
+        case .artifacts: return .artifact
+        case .responseCompleted(let completion):
+            return .stats(StreamLogStats(tokenCount: completion.tokenCount,
+                inputTokenCount: completion.inputTokenCount, stopReason: completion.stopReason,
+                calls: completion.dispatchableFunctionCalls))
+        case .drainFailed(let message): return .drainFailure(message)
+        default: return .control
+        }
+    }
+
     /// Wraps an async stream to count output tokens and log on completion.
     /// Uses Task.detached to avoid actor isolation deadlocks when consumed from MainActor.
     /// Properly handles cancellation via onTermination handler to prevent orphaned tasks.
-    private func wrapStreamWithLogging(
-        _ inner: AsyncThrowingStream<String, Error>,
+    private func wrapStreamWithLogging<Element: Sendable>(
+        _ inner: AsyncThrowingStream<Element, Error>,
+        logEvent: @escaping @Sendable (Element) -> StreamLogEvent,
         source: InferenceSource,
         turnId: UUID? = nil,
         parentTurnId: UUID? = nil,
@@ -1111,8 +1274,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         secretToolWasExposed: Bool = false,
         warmupPrefill: Bool = false,
         attribution: InsightsService.ActivityAttribution = .none
-    ) -> AsyncThrowingStream<String, Error> {
-        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+    ) -> AsyncThrowingStream<Element, Error> {
+        let (stream, continuation) = AsyncThrowingStream<Element, Error>.makeStream()
         let shouldLogToInsights = Self.shouldLogInferenceToInsights(
             source: source,
             warmupPrefill: warmupPrefill
@@ -1223,17 +1386,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             print("[Osaurus][Stream] Starting stream wrapper for model: \(model)")
 
             do {
-                for try await delta in inner {
-                    if let count = StreamingInputTokenHint.decode(delta) {
+                for try await element in inner {
+                    let event = logEvent(element)
+                    if case .inputTokens(let count) = event {
                         recordInputTokens(count)
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
-                    if let stats = StreamingStatsHint.decode(delta) {
+                    if case .stats(let stats) = event {
                         if let count = stats.inputTokenCount { recordInputTokens(count) }
                         terminalStatsObserved.withLock { $0 = true }
                         statsHintCount += 1
-                        outputTokenCount = stats.tokenCount
+                        if let count = stats.tokenCount { outputTokenCount = count }
                         // Stats hint carries the authoritative cumulative
                         // output-token count from the model runtime. Push
                         // only the delta since our last report so we
@@ -1254,7 +1418,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         {
                             finishReason = loggedReason
                         }
-                        continuation.yield(delta)
+                        if !stats.calls.isEmpty {
+                            parsedToolNames = stats.calls.map(\.name)
+                            if let first = stats.calls.first { toolInvocation = (first.name, first.arguments) }
+                            finishReason = .toolCalls
+                        }
+                        continuation.yield(element)
                         continue
                     }
 
@@ -1265,7 +1434,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         return
                     }
 
-                    if let reasoning = StreamingReasoningHint.decode(delta) {
+                    if case .reasoning(let reasoning) = event {
                         deltaCount += 1
                         reasoningHintCount += 1
                         let estimated = TokenEstimator.estimate(reasoning)
@@ -1279,36 +1448,43 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                                 )
                             }
                         }
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
 
-                    if StreamingBillingHint.decode(delta) != nil {
+                    if case .billing = event {
                         billingHintCount += 1
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
 
-                    if StreamingPrefillProgressHint.decode(delta) != nil {
+                    if case .prefill = event {
                         prefillHintCount += 1
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
 
                     // Artifacts returned by a teammate's host (Mode 2): pass
                     // through for `ChatSession` to import; not tokens.
-                    if StreamingArtifactHint.decode(delta) != nil {
-                        continuation.yield(delta)
+                    if case .artifact = event {
+                        continuation.yield(element)
                         continue
                     }
 
                     // Pass through tool-hint sentinels without counting as tokens
-                    if StreamingToolHint.isSentinel(delta) {
+                    if case .control = event {
                         toolHintCount += 1
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
 
+                    if case .drainFailure(let message) = event {
+                        finishReason = .error
+                        errorMsg = message
+                        continuation.yield(element)
+                        continue
+                    }
+                    guard case .text(let delta) = event else { continue }
                     deltaCount += 1
                     let now = Date()
                     let timeSinceStart = now.timeIntervalSince(startTime)
@@ -1346,7 +1522,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             )
                         }
                     }
-                    continuation.yield(delta)
+                    continuation.yield(element)
                 }
 
                 let totalTime = Date().timeIntervalSince(startTime)

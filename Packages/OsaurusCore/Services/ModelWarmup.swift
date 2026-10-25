@@ -75,20 +75,10 @@ public enum ModelWarmup {
         // which GPU matmul/attention/sampling kernels compile — so a no-tool
         // warm-up compiles the same kernels the scored, tool-carrying requests
         // hit. Output is discarded.
-        let request = ChatCompletionRequest(
+        let request = ResponsesInferenceRequest(
             model: trimmed,
-            messages: [ChatMessage(role: "user", content: "Hi")],
-            temperature: 0.0,
-            max_tokens: 8,
-            stream: true,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: nil,
-            tool_choice: nil,
-            session_id: nil
+            input: [ChatMessage(role: "user", content: "Hi")],
+            generation: ResponsesGenerationOptions(temperature: 0.0, maxOutputTokens: 8)
         )
 
         // Local services only — warm-up never reaches out to remote providers.
@@ -100,7 +90,7 @@ public enum ModelWarmup {
         let startedAt = Date()
         log("warm-up start model=\(trimmed) (compiling kernels off the request path)")
         do {
-            let stream = try await engine.streamChat(request: request)
+            let stream = try await engine.streamResponses(request: request)
             for try await _ in stream { /* discard — warm-up output is irrelevant */  }
             let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
             log("warm-up done  model=\(trimmed) elapsedMs=\(ms) (one-time JIT now off the request path)")

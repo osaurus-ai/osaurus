@@ -19,7 +19,7 @@ struct ResponsesInferenceRequest: Sendable {
 
 /// Nil values preserve the active bundle's generation defaults. The transport
 /// adapter resolves aliases once; it does not invent sampling or output caps.
-struct ResponsesGenerationOptions: Sendable {
+struct ResponsesGenerationOptions: Sendable, Encodable {
     var temperature: Float? = nil
     var maxOutputTokens: Int? = nil
     var topP: Float? = nil
