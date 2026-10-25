@@ -1707,17 +1707,15 @@ struct RuntimePolicySourceTests {
         #expect(rebuild.contains("toolCallId: message.toolCallId"))
     }
 
-    @Test("HTTP streams preserve stats hints before generic sentinel filters")
+    @Test("HTTP typed streams preserve usage; legacy boundaries decode stats before filtering sentinels")
     func httpStreamsPreserveStatsHintsBeforeGenericSentinelFilters() throws {
         let handler = try Self.source("Networking/HTTPHandler.swift")
-
-        let segments = handler.components(separatedBy: "StreamingToolHint.isSentinel(delta)")
-
-        #expect(
-            segments.count == 9,
-            "HTTPHandler should have eight generic StreamingToolHint sentinel filters, including streaming and non-streaming raw completions"
-        )
-
+        let rawCompletions = try Self.functionBody("private func handleCompletions(", in: handler)
+        let compatibility = try Self.source("Services/Inference/ResponsesCompatibilityStream.swift")
+        // Raw text completions retain their explicit string boundary. All
+        // structured chat routes consume authoritative typed completions.
+        let segments = rawCompletions.components(separatedBy: "StreamingToolHint.isSentinel(delta)")
+        #expect(segments.count == 3, "Both raw completion modes must filter internal sentinels")
         for segment in segments.dropLast() {
             #expect(
                 segment.contains("StreamingInputTokenHint.decode(delta)"),
@@ -1727,6 +1725,27 @@ struct RuntimePolicySourceTests {
                 segment.contains("StreamingStatsHint.decode(delta)"),
                 "Each HTTP stream writer must decode StreamingStatsHint before the generic U+FFFE sentinel filter, otherwise API usage stats and unclosedReasoning are dropped"
             )
+        }
+        let genericFilter = try #require(compatibility.range(of: "StreamingToolHint.isSentinel(delta)"))
+        for decoder in ["StreamingInputTokenHint.decode(delta)", "StreamingStatsHint.decode(delta)"] {
+            let decode = try #require(compatibility.range(of: decoder))
+            #expect(decode.lowerBound < genericFilter.lowerBound)
+        }
+        #expect(compatibility.contains("tokenCount: usage.tokenCount"))
+        #expect(compatibility.contains("unclosedReasoning: usage.unclosedReasoning"))
+        #expect(compatibility.contains("inputTokenCount: usage.inputTokenCount"))
+        for signature in [
+            "private func handleAgentRunEndpoint(", "private func handleChatCompletions(",
+            "private func handleChatNDJSON(", "private func handleOllamaGenerate(",
+            "private func handleAnthropicMessagesStreaming(", "private func handleOpenResponsesStreaming(",
+        ] {
+            let route = try Self.functionBody(signature, in: handler)
+            #expect(route.contains("streamResponses(request:"), "\(signature) must use typed inference")
+            #expect(route.contains("try accumulator.consume(event)"))
+            #expect(route.contains("try accumulator.result()"))
+            #expect(route.contains("response.inputTokenCount"))
+            #expect(route.contains("response.completion"))
+            #expect(!route.contains("StreamingToolHint.isSentinel"), "Typed routes must not reinterpret string sentinels")
         }
     }
 
@@ -1751,8 +1770,14 @@ struct RuntimePolicySourceTests {
                 && !agentRun.contains("StreamingToolHint.encodeDone"),
             "/agents/{id}/run should execute tools server-side and stream only final assistant text, not internal U+FFFE tool sentinels."
         )
-        #expect(agentRun.contains("assistantToolCalls.append"))
-        #expect(agentRun.contains("ChatMessage(role: \"tool\""))
+        #expect(agentRun.contains("try response.completedAssistantInput()"))
+        #expect(agentRun.contains("try batchHistory.begin(assistant)"))
+        #expect(agentRun.contains("batchHistory.record(callID: outcome.callId, result: recordedResult)"))
+        #expect(agentRun.contains("if let commit = batchHistory.complete([]) { messages.append(contentsOf: commit.messages) }"))
+        #expect(agentRun.contains("batchHistory.finish(runExit:"))
+        let history = try Self.source("Services/Inference/ResponsesToolBatchHistory.swift")
+        #expect(history.contains("var messages: [ChatMessage] { [assistant] + results }"))
+        #expect(history.contains("ChatMessage(role: \"tool\", content: results[call.id]"))
     }
 
     @Test("Agent finalization keeps tool_choice stable post-tool (no prefix-busting downgrade)")
@@ -1785,7 +1810,8 @@ struct RuntimePolicySourceTests {
         // iteration (no post-tool downgrade), so the post-tool prompt extends the
         // calling prompt's KV prefix instead of re-prefilling.
         #expect(!agentRun.contains("finalizingPostToolChoice"))
-        #expect(agentRun.contains("tool_choice: resolvedToolChoice"))
+        #expect(agentRun.contains("iterationReq.toolChoice = resolvedToolChoice"))
+        #expect(agentRun.contains("iterationReq.tools = tools.isEmpty ? nil : tools"))
         #expect(!chatView.contains("finalizingPostToolChoice"))
         #expect(chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve("))
         #expect(chatView.contains("toolChoice: requestedToolChoice"))
@@ -1866,7 +1892,9 @@ struct RuntimePolicySourceTests {
         }
 
         let responses = handler[start.lowerBound ..< end.lowerBound]
-        #expect(responses.contains("toChatCompletionRequest()"))
+        #expect(responses.contains("toResponsesInferenceRequest()"))
+        #expect(responses.contains("Self.applyOpenResponsesContext("))
+        #expect(!responses.contains("toChatCompletionRequest()"))
         #expect(!responses.contains("enrichWithAgentContext("))
         #expect(!responses.contains("composeChatContext("))
         #expect(!responses.contains("injectMemoryPrefix("))
@@ -1886,8 +1914,17 @@ struct RuntimePolicySourceTests {
             handler.components(separatedBy: bridge).count == 7,
             "Expected six streaming server paths to bridge generation.streamInterval through StreamDeltaCoalescer"
         )
-        #expect(handler.contains("writerBound.value.writeContent(\n                                    chunk"))
-        #expect(handler.contains("writerBound.value.writeTextDelta(chunk"))
+        for signature in [
+            "private func handleAgentRunEndpoint(", "private func handleChatCompletions(",
+            "private func handleChatNDJSON(", "private func handleOllamaGenerate(",
+            "private func handleAnthropicMessagesStreaming(", "private func handleOpenResponsesStreaming(",
+        ] {
+            let route = try Self.functionBody(signature, in: handler)
+            #expect(route.contains(bridge), "\(signature) must honor the effective stream interval")
+            #expect(route.contains("contentCoalescer.append("))
+            #expect(route.contains("contentCoalescer.flush()"))
+            #expect(route.contains("writerBound.value.writeContent(chunk") || route.contains("writerBound.value.writeTextDelta(chunk"))
+        }
     }
 
     @Test("HTTP channel close cancels per-request streaming tasks")
@@ -1937,12 +1974,12 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             handler.contains(
-                "try Task.checkCancellation()\n                    var resp = try await chatEngine.completeChat(request: enrichedReq)"
+                "try Task.checkCancellation()\n                    let response = try await chatEngine.completeResponse(request: ResponsesInferenceRequest(chatCompletion: enrichedReq))"
             )
         )
         #expect(
             handler.contains(
-                "var resp = try await chatEngine.completeChat(request: enrichedReq)\n                    try Task.checkCancellation()"
+                "let response = try await chatEngine.completeResponse(request: ResponsesInferenceRequest(chatCompletion: enrichedReq))\n                    try Task.checkCancellation()"
             )
         )
         #expect(handler.contains("var emittedSemanticDelta = false"))
@@ -1981,7 +2018,7 @@ struct RuntimePolicySourceTests {
         #expect(ndjsonStreaming.contains("await ModelRuntime.shared.unload(name: req.model)"))
         #expect(
             ndjsonStreaming.contains(
-                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Ollama-style NDJSON"
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    try accumulator.consume(event)"
             )
         )
         let anthropicStart = try #require(handler.range(of: "private func handleAnthropicMessagesStreaming("))
@@ -2002,13 +2039,13 @@ struct RuntimePolicySourceTests {
         #expect(anthropicStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
         #expect(
             anthropicStreaming.contains(
-                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Reasoning sentinel"
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    try accumulator.consume(event)"
             )
         )
         let responsesStart = try #require(handler.range(of: "private func handleOpenResponsesStreaming("))
         let responsesEnd = try #require(
             handler.range(
-                of: "private static func openResponsesNonStreamingBody(",
+                of: "private func handleOpenResponsesNonStreaming(",
                 range: responsesStart.upperBound ..< handler.endIndex
             )
         )
@@ -2019,12 +2056,12 @@ struct RuntimePolicySourceTests {
             )
         )
         #expect(responsesStreaming.contains("var emittedSemanticDelta = false"))
-        #expect(responsesStreaming.contains("func markSemanticDeltaIfChannelActive()"))
+        #expect(responsesStreaming.contains("emittedSemanticDelta = self._isChannelActive.value"))
         #expect(responsesStreaming.contains("!wasResidentBeforeStream && !emittedSemanticDelta"))
         #expect(responsesStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
         #expect(
             responsesStreaming.contains(
-                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Reasoning sentinel"
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    try accumulator.consume(event)"
             )
         )
         let errorStart = try #require(handler.range(of: "func errorCaught"))
@@ -2045,19 +2082,26 @@ struct RuntimePolicySourceTests {
             "Per-request HTTP work must go through runRequestTask so channelInactive can cancel model loads/generation"
         )
         #expect(handler.components(separatedBy: "runRequestTask(priority: .userInitiated)").count >= 8)
-        #expect(
-            handler.contains(
-                "try Task.checkCancellation()\n                    let stream = try await chatEngine.streamChat(request: enrichedReq)"
-            )
-        )
-        #expect(
-            handler.contains(
-                "try Task.checkCancellation()\n                let stream = try await chatEngine.streamChat(request: req)"
-            )
-        )
-        #expect(handler.contains("let stream = try await chatEngine.streamChat(request: req)"))
-        #expect(handler.contains("let stream = try await self.chatEngine.streamChat(request: chatRequest)"))
-        #expect(handler.contains("let stream = try await chatEngine.streamChat(request: internalReq)"))
+        for signature in [
+            "private func handleChatCompletions(", "private func handleChatNDJSON(",
+            "private func handleOllamaGenerate(", "private func handleAnthropicMessagesStreaming(",
+            "private func handleOpenResponsesStreaming(",
+        ] {
+            let route = try Self.functionBody(signature, in: handler)
+            let dispatch = try #require(route.range(of: ".streamResponses(request:"))
+            let cancellation = try #require(route.range(of: "try Task.checkCancellation()"))
+            #expect(cancellation.lowerBound < dispatch.lowerBound, "\(signature) must cancel before load/dispatch")
+            let normalizedRoute = route.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
+            #expect(normalizedRoute.contains("try Task.checkCancellation()\nif disconnected.value { throw CancellationError() }\ntry accumulator.consume(event)"),
+                "\(signature) must cancel before consuming each typed event")
+            #expect(!route.contains(".streamChat(request:"))
+        }
+        let collector = try Self.source("Services/Inference/ResponsesGenerationResult.swift")
+        #expect(collector.contains("for try await event in stream {\n            try Task.checkCancellation()"))
+        let nativeStream = try Self.source("Services/Inference/ResponsesGenerationEvent.swift")
+        #expect(nativeStream.contains("continuation.onTermination"))
+        #expect(nativeStream.contains("producer.cancel()"))
     }
 
     /// Lock the removal of the `activeGenerationTask?.value` gate at
@@ -3355,15 +3399,30 @@ struct RuntimePolicySourceTests {
     @Test("Agent-loop evals preserve bundle-native sampling defaults")
     func agentLoopEvalsPreserveBundleNativeSamplingDefaults() throws {
         let evaluator = try Self.source("Services/Context/AgentLoopEvaluator.swift")
+        let requestTypes = try Self.source("Services/Inference/ResponsesInferenceRequest.swift")
+        let requestStart = try #require(evaluator.range(of: "func makeRequest("))
+        let requestEnd = try #require(evaluator.range(of: "func diagnosticPreview(", range: requestStart.upperBound ..< evaluator.endIndex))
+        let makeRequest = String(evaluator[requestStart.lowerBound ..< requestEnd.lowerBound])
 
         #expect(
-            evaluator.contains("temperature: nil"),
+            makeRequest.contains("var request = ResponsesInferenceRequest(model: resolvedModel, input: messages)")
+                && requestTypes.contains("var temperature: Float? = nil")
+                && !makeRequest.contains("request.generation.temperature ="),
             "Agent-loop evals must leave temperature unspecified so the active bundle config wins."
         )
         #expect(
-            evaluator.contains("request.samplingParametersAreImplicit = true"),
+            evaluator.contains("request.context.samplingParametersAreImplicit = true"),
             "Agent-loop evals must mark omitted sampling parameters as implicit, matching real chat."
         )
+        for (field, declaration) in [
+            ("topP", "var topP: Float? = nil"), ("topK", "var topK: Int? = nil"),
+        ] {
+            #expect(requestTypes.contains(declaration))
+            #expect(!makeRequest.contains("request.generation.\(field) ="),
+                "The eval harness must preserve the bundle's omitted \(field) default")
+        }
+        #expect(makeRequest.contains("request.generation.maxOutputTokens = resolvedMaxTokens"),
+            "Explicit diagnostic output budgets must still reach the runtime")
         #expect(
             !evaluator.contains("temperature: 0.0"),
             "The eval harness must not silently force greedy decoding for bundles tuned for sampling."
@@ -3374,7 +3433,7 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             evaluator.contains("let sessionSource: SessionSource = .chat")
-                && evaluator.contains("ChatEngine(source: sessionSource.inferenceSource)")
+                && evaluator.contains("ChatEngine(source: SessionSource.chat.inferenceSource)")
                 && evaluator.contains("ChatExecutionContext.$currentSessionSource.withValue("),
             "Agent-loop eval inference and tool dispatch must share Chat provenance so parent residency ownership matches the live UI."
         )
