@@ -7,16 +7,16 @@ struct GenerationAllocatorWindows {
         private let id = UUID()
     }
 
-    private var activeCount = 0
+    private var active: Set<Window> = []
 
     mutating func begin() -> Window {
-        activeCount += 1
-        return Window()
+        let window = Window()
+        active.insert(window)
+        return window
     }
 
     mutating func end(_ window: Window?) -> Bool {
-        guard window != nil else { return false }
-        activeCount = max(0, activeCount - 1)
-        return activeCount == 0
+        guard let window, active.remove(window) != nil else { return false }
+        return active.isEmpty
     }
 }

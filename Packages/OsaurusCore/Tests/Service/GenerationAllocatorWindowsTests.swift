@@ -69,4 +69,33 @@ struct GenerationAllocatorWindowsTests {
         let returnedPool17 = windows.end(active)
         #expect(returnedPool17)
     }
+
+    @Test func aForeignWindowCannotReleaseThisRegistrysPool() {
+        var first = GenerationAllocatorWindows()
+        var second = GenerationAllocatorWindows()
+        let owner = first.begin()
+        let foreign = second.begin()
+        let foreignRelease = first.end(foreign)
+        #expect(!foreignRelease)
+        let ownerRelease = first.end(owner)
+        #expect(ownerRelease)
+        let ownForeignRelease = second.end(foreign)
+        #expect(ownForeignRelease)
+    }
+
+    @Test func reverseCompletionOrderStillReleasesOnlyLastUniqueOwner() {
+        var windows = GenerationAllocatorWindows()
+        let first = windows.begin()
+        let second = windows.begin()
+        let firstSecondCallback = windows.end(second)
+        #expect(!firstSecondCallback)
+        let duplicateSecondCallback = windows.end(second)
+        #expect(!duplicateSecondCallback)
+        let firstCallback = windows.end(first)
+        #expect(firstCallback)
+        let repeatedSecondCallback = windows.end(second)
+        #expect(!repeatedSecondCallback)
+        let repeatedFirstCallback = windows.end(first)
+        #expect(!repeatedFirstCallback)
+    }
 }
