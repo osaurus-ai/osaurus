@@ -154,7 +154,7 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
         switch self {
         case .reviewCanceled: return 499  // client-closed-request analog
         case .engineUnavailable: return 503
-        case .scrubNoOp, .scrubLeaked, .reviewRequiresInteractive: return 422
+        case .scrubNoOp, .scrubLeaked, .signedReasoningRedactionUnsupported, .reviewRequiresInteractive: return 422
         }
     }
 
