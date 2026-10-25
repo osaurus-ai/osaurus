@@ -33,8 +33,23 @@ physical-footprint fields, once-only reporting with original-error transport
 and producer drain, plus existing crash-reporting lifecycle/consent behavior.
 The tests do not start the real Sentry SDK or transmit fixture events.
 
-Release app qualification remains pending. This is an observability repair,
-not a reproduction or fix of the unknown user's GPU workload. Errors before
+Local Release integration passes on Max2 in combined app source bbb8fd4dc
+and runtime c2ab69f771 (the separate base-GPU dispatch consumer). Both
+Allosaurus bundles load through native UI with disconnected stderr. Four
+history/code turns stop naturally with closed reasoning: 45.69/78.83 tok/s
+for v0.2, 50.58/73.73 for v0.1. The long code answers independently validate
+all 200 odd numbers and 150 multiples respectively. Native model switching
+rebuilds history correctly. Activity Monitor shows 32.03 / 39.12 GB during
+sustained code; settings Save unloads to 798.8 MB. Strict over-budget refusal
+matches the saved profile and API load decision. Raw GPU architecture is
+confirmed as applegpu_g17s in the read-only memory-status API.
+
+The corrected 46 focused tests pass again. The exact Release binary SHA-256
+is 205266d8baa1f2ccd3e902aecd70415018e549cfd2683fde95d542dad1ad3404;
+the isolated proof artifact has its Sentry DSN removed. No synthetic Sentry
+events were transmitted. Actual production event delivery and the unknown
+reporter's failing workload are not reproduced by this healthy-app proof.
+This is an observability repair, not a fix of that workload. Errors before
 the mapped engine stream (for example, input preparation or model loading)
 are outside this first reporting change.
 
