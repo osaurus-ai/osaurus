@@ -868,6 +868,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
     func streamResponses(request: ResponsesInferenceRequest) async throws
         -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
     {
+        try ResponsesToolChoiceContract.preflight(request)
         let trace = request.context.ttftTrace
         trace?.mark("chatengine_start")
         let dispatch = try await prepareDispatch(request: request, trace: trace)
@@ -927,12 +928,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         service: ModelService,
         params: GenerationParameters
     ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
-        let tools = Self.allowsLocalToolDispatch(request.toolChoice) ? (request.tools ?? []) : []
-        let choice = tools.isEmpty ? nil : Self.localToolChoiceForDispatch(request.toolChoice, tools: tools)
+        if request.providerOptions?.unsupportedPortableTools.isEmpty == false,
+            !(service is RemoteProviderService) {
+            throw ResponsesToolChoiceContract.failure("Hosted tools require a native hosted-tool provider; this model route cannot execute them.")
+        }
+        let originalChoice = ResponsesToolChoiceContract.choice(request)
+        let tools = Self.allowsLocalToolDispatch(originalChoice) ? (request.tools ?? []) : []
+        let choice = tools.isEmpty ? nil : Self.localToolChoiceForDispatch(originalChoice, tools: tools)
         if let typed = service as? ResponsesGenerationService {
-            return try await typed.streamResponses(messages: request.input, parameters: params,
+            let stream = try await typed.streamResponses(messages: request.input, parameters: params,
                 stopSequences: request.generation.stop ?? [], tools: tools, toolChoice: choice,
                 requestedModel: request.model)
+            return ResponsesToolChoiceContract.enforce(stream, request: request)
         }
         let legacy: AsyncThrowingStream<String, Error>
         if !tools.isEmpty, let capable = service as? ToolCapableService {
@@ -943,7 +950,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             legacy = try await service.streamDeltas(messages: request.input, parameters: params,
                 requestedModel: request.model, stopSequences: request.generation.stop ?? [])
         }
-        return ResponsesGenerationStream.compatibility(legacy)
+        return ResponsesToolChoiceContract.enforce(ResponsesGenerationStream.compatibility(legacy), request: request)
     }
 
     /// The app-owned input snapshot, not an assertion about provider wire JSON.
