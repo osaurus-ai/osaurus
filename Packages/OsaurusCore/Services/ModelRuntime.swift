@@ -5894,7 +5894,7 @@ public actor ModelRuntime {
         toolChoice: ToolChoiceOption?,
         modelId: String,
         modelName: String
-    ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+    ) async throws -> ModelRuntimeEventStream {
         let trace = parameters.ttftTrace
         trace?.mark("runtime_start")
 
@@ -6099,7 +6099,7 @@ public actor ModelRuntime {
             activeTask.cancel()
         }
 
-        return GenerationEventMapper.map(
+        let events = GenerationEventMapper.map(
             events: prepared.stream,
             modelName: modelName,
             promptTokenCount: prepared.promptTokens.count,
@@ -6139,6 +6139,13 @@ public actor ModelRuntime {
                 }
             }
         )
+        return ModelRuntimeEventStream(events: events, waitForProducerDrain: {
+            await withTaskCancellationHandler {
+                await activeTask.value
+            } onCancel: {
+                activeTask.cancel()
+            }
+        })
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -6191,7 +6198,7 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
-        return try await Self.collectToolEventResponse(events)
+        return try await Self.collectToolEventResponse(events.events)
     }
 
     nonisolated static func collectToolEventResponse(
@@ -6259,7 +6266,7 @@ public actor ModelRuntime {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
             do {
-                for try await ev in events {
+                for try await ev in events.events {
                     // Terminal usage must survive cancellation just as it does
                     // in streamWithTools; only generated deltas are suppressed.
                     if case .completionInfo(let count, let rate, let unclosed, let stop, let prefill, let mtp) = ev {
@@ -6306,13 +6313,39 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<String, Error> {
+        let events = try await streamResponseEvents(
+            messages: messages,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools,
+            toolChoice: toolChoice,
+            modelId: modelId,
+            modelName: modelName
+        )
+        return Self.bridgeToolEventStream(
+            events.events,
+            collectCompleteResponse: parameters.collectCompleteToolResponse
+        )
+    }
+
+    /// Native typed entry point shared by Responses and the legacy boundary.
+    /// Generation, admission and cache-lease ownership stay in one pipeline.
+    func streamResponseEvents(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        modelId: String,
+        modelName: String
+    ) async throws -> ModelRuntimeEventStream {
         let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
             messages,
             toolChoice: toolChoice,
             modelName: modelName
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
-        let events = try await generateEventStream(
+        return try await generateEventStream(
             chatBuilder: {
                 try ModelRuntime.mapOpenAIChatToMLX(
                     augmented,
@@ -6326,10 +6359,6 @@ public actor ModelRuntime {
             toolChoice: toolChoice,
             modelId: modelId,
             modelName: modelName
-        )
-        return Self.bridgeToolEventStream(
-            events,
-            collectCompleteResponse: parameters.collectCompleteToolResponse
         )
     }
 

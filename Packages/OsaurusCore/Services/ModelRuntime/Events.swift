@@ -7,6 +7,13 @@
 
 import Foundation
 
+/// The event iterator can finish before the runtime's lease-owning cleanup
+/// task. Consumers needing a drained boundary must await both.
+struct ModelRuntimeEventStream: Sendable {
+    let events: AsyncThrowingStream<ModelRuntimeEvent, Error>
+    let waitForProducerDrain: @Sendable () async -> Void
+}
+
 enum ModelRuntimeEvent: Sendable {
     /// Token count from the prepared runtime input, including its template and
     /// media token positions. Available before output or immediate tool dispatch;

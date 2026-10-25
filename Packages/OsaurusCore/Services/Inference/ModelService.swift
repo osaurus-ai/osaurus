@@ -741,6 +741,19 @@ protocol ToolCapableService: ModelService {
     ) async throws -> AsyncThrowingStream<String, Error>
 }
 
+/// A service with an ordered typed Responses generation stream. Compatibility
+/// providers may continue implementing the legacy boundary during migration.
+protocol ResponsesGenerationService: ModelService {
+    func streamResponses(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        requestedModel: String?
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
+}
+
 /// Simple router that selects a service based on the request and environment.
 enum ModelRoute {
     case service(service: ModelService, effectiveModel: String)
