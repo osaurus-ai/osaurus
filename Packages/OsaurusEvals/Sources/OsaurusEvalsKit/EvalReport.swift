@@ -416,6 +416,8 @@ public struct EvalCaseReport: Sendable, Codable {
         public let blocker: EvalBlockerReason?
         public let contextWindow: Int?
         public let maxOutputTokens: Int?
+        /// Raw cache evidence for this specific repeat, including failed turns.
+        public let cacheProof: CacheProofTranscript?
 
         public init(
             outcome: EvalCaseOutcome,
@@ -426,7 +428,8 @@ public struct EvalCaseReport: Sendable, Codable {
             context: ContextAttribution?,
             blocker: EvalBlockerReason? = nil,
             contextWindow: Int? = nil,
-            maxOutputTokens: Int? = nil
+            maxOutputTokens: Int? = nil,
+            cacheProof: CacheProofTranscript? = nil
         ) {
             self.outcome = outcome
             self.notes = notes
@@ -437,6 +440,7 @@ public struct EvalCaseReport: Sendable, Codable {
             self.blocker = blocker
             self.contextWindow = contextWindow
             self.maxOutputTokens = maxOutputTokens
+            self.cacheProof = cacheProof
         }
 
         init(row: EvalCaseReport) {
@@ -447,7 +451,8 @@ public struct EvalCaseReport: Sendable, Codable {
                 toolUsage: row.toolUsage,
                 telemetry: row.telemetry,
                 context: row.context,
-                blocker: row.blocker
+                blocker: row.blocker,
+                cacheProof: row.cacheProof
             )
         }
     }
@@ -511,6 +516,10 @@ public struct EvalCaseReport: Sendable, Codable {
     /// optimization loop can read "where do the tokens go" without
     /// forcing a failure. nil for domains that don't compose.
     public let context: ContextAttribution?
+    /// Exact cache-proof transcript retained on errors and successes. Optional
+    /// so historical reports decode unchanged; counters on failed rows remain
+    /// diagnostics, not a successful cache qualification.
+    public let cacheProof: CacheProofTranscript?
 
     /// Pass fraction across trials — nil for single-execution rows.
     public var passRate: Double? {
@@ -543,7 +552,8 @@ public struct EvalCaseReport: Sendable, Codable {
         trialSummaries: [TrialSummary]? = nil,
         blocker: EvalBlockerReason? = nil,
         judge: EvalJudgeAudit? = nil,
-        context: ContextAttribution? = nil
+        context: ContextAttribution? = nil,
+        cacheProof: CacheProofTranscript? = nil
     ) {
         self.id = id
         self.label = label
@@ -563,6 +573,7 @@ public struct EvalCaseReport: Sendable, Codable {
         self.blocker = blocker
         self.judge = judge
         self.context = context
+        self.cacheProof = cacheProof
     }
 
     /// Build an early-exit row (decode failure, unknown domain, missing
@@ -678,7 +689,8 @@ public struct EvalCaseReport: Sendable, Codable {
                 ? representative.blocker ?? EvalBlockerReason.infer(from: representative.notes)
                 : nil,
             judge: representative.judge,
-            context: representative.context
+            context: representative.context,
+            cacheProof: representative.cacheProof
         )
     }
 }

@@ -212,6 +212,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
     public let trial: Int?
     public let trialCount: Int?
     public let error: String?
+    /// Cache-specific per-turn status, usage, restore and producer-drain data.
+    public let cacheProof: CacheProofTranscript?
 
     public init(
         caseId: String,
@@ -230,7 +232,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
         stepDiagnostics: [StepEvent]? = nil,
         trial: Int? = nil,
         trialCount: Int? = nil,
-        error: String? = nil
+        error: String? = nil,
+        cacheProof: CacheProofTranscript? = nil
     ) {
         self.caseId = caseId
         self.domain = domain
@@ -249,6 +252,7 @@ public struct EvalCaseTranscript: Codable, Sendable {
         self.trial = trial ?? EvalTrialExecutionContext.current?.ordinal
         self.trialCount = trialCount ?? EvalTrialExecutionContext.current?.total
         self.error = error
+        self.cacheProof = cacheProof
     }
 }
 

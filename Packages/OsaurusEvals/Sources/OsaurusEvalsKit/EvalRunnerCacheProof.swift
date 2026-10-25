@@ -120,6 +120,41 @@ enum CacheProofFootprintGate {
 
 extension EvalRunner {
 
+    /// Failure takes precedence over missing cache telemetry. Raw per-turn
+    /// evidence is attached before either early report exits the runner.
+    static func cacheProofEarlyReport(
+        _ transcript: CacheProofTranscript, id: String, label: String,
+        query: String, modelId: String, latencyMs: Double
+    ) -> EvalCaseReport? {
+        let outcome: EvalCaseOutcome
+        let notes: [String]
+        if let error = transcript.error {
+            outcome = .errored
+            notes = ["cache-proof run failed: \(error)",
+                "raw per-turn cache transcript attached; failed-row counters are diagnostic"]
+        } else if let reason = transcript.skipReason {
+            outcome = .skipped
+            notes = ["SKIP: \(reason)"]
+        } else { return nil }
+        let report = EvalCaseReport(id: id, label: label, domain: "cache_proof", query: query,
+            outcome: outcome, notes: notes, modelId: modelId, latencyMs: latencyMs,
+            cacheProof: transcript)
+        return persistCacheProofTranscript(transcript, for: report, query: query)
+    }
+
+    static func persistCacheProofTranscript(
+        _ transcript: CacheProofTranscript, for report: EvalCaseReport, query: String
+    ) -> EvalCaseReport {
+        EvalTranscriptStore.persistIfEnabled(EvalCaseTranscript(
+            caseId: report.id, domain: report.domain, modelId: report.modelId,
+            outcome: report.outcome.rawValue, query: query,
+            finalText: transcript.visibleTurns.joined(separator: "\n\n--- turn ---\n\n"),
+            iterations: transcript.visibleTurns.count, error: transcript.error,
+            cacheProof: transcript
+        ), includeSuccessful: true)
+        return report
+    }
+
     static func runCacheProofCase(
         _ testCase: EvalCase,
         modelId: String
@@ -210,27 +245,9 @@ extension EvalRunner {
         let elapsedMs = Date().timeIntervalSince(started) * 1000
         let sample = sampler.stop()
 
-        if let reason = transcript.skipReason {
-            return .terminal(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                outcome: .skipped,
-                notes: ["SKIP: \(reason)"],
-                modelId: modelId
-            )
-        }
-        if let err = transcript.error {
-            return EvalCaseReport(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                query: testCase.query,
-                outcome: .errored,
-                notes: ["cache-proof run failed: \(err)"],
-                modelId: modelId,
-                latencyMs: elapsedMs
-            )
+        if let report = cacheProofEarlyReport(transcript, id: testCase.id, label: label,
+            query: testCase.query, modelId: modelId, latencyMs: elapsedMs) {
+            return report
         }
 
         var notes: [String] = [
@@ -514,53 +531,11 @@ extension EvalRunner {
             )
         }
 
-        // Sustained-speed gates: decode rate on the FINAL turn vs the FIRST
-        // measured turn. Catches allocator-cap and compiled-decode
-        // regressions that collapse decode as context grows while every
-        // reuse floor still passes.
-        if exp.minFinalDecodeTpsRatio != nil || exp.minFinalDecodeTps != nil {
-            let decodeReadings = turnMetrics.compactMap { turn in
-                turn.decodeTokensPerSecond.map { (turn.turnNumber, $0) }
-            }
-            if let first = decodeReadings.first, let last = decodeReadings.last,
-                decodeReadings.count >= 2 || exp.minFinalDecodeTpsRatio == nil
-            {
-                if let ratioFloor = exp.minFinalDecodeTpsRatio, first.1 > 0 {
-                    let ratio = last.1 / first.1
-                    check(
-                        ratio >= ratioFloor,
-                        pass: String(
-                            format: "sustained decode: turn %d %.1f tok/s vs turn %d %.1f tok/s "
-                                + "(ratio %.2f ≥ %.2f)",
-                            last.0, last.1, first.0, first.1, ratio, ratioFloor
-                        ),
-                        fail: String(
-                            format: "decode COLLAPSED: turn %d %.1f tok/s vs turn %d %.1f tok/s "
-                                + "(ratio %.2f below floor %.2f)",
-                            last.0, last.1, first.0, first.1, ratio, ratioFloor
-                        )
-                    )
-                }
-                if let absFloor = exp.minFinalDecodeTps {
-                    check(
-                        last.1 >= absFloor,
-                        pass: String(
-                            format: "final-turn decode %.1f tok/s ≥ %.1f", last.1, absFloor
-                        ),
-                        fail: String(
-                            format: "final-turn decode %.1f tok/s below floor %.1f", last.1,
-                            absFloor
-                        )
-                    )
-                }
-            } else {
-                check(
-                    false,
-                    pass: "",
-                    fail: "sustained-decode gate set but decode readings unavailable "
-                        + "(\(decodeReadings.count) turn(s) reported a rate)"
-                )
-            }
+        // A measured earlier turn cannot stand in for an unreported final
+        // turn. Missing final speed makes the configured gate unverified.
+        for verdict in CacheProofDecodeGate.evaluate(turns: turnMetrics,
+            minimumFinal: exp.minFinalDecodeTps, minimumRatio: exp.minFinalDecodeTpsRatio) {
+            check(verdict.passed, pass: verdict.note, fail: verdict.note)
         }
 
         // AGENTS.md hybrid rule: on a hybrid-SSM model, KV movement without
@@ -665,7 +640,7 @@ extension EvalRunner {
             notes.append(String(format: "decode tok/s: %.1f", tps))
         }
 
-        return EvalCaseReport(
+        let report = EvalCaseReport(
             id: testCase.id,
             label: label,
             domain: testCase.domain,
@@ -684,8 +659,10 @@ extension EvalRunner {
                 diskL2HitsDelta: transcript.diskL2HitsDelta,
                 diskL2MissesDelta: transcript.diskL2MissesDelta,
                 diskL2StoresDelta: transcript.diskL2StoresDelta
-            )
+            ),
+            cacheProof: transcript
         )
+        return persistCacheProofTranscript(transcript, for: report, query: testCase.query)
     }
 
     static func cacheProofTrialInputs(
