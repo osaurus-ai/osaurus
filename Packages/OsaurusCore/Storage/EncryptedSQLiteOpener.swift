@@ -69,6 +69,15 @@ public enum EncryptedSQLiteOpener {
             throw EncryptedSQLiteError.openFailed(msg)
         }
 
+        // Until the fully configured connection is returned, this opener
+        // owns it, including failures during key verification or PRAGMA setup.
+        var transferredToCaller = false
+        defer {
+            if !transferredToCaller {
+                sqlite3_close_v2(connection)
+            }
+        }
+
         if let key {
             try applyKey(connection: connection, key: key)
             try applyCipherPragmas(connection: connection)
@@ -85,6 +94,7 @@ public enum EncryptedSQLiteOpener {
             try executePragma(connection, "PRAGMA foreign_keys = ON")
         }
 
+        transferredToCaller = true
         return connection
     }
 
