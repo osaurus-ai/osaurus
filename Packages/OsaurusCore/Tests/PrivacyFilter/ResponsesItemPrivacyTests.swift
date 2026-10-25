@@ -110,4 +110,60 @@ struct ResponsesItemPrivacyTests {
         #expect(await PrivacyFilterPipeline.unscrubInboundJSON(event, map: nil) == event)
     }
 
+
+    @Test func signedReasoningCannotBeRedactedOrResignedSilently() async throws {
+        let signed: JSONValue = .object([
+            "type": .string("thinking"), "thinking": .string("Contact alice@example.com"),
+            "signature": .string("actual-provider-signature"),
+        ])
+        let opaque: JSONValue = .object([
+            "type": .string("redacted_thinking"), "data": .string("opaque-alice@example.com"),
+        ])
+        var message = ChatMessage(role: "assistant", content: nil)
+        message.anthropic_thinking_blocks = [signed, opaque]
+        let approved = await detection()
+        #expect([message].scrubbableTexts().contains("Contact alice@example.com"))
+        #expect(![message].scrubbableTexts().contains("opaque-alice@example.com"))
+        #expect(throws: PrivacyFilterPipelineError.signedReasoningRedactionUnsupported) {
+            try PrivacyFilterPipeline.scrubOutboundMessages([message], approved: [approved])
+        }
+        // A no-redaction pass keeps the provider's actual signed state.
+        let unchanged = try PrivacyFilterPipeline.scrubOutboundMessages([message], approved: [])
+        #expect(unchanged.first?.anthropic_thinking_blocks == [signed, opaque])
+        #expect(await PrivacyFilterPipeline.unscrubInboundJSON(signed, map: nil) == signed)
+    }
+
+    @Test func unsignedThinkingRedactsAndAbsentProviderStateStaysAbsent() async throws {
+        let approved = await detection()
+        var message = ChatMessage(role: "assistant", content: "Contact alice@example.com")
+        message.anthropic_thinking_blocks = [.object([
+            "type": .string("thinking"), "thinking": .string("Contact alice@example.com"),
+        ])]
+        let scrubbed = try PrivacyFilterPipeline.scrubOutboundMessages([message], approved: [approved])
+        #expect(scrubbed.first?.anthropic_thinking_blocks == [.object([
+            "type": .string("thinking"), "thinking": .string("Contact [EMAIL_1]"),
+        ])])
+        let ordinary = [ChatMessage(role: "user", content: "Contact alice@example.com")]
+        #expect(ordinary.applyingScrub(approved: [approved]).first?.anthropic_thinking_blocks == nil)
+    }
+
+    @Test func argumentDeltaRestorationEscapesOnlyInsertedJSONPayload() async throws {
+        let original = "A\"B\\C\nD\tE"
+        let map = RedactionMap(conversationID: UUID())
+        _ = await map.intern(original, as: .person)
+        let rail = await StreamingUnscrubber.make(for: map, jsonStringEscaping: true)
+        var json = await rail.push(#"{"contact":"[PER"#)
+        #expect(rail.hasPendingFragment)
+        json += await rail.push(#"SON_1]","count":3}"#)
+        json += await rail.flush()
+        let parsed = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        #expect(parsed["contact"] as? String == original)
+        #expect(parsed["count"] as? Int == 3)
+        #expect(!rail.hasPendingFragment)
+        let plain = await StreamingUnscrubber.make(for: map)
+        var text = await plain.push("[PERSON_1]")
+        text += await plain.flush()
+        #expect(text == original)
+    }
+
 }

@@ -144,7 +144,7 @@ extension ChatMessage {
     /// are `let` and its designated inits each drop some field, so the policy
     /// rebuilds through this full-fields copy.
     func replacingContentParts(_ parts: [MessageContentPart]?) -> ChatMessage {
-        ChatMessage(
+        var prepared = ChatMessage(
             role: role,
             content: content,
             contentParts: parts,
@@ -156,6 +156,8 @@ extension ChatMessage {
             reasoning_encrypted: reasoning_encrypted,
             responses_output_items: responses_output_items
         )
+        prepared.anthropic_thinking_blocks = anthropic_thinking_blocks
+        return prepared
     }
 }
 
