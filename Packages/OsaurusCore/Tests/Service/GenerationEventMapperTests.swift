@@ -16,6 +16,36 @@ import Testing
 
 @Suite("GenerationEventMapper bridge behaviour")
 struct GenerationEventMapperTests {
+    @Test(.timeLimit(.minutes(1)))
+    func reportsFailureOnceWithoutChangingTheErrorOrAbandoningProducerDrain() async {
+        let failure = GenerationFailure(stage: .decoding,
+            cause: "kIOGPUCommandBufferCallbackErrorImpactingInteractivity: original caller diagnostic")
+        let info = GenerateCompletionInfo(promptTokenCount: 72, generationTokenCount: 11,
+            promptTime: 0, generationTime: 0, stopReason: .cancelled, generationFailure: failure)
+        let source = MapperDuplicateFailureSource(info: info)
+        let recorder = MapperFailureRecorder()
+        let events = AsyncStream<Generation>(unfolding: { await source.next() })
+        do {
+            for try await event in GenerationEventMapper.map(events: events, modelName: "public--model",
+                reportFailure: { recorder.record($0, model: $1, prompt: $2, generated: $3) })
+            {
+                if case .completionInfo = event { Issue.record("Failed generation must not complete successfully") }
+            }
+            Issue.record("Expected originating error")
+        } catch let caught as GenerationFailure {
+            #expect(caught == failure)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        await source.drained.wait()
+        let reports = recorder.snapshot()
+        #expect(reports.count == 1)
+        #expect(reports.first?.failure == failure)
+        #expect(reports.first?.model == "public--model")
+        #expect(reports.first?.prompt == 72)
+        #expect(reports.first?.generated == 11)
+    }
+
     @Test func preparationFailureReachesCallerWithoutCompletion() async {
         let failure = GenerationFailure(stage: .preparation, cause: "fixture projection shape mismatch")
         let info = GenerateCompletionInfo(promptTokenCount: 8, generationTokenCount: 0,
@@ -811,6 +841,40 @@ struct GenerationEventMapperTests {
 }
 
 private struct MapperTestTimeout: Error {}
+
+private final class MapperFailureRecorder: @unchecked Sendable {
+    struct Row: Sendable {
+        let failure: GenerationFailure
+        let model: String
+        let prompt: Int
+        let generated: Int
+    }
+    private let lock = NSLock()
+    private var rows: [Row] = []
+    func record(_ failure: GenerationFailure, model: String, prompt: Int, generated: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        rows.append(Row(failure: failure, model: model, prompt: prompt, generated: generated))
+    }
+    func snapshot() -> [Row] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rows
+    }
+}
+
+private actor MapperDuplicateFailureSource {
+    let drained = MapperAsyncLatch()
+    private let info: GenerateCompletionInfo
+    private var reads = 0
+    init(info: GenerateCompletionInfo) { self.info = info }
+    func next() async -> Generation? {
+        reads += 1
+        if reads <= 2 { return .info(info) }
+        await drained.signal()
+        return nil
+    }
+}
 
 private final class MapperCancellationProbe: @unchecked Sendable {
     private let lock = NSLock()

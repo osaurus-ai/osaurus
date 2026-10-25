@@ -59,7 +59,13 @@ enum GenerationEventMapper {
         onFirstModelOutput: @escaping @Sendable () -> Void = {},
         /// Fired when vmlx emits its authoritative terminal stats. Cache
         /// persistence may still be draining after this boundary.
-        onCompletionInfo: @escaping @Sendable () -> Void = {}
+        onCompletionInfo: @escaping @Sendable () -> Void = {},
+        /// Injectable sink; the default reports only whitelisted native GPU
+        /// failures and obeys the existing crash-reporting consent gate.
+        reportFailure: @escaping @Sendable (GenerationFailure, String, Int, Int) -> Void = {
+            CrashReportingService.recordHandledGPUFailure(
+                $0, modelName: $1, promptTokens: $2, generatedTokens: $3)
+        }
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
@@ -74,6 +80,7 @@ enum GenerationEventMapper {
             var firstChunk = true
             var finalTokenCount = 0
             var sawCompletionInfo = false
+            var reportedFailure = false
             var sawReasoning = false
             var estimatedTextTokens = 0
             var markedFirstModelOutput = false
@@ -143,6 +150,10 @@ enum GenerationEventMapper {
                     finalTokenCount = info.generationTokenCount
                     logCompletionInfo(info)
                     if let failure = info.generationFailure {
+                        if !reportedFailure {
+                            reportedFailure = true
+                            reportFailure(failure, modelName, info.promptTokenCount, info.generationTokenCount)
+                        }
                         // Preserve the engine's originating diagnostic. A
                         // preparation error is not an empty user cancellation.
                         continuation.finish(throwing: failure)

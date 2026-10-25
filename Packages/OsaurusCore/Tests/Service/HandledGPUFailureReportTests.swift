@@ -1,0 +1,79 @@
+import Foundation
+import MLXLMCommon
+import Testing
+
+@testable import OsaurusCore
+
+struct HandledGPUFailureReportTests {
+    private let signature = "[METAL] Command buffer execution failed: Impacting Interactivity (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)"
+
+    @Test func nativeSignatureProducesAnIdentifierOnlyReport() throws {
+        let cause = "MLX Error: \(signature) at /Users/private-user/secret.cpp:73"
+        let report = try #require(HandledGPUFailureReport(
+            failure: GenerationFailure(stage: .decoding, cause: cause),
+            modelName: "OsaurusAI--Allosaurus-v0.2-125B-A6B-JANGHT1.8", promptTokens: 4096, generatedTokens: 231))
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: report.context), as: UTF8.self)
+        #expect(report.stage == "decoding")
+        #expect(report.promptTokens == 4096)
+        #expect(report.generatedTokens == 231)
+        #expect(encoded.contains("Allosaurus-v0.2"))
+        #expect(!encoded.contains("private-user"))
+        #expect(!encoded.contains("secret.cpp"))
+        #expect(!encoded.contains(signature))
+        #expect(report.context["snapshot_stage"] as? String == "terminal_after_engine_drain")
+    }
+
+    @Test(arguments: ["", "Out of memory", "kIOGPUCommandBufferCallbackErrorTimeout",
+        "kIOGPUCommandBufferCallbackErrorInnocentVictim", "Impacting Interactivity in user text",
+        "kIOGPUCommandBufferCallbackErrorImpactingInteractivity"])
+    func unrelatedErrorsAreNotReclassifiedAsInteractivity(cause: String) {
+        #expect(HandledGPUFailureReport(failure: GenerationFailure(stage: .preparation, cause: cause),
+            modelName: "public--model", promptTokens: 0, generatedTokens: 0) == nil)
+    }
+
+    @Test(arguments: ["/Users/private-user/models/secret-model", "private local model", "C:\\Users\\private-user\\model", "public--model\n"])
+    func arbitraryLocalNamesAndPathsAreHashed(modelName: String) throws {
+        let failure = GenerationFailure(stage: .preparation, cause: signature)
+        let first = try #require(HandledGPUFailureReport(failure: failure, modelName: modelName,
+            promptTokens: 8, generatedTokens: 0))
+        let second = try #require(HandledGPUFailureReport(failure: failure, modelName: modelName,
+            promptTokens: 8, generatedTokens: 0))
+        #expect(first.modelReference.hasPrefix("local-sha256:"))
+        #expect(first.modelReference == second.modelReference)
+        #expect(!first.modelReference.contains("private"))
+        #expect(!first.modelReference.contains("secret"))
+    }
+
+    @Test func unavailableCountsAreNotInventedAsZero() throws {
+        let report = try #require(HandledGPUFailureReport(
+            failure: GenerationFailure(stage: .preparation, cause: signature),
+            modelName: "public--model", promptTokens: -1, generatedTokens: -1))
+        #expect(report.context["prompt_tokens"] == nil)
+        #expect(report.context["generated_tokens"] == nil)
+    }
+
+    @Test func eventKeepsSavedPolicySeparateFromObservedOccupancyAndLimits() throws {
+        let report = try #require(HandledGPUFailureReport(
+            failure: GenerationFailure(stage: .decoding, cause: signature),
+            modelName: "public--model", promptTokens: 128, generatedTokens: 10))
+        let memory: [String: Any] = [
+            "saved_profile": ["mode": "safe_auto", "slider": 2],
+            "observed_after_engine_drain": [
+                "allocator_cache_limit_bytes": 8_589_934_592,
+                "mlx_cached_bytes": 134_217_728,
+                "phys_footprint_bytes": 38_000_000_000,
+                "rss_bytes": 37_000_000_000,
+            ],
+        ]
+        let event = CrashReportingService.makeHandledGPUFailureEvent(report: report, memory: memory)
+        #expect(event.fingerprint == ["handled-metal-gpu-failure", "impacting-interactivity"])
+        #expect(event.tags?["gpu.stage"] == "decoding")
+        let snapshot = try #require(event.context?["gpu_memory_snapshot"] as? [String: Any])
+        let observed = try #require(snapshot["observed_after_engine_drain"] as? [String: Int])
+        #expect(observed["allocator_cache_limit_bytes"] == 8_589_934_592)
+        #expect(observed["mlx_cached_bytes"] == 134_217_728)
+        #expect(observed["phys_footprint_bytes"] == 38_000_000_000)
+        #expect(observed["rss_bytes"] == 37_000_000_000)
+        #expect(JSONSerialization.isValidJSONObject(snapshot))
+    }
+}

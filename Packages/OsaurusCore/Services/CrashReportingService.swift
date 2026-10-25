@@ -15,6 +15,8 @@
 //
 
 import Foundation
+import MLX
+import MLXLMCommon
 import Sentry
 
 @MainActor
@@ -194,6 +196,64 @@ public final class CrashReportingService {
 
     private nonisolated static let breadcrumbQueue = DispatchQueue(
         label: "com.dinoki.osaurus.crash-breadcrumbs", qos: .utility)
+
+    /// Handled eval failures do not produce a fatal crash event. Record the
+    /// known interactivity signature without the raw error, prompt or output.
+    /// Limits and occupancy are sampled separately after engine drain; none
+    /// of these readings claim to be the peak or the policy at the failed op.
+    nonisolated static func recordHandledGPUFailure(
+        _ failure: GenerationFailure, modelName: String, promptTokens: Int, generatedTokens: Int
+    ) {
+        guard SentrySDK.isEnabled,
+            let report = HandledGPUFailureReport(failure: failure, modelName: modelName,
+                promptTokens: promptTokens, generatedTokens: generatedTokens)
+        else { return }
+        let saved = ServerRuntimeSettingsStore.snapshot().memorySafety
+        let status = MemoryStatus.snapshot()
+        let allocator = MLX.Memory.snapshot()
+        var observed: [String: Any] = [
+            "scope": "process_wide_not_request_peak",
+            "observed_at_unix_seconds": Date().timeIntervalSince1970,
+            "memory_limit_bytes": status.memoryLimit,
+            "allocator_cache_limit_bytes": status.cacheLimit,
+            "physical_memory_bytes": status.physicalMemory,
+            "rss_bytes": status.currentRSS,
+            "mlx_active_bytes": allocator.activeMemory,
+            "mlx_cached_bytes": allocator.cacheMemory,
+            "host_memory_pressure": SubagentMemoryPressure.sampled().rawValue,
+        ]
+        if let footprint = ProcessMemoryProbe.currentPhysFootprintMB() {
+            observed["phys_footprint_bytes"] = UInt64(footprint * 1024 * 1024)
+        }
+        var savedProfile: [String: Any] = [
+            "mode": saved.mode.rawValue, "slider": saved.slider,
+            "keep_model_in_memory": saved.keepModelInMemory,
+        ]
+        if let cap = saved.customAllocatorCacheBytes { savedProfile["custom_allocator_max_bytes"] = cap }
+        // Serialize before crossing the queue: [String: Any] is not Sendable.
+        // All values are the numeric/identifier allowlist constructed above.
+        guard let data = try? JSONSerialization.data(withJSONObject: [
+            "saved_profile": savedProfile, "observed_after_engine_drain": observed,
+        ]) else { return }
+        breadcrumbQueue.async {
+            // Consent can be revoked while a report is queued.
+            guard SentrySDK.isEnabled,
+                let memory = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return }
+            SentrySDK.capture(event: makeHandledGPUFailureEvent(report: report, memory: memory))
+        }
+    }
+
+    nonisolated static func makeHandledGPUFailureEvent(
+        report: HandledGPUFailureReport, memory: [String: Any]
+    ) -> Event {
+        let event = Event(level: .error)
+        event.message = SentryMessage(formatted: "Handled Metal GPU failure: Impacting Interactivity")
+        event.fingerprint = ["handled-metal-gpu-failure", "impacting-interactivity"]
+        event.tags = ["gpu.failure": "impacting_interactivity", "gpu.stage": report.stage]
+        event.context = ["gpu_generation_failure": report.context, "gpu_memory_snapshot": memory]
+        return event
+    }
 
     // MARK: - Main-thread stall reporting
 
