@@ -23,6 +23,17 @@ struct HarnessRequestContextTests {
         #expect(!copied.admissionOutputTokensAreImplicit)
     }
 
+    @Test(arguments: [false, true])
+    func requestCopyPreservesRuntimeOnlyCachePrefix(replaceModel: Bool) throws {
+        var original = request()
+        original.cacheStableSystemPrefix = "Byte-exact static system prefix."
+        let copied = copy(original, replaceModel: replaceModel)
+        #expect(copied.cacheStableSystemPrefix == original.cacheStableSystemPrefix)
+        let wire = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(copied)) as? [String: Any])
+        #expect(wire["cacheStableSystemPrefix"] == nil)
+        #expect(wire["inferenceContext"] == nil)
+    }
+
     @Test
     func publicWireCannotSetOrReceiveHostAdmissionControls() throws {
         let input = Data(#"{"model":"model","messages":[],"admissionPositionLimit":4096,"admissionOutputTokensAreImplicit":true,"inferenceContext":{"admissionPositionLimit":8192,"backgroundModelLoad":true}}"#.utf8)

@@ -1211,6 +1211,7 @@ struct RuntimePolicySourceTests {
     @Test("chat-composed static prompt prefix reaches local MLX as a runtime-only cache hint")
     func chatComposedStaticPromptPrefixReachesLocalMLXCacheHint() throws {
         let api = try Self.source("Models/API/OpenAIAPI.swift")
+        let context = try Self.source("Services/Inference/InferenceRequestContext.swift")
         let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
         let chatView = try Self.source("Views/Chat/ChatView.swift")
         let chatWarmup = try Self.source("Services/Chat/ChatSessionWarmup.swift")
@@ -1218,8 +1219,10 @@ struct RuntimePolicySourceTests {
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
-        #expect(api.contains("var cacheStableSystemPrefix: String? = nil"))
-        #expect(api.contains("copy.cacheStableSystemPrefix = cacheStableSystemPrefix"))
+        #expect(context.contains("var cacheStableSystemPrefix: String? = nil"))
+        #expect(api.contains("get { inferenceContext.cacheStableSystemPrefix }"))
+        #expect(api.contains("set { inferenceContext.cacheStableSystemPrefix = newValue }"))
+        #expect(api.components(separatedBy: "copy.inferenceContext = inferenceContext").count - 1 == 2)
         #expect(!api.contains("case cacheStableSystemPrefix"))
         #expect(chatEngine.contains("cacheStableSystemPrefix: request.cacheStableSystemPrefix"))
         #expect(chatView.contains("req.cacheStableSystemPrefix ="))
