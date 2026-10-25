@@ -11,11 +11,18 @@ struct ResponsesEngineTests {
         var parameters: GenerationParameters?
         var messages: [ChatMessage] = []
         var tools: [Tool] = []
-        func native(_ messages: [ChatMessage], _ parameters: GenerationParameters, _ tools: [Tool]) {
+        var receivedToolChoice = false
+        func native(
+            _ messages: [ChatMessage],
+            _ parameters: GenerationParameters,
+            _ tools: [Tool],
+            _ choice: ToolChoiceOption?
+        ) {
             nativeCalls += 1
             self.messages = messages
             self.parameters = parameters
             self.tools = tools
+            receivedToolChoice = choice != nil
         }
         func legacy() { legacyCalls += 1 }
     }
@@ -49,7 +56,7 @@ struct ResponsesEngineTests {
             toolChoice: ToolChoiceOption?,
             requestedModel: String?
         ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
-            await capture.native(messages, parameters, tools)
+            await capture.native(messages, parameters, tools, toolChoice)
             let events = AsyncThrowingStream<ModelRuntimeEvent, Error> { c in
                 c.yield(.inputTokenCount(517))
                 c.yield(.reasoning("plan"))
@@ -178,6 +185,7 @@ struct ResponsesEngineTests {
         let completion = try #require(terminal)
         #expect(await capture.nativeCalls == 1)
         #expect(await capture.legacyCalls == 0)
+        #expect(await capture.receivedToolChoice == false)
         #expect(await capture.messages.first?.localAudioSamples == [samples])
         let params = try #require(await capture.parameters)
         #expect(params.maxTokensExplicit == false)

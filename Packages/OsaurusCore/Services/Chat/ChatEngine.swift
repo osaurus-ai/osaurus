@@ -927,7 +927,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         params: GenerationParameters
     ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
         let tools = Self.allowsLocalToolDispatch(request.toolChoice) ? (request.tools ?? []) : []
-        let choice = Self.localToolChoiceForDispatch(request.toolChoice, tools: tools)
+        let choice = tools.isEmpty ? nil : Self.localToolChoiceForDispatch(request.toolChoice, tools: tools)
         if let typed = service as? ResponsesGenerationService {
             return try await typed.streamResponses(messages: request.input, parameters: params,
                 stopSequences: request.generation.stop ?? [], tools: tools, toolChoice: choice,

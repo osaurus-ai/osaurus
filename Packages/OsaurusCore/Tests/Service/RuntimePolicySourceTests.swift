@@ -2947,11 +2947,11 @@ struct RuntimePolicySourceTests {
     func chatEngineStreamWrapperKeepsReasoningOutOfVisibleAccumulator() throws {
         let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
         let reasoningDecode = try #require(
-            chatEngine.range(of: "if let reasoning = StreamingReasoningHint.decode(delta)")
+            chatEngine.range(of: "if case .reasoning(let reasoning) = event")
         )
         let yieldReasoning = try #require(
             chatEngine.range(
-                of: "continuation.yield(delta)\n                        continue",
+                of: "continuation.yield(element)\n                        continue",
                 range: reasoningDecode.upperBound ..< chatEngine.endIndex
             )
         )
@@ -2961,6 +2961,10 @@ struct RuntimePolicySourceTests {
         #expect(reasoningDecode.lowerBound < yieldReasoning.lowerBound)
         #expect(yieldReasoning.lowerBound < visibleAppend.lowerBound)
         #expect(yieldReasoning.lowerBound < textEstimate.lowerBound)
+        #expect(chatEngine.contains("if let text = StreamingReasoningHint.decode(delta) { return .reasoning(text) }"))
+        #expect(chatEngine.contains("case .reasoningDelta(let text): return .reasoning(text)"))
+        let textGuard = try #require(chatEngine.range(of: "guard case .text(let delta) = event else { continue }"))
+        #expect(textGuard.lowerBound < visibleAppend.lowerBound)
     }
 
     @Test("ChatEngine completeChat preserves reasoning_content before generic sentinel filtering")
