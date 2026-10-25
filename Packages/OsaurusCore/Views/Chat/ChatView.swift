@@ -815,6 +815,9 @@ final class ChatSession: ObservableObject {
     }
 
     private var currentTask: Task<Void, Never>?
+    /// Tests capture the task before Stop clears session state, then await
+    /// its actual unwind rather than treating composer unlock as termination.
+    var currentSendTaskForTesting: Task<Void, Never>? { currentTask }
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
     /// A native image progress row still awaiting its terminal event.
@@ -5172,7 +5175,7 @@ final class ChatSession: ObservableObject {
         // write anything: the run's cleanup already finished, so every
         // mutation here would ghost into the transcript — starting with the
         // reset below erasing the `cancelled` stamp finalizeRun recorded.
-        guard activeRunId == runId else { throw CancellationError() }
+        guard isRunActive(runId) else { throw CancellationError() }
         // A continuation or transient retry may reuse this stream processor
         // after the prior assistant step set terminal metadata. Each model
         // generation owns fresh terminal state; carrying `stop` or an
@@ -5269,11 +5272,11 @@ final class ChatSession: ObservableObject {
             responseLoop: for try await event in stream {
                 noteRunProgress(.stream)
                 if !isRunActive(runId) {
-                    await processor.finalize()
+                    processor.finishImmediately()
                     // Cancelled mid-run: don't leave a remote tool chip
                     // shimmering forever — settle any still-running rows.
                     currentTurn.finalizeRemoteToolActivity(endedBy: .cancelled)
-                    return ([], currentTurn)
+                    throw CancellationError()
                 }
                 if receivedCompletion {
                     switch event {
@@ -5637,12 +5640,21 @@ final class ChatSession: ObservableObject {
                 }
             }
         } catch {
+            // Cancelling an AsyncThrowingStream may end its iterator
+            // normally, or a compatibility adapter may report its missing
+            // terminal after that cancellation. Neither is a fresh provider
+            // error belonging in the already-stopped transcript.
+            guard isRunActive(runId) else {
+                currentTurn.finalizeRemoteToolActivity(endedBy: .cancelled)
+                throw CancellationError()
+            }
             currentTurn.finalizeRemoteToolActivity(
                 endedBy: error is CancellationError ? .cancelled : .failed
             )
             throw error
         }
 
+        guard isRunActive(runId) else { throw CancellationError() }
         guard receivedCompletion else {
             throw ResponsesGenerationResult.CollectionError.missingCompletion
         }
@@ -5652,6 +5664,7 @@ final class ChatSession: ObservableObject {
         // `send()`'s return so the residual buffer is rendered, not
         // dropped on dealloc.
         await processor.finalize()
+        guard isRunActive(runId) else { throw CancellationError() }
 
         // Mode 2 safety net: if the stream ended without an explicit
         // `endRun` trace (clean end, network cutoff, or a peer that doesn't
