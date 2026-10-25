@@ -146,8 +146,8 @@ final class RemoteResponsesNativeStream: RemoteNativeStreamConsumer, @unchecked 
         case "function_call":
             if let call = state.calls[index] { yield(.functionCallAdded(call)) }
         case "reasoning":
-            if let id = item["id"]?.string {
-                yield(.reasoningItem(.init(id: id, encryptedContent: item["encrypted_content"]?.string)))
+            if let id = item["id"]?.string, let encrypted = item["encrypted_content"]?.string {
+                yield(.reasoningItem(.init(id: id, encryptedContent: encrypted)))
             }
             for (part, summary) in (item["summary"]?.array ?? []).enumerated() {
                 let rail = "\(index):\(part)"
