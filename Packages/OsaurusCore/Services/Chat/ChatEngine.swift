@@ -330,7 +330,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 && !request.context.warmupPrefill && !request.context.suppressProgressUI
                 ? request.context.alignmentRepairModel : nil,
             preserveExistingResidencyOwner: request.context.preserveExistingResidencyOwner,
-            collectCompleteToolResponse: inferenceSource == .httpAPI && !request.context.isAgentRequest
+            collectCompleteToolResponse: inferenceSource == .httpAPI && !request.context.isAgentRequest,
+            responsesProviderOptions: request.providerOptions
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
@@ -1610,7 +1611,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 let wireSnapshot = wireProbe?.snapshot()
                 let destination = Self.inferenceLogDestination(
                     connection: connection, path: logPath ?? "/chat/completions",
-                    endpointURL: wireProbe?.requestEndpointURL
+                    endpointURL: wireProbe?.acceptedRequestEndpointURL ?? wireProbe?.requestEndpointURL
                 )
 
                 InsightsService.logInference(

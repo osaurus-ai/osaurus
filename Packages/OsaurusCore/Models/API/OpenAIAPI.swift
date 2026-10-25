@@ -334,6 +334,9 @@ struct ChatMessage: Codable, Sendable {
     /// replayed verbatim on later Responses turns so item ids, assistant phase,
     /// encrypted reasoning, and future typed fields survive.
     var responses_output_items: [JSONValue]? = nil
+    /// In-process provider-tagged signed/opaque thinking blocks. Never encoded
+    /// on the OpenAI Chat Completions wire or replayed as Responses Items.
+    var anthropic_thinking_blocks: [JSONValue]? = nil
 
     /// Extract image URLs from content parts (supports both data URLs and http URLs)
     var imageUrls: [String] {
@@ -485,7 +488,8 @@ extension ChatMessage {
         reasoning_content: String? = nil,
         reasoning_item_id: String? = nil,
         reasoning_encrypted: String? = nil,
-        responses_output_items: [JSONValue]? = nil
+        responses_output_items: [JSONValue]? = nil,
+        anthropic_thinking_blocks: [JSONValue]? = nil
     ) {
         self.role = role
         self.content = content
@@ -497,6 +501,7 @@ extension ChatMessage {
         self.reasoning_item_id = reasoning_item_id
         self.reasoning_encrypted = reasoning_encrypted
         self.responses_output_items = responses_output_items
+        self.anthropic_thinking_blocks = anthropic_thinking_blocks
     }
 
     /// Initialize from a route adapter that already normalized OpenAI-style

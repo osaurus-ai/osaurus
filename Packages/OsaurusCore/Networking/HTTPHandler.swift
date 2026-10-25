@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import LocalAuthentication
 import MLX
 @preconcurrency import MLXLMCommon
@@ -121,24 +123,25 @@ private final class OpenResponsesContextStore: @unchecked Sendable {
     private var entries: [String: Entry] = [:]
     private var insertionOrder: [String] = []
     private let maxEntries = 128
-    private let maxMessagesPerEntry = 40
 
-    func transcript(for responseId: String?, model: String) -> [ChatMessage] {
+    func transcript(for responseId: String?, model: String) throws -> [ChatMessage] {
         guard let responseId, !responseId.isEmpty else { return [] }
-        return lock.withLock {
-            guard let entry = entries[responseId], entry.model == model else { return [] }
+        return try lock.withLock {
+            guard let entry = entries[responseId], entry.model == model else {
+                throw NSError(domain: "OsaurusResponsesContext", code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "The previous response is unavailable for this model. Send the complete input history to continue."])
+            }
             return entry.messages
         }
     }
 
     func store(responseId: String, model: String, messages: [ChatMessage]) {
         guard !responseId.isEmpty, !messages.isEmpty else { return }
-        let clipped = Array(messages.suffix(maxMessagesPerEntry))
         lock.withLock {
             if entries[responseId] == nil {
                 insertionOrder.append(responseId)
             }
-            entries[responseId] = Entry(model: model, messages: clipped)
+            entries[responseId] = Entry(model: model, messages: messages)
 
             while insertionOrder.count > maxEntries {
                 let evicted = insertionOrder.removeFirst()
@@ -10812,6 +10815,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             var loggedResponseText = ""
             var loggedToolCalls: [ToolCallLog] = []
             var runUsage = AgentRunUsage()
+            var batchHistory = ResponsesToolBatchHistory()
 
             // Set when a successful `complete`/`clarify` intercept ends the
             // run — the post-loop tail streams this text (the parsed summary
@@ -10824,8 +10828,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // `clarify` flags `endRun` so the driver exits `.endedBySurface`.
             func interceptAware(
                 _ inv: ServiceToolInvocation,
-                _ execution: AgentLoopToolExecution
+                _ execution: AgentLoopToolExecution,
+                callID: String
             ) -> AgentLoopToolExecution {
+                batchHistory.record(callID: callID, result: execution.result)
                 guard
                     AgentToolLoop.isSuccessfulIntercept(
                         toolName: inv.toolName,
@@ -10877,238 +10883,105 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // `<tools>` block) byte-stable across every iteration so the
                     // post-tool finalization step extends the calling step's KV
                     // prefix instead of re-prefilling from scratch.
-                    var iterationReq = ChatCompletionRequest(
-                        model: model,
-                        messages: msgs,
-                        temperature: effectiveTemperature,
-                        max_tokens: effectiveMaxTokens,
-                        stream: true,
-                        top_p: req.top_p,
-                        top_k: req.top_k,
-                        min_p: req.min_p,
-                        frequency_penalty: req.frequency_penalty,
-                        presence_penalty: req.presence_penalty,
-                        stop: req.stop,
-                        n: nil,
-                        tools: tools.isEmpty ? nil : tools,
-                        tool_choice: resolvedToolChoice,
-                        // A continued chat is keyed as the Mac's own window
-                        // keys it, so the Privacy Filter remembers its
-                        // redactions across steps and turns (and shares them
-                        // with the Mac). Without a key it started afresh on
-                        // every model call: the phone, which sends none for
-                        // a Mac chat, was asked again each step, and earlier
-                        // turns went out unredacted. With no key at all, the
-                        // run's own: its steps at least share one memory.
-                        session_id: continuedSessionId?.uuidString ?? req.session_id ?? requestId,
-                        seed: req.seed,
-                        response_format: req.response_format,
-                        stream_options: req.stream_options
-                    )
+                    var iterationReq = ResponsesInferenceRequest(chatCompletion: enrichedReq)
+                    iterationReq.model = model
+                    iterationReq.input = msgs
+                    iterationReq.generation.temperature = effectiveTemperature
+                    iterationReq.generation.maxOutputTokens = effectiveMaxTokens
+                    iterationReq.tools = tools.isEmpty ? nil : tools
+                    iterationReq.toolChoice = resolvedToolChoice
+                    iterationReq.sessionID = continuedSessionId?.uuidString ?? req.session_id ?? requestId
                     if let storedModelOptions, req.enable_thinking == nil, req.reasoning_effort == nil {
-                        iterationReq.modelOptions = storedModelOptions
+                        iterationReq.context.modelOptions = storedModelOptions
                     }
                     if let enable = req.enable_thinking {
-                        var opts = iterationReq.modelOptions ?? [:]
+                        var opts = iterationReq.context.modelOptions ?? [:]
                         opts["disableThinking"] = .bool(!enable)
-                        iterationReq.modelOptions = opts
-                        iterationReq.enable_thinking = enable
+                        iterationReq.context.modelOptions = opts
+                        iterationReq.generation.enableThinking = enable
                     }
-                    iterationReq.reasoning_effort = req.reasoning_effort
-                    // Label the turn agent-driven for `message_sent` telemetry.
-                    // Only the first iteration (trailing `user` message) actually
-                    // emits; later tool-result iterations are skipped by the
-                    // engine's de-dup rule.
-                    iterationReq.isAgentRequest = true
-                    // Per-step Router billing dedupe: the message count is
-                    // stable per logical step (tool loops append messages
-                    // between steps), so a re-POST of the same step reuses its
-                    // key. The count alone is not collision-safe — compaction
-                    // can shrink the array back to a count an earlier step
-                    // used, and a client retry re-derives the same counts over
-                    // nondeterministic model/tool output — so the body
-                    // fingerprint suffix keys any changed body as a distinct
-                    // request instead of a router IDEMPOTENCY_CONFLICT (409).
-                    iterationReq.idempotencyKey =
-                        "\(idempotencyBase)-s\(msgs.count)-"
+                    iterationReq.generation.reasoningEffort = req.reasoning_effort
+                    iterationReq.context.isAgentRequest = true
+                    iterationReq.context.idempotencyKey = "\(idempotencyBase)-s\(msgs.count)-"
                         + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
-
                     responseContent = ""
-                    var stepCompletionTokens: Int?
-                    var stepPromptTokens: Int?
-                    var stepTokensPerSecond: Double?
-                    var stepStopReason: String?
-                    defer {
-                        runUsage.append(
-                            promptTokens: stepPromptTokens ?? Self.estimatePromptTokens(msgs),
-                            completionTokens: stepCompletionTokens ?? TokenEstimator.estimate(responseContent),
-                            tokensPerSecond: stepTokensPerSecond
-                        )
-                    }
                     var contentCoalescer = Self.StreamDeltaCoalescer(
-                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                    )
+                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
                     if let inboundRun {
-                        Task { @MainActor in
-                            InboundSharedRunBridge.shared.step(inboundRun.handle, "Thinking…")
-                        }
+                        Task { @MainActor in InboundSharedRunBridge.shared.step(inboundRun.handle, "Thinking…") }
                     }
                     var inboundStepMarkedWriting = false
-
-                    do {
-                        let stream = try await chatEngine.streamChat(request: iterationReq)
+                    var accumulator = ResponsesGenerationAccumulator()
+                    let stream = try await chatEngine.streamResponses(request: iterationReq)
+                    generation: for try await event in stream {
+                        try Task.checkCancellation()
                         if disconnected.value { throw CancellationError() }
-                        for try await delta in stream {
-                            if disconnected.value { throw CancellationError() }
-                            // Workspace-billed run: relay the router's billing
-                            // summary to the teammate (same `{"osaurus": …}`
-                            // shape the router emits) so their spend chip ticks
-                            // live. Decoded BEFORE the generic sentinel filter.
-                            if let billing = StreamingBillingHint.decode(delta) {
-                                if workspaceBilling != nil {
-                                    hop {
-                                        writerBound.value.writeRouterSummary(billing, context: ctx.value)
-                                    }
-                                }
-                                continue
+                        try accumulator.consume(event)
+                        switch event {
+                        case .billing(let billing):
+                            if workspaceBilling != nil {
+                                hop { writerBound.value.writeRouterSummary(billing, context: ctx.value) }
                             }
-                            // Reasoning sentinel must be decoded BEFORE the
-                            // generic `isSentinel` filter; emit it on the
-                            // OpenAI extended `reasoning_content` channel
-                            // and do NOT mix it into `responseContent`.
-                            if let reasoning = StreamingReasoningHint.decode(delta) {
-                                if let inboundRun {
-                                    await MainActor.run {
-                                        InboundSharedRunBridge.shared.streamDelta(
-                                            inboundRun.handle,
-                                            reasoning: reasoning
-                                        )
-                                    }
-                                }
-                                if let pending = contentCoalescer.flush() {
-                                    hop {
-                                        writerBound.value.writeContent(
-                                            pending,
-                                            model: model,
-                                            responseId: responseId,
-                                            created: created,
-                                            context: ctx.value
-                                        )
-                                    }
-                                }
-                                hop {
-                                    writerBound.value.writeReasoning(
-                                        reasoning,
-                                        model: model,
-                                        responseId: responseId,
-                                        created: created,
-                                        context: ctx.value
-                                    )
-                                }
-                                continue
-                            }
-                            if let count = StreamingInputTokenHint.decode(delta) {
-                                stepPromptTokens = count
-                                continue
-                            }
-                            if let stats = StreamingStatsHint.decode(delta) {
-                                // Keep the final cumulative stats for this step;
-                                // intermediate updates must not be counted twice.
-                                stepCompletionTokens = stats.tokenCount
-                                stepPromptTokens = stats.inputTokenCount ?? stepPromptTokens
-                                stepTokensPerSecond = stats.tokensPerSecond
-                                stepStopReason = stats.stopReason
-                                continue
-                            }
-                            if StreamingToolHint.isSentinel(delta) { continue }
-                            responseContent += delta
-                            loggedResponseText += delta
+                        case .reasoningDelta(let reasoning):
                             if let inboundRun {
-                                await MainActor.run {
-                                    InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, content: delta)
-                                }
+                                await MainActor.run { InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, reasoning: reasoning) }
+                            }
+                            if let pending = contentCoalescer.flush() {
+                                hop { writerBound.value.writeContent(pending, model: model, responseId: responseId, created: created, context: ctx.value) }
+                            }
+                            hop { writerBound.value.writeReasoning(reasoning, model: model, responseId: responseId, created: created, context: ctx.value) }
+                        case .outputTextDelta(let text):
+                            responseContent += text
+                            loggedResponseText += text
+                            if let inboundRun {
+                                await MainActor.run { InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, content: text) }
                             }
                             if let inboundRun, !inboundStepMarkedWriting {
                                 inboundStepMarkedWriting = true
-                                Task { @MainActor in
-                                    InboundSharedRunBridge.shared.step(inboundRun.handle, "Writing…")
-                                }
+                                Task { @MainActor in InboundSharedRunBridge.shared.step(inboundRun.handle, "Writing…") }
                             }
-                            if let chunk = contentCoalescer.append(delta) {
-                                hop {
-                                    writerBound.value.writeContent(
-                                        chunk,
-                                        model: model,
-                                        responseId: responseId,
-                                        created: created,
-                                        context: ctx.value
-                                    )
-                                }
+                            if let chunk = contentCoalescer.append(text) {
+                                hop { writerBound.value.writeContent(chunk, model: model, responseId: responseId, created: created, context: ctx.value) }
                             }
+                        case .prefillProgress(let progress):
+                            hop { writerBound.value.writePrefillProgress(progress, model: model, responseId: responseId,
+                                created: created, context: ctx.value) }
+                        case .responseCompleted: break generation
+                        default: break
                         }
-                        if let pending = contentCoalescer.flush() {
-                            hop {
-                                writerBound.value.writeContent(
-                                    pending,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                        }
-                    } catch let invs as ServiceToolInvocations {
-                        // Local models can emit multiple tool calls in a single
-                        // completion; ServiceToolInvocations carries the batch.
-                        // Text can still be pending in the coalescer when the tool call
-                        // arrives (tool calls surface by throw, so the loop's own flush
-                        // never runs). Deliver it before the tool frames or the visible
-                        // answer ends mid-word.
-                        if let pending = contentCoalescer.flush() {
-                            hop {
-                                writerBound.value.writeContent(
-                                    pending,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                        }
-                        return .toolCalls(invs.invocations)
-                    } catch let inv as ServiceToolInvocation {
-                        // Text can still be pending in the coalescer when the tool call
-                        // arrives (tool calls surface by throw, so the loop's own flush
-                        // never runs). Deliver it before the tool frames or the visible
-                        // answer ends mid-word.
-                        if let pending = contentCoalescer.flush() {
-                            hop {
-                                writerBound.value.writeContent(
-                                    pending,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                        }
-                        return .toolCalls([inv])
                     }
-
-                    // Preserve the runtime's incomplete terminal state. A
-                    // visible fragment at the output cap is not a final answer.
-                    if stepStopReason == "length" { return .lengthExhausted }
-
-                    // Empty turn (0-token / EOS-first, no tool call): don't
-                    // record a blank assistant message or end the run on
-                    // silence — let the driver nudge-and-retry, then fall back.
-                    if responseContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        return .emptyResponse
+                    if let pending = contentCoalescer.flush() {
+                        hop { writerBound.value.writeContent(pending, model: model, responseId: responseId, created: created, context: ctx.value) }
                     }
-                    // Final text response — done
-                    messages.append(ChatMessage(role: "assistant", content: responseContent))
-                    await mirrorNewMessages(messages)
-                    return .finalResponse
+                    let response = try accumulator.result()
+                    runUsage.append(promptTokens: response.inputTokenCount, completionTokens: response.completion.tokenCount,
+                        tokensPerSecond: response.completion.tokensPerSecond)
+                    switch response.completion.status {
+                    case .cancelled:
+                        throw NSError(domain: "OsaurusUpstreamCancellation", code: 499,
+                            userInfo: [NSLocalizedDescriptionKey: "The upstream model or provider cancelled generation."])
+                    case .incomplete:
+                        if response.completion.stopReason == "length" { return .lengthExhausted }
+                        throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
+                    case .completed: break
+                    }
+                    let calls = response.completion.dispatchableFunctionCalls
+                    let assistant = SecretArgumentScrubber.recordedAssistantMessage(try response.completedAssistantInput())
+                    if !calls.isEmpty {
+                        try batchHistory.begin(assistant)
+                        return .toolCalls(calls.map { ServiceToolInvocation(toolName: $0.name,
+                            jsonArguments: $0.arguments, toolCallId: $0.callID, geminiThoughtSignature: $0.geminiThoughtSignature) })
+                    }
+                    let step = AgentLoopModelStep.classifyTerminal(
+                        contentIsBlank: response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        thinkingIsBlank: response.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        stopReason: response.completion.stopReason, unclosedReasoning: response.completion.unclosedReasoning,
+                        requiresVisibleFinalResponse: true, toolsWereOffered: !tools.isEmpty, content: response.text)
+                    if case .finalResponse = step {
+                        messages.append(assistant)
+                        await mirrorNewMessages(messages)
+                    }
+                    return step
                 },
                 executeTool: { inv, callId in
                     // Single-call fallback; the batch executor below is the
@@ -11132,7 +11005,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ),
                             isError: true
                         )
-                    return interceptAware(inv, execution)
+                    return interceptAware(inv, execution, callID: callId)
                 },
                 executeBatch: { calls in
                     await ChatExecutionContext.$isExternalSurface.withValue(true) {
@@ -11174,7 +11047,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         sessionId: requestId,
                                         agentId: agentId
                                     ).first ?? AgentLoopToolExecution(result: "")
-                                let execution = interceptAware(call.invocation, single)
+                                let execution = interceptAware(call.invocation, single, callID: call.callId)
                                 if emitAgentToolTrace {
                                     RemoteAgentRunLog.server(
                                         "tool completed agent=\(agentId.uuidString) name=\(call.invocation.toolName) "
@@ -11248,8 +11121,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 },
                 onBatchComplete: { outcomes in
-                    var assistantToolCalls: [ToolCall] = []
-                    var toolResultsByCallId: [(String, String)] = []
                     if let inboundRun {
                         let finished = outcomes.map { ($0.invocation.toolName, $0.wasError) }
                         inboundOutcome.recordTools(finished.map { (name: $0.0, isError: $0.1) })
@@ -11292,12 +11163,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         // History + host logs use the recorded (secret-safe)
                         // argument view; ToolRegistry.execute still saw the
                         // original via the batch executor above.
-                        assistantToolCalls.append(
-                            SecretArgumentScrubber.recordedToolCall(
-                                id: outcome.callId,
-                                invocation: outcome.invocation
-                            )
-                        )
                         let recordedResult: String
                         if let artifactRelay, outcome.invocation.toolName == "share_artifact",
                             !outcome.wasError
@@ -11306,7 +11171,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         } else {
                             recordedResult = outcome.result
                         }
-                        toolResultsByCallId.append((outcome.callId, recordedResult))
+                        batchHistory.record(callID: outcome.callId, result: recordedResult)
                         // Host-only tool detail (args + result). Args are the
                         // recorded view so sandbox_secret_set values never
                         // re-enter Insights / agent-run logs. The peer still
@@ -11324,19 +11189,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
 
-                    messages.append(
-                        ChatMessage(
-                            role: "assistant",
-                            content: responseContent.isEmpty ? nil : responseContent,
-                            tool_calls: assistantToolCalls,
-                            tool_call_id: nil
-                        )
-                    )
-                    for (callId, result) in toolResultsByCallId {
-                        messages.append(
-                            ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
-                        )
-                    }
+                    if let commit = batchHistory.complete([]) { messages.append(contentsOf: commit.messages) }
                     await mirrorNewMessages(messages)
                 },
                 emitFallbackText: { text in
@@ -11406,6 +11259,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 inboundOutcome.record(exit: exitState, cancelled: disconnected.value)
             } catch {
+                if let commit = batchHistory.finish(runExit: "error") {
+                    messages.append(contentsOf: commit.messages)
+                    await mirrorNewMessages(messages)
+                }
                 inboundOutcome.record(error: error, cancelled: disconnected.value)
                 await releaseHostFolder()
                 // Stopped, or a send the user declined in a privacy review,
@@ -11437,6 +11294,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     errorMessage: error.localizedDescription
                 )
                 return
+            }
+            if let commit = batchHistory.finish(runExit: String(describing: exitState)) {
+                messages.append(contentsOf: commit.messages)
+                await mirrorNewMessages(messages)
             }
             // Tools have finished executing (the loop is done); release the
             // host folder before streaming the tail so the gate isn't held
@@ -11550,7 +11411,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 }
                 writerBound.value.writeFinish(model, responseId: responseId, created: created, context: ctx.value)
-                if includeUsage {
+                if includeUsage && finalUsage.hasCompleteTokenCounts {
                     writerBound.value.writeUsageChunk(
                         promptTokens: finalUsage.promptTokens,
                         completionTokens: finalUsage.completionTokens,
@@ -14770,385 +14631,103 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
-                // Tool completions finish by throwing after the runtime's
-                // terminal stats. Keep accounting outside do so both tool
-                // catch branches can emit the same authoritative usage.
-                var authoritativeInputTokens: Int?
-                var authoritativeCompletionTokens: Int?
-                var authoritativeTokensPerSecond: Double?
                 var accumulatedContent = ""
                 var accumulatedReasoning = ""
                 do {
                     httpTrace.mark("http_task_start")
-                    let chatEngine = self.chatEngine
                     let enrichedReq = req
                     httpTrace.mark("http_context_passthrough_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
-
-                    // Compute prefix evidence from the exact request sent to
-                    // the OpenAI-compatible server path. Agent context is
-                    // intentionally not injected here; the app chat and
-                    // /agents/{id}/run paths own composed context.
-                    let prefixHash: String = {
-                        let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
-                        return ModelRuntime.computePrefixHash(
-                            systemContent: sysContent,
-                            tools: enrichedReq.tools ?? []
-                        )
-                    }()
-                    hop {
-                        writerBound.value.writeRole(
-                            "assistant",
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            prefixHash: prefixHash,
-                            context: ctx.value
-                        )
-                    }
+                    let prefixHash = ModelRuntime.computePrefixHash(
+                        systemContent: enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? "",
+                        tools: enrichedReq.tools ?? [])
+                    hop { writerBound.value.writeRole("assistant", model: model, responseId: responseId,
+                        created: created, prefixHash: prefixHash, context: ctx.value) }
                     httpTrace.mark("http_sse_role_written")
-
-                    httpTrace.mark("http_stream_chat_start")
+                    httpTrace.mark("http_stream_responses_start")
                     try Task.checkCancellation()
-                    let stream = try await chatEngine.streamChat(request: enrichedReq)
-                    httpTrace.mark("http_stream_chat_ready")
-                    if disconnected.value { throw CancellationError() }
-                    var streamFinishReason = "stop"
-                    for try await delta in stream {
+                    let stream = try await self.chatEngine.streamResponses(request: ResponsesInferenceRequest(chatCompletion: enrichedReq))
+                    httpTrace.mark("http_stream_responses_ready")
+                    var accumulator = ResponsesGenerationAccumulator()
+                    generation: for try await event in stream {
                         try Task.checkCancellation()
                         if disconnected.value { throw CancellationError() }
-                        if let reasoning = StreamingReasoningHint.decode(delta) {
+                        try accumulator.consume(event)
+                        switch event {
+                        case .reasoningDelta(let reasoning):
                             httpTrace.markFirstSemanticDelta("reasoning")
                             markSemanticDeltaIfConnected()
                             accumulatedReasoning += reasoning
                             if let pending = contentCoalescer.flush() {
-                                hop {
-                                    writerBound.value.writeContent(
-                                        pending,
-                                        model: model,
-                                        responseId: responseId,
-                                        created: created,
-                                        context: ctx.value
-                                    )
-                                }
+                                hop { writerBound.value.writeContent(pending, model: model, responseId: responseId, created: created, context: ctx.value) }
                             }
-                            hop {
-                                writerBound.value.writeReasoning(
-                                    reasoning,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
+                            hop { writerBound.value.writeReasoning(reasoning, model: model, responseId: responseId, created: created, context: ctx.value) }
+                        case .prefillProgress(let progress):
+                            hop { writerBound.value.writePrefillProgress(progress, model: model, responseId: responseId, created: created, context: ctx.value) }
+                        case .outputTextDelta(let text):
+                            httpTrace.markFirstSemanticDelta("content")
+                            markSemanticDeltaIfConnected()
+                            accumulatedContent += text
+                            if let chunk = contentCoalescer.append(text) {
+                                hop { writerBound.value.writeContent(chunk, model: model, responseId: responseId, created: created, context: ctx.value) }
                             }
-                            continue
+                        case .responseCompleted: break generation
+                        default: break
                         }
-                        if let progress = StreamingPrefillProgressHint.decode(delta) {
-                            hop {
-                                writerBound.value.writePrefillProgress(
-                                    progress,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                            continue
-                        }
-                        if let count = StreamingInputTokenHint.decode(delta) {
-                            authoritativeInputTokens = count
-                            continue
-                        }
-                        if let stats = StreamingStatsHint.decode(delta) {
-                            authoritativeInputTokens = stats.inputTokenCount ?? authoritativeInputTokens
-                            authoritativeCompletionTokens = stats.tokenCount
-                            authoritativeTokensPerSecond = stats.tokensPerSecond
-                            if let stopReason = stats.stopReason {
-                                streamFinishReason = stopReason
-                            }
-                            continue
-                        }
-                        if StreamingToolHint.isSentinel(delta) { continue }
-                        httpTrace.markFirstSemanticDelta("content")
-                        markSemanticDeltaIfConnected()
-                        accumulatedContent += delta
-                        if let chunk = contentCoalescer.append(delta) {
-                            hop {
-                                writerBound.value.writeContent(
-                                    chunk,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                        }
-                        if disconnected.value { throw CancellationError() }
                     }
                     if disconnected.value { throw CancellationError() }
                     if let pending = contentCoalescer.flush() {
-                        hop {
-                            writerBound.value.writeContent(
-                                pending,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
+                        hop { writerBound.value.writeContent(pending, model: model, responseId: responseId, created: created, context: ctx.value) }
+                    }
+                    let response = try accumulator.result()
+                    let completion = response.completion
+                    switch completion.status {
+                    case .cancelled:
+                        throw NSError(domain: "OsaurusUpstreamCancellation", code: 499,
+                            userInfo: [NSLocalizedDescriptionKey: "The upstream model or provider cancelled generation."])
+                    case .incomplete:
+                        guard completion.stopReason == "length" else {
+                            throw ResponsesGenerationResult.CollectionError.incomplete(completion.stopReason)
+                        }
+                    case .completed: break
+                    }
+                    let calls = completion.dispatchableFunctionCalls
+                    if case .completed = completion.status {
+                        let assistant = try response.completedAssistantInput()
+                        if let error = Self.emptyToolTaskCompletionError(requestMessages: enrichedReq.messages, responseMessage: assistant) { throw error }
+                        if persistOnSuccess {
+                            ChatHistoryWriter.persistInBackground(source: .http, sourcePluginId: nil,
+                                agentId: resolvedAgentUUID, externalKey: externalSessionKey,
+                                finalMessages: priorMessages + [assistant], model: model)
                         }
                     }
-                    let terminalMessage = ChatMessage(
-                        role: "assistant",
-                        content: accumulatedContent,
-                        tool_calls: nil,
-                        tool_call_id: nil,
-                        reasoning_content: accumulatedReasoning.isEmpty ? nil : accumulatedReasoning
-                    )
-                    if let error = Self.emptyToolTaskCompletionError(
-                        requestMessages: enrichedReq.messages,
-                        responseMessage: terminalMessage
-                    ) {
-                        let message = error.localizedDescription
-                        hop {
-                            writerBound.value.writeError(message, context: ctx.value)
-                            writerBound.value.writeEnd(ctx.value)
-                        }
-                        httpTrace.mark("http_sse_error_written")
-                        httpTrace.emit(finishReason: "error", responseStatus: 200, errorMessage: message)
-                        logSelf.logRequest(
-                            method: "POST",
-                            path: "/chat/completions",
-                            userAgent: logUserAgent,
-                            requestBody: logRequestBody,
-                            responseStatus: 200,
-                            startTime: logStartTime,
-                            model: logModel,
-                            temperature: logTemperature,
-                            maxTokens: logMaxTokens,
-                            finishReason: .error,
-                            errorMessage: message
-                        )
-                        return
-                    }
+                    let finish = Self.openResponsesFinishReason(completion).rawValue
                     let includeUsage = req.stream_options?.include_usage == true
-                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(enrichedReq.messages)
-                    let completionTokens =
-                        authoritativeCompletionTokens ?? TokenEstimator.estimate(accumulatedContent)
-                    httpTrace.set("http_prompt_tokens", promptTokens)
-                    httpTrace.set("http_prompt_tokens_estimated", authoritativeInputTokens == nil ? 1 : 0)
-                    httpTrace.set("http_completion_tokens", completionTokens)
-                    let finalStreamFinishReason = streamFinishReason
-                    let finalTokensPerSecond = authoritativeTokensPerSecond
+                    let usage = response.reportedChatUsage
+                    if let count = response.inputTokenCount { httpTrace.set("http_prompt_tokens", count) }
+                    if let count = completion.tokenCount { httpTrace.set("http_completion_tokens", count) }
+                    if !calls.isEmpty { markSemanticDeltaIfConnected(); httpTrace.markFirstSemanticDelta("tool_calls") }
                     hop {
-                        writerBound.value.writeFinishWithReason(
-                            finalStreamFinishReason,
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        if includeUsage {
-                            writerBound.value.writeUsageChunk(
-                                promptTokens: promptTokens,
-                                completionTokens: completionTokens,
-                                tokensPerSecond: finalTokensPerSecond,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
+                        for (index, call) in calls.enumerated() {
+                            self.writeOpenAIToolCallSSE(ServiceToolInvocation(toolName: call.name, jsonArguments: call.arguments,
+                                toolCallId: call.callID, geminiThoughtSignature: call.geminiThoughtSignature), index: index,
+                                writer: writerBound.value, model: model, responseId: responseId, created: created, context: ctx.value)
+                        }
+                        writerBound.value.writeFinishWithReason(finish, model: model, responseId: responseId, created: created, context: ctx.value)
+                        if includeUsage, let usage {
+                            writerBound.value.writeUsageChunk(promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
+                                tokensPerSecond: usage.tokens_per_second, model: model, responseId: responseId, created: created, context: ctx.value)
                         }
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_finish_written")
-                    httpTrace.emit(finishReason: finalStreamFinishReason, responseStatus: 200)
-                    if persistOnSuccess {
-                        var finalMessages = priorMessages
-                        if !accumulatedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            finalMessages.append(
-                                ChatMessage(role: "assistant", content: accumulatedContent)
-                            )
-                        }
-                        ChatHistoryWriter.persistInBackground(
-                            source: .http,
-                            sourcePluginId: nil,
-                            agentId: resolvedAgentUUID,
-                            externalKey: externalSessionKey,
-                            finalMessages: finalMessages,
-                            model: model
-                        )
-                    }
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/chat/completions",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseStatus: 200,
-                        startTime: logStartTime,
-                        model: logModel,
-                        temperature: logTemperature,
-                        maxTokens: logMaxTokens,
-                        finishReason: RequestLog.FinishReason(rawValue: finalStreamFinishReason) ?? .stop
-                    )
-                } catch let invs as ServiceToolInvocations {
-                    // Text can still be pending in the coalescer when the tool call
-                    // arrives (tool calls surface by throw, so the loop's own flush
-                    // never runs). Deliver it before the tool frames or the visible
-                    // answer ends mid-word.
-                    if let pending = contentCoalescer.flush() {
-                        hop {
-                            writerBound.value.writeContent(
-                                pending,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                    }
-                    // Multi-tool MLX completion: emit one tool_call delta
-                    // per invocation, sharing one finish_reason="tool_calls".
-                    // OpenAI clients deduplicate by `index`.
-                    httpTrace.markFirstSemanticDelta("tool_calls")
-                    markSemanticDeltaIfConnected()
-                    httpTrace.set("http_tool_call_count", invs.invocations.count)
-                    let includeUsage = req.stream_options?.include_usage == true
-                    // Use `req.messages` here (not `enrichedReq.messages`)
-                    // because the enriched value is scoped to the `do` block
-                    // and unavailable in this catch — at worst we under-
-                    // count by the agent system-prompt fragment.
-                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(req.messages)
-                    let requestTools = req.tools
-                    let completionTokens = authoritativeCompletionTokens ?? TokenEstimator.estimate(
-                        accumulatedContent + accumulatedReasoning
-                            + invs.invocations.map { $0.toolName + $0.jsonArguments }.joined()
-                    )
-                    let finalTokensPerSecond = authoritativeTokensPerSecond
-                    hop {
-                        for (idx, inv) in invs.invocations.enumerated() {
-                            self.writeOpenAIToolCallSSE(
-                                inv,
-                                index: idx,
-                                writer: writerBound.value,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value,
-                                tools: requestTools
-                            )
-                        }
-                        writerBound.value.writeFinishWithReason(
-                            "tool_calls",
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        if includeUsage {
-                            writerBound.value.writeUsageChunk(
-                                promptTokens: promptTokens,
-                                completionTokens: completionTokens,
-                                tokensPerSecond: finalTokensPerSecond,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                        writerBound.value.writeEnd(ctx.value)
-                    }
-                    httpTrace.mark("http_sse_tool_calls_written")
-                    httpTrace.emit(finishReason: "tool_calls", responseStatus: 200)
-                    let toolLogs = invs.invocations.map {
-                        ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                    }
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/chat/completions",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseStatus: 200,
-                        startTime: logStartTime,
-                        model: logModel,
-                        toolCalls: toolLogs,
-                        temperature: logTemperature,
-                        maxTokens: logMaxTokens,
-                        finishReason: .toolCalls
-                    )
-                } catch let inv as ServiceToolInvocation {
-                    // Text can still be pending in the coalescer when the tool call
-                    // arrives (tool calls surface by throw, so the loop's own flush
-                    // never runs). Deliver it before the tool frames or the visible
-                    // answer ends mid-word.
-                    if let pending = contentCoalescer.flush() {
-                        hop {
-                            writerBound.value.writeContent(
-                                pending,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                    }
-                    // Single tool invocation — same emission as above.
-                    httpTrace.markFirstSemanticDelta("tool_calls")
-                    markSemanticDeltaIfConnected()
-                    httpTrace.set("http_tool_call_count", 1)
-                    let includeUsage = req.stream_options?.include_usage == true
-                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(req.messages)
-                    let requestTools = req.tools
-                    let completionTokens = authoritativeCompletionTokens ?? TokenEstimator.estimate(
-                        accumulatedContent + accumulatedReasoning + inv.toolName + inv.jsonArguments
-                    )
-                    let finalTokensPerSecond = authoritativeTokensPerSecond
-                    hop {
-                        self.writeOpenAIToolCallSSE(
-                            inv,
-                            index: 0,
-                            writer: writerBound.value,
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value,
-                            tools: requestTools
-                        )
-                        writerBound.value.writeFinishWithReason(
-                            "tool_calls",
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        if includeUsage {
-                            writerBound.value.writeUsageChunk(
-                                promptTokens: promptTokens,
-                                completionTokens: completionTokens,
-                                tokensPerSecond: finalTokensPerSecond,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                        writerBound.value.writeEnd(ctx.value)
-                    }
-                    httpTrace.mark("http_sse_tool_calls_written")
-                    httpTrace.emit(finishReason: "tool_calls", responseStatus: 200)
-                    let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/chat/completions",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseStatus: 200,
-                        startTime: logStartTime,
-                        model: logModel,
-                        toolCalls: [toolLog],
-                        temperature: logTemperature,
-                        maxTokens: logMaxTokens,
-                        finishReason: .toolCalls
-                    )
+                    httpTrace.emit(finishReason: finish, responseStatus: 200)
+                    logSelf.logRequest(method: "POST", path: "/chat/completions", userAgent: logUserAgent,
+                        requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
+                        tokensInput: response.inputTokenCount, tokensOutput: completion.tokenCount,
+                        toolCalls: calls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
+                        temperature: logTemperature, maxTokens: logMaxTokens,
+                        finishReason: Self.openResponsesFinishReason(completion))
                 } catch {
                     // SSE response head was already written as 200 — the
                     // failure surfaces as an in-band SSE error chunk. Log
@@ -15206,37 +14785,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
                     httpTrace.mark("http_complete_chat_start")
                     try Task.checkCancellation()
-                    var resp = try await chatEngine.completeChat(request: enrichedReq)
+                    let response = try await chatEngine.completeResponse(request: ResponsesInferenceRequest(chatCompletion: enrichedReq))
                     try Task.checkCancellation()
-                    httpTrace.mark("http_complete_chat_done")
-                    // Compute prefix evidence from the exact request sent to
-                    // the OpenAI-compatible server path. Agent context is
-                    // intentionally not injected here; the app chat and
-                    // /agents/{id}/run paths own composed context.
+                    httpTrace.mark("http_complete_responses_done")
                     let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
-                    resp.prefix_hash = ModelRuntime.computePrefixHash(
-                        systemContent: sysContent,
-                        tools: enrichedReq.tools ?? []
-                    )
-                    if let error = Self.emptyToolTaskCompletionError(
-                        requestMessages: enrichedReq.messages,
-                        responseMessage: resp.choices.first?.message
-                    ) {
-                        throw error
+                    let prefixHash = ModelRuntime.computePrefixHash(systemContent: sysContent, tools: enrichedReq.tools ?? [])
+                    if case .completed = response.completion.status {
+                        let assistant = try response.completedAssistantInput()
+                        if let error = Self.emptyToolTaskCompletionError(requestMessages: enrichedReq.messages, responseMessage: assistant) {
+                            throw error
+                        }
+                        if persistOnSuccess {
+                            ChatHistoryWriter.persistInBackground(source: .http, sourcePluginId: nil,
+                                agentId: resolvedAgentUUID, externalKey: externalSessionKey,
+                                finalMessages: priorMessages + [assistant], model: model)
+                        }
                     }
-                    if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
-                        var finalMessages = priorMessages
-                        finalMessages.append(assistantMsg)
-                        ChatHistoryWriter.persistInBackground(
-                            source: .http,
-                            sourcePluginId: nil,
-                            agentId: resolvedAgentUUID,
-                            externalKey: externalSessionKey,
-                            finalMessages: finalMessages,
-                            model: model
-                        )
-                    }
-                    let body = try Self.chatCompletionResponseBody(resp)
+                    let body = try response.chatCompletionsHTTPBody(model: model, prefixHash: prefixHash)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)
                     let headersCopy = headers
@@ -15258,21 +14823,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ctx.value.close(promise: nil)
                         }
                     }
-                    // Extract token counts and finish reason from response
-                    let tokensIn = resp.usage.prompt_tokens
-                    let tokensOut = resp.usage.completion_tokens
-                    let finishReasonString = resp.choices.first?.finish_reason ?? "stop"
-                    let finishReason: RequestLog.FinishReason = {
-                        switch finishReasonString {
-                        case "stop": return .stop
-                        case "length": return .length
-                        case "tool_calls": return .toolCalls
-                        default: return .stop
-                        }
-                    }()
+                    let tokensIn = response.inputTokenCount
+                    let tokensOut = response.completion.tokenCount
+                    let finishReason = Self.openResponsesFinishReason(response.completion)
+                    let finishReasonString = finishReason.rawValue
                     httpTrace.markFirstSemanticDelta("completion")
-                    httpTrace.set("http_prompt_tokens", tokensIn)
-                    httpTrace.set("http_completion_tokens", tokensOut)
+                    if let tokensIn { httpTrace.set("http_prompt_tokens", tokensIn) }
+                    if let tokensOut { httpTrace.set("http_completion_tokens", tokensOut) }
                     httpTrace.mark("http_json_response_written")
                     httpTrace.emit(finishReason: finishReasonString, responseStatus: 200)
                     logSelf.logRequest(
@@ -15352,6 +14909,56 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Explicit Ollama wire aliases. Preserve earlier thinking for template
+    /// prefix fidelity and carry real images through the ordinary media path.
+    static func decodeOllamaChatRequest(_ data: Data) throws -> ChatCompletionRequest {
+        guard var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "OsaurusOllamaRequest", code: 400)
+        }
+        if let options = object["options"] as? [String: Any] {
+            for (source, target) in ["num_predict": "max_tokens", "temperature": "temperature",
+                "top_p": "top_p", "top_k": "top_k", "min_p": "min_p", "seed": "seed", "stop": "stop"]
+            where object[target] == nil {
+                object[target] = options[source]
+            }
+        }
+        if object["enable_thinking"] == nil {
+            if let flag = object["think"] as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() {
+                object["enable_thinking"] = flag.boolValue
+            } else if let effort = object["think"] as? String { object["reasoning_effort"] = effort }
+            else if let value = object["think"], !(value is NSNull) {
+                throw NSError(domain: "OsaurusOllamaRequest", code: 400,
+                    userInfo: [NSLocalizedDescriptionKey: "Ollama think must be a boolean, model-defined effort string, or null."])
+            }
+        }
+        if var messages = object["messages"] as? [[String: Any]] {
+            for index in messages.indices {
+                if messages[index]["reasoning_content"] == nil, let thinking = messages[index]["thinking"] as? String {
+                    messages[index]["reasoning_content"] = thinking
+                }
+                if let images = messages[index]["images"] as? [String], !images.isEmpty {
+                    var parts = messages[index]["content"] as? [[String: Any]] ?? []
+                    if let text = messages[index]["content"] as? String { parts.insert(["type": "text", "text": text], at: 0) }
+                    for encoded in images {
+                        guard let bytes = Data(base64Encoded: encoded),
+                            let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+                            let identifier = CGImageSourceGetType(source),
+                            let mime = UTType(identifier as String)?.preferredMIMEType
+                        else {
+                            throw NSError(domain: "OsaurusOllamaRequest", code: 400,
+                                userInfo: [NSLocalizedDescriptionKey: "An Ollama images entry is not a supported base64 image."])
+                        }
+                        parts.append(["type": "image_url", "image_url": ["url": "data:\(mime);base64,\(encoded)"]])
+                    }
+                    messages[index]["content"] = parts
+                }
+            }
+            object["messages"] = messages
+        }
+        return try JSONDecoder().decode(ChatCompletionRequest.self,
+            from: JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical))
+    }
+
     private func handleChatNDJSON(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -15370,7 +14977,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard var decodedReq = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+        guard var decodedReq = try? Self.decodeOllamaChatRequest(data) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -15461,146 +15068,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let stream = try await chatEngine.streamChat(request: req)
-                if disconnected.value { throw CancellationError() }
-                for try await delta in stream {
+                let stream = try await chatEngine.streamResponses(request: ResponsesInferenceRequest(chatCompletion: req))
+                var accumulator = ResponsesGenerationAccumulator()
+                generation: for try await event in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
-                    // Ollama-style NDJSON has no `reasoning` / `thinking`
-                    // field today — `StreamingReasoningHint`, along with
-                    // `StreamingToolHint` / `StreamingStatsHint`, is
-                    // intentionally dropped here so it doesn't leak as
-                    // assistant content. Add a `thinking` field on the
-                    // NDJSON response shape (and decode reasoning here
-                    // first) when an upstream client requests it.
-                    if StreamingReasoningHint.decode(delta) != nil { continue }
-                    if let count = StreamingInputTokenHint.decode(delta) {
-                        hop { writerBound.value.setInputTokens(count) }
-                        continue
-                    }
-                    if let stats = StreamingStatsHint.decode(delta) {
-                        hop {
-                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
-                            writerBound.value.setOutputTokens(stats.tokenCount)
-                        }
-                        continue
-                    }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if let chunk = contentCoalescer.append(delta) {
+                    try accumulator.consume(event)
+                    switch event {
+                    case .reasoningDelta(let text):
                         markSemanticDeltaIfChannelActive()
-                        hop {
-                            writerBound.value.writeContent(
-                                chunk,
-                                model: req.model,
-                                responseId: "",
-                                created: Int(Date().timeIntervalSince1970),
-                                context: ctx.value
-                            )
+                        hop { writerBound.value.writeThinking(text, model: req.model, context: ctx.value) }
+                    case .outputTextDelta(let text):
+                        if let chunk = contentCoalescer.append(text) {
+                            markSemanticDeltaIfChannelActive()
+                            hop { writerBound.value.writeContent(chunk, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                         }
+                    case .responseCompleted: break generation
+                    default: break
                     }
                 }
                 if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeContent(
-                            pending,
-                            model: req.model,
-                            responseId: "",
-                            created: Int(Date().timeIntervalSince1970),
-                            context: ctx.value
-                        )
-                    }
+                    hop { writerBound.value.writeContent(pending, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                 }
+                let response = try accumulator.result()
+                let finish = Self.openResponsesFinishReason(response.completion)
+                guard finish != .cancelled, finish != .error else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
+                }
+                let calls = response.completion.dispatchableFunctionCalls.map {
+                    ServiceToolInvocation(toolName: $0.name, jsonArguments: $0.arguments, toolCallId: $0.callID,
+                        geminiThoughtSignature: $0.geminiThoughtSignature)
+                }
+                let input = response.inputTokenCount, output = response.completion.tokenCount
                 hop {
-                    writerBound.value.writeFinish(
-                        req.model,
-                        responseId: "",
-                        created: Int(Date().timeIntervalSince1970),
-                        context: ctx.value
-                    )
+                    if let input { writerBound.value.setInputTokens(input) }
+                    if let output { writerBound.value.setOutputTokens(output) }
+                    writerBound.value.setDoneReason(finish == .length ? "length" : "stop")
+                    if !calls.isEmpty { writerBound.value.writeToolCalls(calls, model: req.model, context: ctx.value) }
+                    else { writerBound.value.writeFinish(req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                     writerBound.value.writeEnd(ctx.value)
                 }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    temperature: logTemperature,
-                    maxTokens: logMaxTokens,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeContent(
-                            pending,
-                            model: req.model,
-                            responseId: "",
-                            created: Int(Date().timeIntervalSince1970),
-                            context: ctx.value
-                        )
-                    }
-                }
-                hop {
-                    writerBound.value.writeToolCalls(invs.invocations, model: req.model, context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    temperature: logTemperature,
-                    maxTokens: logMaxTokens,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeContent(
-                            pending,
-                            model: req.model,
-                            responseId: "",
-                            created: Int(Date().timeIntervalSince1970),
-                            context: ctx.value
-                        )
-                    }
-                }
-                hop {
-                    writerBound.value.writeToolCalls([inv], model: req.model, context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    temperature: logTemperature,
-                    maxTokens: logMaxTokens,
-                    finishReason: .toolCalls
-                )
+                logSelf.logRequest(method: "POST", path: "/chat", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
+                    tokensInput: input, tokensOutput: output,
+                    toolCalls: calls.map { ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments) },
+                    temperature: logTemperature, maxTokens: logMaxTokens, finishReason: finish)
             } catch {
                 // NDJSON response head was already 200 — surface as in-band
                 // NDJSON error chunk and log actual on-wire status.
@@ -15643,14 +15155,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
-                let response = try await self.chatEngine.completeChat(request: request)
-                let message = response.choices.first?.message
+                let response = try await self.chatEngine.completeResponse(request: ResponsesInferenceRequest(chatCompletion: request))
+                let message = try response.compatibilityAssistantMessage()
                 let body = Self.ollamaChatJSON(
                     model: request.model,
-                    content: message?.content ?? "",
-                    toolCalls: message?.tool_calls,
+                    content: message.content ?? "",
+                    toolCalls: message.tool_calls,
                     done: true,
-                    usage: response.usage
+                    usage: response.reportedChatUsage,
+                    thinking: response.reasoning,
+                    doneReason: Self.openResponsesFinishReason(response.completion) == .length ? "length" : "stop"
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -15671,67 +15185,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: request.model,
-                    tokensInput: response.usage.prompt_tokens,
-                    tokensOutput: response.usage.completion_tokens,
+                    tokensInput: response.inputTokenCount,
+                    tokensOutput: response.completion.tokenCount,
                     temperature: request.temperature,
                     maxTokens: request.max_tokens,
-                    finishReason: message?.tool_calls?.isEmpty == false ? .toolCalls : .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                let body = Self.ollamaChatToolCallsJSON(model: request.model, invocations: invs.invocations)
-                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
-                hop {
-                    logSelf.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .ok,
-                        headers: headers,
-                        body: body
-                    )
-                }
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: userAgent,
-                    requestBody: requestBodyString,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: startTime,
-                    model: request.model,
-                    toolCalls: toolLogs,
-                    temperature: request.temperature,
-                    maxTokens: request.max_tokens,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                let body = Self.ollamaChatToolCallsJSON(model: request.model, invocations: [inv])
-                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
-                hop {
-                    logSelf.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .ok,
-                        headers: headers,
-                        body: body
-                    )
-                }
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: userAgent,
-                    requestBody: requestBodyString,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: startTime,
-                    model: request.model,
-                    toolCalls: [toolLog],
-                    temperature: request.temperature,
-                    maxTokens: request.max_tokens,
-                    finishReason: .toolCalls
+                    finishReason: message.tool_calls?.isEmpty == false ? .toolCalls : .stop
                 )
             } catch {
                 let body = Self.ollamaGenerateErrorJSON(
@@ -15902,67 +15360,44 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
-                let stream = try await self.chatEngine.streamChat(request: chatRequest)
-                if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
-                for try await delta in stream {
+                let stream = try await self.chatEngine.streamResponses(request: ResponsesInferenceRequest(chatCompletion: chatRequest))
+                var accumulator = ResponsesGenerationAccumulator()
+                var contentCoalescer = Self.StreamDeltaCoalescer(interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
+                generation: for try await event in stream {
+                    try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
-                    if StreamingReasoningHint.decode(delta) != nil { continue }
-                    if let count = StreamingInputTokenHint.decode(delta) {
-                        hop { writerBound.value.setInputTokens(count) }
-                        continue
-                    }
-                    if let stats = StreamingStatsHint.decode(delta) {
-                        hop {
-                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
-                            writerBound.value.setOutputTokens(stats.tokenCount)
+                    try accumulator.consume(event)
+                    switch event {
+                    case .reasoningDelta(let text):
+                        hop { writerBound.value.writeThinking(text, model: chatRequest.model, context: ctx.value) }
+                    case .outputTextDelta(let text):
+                        if let chunk = contentCoalescer.append(text) {
+                            hop { writerBound.value.writeContent(chunk, model: chatRequest.model, created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                         }
-                        continue
-                    }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if let chunk = contentCoalescer.append(delta) {
-                        hop {
-                            writerBound.value.writeContent(
-                                chunk,
-                                model: chatRequest.model,
-                                created: Int(Date().timeIntervalSince1970),
-                                context: ctx.value
-                            )
-                        }
+                    case .responseCompleted: break generation
+                    default: break
                     }
                 }
                 if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeContent(
-                            pending,
-                            model: chatRequest.model,
-                            created: Int(Date().timeIntervalSince1970),
-                            context: ctx.value
-                        )
-                    }
+                    hop { writerBound.value.writeContent(pending, model: chatRequest.model, created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                 }
+                let response = try accumulator.result()
+                let finish = Self.openResponsesFinishReason(response.completion)
+                guard finish != .cancelled, finish != .error, response.completion.functionCalls.isEmpty else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
+                }
+                let input = response.inputTokenCount, output = response.completion.tokenCount
                 hop {
-                    writerBound.value.writeFinish(
-                        chatRequest.model,
-                        created: Int(Date().timeIntervalSince1970),
-                        context: ctx.value
-                    )
+                    if let input { writerBound.value.setInputTokens(input) }
+                    if let output { writerBound.value.setOutputTokens(output) }
+                    writerBound.value.setDoneReason(finish == .length ? "length" : "stop")
+                    writerBound.value.writeFinish(chatRequest.model, created: Int(Date().timeIntervalSince1970), context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/generate",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    temperature: logTemperature,
-                    maxTokens: logMaxTokens,
-                    finishReason: .stop
-                )
+                logSelf.logRequest(method: "POST", path: "/generate", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
+                    tokensInput: input, tokensOutput: output, temperature: logTemperature,
+                    maxTokens: logMaxTokens, finishReason: finish)
             } catch {
                 hop {
                     writerBound.value.writeErrorFromThrown(error, context: ctx.value)
@@ -16003,13 +15438,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
-                let response = try await self.chatEngine.completeChat(request: request)
-                let content = response.choices.first?.message.content ?? ""
+                let response = try await self.chatEngine.completeResponse(request: ResponsesInferenceRequest(chatCompletion: request))
+                let content = try response.compatibilityAssistantMessage().content ?? ""
                 let body = Self.ollamaGenerateJSON(
                     model: request.model,
                     response: content,
                     done: true,
-                    usage: response.usage
+                    usage: response.reportedChatUsage,
+                    thinking: response.reasoning,
+                    doneReason: Self.openResponsesFinishReason(response.completion) == .length ? "length" : "stop"
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -16030,8 +15467,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: request.model,
-                    tokensInput: response.usage.prompt_tokens,
-                    tokensOutput: response.usage.completion_tokens,
+                    tokensInput: response.inputTokenCount,
+                    tokensOutput: response.completion.tokenCount,
                     temperature: request.temperature,
                     maxTokens: request.max_tokens,
                     finishReason: .stop
@@ -16066,13 +15503,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    private static func ollamaGenerateJSON(model: String, response: String, done: Bool, usage: Usage? = nil) -> String {
+    private static func ollamaGenerateJSON(model: String, response: String, done: Bool, usage: Usage? = nil,
+        thinking: String? = nil, doneReason: String = "stop") -> String {
         var object: [String: Any] = [
             "model": model,
             "created_at": Date().ISO8601Format(),
             "response": response,
             "done": done,
         ]
+        if let thinking, !thinking.isEmpty { object["thinking"] = thinking }
+        if done { object["done_reason"] = doneReason }
         if done, let usage {
             object["prompt_eval_count"] = usage.prompt_tokens
             object["eval_count"] = usage.completion_tokens
@@ -16088,12 +15528,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         content: String,
         toolCalls: [ToolCall]? = nil,
         done: Bool,
-        usage: Usage? = nil
+        usage: Usage? = nil,
+        thinking: String? = nil,
+        doneReason: String = "stop"
     ) -> String {
         var message: [String: Any] = [
             "role": "assistant",
             "content": content,
         ]
+        if let thinking, !thinking.isEmpty { message["thinking"] = thinking }
         if let toolCalls, !toolCalls.isEmpty {
             message["tool_calls"] = toolCalls.map { call in
                 [
@@ -16110,40 +15553,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "message": message,
             "done": done,
         ]
+        if done { object["done_reason"] = doneReason }
         if done, let usage {
             object["prompt_eval_count"] = usage.prompt_tokens
             object["eval_count"] = usage.completion_tokens
         }
         guard let data = try? JSONSerialization.data(withJSONObject: object) else {
             return #"{"message":{"role":"assistant","content":""},"done":true}"#
-        }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func ollamaChatToolCallsJSON(
-        model: String,
-        invocations: [ServiceToolInvocation]
-    ) -> String {
-        let toolCalls = invocations.map { inv in
-            [
-                "function": [
-                    "name": inv.toolName,
-                    "arguments": ollamaArguments(from: inv.jsonArguments),
-                ]
-            ]
-        }
-        let object: [String: Any] = [
-            "model": model,
-            "created_at": Date().ISO8601Format(),
-            "message": [
-                "role": "assistant",
-                "content": "",
-                "tool_calls": toolCalls,
-            ],
-            "done": true,
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
-            return #"{"message":{"role":"assistant","content":"","tool_calls":[]},"done":true}"#
         }
         return String(decoding: data, as: UTF8.self)
     }
@@ -17499,8 +16915,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Convert to internal format
-        var internalReq = anthropicReq.toChatCompletionRequest()
-        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        var internalReq: ResponsesInferenceRequest
+        do {
+            internalReq = try anthropicReq.toResponsesInferenceRequest()
+            internalReq.context.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        } catch {
+            let response = AnthropicError(message: error.localizedDescription, errorType: "invalid_request_error")
+            let body = (try? JSONEncoder.osaurusCanonical().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            sendResponse(context: context, version: head.version, status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + stateRef.value.corsHeaders, body: body)
+            return
+        }
 
         // Generate response ID
         let messageId = Self.shortId(prefix: "msg_")
@@ -17553,7 +16978,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private func handleAnthropicMessagesStreaming(
         anthropicReq: AnthropicMessagesRequest,
-        internalReq: ChatCompletionRequest,
+        internalReq: ResponsesInferenceRequest,
         messageId: String,
         model: String,
         head: HTTPRequestHead,
@@ -17570,22 +16995,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
 
-        // Estimate input tokens (rough: 1 token per 4 chars)
-        let inputTokens =
-            anthropicReq.messages.reduce(0) { acc, msg in
-                acc + TokenEstimator.estimate(msg.content.plainText)
-            } + (anthropicReq.system?.plainText.count ?? 0) / TokenEstimator.charsPerToken
-
-        // Send headers and message_start
         hop {
             writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
-            writerBound.value.writeMessageStart(
-                messageId: messageId,
-                model: model,
-                inputTokens: inputTokens,
-                context: ctx.value,
-                deferUntilInput: true
-            )
+            writerBound.value.writeMessageStart(messageId: messageId, model: model, inputTokens: nil,
+                context: ctx.value, deferUntilInput: true)
         }
 
         // Capture for logging
@@ -17620,128 +17033,76 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let stream = try await chatEngine.streamChat(request: internalReq)
-                if disconnected.value { throw CancellationError() }
-                for try await delta in stream {
+                let stream = try await chatEngine.streamResponses(request: internalReq)
+                var accumulator = ResponsesGenerationAccumulator()
+                var pending: [ResponsesGenerationEvent] = []
+                var hasInputCount = false
+                func emit(_ event: ResponsesGenerationEvent) async throws {
+                    switch event {
+                    case .reasoningDelta(let text):
+                        markSemanticDeltaIfChannelActive()
+                        if let chunk = contentCoalescer.flush() { hop { writerBound.value.writeTextDelta(chunk, context: ctx.value) } }
+                        hop { writerBound.value.writeThinkingDelta(text, context: ctx.value) }
+                    case .anthropicThinkingBlock(let block):
+                        try await loop.submit {
+                            try writerBound.value.writeCompletedThinkingBlock(block, context: ctx.value)
+                        }.get()
+                    case .outputTextDelta(let text):
+                        if let chunk = contentCoalescer.append(text) {
+                            markSemanticDeltaIfChannelActive()
+                            hop { writerBound.value.writeTextDelta(chunk, context: ctx.value) }
+                        }
+                    default: break
+                    }
+                }
+                generation: for try await event in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
-                    // Reasoning sentinel must be decoded BEFORE the
-                    // generic `isSentinel` filter, otherwise it gets
-                    // dropped together with tool/stats hints.
-                    if let reasoning = StreamingReasoningHint.decode(delta) {
-                        markSemanticDeltaIfChannelActive()
-                        if let pending = contentCoalescer.flush() {
-                            hop {
-                                writerBound.value.writeTextDelta(pending, context: ctx.value)
-                            }
-                        }
-                        hop {
-                            writerBound.value.writeThinkingDelta(reasoning, context: ctx.value)
-                        }
-                        continue
-                    }
-                    if let count = StreamingInputTokenHint.decode(delta) {
+                    try accumulator.consume(event)
+                    switch event {
+                    case .inputTokenCount(let count):
+                        hasInputCount = true
                         hop { writerBound.value.setInputTokens(count, context: ctx.value) }
-                        continue
-                    }
-                    if let stats = StreamingStatsHint.decode(delta) {
-                        hop {
-                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count, context: ctx.value) }
-                            writerBound.value.setOutputTokens(stats.tokenCount)
-                        }
-                        continue
-                    }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if let chunk = contentCoalescer.append(delta) {
-                        markSemanticDeltaIfChannelActive()
-                        hop {
-                            writerBound.value.writeTextDelta(chunk, context: ctx.value)
-                        }
+                        for buffered in pending { try await emit(buffered) }
+                        pending.removeAll(keepingCapacity: true)
+                    case .outputTextDelta, .reasoningDelta, .anthropicThinkingBlock:
+                        if hasInputCount { try await emit(event) } else { pending.append(event) }
+                    case .responseCompleted: break generation
+                    default: break
                     }
                 }
-                if let pending = contentCoalescer.flush() {
+                let response = try accumulator.result()
+                guard let usage = response.reportedChatUsage else {
+                    throw NSError(domain: "OsaurusProtocolUsage", code: 502,
+                        userInfo: [NSLocalizedDescriptionKey: "Anthropic compatibility requires reported input and output token counts; this model or provider did not report them."])
+                }
+                let finish = Self.openResponsesFinishReason(response.completion)
+                guard finish != .cancelled, finish != .error else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
+                }
+                if !hasInputCount {
+                    let count = usage.prompt_tokens
+                    hop { writerBound.value.setInputTokens(count, context: ctx.value) }
+                    for buffered in pending { try await emit(buffered) }
+                }
+                if let chunk = contentCoalescer.flush() {
                     markSemanticDeltaIfChannelActive()
-                    hop {
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
+                    hop { writerBound.value.writeTextDelta(chunk, context: ctx.value) }
+                }
+                let calls = response.completion.dispatchableFunctionCalls.map {
+                    ServiceToolInvocation(toolName: $0.name, jsonArguments: $0.arguments, toolCallId: $0.callID,
+                        geminiThoughtSignature: $0.geminiThoughtSignature)
                 }
                 hop {
-                    writerBound.value.writeFinish(stopReason: "end_turn", context: ctx.value)
+                    writerBound.value.setOutputTokens(usage.completion_tokens)
+                    for call in calls { self.writeAnthropicToolUse(call, writer: writerBound.value, context: ctx.value) }
+                    writerBound.value.writeFinish(stopReason: finish == .length ? "max_tokens" : (calls.isEmpty ? "end_turn" : "tool_use"), context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                // Multi-tool MLX completion: one `tool_use` content block
-                // per invocation, then a single `tool_use` finish.
-                markSemanticDeltaIfChannelActive()
-                hop {
-                    for inv in invs.invocations {
-                        self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
-                    }
-                    writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                // Single tool invocation — same emission path.
-                markSemanticDeltaIfChannelActive()
-                hop {
-                    self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
-                    writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    finishReason: .toolCalls
-                )
+                logSelf.logRequest(method: "POST", path: "/messages", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
+                    tokensInput: response.inputTokenCount, tokensOutput: response.completion.tokenCount,
+                    toolCalls: calls.map { ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments) }, finishReason: finish)
             } catch {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
@@ -17766,7 +17127,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private func handleAnthropicMessagesNonStreaming(
         anthropicReq: AnthropicMessagesRequest,
-        internalReq: ChatCompletionRequest,
+        internalReq: ResponsesInferenceRequest,
         messageId: String,
         model: String,
         head: HTTPRequestHead,
@@ -17793,59 +17154,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let resp = try await chatEngine.completeChat(request: internalReq)
-
-                // Convert OpenAI response to Anthropic format
-                let content = resp.choices.first?.message.content ?? ""
-                let stopReason: String
-                switch resp.choices.first?.finish_reason {
-                case "stop": stopReason = "end_turn"
-                case "length": stopReason = "max_tokens"
-                case "tool_calls": stopReason = "tool_use"
-                default: stopReason = "end_turn"
+                let response = try await chatEngine.completeResponse(request: internalReq)
+                guard let usage = response.reportedChatUsage else {
+                    throw NSError(domain: "OsaurusProtocolUsage", code: 502,
+                        userInfo: [NSLocalizedDescriptionKey: "Anthropic compatibility requires reported input and output token counts; this model or provider did not report them."])
                 }
-
-                var contentBlocks: [AnthropicResponseContentBlock] = []
-
-                // Check for tool calls
-                if let toolCalls = resp.choices.first?.message.tool_calls, !toolCalls.isEmpty {
-                    // Add any text content first
-                    if !content.isEmpty {
-                        contentBlocks.append(.textBlock(content))
-                    }
-
-                    // Add tool_use blocks
-                    for toolCall in toolCalls {
-                        // Parse arguments JSON to dictionary
-                        var inputDict: [String: AnyCodableValue] = [:]
-                        if let argsData = toolCall.function.arguments.data(using: .utf8),
-                            let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-                        {
-                            inputDict = parsed.mapValues { AnyCodableValue($0) }
-                        }
-                        contentBlocks.append(
-                            .toolUseBlock(
-                                id: toolCall.id,
-                                name: toolCall.function.name,
-                                input: inputDict
-                            )
-                        )
-                    }
-                } else {
-                    contentBlocks.append(.textBlock(content))
+                let finish = Self.openResponsesFinishReason(response.completion)
+                guard finish != .cancelled, finish != .error else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
                 }
-
-                let anthropicResp = AnthropicMessagesResponse(
-                    id: messageId,
-                    model: model,
-                    content: contentBlocks,
-                    stopReason: stopReason,
-                    usage: AnthropicUsage(
-                        inputTokens: resp.usage.prompt_tokens,
-                        outputTokens: resp.usage.completion_tokens
-                    )
-                )
-
+                var blocks: [AnthropicResponseContentBlock] = []
+                if !response.anthropicThinkingBlocks.isEmpty {
+                    for block in response.anthropicThinkingBlocks {
+                        blocks.append(try JSONDecoder().decode(AnthropicResponseContentBlock.self,
+                            from: JSONEncoder.osaurusCanonical().encode(block)))
+                    }
+                } else if !response.reasoning.isEmpty {
+                    blocks.append(.thinking(.init(thinking: response.reasoning)))
+                }
+                if !response.text.isEmpty { blocks.append(.textBlock(response.text)) }
+                for call in response.completion.dispatchableFunctionCalls {
+                    guard let data = call.arguments.data(using: .utf8),
+                        let arguments = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else {
+                        throw NSError(domain: "OsaurusToolArguments", code: 422,
+                            userInfo: [NSLocalizedDescriptionKey: "The model returned non-object arguments for '\(call.name)'."])
+                    }
+                    blocks.append(.toolUseBlock(id: call.callID, name: call.name,
+                        input: arguments.mapValues { AnyCodableValue($0) }))
+                }
+                if blocks.isEmpty { blocks.append(.textBlock("")) }
+                let anthropicResp = AnthropicMessagesResponse(id: messageId, model: model, content: blocks,
+                    stopReason: finish == .length ? "max_tokens" : (response.completion.functionCalls.isEmpty ? "end_turn" : "tool_use"),
+                    usage: AnthropicUsage(inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens))
                 let json = try JSONEncoder.osaurusCanonical().encode(anthropicResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
                 headers.append(contentsOf: cors)
@@ -17878,57 +17219,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: logStartTime,
                     model: logModel,
-                    tokensInput: resp.usage.prompt_tokens,
-                    tokensOutput: resp.usage.completion_tokens,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                // Multi-tool MLX completion: emit one Anthropic
-                // `tool_use` content block per invocation.
-                let blocks: [AnthropicResponseContentBlock] = invs.invocations.map {
-                    Self.makeAnthropicToolUseBlock(from: $0)
-                }
-                let body = Self.anthropicNonStreamingBody(
-                    messageId: messageId,
-                    model: model,
-                    blocks: blocks
-                )
-                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                // Single tool invocation — same emission with one block.
-                let body = Self.anthropicNonStreamingBody(
-                    messageId: messageId,
-                    model: model,
-                    blocks: [Self.makeAnthropicToolUseBlock(from: inv)]
-                )
-                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    finishReason: .toolCalls
+                    tokensInput: response.inputTokenCount,
+                    tokensOutput: response.completion.tokenCount,
+                    toolCalls: response.completion.dispatchableFunctionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
+                    finishReason: finish
                 )
             } catch {
                 let errorResp = AnthropicError(
@@ -18179,77 +17473,36 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Open Responses API
 
-    private static func applyOpenResponsesContext(
-        to request: ChatCompletionRequest,
+    static func applyOpenResponsesContext(
+        to request: ResponsesInferenceRequest,
         previousResponseId: String?
-    ) -> ChatCompletionRequest {
-        let previous = openResponsesContextStore.transcript(
-            for: previousResponseId,
-            model: request.model
-        )
+    ) throws -> ResponsesInferenceRequest {
+        let previous = try openResponsesContextStore.transcript(for: previousResponseId, model: request.model)
         guard !previous.isEmpty else { return request }
-
         var copy = request
-        let currentSystem = request.messages.filter { $0.role.lowercased() == "system" }
-        let currentNonSystem = request.messages.filter { $0.role.lowercased() != "system" }
-        copy.messages = currentSystem + previous + currentNonSystem
+        // Per-request instructions do not carry over via previous_response_id.
+        let currentSystem = request.input.filter { $0.role.lowercased() == "system" }
+        let currentNonSystem = request.input.filter { $0.role.lowercased() != "system" }
+        copy.input = currentSystem + previous + currentNonSystem
         return copy
     }
 
-    private static func assistantMessages(from response: ChatCompletionResponse) -> [ChatMessage] {
-        response.choices.compactMap { choice in
-            let message = choice.message
-            if let content = message.content, !content.isEmpty {
-                return ChatMessage(
-                    role: "assistant",
-                    content: content,
-                    tool_calls: message.tool_calls,
-                    tool_call_id: nil,
-                    reasoning_content: message.reasoning_content
-                )
-            }
-            if let toolCalls = message.tool_calls, !toolCalls.isEmpty {
-                return ChatMessage(
-                    role: "assistant",
-                    content: nil,
-                    tool_calls: toolCalls,
-                    tool_call_id: nil,
-                    reasoning_content: message.reasoning_content
-                )
-            }
-            return nil
-        }
-    }
-
-    private static func assistantMessage(from invocations: [ServiceToolInvocation]) -> ChatMessage? {
-        let toolCalls = invocations.map { inv in
-            ToolCall(
-                id: inv.toolCallId ?? Self.shortId(prefix: "call_"),
-                type: "function",
-                function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
-            )
-        }
-        guard !toolCalls.isEmpty else { return nil }
-        return ChatMessage(
-            role: "assistant",
-            content: nil,
-            tool_calls: toolCalls,
-            tool_call_id: nil
-        )
-    }
-
-    private static func storeOpenResponsesContext(
+    static func storeOpenResponsesContext(
         responseId: String,
         model: String,
-        request: ChatCompletionRequest,
-        assistantMessages: [ChatMessage]
+        request: ResponsesInferenceRequest,
+        assistantMessages: [ChatMessage],
+        perRequestInstructions: String? = nil
     ) {
         guard !assistantMessages.isEmpty else { return }
-        openResponsesContextStore.store(
-            responseId: responseId,
-            model: model,
-            messages: request.messages + assistantMessages
-        )
+        var input = request.input
+        // Exclude only top-level per-request instructions. Explicit system
+        // input Items remain conversation history.
+        if let perRequestInstructions, input.first?.role == "system", input.first?.content == perRequestInstructions {
+            input.removeFirst()
+        }
+        openResponsesContextStore.store(responseId: responseId, model: model,
+            messages: input + assistantMessages)
     }
 
     private func handleOpenResponses(
@@ -18316,19 +17569,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let responseId = Self.shortId(prefix: "resp_")
         let model = openResponsesReq.model
 
-        // Convert to internal format, preserving local Responses API
-        // context when clients chain turns with `previous_response_id`.
-        var internalReq = Self.applyOpenResponsesContext(
-            to: openResponsesReq.toChatCompletionRequest(),
-            previousResponseId: openResponsesReq.previous_response_id
-        )
-        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
-        if let reason = Self.unsupportedSamplerReason(internalReq) {
-            let response = OpenResponsesErrorResponse(code: "invalid_request_error", message: reason)
-            let body = (try? JSONEncoder.osaurusCanonical().encode(response))
+        // Project directly into canonical input. Full native assistant Items
+        // and reasoning stay with the template/transport message snapshot.
+        var internalReq: ResponsesInferenceRequest
+        do {
+            internalReq = try Self.applyOpenResponsesContext(
+                to: try openResponsesReq.toResponsesInferenceRequest(),
+                previousResponseId: openResponsesReq.previous_response_id
+            )
+            internalReq.context.idempotencyKey = Self.httpIdempotencyKey(head: head)
+            if let reason = RequestValidator.responseFormatReason(internalReq.generation.outputFormat)
+                ?? RequestValidator.unsupportedSamplerReason(n: nil,
+                    responseFormatType: internalReq.generation.outputFormat?.type)
+            {
+                throw NSError(domain: "OsaurusResponsesRequest", code: 400,
+                    userInfo: [NSLocalizedDescriptionKey: reason])
+            }
+        } catch {
+            let errorResponse = OpenResponsesErrorResponse(code: "invalid_request_error", message: error.localizedDescription)
+            let body = (try? JSONEncoder.osaurusCanonical().encode(errorResponse))
                 .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-            sendResponse(context: context, version: head.version, status: .badRequest,
-                headers: [("Content-Type", "application/json; charset=utf-8")], body: body)
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            let status: HTTPResponseStatus = (error as NSError).domain == "OsaurusResponsesContext" ? .notFound : .badRequest
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
             return
         }
 
@@ -18363,7 +17627,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         } else {
             handleOpenResponsesNonStreaming(
                 internalReq: internalReq,
-                responseId: responseId,
+                perRequestInstructions: openResponsesReq.instructions,
                 model: model,
                 head: head,
                 context: context,
@@ -18377,7 +17641,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private func handleOpenResponsesStreaming(
         request: OpenResponsesRequest,
-        internalReq: ChatCompletionRequest,
+        internalReq: ResponsesInferenceRequest,
         responseId: String,
         model: String,
         context: ChannelHandlerContext,
@@ -18392,394 +17656,176 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
-
-        // Estimate input tokens (rough: 1 token per 4 chars)
-        let inputTokens: Int =
-            {
-                switch request.input {
-                case .text(let text):
-                    return TokenEstimator.estimate(text)
-                case .items(let items):
-                    return items.reduce(0) { acc, item in
-                        switch item {
-                        case .message(let msg):
-                            return acc + TokenEstimator.estimate(msg.content.plainText)
-                        case .functionCall(let call):
-                            return acc + TokenEstimator.estimate(call.arguments)
-                        case .functionCallOutput(let output):
-                            return acc + TokenEstimator.estimate(output.output)
-                        case .reasoning(let reasoning):
-                            return acc + TokenEstimator.estimate(reasoning.encrypted_content ?? "")
-                        case .raw(let raw):
-                            let byteCount =
-                                (try? JSONEncoder.osaurusCanonical().encode(raw).count) ?? 0
-                            return acc + byteCount / TokenEstimator.charsPerToken
-                        }
-                    }
-                }
-            }() + (request.instructions?.count ?? 0) / TokenEstimator.charsPerToken
-
-        let itemId = Self.shortId(prefix: "item_")
-        let reasoningItemId = Self.shortId(prefix: "rs_")
-
-        // Send headers and initial response-level events. Output items
-        // (reasoning / message) are now opened lazily inside the stream
-        // loop so a reasoning item can land BEFORE the message item, which
-        // matches OpenAI Responses semantics for reasoning models.
-        hop {
-            writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
-            writerBound.value.writeResponseCreated(
-                responseId: responseId,
-                model: model,
-                inputTokens: inputTokens,
-                context: ctx.value
-            )
-            writerBound.value.writeResponseInProgress(context: ctx.value)
-        }
-
-        // Capture for logging
-        let logStartTime = startTime
-        let logUserAgent = userAgent
-        let logRequestBody = requestBodyString
-        let logModel = model
-        let logSelf = self
-
-        // Track whether the message item has been opened across the
-        // streaming and catch closures. A heap box satisfies Sendable for
-        // the concurrent closures that read/mutate the flag.
-        let messageItemOpen = AtomicBoolBox()
-        let outputText = LockedStringAccumulator()
+        // Headers are independent of provider identity. The first semantic
+        // event selects either native proxy lifecycle or portable local output.
+        hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
         let disconnected = installStreamingDisconnectHook(context: context)
-
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
             let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
             var emittedSemanticDelta = false
-            func markSemanticDeltaIfChannelActive() {
-                if self._isChannelActive.value {
-                    emittedSemanticDelta = true
-                }
-            }
             defer {
                 if !wasResidentBeforeStream && !emittedSemanticDelta
                     && (!self._isChannelActive.value || Task.isCancelled)
-                {
-                    Task {
-                        await ModelRuntime.shared.unload(name: model)
-                    }
+                { Task { await ModelRuntime.shared.unload(name: model) } }
+            }
+            var nativeProxy = false
+            var nativeTerminal = false
+            var nativeResponseID: String?
+            var portableStarted = false
+            let itemId = "msg_" + responseId
+            let reasoningItemId = "rs_" + responseId
+            let messageItemOpen = AtomicBoolBox()
+            var accumulator = ResponsesGenerationAccumulator()
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
+            func beginPortable() {
+                guard !portableStarted else { return }
+                portableStarted = true
+                hop {
+                    writerBound.value.writeResponseCreated(responseId: responseId, model: model, context: ctx.value)
+                    writerBound.value.writeResponseInProgress(context: ctx.value)
                 }
             }
-            var contentCoalescer = Self.StreamDeltaCoalescer(
-                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-            )
+            func emitText(_ chunk: String) {
+                guard !chunk.isEmpty else { return }
+                beginPortable()
+                emittedSemanticDelta = self._isChannelActive.value
+                hop {
+                    writerBound.value.writeReasoningItemDone(context: ctx.value)
+                    if !messageItemOpen.value {
+                        messageItemOpen.value = true
+                        writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                        writerBound.value.writeContentPartAdded(context: ctx.value)
+                    }
+                    writerBound.value.writeTextDelta(chunk, context: ctx.value)
+                }
+            }
             do {
-                let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let stream = try await chatEngine.streamChat(request: internalReq)
-                if disconnected.value { throw CancellationError() }
-                for try await delta in stream {
+                let stream = try await self.chatEngine.streamResponses(request: internalReq)
+                generation: for try await event in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
-                    // Reasoning sentinel must be decoded BEFORE the
-                    // generic `isSentinel` filter, otherwise it gets
-                    // dropped together with tool/stats hints.
-                    if let reasoning = StreamingReasoningHint.decode(delta) {
-                        markSemanticDeltaIfChannelActive()
-                        if let pending = contentCoalescer.flush() {
-                            outputText.append(pending)
-                            hop {
-                                // First non-reasoning chunk: close the
-                                // reasoning item (if any) then open the
-                                // message item so the text deltas land on
-                                // the message item.
-                                writerBound.value.writeReasoningItemDone(context: ctx.value)
-                                if !messageItemOpen.value {
-                                    messageItemOpen.value = true
-                                    writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                                    writerBound.value.writeContentPartAdded(context: ctx.value)
-                                }
-                                writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    try accumulator.consume(event)
+                    switch event {
+                    case .providerEvent(let raw):
+                        guard !portableStarted else {
+                            throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                                userInfo: [NSLocalizedDescriptionKey: "Native Responses lifecycle arrived after portable output."])
+                        }
+                        guard case .object(let fields) = raw, case .string(let type) = fields["type"], !type.isEmpty else {
+                            throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                                userInfo: [NSLocalizedDescriptionKey: "Native Responses event is missing its type."])
+                        }
+                        nativeProxy = true
+                        if case .object(let response) = fields["response"], case .string(let id) = response["id"] {
+                            if let nativeResponseID, nativeResponseID != id {
+                                throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                                    userInfo: [NSLocalizedDescriptionKey: "Native Responses identity changed during the stream."])
                             }
+                            nativeResponseID = id
                         }
+                        nativeTerminal = nativeTerminal || ["response.completed", "response.incomplete",
+                            "response.cancelled", "response.failed", "error"].contains(type)
+                        if type.contains(".delta") { emittedSemanticDelta = self._isChannelActive.value }
                         hop {
-                            writerBound.value.writeReasoningDelta(
-                                reasoning,
-                                itemId: reasoningItemId,
-                                context: ctx.value
-                            )
+                            do { try writerBound.value.writeProviderEvent(raw, context: ctx.value) }
+                            catch { ctx.value.close(promise: nil) }
                         }
-                        continue
+                    case .outputTextDelta(let text):
+                        if !nativeProxy, let chunk = contentCoalescer.append(text) { emitText(chunk) }
+                    case .reasoningDelta(let reasoning):
+                        guard !nativeProxy else { break }
+                        if let pending = contentCoalescer.flush() { emitText(pending) }
+                        beginPortable()
+                        emittedSemanticDelta = self._isChannelActive.value
+                        hop { writerBound.value.writeReasoningDelta(reasoning, itemId: reasoningItemId, context: ctx.value) }
+                    case .prefillProgress(let progress):
+                        guard !nativeProxy else { break }
+                        beginPortable()
+                        hop { writerBound.value.writePrefillProgress(progress, context: ctx.value) }
+                    case .responseCompleted:
+                        break generation
+                    default: break
                     }
-                    if let count = StreamingInputTokenHint.decode(delta) {
-                        hop { writerBound.value.setInputTokens(count) }
-                        continue
+                }
+                let response = try accumulator.result()
+                let storedID = nativeResponseID ?? (nativeProxy ? response.completion.responseID : responseId)
+                if case .completed = response.completion.status {
+                    Self.storeOpenResponsesContext(responseId: storedID, model: model, request: internalReq,
+                        assistantMessages: [try response.completedAssistantInput()], perRequestInstructions: request.instructions)
+                }
+                if nativeProxy {
+                    guard nativeTerminal else {
+                        throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                            userInfo: [NSLocalizedDescriptionKey: "Native Responses stream completed without a native terminal event."])
                     }
-                    if let stats = StreamingStatsHint.decode(delta) {
-                        hop {
-                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
-                            writerBound.value.setOutputTokens(stats.tokenCount)
-                            writerBound.value.setTokensPerSecond(stats.tokensPerSecond)
+                    hop { writerBound.value.writeEnd(ctx.value) }
+                } else {
+                    // A late provider Item cannot retroactively replace the
+                    // identity of already streamed local output.
+                    guard response.providerOutputItems.isEmpty, response.reasoningItem == nil else {
+                        throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                            userInfo: [NSLocalizedDescriptionKey: "Provider-native Responses Items require an ordered native event lifecycle."])
+                    }
+                    if let pending = contentCoalescer.flush() { emitText(pending) }
+                    beginPortable()
+                    let terminal = response.completion
+                    let inputCount = response.inputTokenCount
+                    let status: OpenResponsesStatus
+                    let itemStatus: OpenResponsesItemStatus
+                    switch terminal.status {
+                    case .completed: status = .completed; itemStatus = .completed
+                    case .incomplete: status = .incomplete; itemStatus = .incomplete
+                    case .cancelled: status = .cancelled; itemStatus = .incomplete
+                    }
+                    emittedSemanticDelta = emittedSemanticDelta || !terminal.functionCalls.isEmpty
+                    hop {
+                        writerBound.value.writeReasoningItemDone(status: itemStatus, context: ctx.value)
+                        if messageItemOpen.value {
+                            writerBound.value.writeTextDone(context: ctx.value)
+                            writerBound.value.writeMessageItemDone(status: itemStatus, context: ctx.value)
                         }
-                        continue
-                    }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if let chunk = contentCoalescer.append(delta) {
-                        markSemanticDeltaIfChannelActive()
-                        outputText.append(chunk)
-                        hop {
-                            // First non-reasoning chunk: close the reasoning
-                            // item (if any) then open the message item so the
-                            // text deltas land on the message item.
-                            writerBound.value.writeReasoningItemDone(context: ctx.value)
-                            if !messageItemOpen.value {
-                                messageItemOpen.value = true
-                                writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                                writerBound.value.writeContentPartAdded(context: ctx.value)
+                        for call in terminal.functionCalls {
+                            writerBound.value.writeFunctionCallItemAdded(itemId: call.id, callId: call.callID,
+                                name: call.name, context: ctx.value)
+                            Self.forEachStringChunk(call.arguments, size: 512) {
+                                writerBound.value.writeFunctionCallArgumentsDelta(callId: call.callID, delta: $0, context: ctx.value)
                             }
-                            writerBound.value.writeTextDelta(chunk, context: ctx.value)
+                            writerBound.value.writeFunctionCallArgumentsDone(callId: call.callID, context: ctx.value)
+                            writerBound.value.writeFunctionCallItemDone(callId: call.callID, name: call.name,
+                                status: itemStatus, context: ctx.value)
                         }
+                        if let inputCount { writerBound.value.setInputTokens(inputCount) }
+                        if let count = terminal.tokenCount { writerBound.value.setOutputTokens(count) }
+                        if let count = terminal.cachedInputTokenCount { writerBound.value.setCachedInputTokens(count) }
+                        if let rate = terminal.tokensPerSecond { writerBound.value.setTokensPerSecond(rate) }
+                        writerBound.value.writeResponseTerminal(status: status,
+                            incompleteReason: status == .incomplete
+                                ? (terminal.stopReason == "length" ? "max_output_tokens" : terminal.stopReason) : nil,
+                            metadata: internalReq.providerOptions?.metadata, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
                     }
                 }
-                if let pending = contentCoalescer.flush() {
-                    markSemanticDeltaIfChannelActive()
-                    outputText.append(pending)
-                    hop {
-                        // First non-reasoning chunk: close the reasoning
-                        // item (if any) then open the message item so the
-                        // text deltas land on the message item.
-                        writerBound.value.writeReasoningItemDone(context: ctx.value)
-                        if !messageItemOpen.value {
-                            messageItemOpen.value = true
-                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                            writerBound.value.writeContentPartAdded(context: ctx.value)
-                        }
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                hop {
-                    // Close any open reasoning item that never got any
-                    // following content (rare — reasoning-only response).
-                    writerBound.value.writeReasoningItemDone(context: ctx.value)
-                    if messageItemOpen.value {
-                        writerBound.value.writeTextDone(context: ctx.value)
-                        writerBound.value.writeMessageItemDone(context: ctx.value)
-                    }
-                    writerBound.value.writeResponseCompleted(context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let text = outputText.value
-                if !text.isEmpty {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [ChatMessage(role: "assistant", content: text)]
-                    )
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeReasoningItemDone(context: ctx.value)
-                        if !messageItemOpen.value {
-                            messageItemOpen.value = true
-                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                            writerBound.value.writeContentPartAdded(context: ctx.value)
-                        }
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                markSemanticDeltaIfChannelActive()
-                // Multi-tool MLX completion: emit one function_call item
-                // per invocation. Use the lazy `messageItemOpen` flag so
-                // we don't close an item that was never opened.
-                hop {
-                    writerBound.value.writeReasoningItemDone(context: ctx.value)
-                    if messageItemOpen.value {
-                        writerBound.value.writeTextDone(context: ctx.value)
-                        writerBound.value.writeMessageItemDone(context: ctx.value)
-                    }
-                    for inv in invs.invocations {
-                        self.writeOpenResponsesFunctionCall(inv, writer: writerBound.value, context: ctx.value)
-                    }
-                    writerBound.value.writeResponseCompleted(context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                if let assistant = Self.assistantMessage(from: invs.invocations) {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [assistant]
-                    )
-                }
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeReasoningItemDone(context: ctx.value)
-                        if !messageItemOpen.value {
-                            messageItemOpen.value = true
-                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                            writerBound.value.writeContentPartAdded(context: ctx.value)
-                        }
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                markSemanticDeltaIfChannelActive()
-                // Single tool invocation — same flow with one item.
-                hop {
-                    writerBound.value.writeReasoningItemDone(context: ctx.value)
-                    if messageItemOpen.value {
-                        writerBound.value.writeTextDone(context: ctx.value)
-                        writerBound.value.writeMessageItemDone(context: ctx.value)
-                    }
-                    self.writeOpenResponsesFunctionCall(inv, writer: writerBound.value, context: ctx.value)
-                    writerBound.value.writeResponseCompleted(context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                if let assistant = Self.assistantMessage(from: [inv]) {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [assistant]
-                    )
-                }
-
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    finishReason: .toolCalls
-                )
+                self.logRequest(method: "POST", path: "/responses", userAgent: userAgent,
+                    requestBody: requestBodyString, responseStatus: 200, startTime: startTime, model: model,
+                    tokensInput: response.inputTokenCount, tokensOutput: response.completion.tokenCount,
+                    toolCalls: response.completion.functionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
+                    finishReason: Self.openResponsesFinishReason(response.completion))
             } catch {
-                // SSE response head was already 200 — surface as in-band
-                // SSE error chunk and log actual on-wire status.
+                if !nativeProxy { beginPortable() }
+                let needsError = !nativeTerminal
                 hop {
-                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                    if needsError { writerBound.value.writeErrorFromThrown(error, context: ctx.value) }
                     writerBound.value.writeEnd(ctx.value)
                 }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    finishReason: .error,
-                    errorMessage: error.localizedDescription
-                )
+                self.logRequest(method: "POST", path: "/responses", userAgent: userAgent,
+                    requestBody: requestBodyString, responseStatus: 200, startTime: startTime,
+                    model: model, finishReason: error is CancellationError ? .cancelled : .error,
+                    errorMessage: error.localizedDescription)
             }
         }
-    }
-
-    /// Build a complete (non-streaming) OpenResponses body whose `output`
-    /// is one `function_call` item per supplied invocation. Returns the
-    /// JSON body so the caller can also feed it to the request log.
-    private static func openResponsesNonStreamingBody(
-        responseId: String,
-        model: String,
-        invocations: [ServiceToolInvocation]
-    ) -> String {
-        let items: [OpenResponsesOutputItem] = invocations.map { inv in
-            let callId = inv.toolCallId ?? Self.shortId(prefix: "call_")
-            let itemId = Self.shortId(prefix: "item_")
-            return .functionCall(
-                OpenResponsesFunctionCall(
-                    id: itemId,
-                    status: .completed,
-                    callId: callId,
-                    name: inv.toolName,
-                    arguments: inv.jsonArguments
-                )
-            )
-        }
-        let resp = OpenResponsesResponse(
-            id: responseId,
-            createdAt: Int(Date().timeIntervalSince1970),
-            status: .completed,
-            model: model,
-            output: items,
-            usage: OpenResponsesUsage(inputTokens: 0, outputTokens: 0)
-        )
-        return (try? JSONEncoder.osaurusCanonical().encode(resp))
-            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-    }
-
-    /// Build an Anthropic `tool_use` block for a single MLX-emitted
-    /// invocation. Used by the non-streaming `/messages` handler.
-    private static func makeAnthropicToolUseBlock(
-        from inv: ServiceToolInvocation
-    ) -> AnthropicResponseContentBlock {
-        let toolId = inv.toolCallId ?? Self.shortId(prefix: "toolu_")
-        var inputDict: [String: AnyCodableValue] = [:]
-        if let argsData = inv.jsonArguments.data(using: .utf8),
-            let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-        {
-            inputDict = parsed.mapValues { AnyCodableValue($0) }
-        }
-        return AnthropicResponseContentBlock.toolUseBlock(
-            id: toolId,
-            name: inv.toolName,
-            input: inputDict
-        )
-    }
-
-    /// Encode a non-streaming Anthropic Messages response carrying the
-    /// supplied content blocks (text/tool_use). Returns the JSON body so
-    /// the caller can also feed it to the request log.
-    private static func anthropicNonStreamingBody(
-        messageId: String,
-        model: String,
-        blocks: [AnthropicResponseContentBlock]
-    ) -> String {
-        let resp = AnthropicMessagesResponse(
-            id: messageId,
-            model: model,
-            content: blocks,
-            stopReason: "tool_use",
-            usage: AnthropicUsage(inputTokens: 0, outputTokens: 0)
-        )
-        return (try? JSONEncoder.osaurusCanonical().encode(resp))
-            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
     /// Emit a complete Anthropic `tool_use` content block for a single
@@ -18816,17 +17862,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String,
         responseId: String,
         created: Int,
-        context: ChannelHandlerContext,
-        tools: [Tool]? = nil
+        context: ChannelHandlerContext
     ) {
         let callId: String = {
             if let preservedId = inv.toolCallId, !preservedId.isEmpty { return preservedId }
             return Self.shortId(prefix: "call_")
         }()
-        let argumentsJSON = Self.canonicalToolArgumentsJSON(
-            inv.jsonArguments,
-            schema: Self.toolSchema(named: inv.toolName, in: tools)
-        )
+        let argumentsJSON = inv.jsonArguments
         writer.writeToolCallStart(
             callId: callId,
             functionName: inv.toolName,
@@ -18849,44 +17891,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// Emit a complete OpenResponses function-call output item for a single
-    /// tool invocation: `output_item.added` → chunked
-    /// `function_call_arguments.delta` → `function_call_arguments.done` →
-    /// `output_item.done`. Caller is responsible for any preceding item
-    /// teardown (closing message / reasoning items) and for emitting
-    /// `response.completed` after the last invocation.
-    @inline(__always)
-    private func writeOpenResponsesFunctionCall(
-        _ inv: ServiceToolInvocation,
-        writer: OpenResponsesSSEWriter,
-        context: ChannelHandlerContext
-    ) {
-        let callId = inv.toolCallId ?? Self.shortId(prefix: "call_")
-        let funcItemId = Self.shortId(prefix: "item_")
-        writer.writeFunctionCallItemAdded(
-            itemId: funcItemId,
-            callId: callId,
-            name: inv.toolName,
-            context: context
-        )
-        Self.forEachStringChunk(inv.jsonArguments, size: 512) { chunk in
-            writer.writeFunctionCallArgumentsDelta(
-                callId: callId,
-                delta: chunk,
-                context: context
-            )
+    static func openResponsesFinishReason(_ completion: ResponsesGenerationCompletion) -> RequestLog.FinishReason {
+        switch completion.status {
+        case .cancelled: return .cancelled
+        case .incomplete: return completion.stopReason == "length" ? .length : .error
+        case .completed: return completion.functionCalls.isEmpty ? .stop : .toolCalls
         }
-        writer.writeFunctionCallArgumentsDone(callId: callId, context: context)
-        writer.writeFunctionCallItemDone(
-            callId: callId,
-            name: inv.toolName,
-            context: context
-        )
     }
 
     private func handleOpenResponsesNonStreaming(
-        internalReq: ChatCompletionRequest,
-        responseId: String,
+        internalReq: ResponsesInferenceRequest,
+        perRequestInstructions: String?,
         model: String,
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -18912,16 +17927,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let resp = try await chatEngine.completeChat(request: internalReq)
-
-                // Convert to Open Responses format
-                let openResponsesResp = resp.toOpenResponsesResponse(responseId: responseId)
-                Self.storeOpenResponsesContext(
-                    responseId: responseId,
-                    model: model,
-                    request: internalReq,
-                    assistantMessages: Self.assistantMessages(from: resp)
-                )
+                let response = try await chatEngine.completeResponse(request: internalReq)
+                let actualResponseID = response.completion.responseID
+                let openResponsesResp = response.openResponsesResponse(responseID: actualResponseID, model: model, metadata: internalReq.providerOptions?.metadata)
+                if case .completed = response.completion.status {
+                    Self.storeOpenResponsesContext(responseId: actualResponseID, model: model, request: internalReq,
+                        assistantMessages: [try response.completedAssistantInput()], perRequestInstructions: perRequestInstructions)
+                }
 
                 let json = try JSONEncoder.osaurusCanonical().encode(openResponsesResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
@@ -18955,67 +17967,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: logStartTime,
                     model: logModel,
-                    tokensInput: resp.usage.prompt_tokens,
-                    tokensOutput: resp.usage.completion_tokens,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                let body = Self.openResponsesNonStreamingBody(
-                    responseId: responseId,
-                    model: model,
-                    invocations: invs.invocations
-                )
-                if let assistant = Self.assistantMessage(from: invs.invocations) {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [assistant]
-                    )
-                }
-                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                let body = Self.openResponsesNonStreamingBody(
-                    responseId: responseId,
-                    model: model,
-                    invocations: [inv]
-                )
-                if let assistant = Self.assistantMessage(from: [inv]) {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [assistant]
-                    )
-                }
-                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    finishReason: .toolCalls
+                    tokensInput: response.inputTokenCount,
+                    tokensOutput: response.completion.tokenCount,
+                    toolCalls: response.completion.functionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
+                    finishReason: Self.openResponsesFinishReason(response.completion)
                 )
             } catch {
                 let errorResp = OpenResponsesErrorResponse(
@@ -19179,143 +18134,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Request Logging
-
-    /// Encode an OpenAI chat-completions response and verify the bytes before
-    /// putting them on the wire. Tool-call arguments are model-authored JSON
-    /// strings and can contain nested backslash/quote sequences; if Codable
-    /// ever produces bytes a client parser rejects, fall back to a
-    /// JSONSerialization envelope that treats those arguments as opaque
-    /// strings and escapes them at the transport boundary.
-    private static func chatCompletionResponseBody(_ response: ChatCompletionResponse) throws -> String {
-        let encoded = try JSONEncoder.osaurusCanonical().encode(response)
-        if (try? JSONSerialization.jsonObject(with: encoded)) != nil {
-            return String(decoding: encoded, as: UTF8.self)
-        }
-
-        let data = try JSONSerialization.data(
-            withJSONObject: chatCompletionResponseJSONObject(response),
-            options: .osaurusCanonical
-        )
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func chatCompletionResponseJSONObject(_ response: ChatCompletionResponse) -> [String: Any] {
-        var usage: [String: Any] = [
-            "prompt_tokens": response.usage.prompt_tokens,
-            "completion_tokens": response.usage.completion_tokens,
-            "total_tokens": response.usage.total_tokens,
-        ]
-        if let tokensPerSecond = response.usage.tokens_per_second {
-            usage["tokens_per_second"] = tokensPerSecond
-        }
-
-        var object: [String: Any] = [
-            "id": response.id,
-            "object": response.object,
-            "created": response.created,
-            "model": response.model,
-            "choices": response.choices.map(chatChoiceJSONObject(_:)),
-            "usage": usage,
-        ]
-        if let fingerprint = response.system_fingerprint {
-            object["system_fingerprint"] = fingerprint
-        }
-        if let prefixHash = response.prefix_hash {
-            object["prefix_hash"] = prefixHash
-        }
-        return object
-    }
-
-    private static func chatChoiceJSONObject(_ choice: ChatChoice) -> [String: Any] {
-        [
-            "index": choice.index,
-            "finish_reason": choice.finish_reason,
-            "message": chatMessageJSONObject(choice.message),
-        ]
-    }
-
-    private static func chatMessageJSONObject(_ message: ChatMessage) -> [String: Any] {
-        var object: [String: Any] = ["role": message.role]
-        if let content = message.content {
-            object["content"] = content
-        }
-        if let toolCalls = message.tool_calls {
-            object["tool_calls"] = toolCalls.map(toolCallJSONObject(_:))
-        }
-        if let toolCallId = message.tool_call_id {
-            object["tool_call_id"] = toolCallId
-        }
-        if let reasoning = message.reasoning_content {
-            object["reasoning_content"] = reasoning
-        }
-        return object
-    }
-
-    private static func toolCallJSONObject(_ call: ToolCall) -> [String: Any] {
-        var object: [String: Any] = [
-            "id": call.id,
-            "type": call.type,
-            "function": [
-                "name": call.function.name,
-                "arguments": canonicalToolArgumentsJSON(call.function.arguments),
-            ],
-        ]
-        if let signature = call.geminiThoughtSignature {
-            object["geminiThoughtSignature"] = signature
-        }
-        return object
-    }
-
-    private static func canonicalToolArgumentsJSON(_ json: String, schema: JSONValue? = nil) -> String {
-        let candidates = [
-            json,
-            json.replacingOccurrences(of: #"\""#, with: #"""#),
-        ]
-        guard
-            let object = candidates.lazy.compactMap({ candidate -> Any? in
-                guard let data = candidate.data(using: .utf8) else { return nil }
-                return try? JSONSerialization.jsonObject(with: data)
-            }).first
-        else {
-            return json
-        }
-        let normalized = normalizeNestedJSONStringValues(object)
-        let coerced: Any
-        if let schema {
-            let candidate = SchemaValidator.coerceArguments(normalized, against: schema)
-            let result = SchemaValidator.validate(arguments: candidate, against: schema)
-            coerced = result.isValid ? candidate : normalized
-        } else {
-            coerced = normalized
-        }
-        guard JSONSerialization.isValidJSONObject(coerced),
-            let encoded = try? JSONSerialization.data(withJSONObject: coerced, options: .osaurusCanonical),
-            let string = String(data: encoded, encoding: .utf8)
-        else {
-            return json
-        }
-        return string
-    }
-
-    private static func normalizeNestedJSONStringValues(_ value: Any) -> Any {
-        if let dictionary = value as? [String: Any] {
-            return dictionary.mapValues(normalizeNestedJSONStringValues(_:))
-        }
-        if let array = value as? [Any] {
-            return array.map(normalizeNestedJSONStringValues(_:))
-        }
-        if let string = value as? String,
-            let nestedData = string.data(using: .utf8),
-            let nested = try? JSONSerialization.jsonObject(with: nestedData)
-        {
-            return normalizeNestedJSONStringValues(nested)
-        }
-        return value
-    }
-
-    private static func toolSchema(named name: String, in tools: [Tool]?) -> JSONValue? {
-        tools?.first(where: { $0.function.name == name })?.function.parameters
-    }
 
     /// Log a completed request to InsightsService
     private func logRequest(

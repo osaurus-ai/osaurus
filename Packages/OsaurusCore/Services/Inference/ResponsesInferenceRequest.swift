@@ -15,6 +15,24 @@ struct ResponsesInferenceRequest: Sendable {
     var toolChoice: ToolChoiceOption? = nil
     var sessionID: String? = nil
     var context = InferenceRequestContext()
+    /// Protocol options are data-plane values, separate from host-only
+    /// admission, residency, routing and attribution controls.
+    var providerOptions: ResponsesProviderOptions? = nil
+}
+
+struct ResponsesProviderOptions: Sendable {
+    var tools: [OpenResponsesTool]? = nil
+    var toolChoice: OpenResponsesToolChoice? = nil
+    var reasoning: OpenResponsesReasoningConfig? = nil
+    var store: Bool? = nil
+    var include: [String]? = nil
+    var parallelToolCalls: Bool? = nil
+    var metadata: [String: String]? = nil
+    var text: OpenResponsesTextConfig? = nil
+
+    /// Hosted/custom tools have no native local executor. Reject them on a
+    /// portable route instead of silently dropping them from the schema.
+    var unsupportedPortableTools: [String] { tools?.filter { !$0.isFunction }.map(\.type) ?? [] }
 }
 
 /// Nil values preserve the active bundle's generation defaults. The transport

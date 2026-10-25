@@ -8,11 +8,18 @@ struct AgentRunUsage: Sendable {
     private var measuredTokens = 0
     private var measuredSeconds = 0.0
     private var allStepsMeasured = true
+    private var allCountsReported = true
+    private var stepCount = 0
 
-    mutating func append(promptTokens: Int, completionTokens: Int, tokensPerSecond: Double?) {
-        self.promptTokens += max(0, promptTokens)
-        self.completionTokens += max(0, completionTokens)
-        guard completionTokens > 0, let rate = tokensPerSecond, rate.isFinite, rate > 0 else {
+    var hasCompleteTokenCounts: Bool { stepCount > 0 && allCountsReported }
+
+    mutating func append(promptTokens: Int?, completionTokens: Int?, tokensPerSecond: Double?) {
+        stepCount += 1
+        if let promptTokens, promptTokens >= 0 { self.promptTokens += promptTokens }
+        else { allCountsReported = false }
+        if let completionTokens, completionTokens >= 0 { self.completionTokens += completionTokens }
+        else { allCountsReported = false }
+        guard let completionTokens, completionTokens > 0, let rate = tokensPerSecond, rate.isFinite, rate > 0 else {
             allStepsMeasured = false
             return
         }

@@ -8,6 +8,7 @@
 import Foundation
 
 struct GenerationParameters: Sendable {
+    let responsesProviderOptions: ResponsesProviderOptions?
     let temperature: Float?
     let maxTokens: Int
     /// Whether `maxTokens` came from an explicit client request. When false,
@@ -179,8 +180,10 @@ struct GenerationParameters: Sendable {
         preserveExistingResidencyOwner: Bool = false,
         auxiliaryCacheIntent: Bool = false,
         collectCompleteToolResponse: Bool = false,
-        requireCompleteOutput: Bool = false
+        requireCompleteOutput: Bool = false,
+        responsesProviderOptions: ResponsesProviderOptions? = nil
     ) {
+        self.responsesProviderOptions = responsesProviderOptions
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.maxTokensExplicit = maxTokensExplicit
