@@ -14,6 +14,48 @@ extension Notification.Name {
     static let pluginConfigDidChange = Notification.Name("PluginConfigDidChange")
 }
 
+/// Bridges cancellation to the detached host task even when no model event
+/// has arrived. Completion releases the task closure; attachment may race
+/// with either cancellation or completion.
+final class PluginStreamCancellationHandle: Sendable {
+    private struct State {
+        var cancelled = false
+        var finished = false
+        var attached = false
+        var action: (@Sendable () -> Void)?
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    func attach(_ action: @escaping @Sendable () -> Void) {
+        let shouldCancel = state.withLock { state in
+            guard !state.finished, !state.attached else { return false }
+            state.attached = true
+            if state.cancelled { return true }
+            state.action = action
+            return false
+        }
+        if shouldCancel { action() }
+    }
+
+    func cancel() {
+        let action = state.withLock { state -> (@Sendable () -> Void)? in
+            guard !state.finished, !state.cancelled else { return nil }
+            state.cancelled = true
+            let action = state.action
+            state.action = nil
+            return action
+        }
+        action?()
+    }
+
+    func finish() {
+        state.withLock { state in
+            state.finished = true
+            state.action = nil
+        }
+    }
+}
+
 // MARK: - Per-Plugin Host Context
 
 /// Holds per-plugin state needed by host API callbacks.
@@ -177,37 +219,51 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Streaming Cancellation Registry
 
-    /// Per-plugin set of stream IDs marked for cancellation. The plugin
-    /// supplies a `stream_id` UUID when it calls `complete_stream`; calling
-    /// `complete_cancel(stream_id)` flips the entry, and the streaming task
-    /// observes it between deltas and unwinds with `finish_reason: "cancelled"`.
-    /// Membership in the set means "this stream id should be cancelled" —
-    /// the streaming task removes the entry on exit (success or cancel).
+    private struct RegisteredStream {
+        var cancelled = false
+        let cancel: @Sendable () -> Void
+    }
     private let streamLock = NSLock()
-    private var cancelledStreamIds: Set<String> = []
+    private var activeStreams: [String: [UUID: RegisteredStream]] = [:]
 
-    /// Register a stream ID as in-flight. Idempotent; calling twice with
-    /// the same id is harmless.
-    private func registerStream(_ streamId: String) {
-        streamLock.withLock { _ = cancelledStreamIds.remove(streamId) }
+    /// Each invocation owns a registration. Reusing an opaque ID groups the
+    /// currently active invocations for cancellation without sharing cleanup.
+    func registerStream(_ streamId: String, owner: UUID, cancel: @escaping @Sendable () -> Void) {
+        streamLock.withLock {
+            guard activeStreams[streamId]?[owner] == nil else { return }
+            activeStreams[streamId, default: [:]][owner] = RegisteredStream(cancel: cancel)
+        }
     }
 
-    /// Mark a stream as cancelled. The streaming task's `isStreamCancelled`
-    /// check picks it up on the next delta. Internal access so unit tests
-    /// can verify the cancellation registry directly.
     func markStreamCancelled(_ streamId: String) {
-        streamLock.withLock { _ = cancelledStreamIds.insert(streamId) }
+        let callbacks: [@Sendable () -> Void] = streamLock.withLock {
+            guard var streams = activeStreams[streamId] else { return [] }
+            var callbacks: [@Sendable () -> Void] = []
+            for (owner, var stream) in streams where !stream.cancelled {
+                stream.cancelled = true
+                streams[owner] = stream
+                callbacks.append(stream.cancel)
+            }
+            activeStreams[streamId] = streams
+            return callbacks
+        }
+        // Task cancellation may invoke termination callbacks that reenter the
+        // registry. Never invoke them while holding its lock.
+        callbacks.forEach { $0() }
     }
 
-    /// Returns true if the stream id has been marked for cancellation.
-    /// Internal access so unit tests can assert registry state.
-    func isStreamCancelled(_ streamId: String) -> Bool {
-        streamLock.withLock { cancelledStreamIds.contains(streamId) }
+    func isStreamCancelled(_ streamId: String, owner: UUID? = nil) -> Bool {
+        streamLock.withLock {
+            if let owner { return activeStreams[streamId]?[owner]?.cancelled == true }
+            return activeStreams[streamId]?.values.contains { $0.cancelled } == true
+        }
     }
 
-    /// Drop bookkeeping for a stream that finished (success or cancel).
-    private func unregisterStream(_ streamId: String) {
-        streamLock.withLock { _ = cancelledStreamIds.remove(streamId) }
+    func unregisterStream(_ streamId: String, owner: UUID) {
+        streamLock.withLock {
+            activeStreams[streamId]?.removeValue(forKey: owner)
+            if activeStreams[streamId]?.isEmpty == true { activeStreams.removeValue(forKey: streamId) }
+        }
     }
 
     // MARK: - Per-Request Agent Context
@@ -1776,25 +1832,31 @@ final class PluginHostContext: @unchecked Sendable {
         let releaseSlot: @Sendable () -> Void = {
             ctxRef?.exitInflightInference()
         }
+        let streamOwner = UUID()
+        let cancellation = PluginStreamCancellationHandle()
         // `unregisterStream` runs once at the end of the streaming work,
         // regardless of how it terminates.
         let unregisterStream: @Sendable (String?) -> Void = { streamId in
-            if let id = streamId { ctxRef?.unregisterStream(id) }
+            if let id = streamId { ctxRef?.unregisterStream(id, owner: streamOwner) }
         }
         // `isCancelled` is the cheap per-delta check the for-await loop calls.
         // Returns false when no stream id was supplied.
         let isCancelled: @Sendable (String?) -> Bool = { streamId in
             guard let id = streamId, let ctx = ctxRef else { return false }
-            return ctx.isStreamCancelled(id)
+            return ctx.isStreamCancelled(id, owner: streamOwner)
         }
         let activityId = Self.beginPluginActivity(pluginId: pid, kind: .completeStream)
-        return Self.blockingAsync(fallback: Self.pluginHostTimeoutJSON(kind: "complete_stream")) {
+        return Self.blockingAsync(
+            fallback: Self.pluginHostTimeoutJSON(kind: "complete_stream"),
+            onTaskCreated: { task in cancellation.attach { task.cancel() } }
+        ) {
             // Stream id is per-call: if the plugin supplied one in the
             // request, register it so a concurrent `complete_cancel` call
             // can flag the stream for cancellation. We treat it as opaque
             // — any non-empty string works, but a UUID is recommended.
             var streamId: String?
             defer {
+                cancellation.finish()
                 releaseSlot()
                 unregisterStream(streamId)
                 Self.endPluginActivity(activityId)
@@ -1811,7 +1873,7 @@ final class PluginHostContext: @unchecked Sendable {
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     streamId = trimmed
-                    ctxRef?.registerStream(trimmed)
+                    ctxRef?.registerStream(trimmed, owner: streamOwner, cancel: { cancellation.cancel() })
                 }
             }
 
@@ -3351,6 +3413,7 @@ extension PluginHostContext {
     static func blockingAsync<T: Sendable>(
         timeout: DispatchTime = .now() + 1800,
         fallback: @autoclosure @escaping () -> T,
+        onTaskCreated: (@Sendable (Task<Void, Never>) -> Void)? = nil,
         _ work: @escaping @Sendable () async -> T
     ) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
@@ -3363,6 +3426,7 @@ extension PluginHostContext {
                 sem.signal()
             }
         }
+        onTaskCreated?(task)
         guard sem.wait(timeout: timeout) == .success else {
             task.cancel()
             NSLog("[PluginHostAPI] blockingAsync timed out — cancelling inner work, returning fallback")

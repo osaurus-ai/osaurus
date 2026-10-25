@@ -301,7 +301,7 @@ From any thread (including the `on_chunk` callback or a separate worker), call `
 }
 ```
 
-`complete_cancel` is non-blocking — it only flips the cancellation flag. The streaming task observes it between deltas, so cancellation latency is bounded by the model's per-token decode time. Callers from `on_chunk` are safe (no deadlock).
+`complete_cancel` is non-blocking. It cancels the active host task directly, including while the model stream is waiting for its first event; it does not wait for another delta. Downstream work must cooperate with task cancellation before cleanup can finish. Calls from `on_chunk` are safe. If concurrent calls reuse an ID, cancellation reaches every currently active call with that ID; each call removes only its own registration.
 
 ### `complete_cancel(stream_id) -> void`
 

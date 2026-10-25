@@ -106,4 +106,50 @@ struct ResponsesPluginCancellationTests {
         #expect(started && firstFinished && secondStillActive)
         #expect(error(firstResult) == "cancelled" && error(secondResult) == "cancelled")
     }
+
+    @Test func anOldOwnerCannotResetOrRemoveAnotherOwner() throws {
+        let context = try PluginHostContext(pluginId: "test.responses.cancel.ownership.\(UUID())")
+        let id = UUID().uuidString
+        let first = UUID(), second = UUID(), replacement = UUID()
+        let observed = OSAllocatedUnfairLock(initialState: [UUID: Int]())
+        for owner in [first, second] {
+            context.registerStream(id, owner: owner) {
+                // Reentry must not deadlock the registry.
+                _ = context.isStreamCancelled(id, owner: owner)
+                observed.withLock { $0[owner, default: 0] += 1 }
+            }
+        }
+        context.completeCancel(streamId: id)
+        context.completeCancel(streamId: id)
+        context.unregisterStream(id, owner: first)
+        context.registerStream(id, owner: replacement) { observed.withLock { $0[replacement, default: 0] += 1 } }
+        #expect(context.isStreamCancelled(id, owner: second))
+        #expect(!context.isStreamCancelled(id, owner: replacement))
+        context.unregisterStream(id, owner: first)
+        context.completeCancel(streamId: id)
+        #expect(observed.withLock { $0 } == [first: 1, second: 1, replacement: 1])
+        context.unregisterStream(id, owner: second)
+        #expect(context.isStreamCancelled(id, owner: replacement))
+        context.unregisterStream(id, owner: replacement)
+        #expect(!context.isStreamCancelled(id))
+    }
+
+    @Test func cancellationAttachmentAndCompletionRaces() {
+        let observed = OSAllocatedUnfairLock(initialState: 0)
+        let beforeAttach = PluginStreamCancellationHandle()
+        beforeAttach.cancel()
+        beforeAttach.attach { observed.withLock { $0 += 1 } }
+        beforeAttach.cancel()
+        beforeAttach.finish()
+        let beforeFinish = PluginStreamCancellationHandle()
+        beforeFinish.attach { observed.withLock { $0 += 10 } }
+        beforeFinish.finish()
+        beforeFinish.cancel()
+        let finishBeforeAttach = PluginStreamCancellationHandle()
+        finishBeforeAttach.finish()
+        finishBeforeAttach.attach { observed.withLock { $0 += 100 } }
+        finishBeforeAttach.cancel()
+        #expect(observed.withLock { $0 } == 1)
+    }
+
 }
