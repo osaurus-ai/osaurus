@@ -6750,12 +6750,14 @@ public actor ModelRuntime {
             jangConfig: jangConfig,
             status: status,
             // A drafter that ships in, or was selected for, this bundle: DFlash 2 (selected or
-            // bundled `dflash2/`) or a bundled Uno adapter (`uno/`, validated against the bundle by
-            // the engine). Per-request admission then keeps the loaded strategy instead of
-            // re-deriving native MTP, which would drop it.
+            // bundled `dflash2/`), a bundled Uno adapter (`uno/`, validated against the bundle by
+            // the engine), or a DeepSeek-V4.1 bundle's `dspark/` head. Per-request admission then
+            // keeps the loaded strategy instead of re-deriving native MTP, which would drop it.
             externalDrafterSelected: settings.resolvedDFlash2Selection(
                 configData: configData, bundleDirectory: modelDirectory) != nil
                 || settings.bundledUnoAdapter(
+                    configData: configData, bundleDirectory: modelDirectory) != nil
+                || settings.bundledDSparkDrafter(
                     configData: configData, bundleDirectory: modelDirectory) != nil
         )
         try admission.validateLoad(
