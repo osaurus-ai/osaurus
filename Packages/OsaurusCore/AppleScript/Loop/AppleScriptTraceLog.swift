@@ -71,7 +71,7 @@ enum AppleScriptTraceLog {
     /// the raw step trace prevents an omitted wire value from being mistaken
     /// for reasoning-on execution during live UI proof.
     static func recordEffectiveDispatch(
-        request: ChatCompletionRequest,
+        request: ResponsesInferenceRequest,
         modelOptions: [String: ModelOptionValue]
     ) {
         guard isEnabled,
@@ -83,8 +83,8 @@ enum AppleScriptTraceLog {
             "\(key)=\(String(describing: modelOptions[key]!))"
         }.joined(separator: ",")
         write(
-            "effective_dispatch model=\(request.model) is_agent=\(request.isAgentRequest) "
-                + "requested_enable_thinking=\(String(reflecting: request.enable_thinking)) "
+            "effective_dispatch model=\(request.model) is_agent=\(request.context.isAgentRequest) "
+                + "requested_enable_thinking=\(String(reflecting: request.generation.enableThinking)) "
                 + "effective_options={\(options)}"
         )
     }

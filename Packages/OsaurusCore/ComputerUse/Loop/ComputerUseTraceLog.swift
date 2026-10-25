@@ -65,7 +65,7 @@ enum ComputerUseTraceLog {
     /// while ChatEngine applies the agent/tool default; logging only the raw
     /// request made an effective false look like an unproven nil.
     static func recordEffectiveDispatch(
-        request: ChatCompletionRequest,
+        request: ResponsesInferenceRequest,
         modelOptions: [String: ModelOptionValue]
     ) {
         guard isEnabled,
@@ -75,8 +75,8 @@ enum ComputerUseTraceLog {
             "\(key)=\(String(describing: modelOptions[key]!))"
         }.joined(separator: ",")
         write(
-            "dispatch model=\(request.model) is_agent=\(request.isAgentRequest) "
-                + "requested_enable_thinking=\(String(reflecting: request.enable_thinking)) "
+            "dispatch model=\(request.model) is_agent=\(request.context.isAgentRequest) "
+                + "requested_enable_thinking=\(String(reflecting: request.generation.enableThinking)) "
                 + "effective_options={\(options)}"
         )
     }

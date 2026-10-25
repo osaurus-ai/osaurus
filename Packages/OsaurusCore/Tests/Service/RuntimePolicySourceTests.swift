@@ -1224,7 +1224,7 @@ struct RuntimePolicySourceTests {
         #expect(api.contains("set { inferenceContext.cacheStableSystemPrefix = newValue }"))
         #expect(api.components(separatedBy: "copy.inferenceContext = inferenceContext").count - 1 == 2)
         #expect(!api.contains("case cacheStableSystemPrefix"))
-        #expect(chatEngine.contains("cacheStableSystemPrefix: request.cacheStableSystemPrefix"))
+        #expect(chatEngine.contains("cacheStableSystemPrefix: request.context.cacheStableSystemPrefix"))
         #expect(chatView.contains("req.cacheStableSystemPrefix ="))
         #expect(chatView.contains("finalReq.cacheStableSystemPrefix ="))
         #expect(chatView.contains("self.isRemoteAgentTarget ? nil : context.staticPrefix"))

@@ -177,24 +177,31 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         request: ChatCompletionRequest,
         trace: TTFTTrace?
     ) async throws -> Dispatch {
-        if let reason = RequestValidator.responseFormatReason(request.response_format)
+        try await prepareDispatch(request: ResponsesInferenceRequest(chatCompletion: request), trace: trace)
+    }
+
+    private func prepareDispatch(
+        request: ResponsesInferenceRequest,
+        trace: TTFTTrace?
+    ) async throws -> Dispatch {
+        if let reason = RequestValidator.responseFormatReason(request.generation.outputFormat)
             ?? RequestValidator.unsupportedSamplerReason(
-                n: nil, responseFormatType: request.response_format?.type)
+                n: nil, responseFormatType: request.generation.outputFormat?.type)
         {
             throw EngineError(kind: .invalidStructuredOutput(reason))
         }
-        let jsonSchema = request.response_format?.type == "json_schema"
-            ? try request.response_format?.json_schema?.encodedSchema() : nil
-        if jsonSchema != nil && request.stop?.isEmpty == false {
+        let jsonSchema = request.generation.outputFormat?.type == "json_schema"
+            ? try request.generation.outputFormat?.json_schema?.encodedSchema() : nil
+        if jsonSchema != nil && request.generation.stop?.isEmpty == false {
             throw EngineError(kind: .invalidStructuredOutput(
                 "JSON schema output cannot be combined with text stop strings; completion uses the schema and EOS."))
         }
-        if jsonSchema != nil && (request.runAsRemoteAgent || request.tools?.isEmpty == false) {
+        if jsonSchema != nil && (request.context.runAsRemoteAgent || request.tools?.isEmpty == false) {
             throw EngineError(kind: .invalidStructuredOutput(
                 "JSON schema output is not yet supported with tools or remote agent execution."))
         }
-        let temperature = request.temperature
-        let maxTokens = request.resolvedMaxTokens ?? 16384
+        let temperature = request.generation.temperature
+        let maxTokens = request.generation.maxOutputTokens ?? 16384
         // OpenAI `frequency_penalty` / `presence_penalty` ride
         // `GenerationParameters` verbatim: vmlx natively implements both as
         // additive count-scaled penalties (`GenerateParameters
@@ -204,8 +211,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // per-request repetition_penalty is not an OpenAI field; model
         // bundle / server defaults still apply downstream.
         let repPenalty: Float? = nil
-        let seedBits: UInt64? = request.seed.map { UInt64(bitPattern: Int64($0)) }
-        let isJSONObject = (request.response_format?.type == "json_object")
+        let seedBits: UInt64? = request.generation.seed.map { UInt64(bitPattern: Int64($0)) }
+        let isJSONObject = (request.generation.outputFormat?.type == "json_object")
         // Internal UI-owned agent loops (Computer Use, AppleScript, and
         // delegated text agents) construct fresh requests on every step. They
         // do not own a composer-local option snapshot, so resolve the same
@@ -214,11 +221,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // OpenAI tool requests, plugins, scheduled work, P2P, and remote-agent
         // execution must not silently inherit GUI preferences.
         let requestModelOptions: [String: ModelOptionValue]? =
-            if let explicit = request.modelOptions {
+            if let explicit = request.context.modelOptions {
                 explicit
             } else if inferenceSource == .chatUI,
-                request.isAgentRequest,
-                !request.runAsRemoteAgent
+                request.context.isAgentRequest,
+                !request.context.runAsRemoteAgent
             {
                 await agentModelOptionsProvider(request.model)
             } else {
@@ -231,7 +238,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let isHy3 = Hy3ReasoningProfile.matches(modelId: request.model)
         let requestReasoningEffort: String? = {
             guard
-                let value = request.reasoning_effort?
+                let value = request.generation.reasoningEffort?
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                 !value.isEmpty
             else { return nil }
@@ -242,21 +249,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // the same bundle/template default on ordinary, agent and tool turns.
         let hasEnabledToolSurface =
             request.tools?.isEmpty == false
-            && Self.allowsLocalToolDispatch(request.tool_choice)
-        let isAgentOrToolRequest = request.isAgentRequest || hasEnabledToolSurface
+            && Self.allowsLocalToolDispatch(request.toolChoice)
+        let isAgentOrToolRequest = request.context.isAgentRequest || hasEnabledToolSurface
         let usesReasoningEffortControl = ModelProfileRegistry.options(for: request.model)
             .contains { $0.id == "reasoningEffort" }
-        if !request.runAsRemoteAgent,
+        if !request.context.runAsRemoteAgent,
             !isHy3,
             let agentEnableThinking = AgentReasoningPolicy.defaultEnableThinking(
                 isAgentOrToolRequest: isAgentOrToolRequest,
-                explicitEnableThinking: request.enable_thinking,
+                explicitEnableThinking: request.generation.enableThinking,
                 explicitReasoningEffort: requestReasoningEffort,
                 modelOptions: modelOptions,
                 usesReasoningEffortControl: usesReasoningEffortControl,
                 capability: reasoningCapabilityProvider(request.model)
             ),
-            request.enable_thinking == nil,
+            request.generation.enableThinking == nil,
             modelOptions["disableThinking"] == nil
         {
             modelOptions["disableThinking"] = .bool(!agentEnableThinking)
@@ -268,13 +275,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     Hy3ReasoningProfile.normalizedEffort(requestReasoningEffort)
                 )
             } else if modelOptions["reasoningEffort"] == nil,
-                let enableThinking = request.enable_thinking
+                let enableThinking = request.generation.enableThinking
             {
                 modelOptions["reasoningEffort"] = .string(enableThinking ? "high" : "no_think")
             }
             modelOptions.removeValue(forKey: "disableThinking")
         } else {
-            if let enableThinking = request.enable_thinking {
+            if let enableThinking = request.generation.enableThinking {
                 modelOptions["disableThinking"] = .bool(!enableThinking)
             }
             if let requestReasoningEffort {
@@ -294,36 +301,36 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let params = GenerationParameters(
             temperature: temperature,
             maxTokens: maxTokens,
-            maxTokensExplicit: request.resolvedMaxTokens != nil,
-            admissionOutputTokensAreImplicit: request.admissionOutputTokensAreImplicit,
-            topPOverride: request.top_p,
-            topKOverride: request.top_k,
-            minPOverride: request.min_p,
+            maxTokensExplicit: request.generation.maxOutputTokens != nil,
+            admissionOutputTokensAreImplicit: request.context.admissionOutputTokensAreImplicit,
+            topPOverride: request.generation.topP,
+            topKOverride: request.generation.topK,
+            minPOverride: request.generation.minP,
             repetitionPenalty: repPenalty,
-            samplingParametersAreImplicit: request.samplingParametersAreImplicit,
-            frequencyPenalty: request.frequency_penalty,
-            presencePenalty: request.presence_penalty,
+            samplingParametersAreImplicit: request.context.samplingParametersAreImplicit,
+            frequencyPenalty: request.generation.frequencyPenalty,
+            presencePenalty: request.generation.presencePenalty,
             seed: seedBits,
             jsonMode: isJSONObject,
             jsonSchema: jsonSchema,
             modelOptions: modelOptions,
-            sessionId: request.session_id,
+            sessionId: request.sessionID,
             activitySource: activitySource,
             ttftTrace: trace,
-            idempotencyKey: request.idempotencyKey,
-            runAsRemoteAgent: request.runAsRemoteAgent,
-            suppressProgressUI: request.suppressProgressUI,
-            warmupPrefill: request.warmupPrefill,
-            cacheStableSystemPrefix: request.cacheStableSystemPrefix,
-            admissionPositionLimit: request.admissionPositionLimit,
+            idempotencyKey: request.context.idempotencyKey,
+            runAsRemoteAgent: request.context.runAsRemoteAgent,
+            suppressProgressUI: request.context.suppressProgressUI,
+            warmupPrefill: request.context.warmupPrefill,
+            cacheStableSystemPrefix: request.context.cacheStableSystemPrefix,
+            admissionPositionLimit: request.context.admissionPositionLimit,
             requestSource: inferenceSource,
             privacyReviewMode: privacyReviewMode,
-            loadIntent: request.backgroundModelLoad ? .background : .interactive,
-            alignmentRepairModel: inferenceSource == .chatUI && !request.backgroundModelLoad
-                && !request.warmupPrefill && !request.suppressProgressUI
-                ? request.alignmentRepairModel : nil,
-            preserveExistingResidencyOwner: request.preserveExistingResidencyOwner,
-            collectCompleteToolResponse: inferenceSource == .httpAPI && !request.isAgentRequest
+            loadIntent: request.context.backgroundModelLoad ? .background : .interactive,
+            alignmentRepairModel: inferenceSource == .chatUI && !request.context.backgroundModelLoad
+                && !request.context.warmupPrefill && !request.context.suppressProgressUI
+                ? request.context.alignmentRepairModel : nil,
+            preserveExistingResidencyOwner: request.context.preserveExistingResidencyOwner,
+            collectCompleteToolResponse: inferenceSource == .httpAPI && !request.context.isAgentRequest
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
@@ -332,13 +339,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // run to a different local provider — that produced opaque upstream
         // 404s ("Model default not found"). The peer resolves its own
         // effective model server-side, so the model field here is irrelevant.
-        if request.runAsRemoteAgent, let agentProviderId = request.remoteAgentProviderId {
+        if request.context.runAsRemoteAgent, let agentProviderId = request.context.remoteAgentProviderId {
             let remoteServices = await remoteServicesProvider()
             if let agentService = Self.remoteAgentService(
                 providerId: agentProviderId,
                 in: remoteServices
             ) {
-                let effective = request.remoteAgentLogModel ?? request.model
+                let effective = request.context.remoteAgentLogModel ?? request.model
                 RemoteAgentRunLog.client(
                     "dispatch route=provider providerId=\(agentProviderId.uuidString) effectiveModel=\(effective) reqModel=\(request.model)"
                 )
