@@ -1274,6 +1274,34 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         }
     }
 
+    /// Completion observation and consumer cancellation compete at one
+    /// transition boundary. A cancellation that wins cannot be undone by
+    /// buffered terminal metadata arriving before producer.cancel() runs.
+    final class StreamLoggingLifecycle: Sendable {
+        struct Snapshot: Sendable {
+            var terminalStatsObserved = false
+            var consumerCancelledBeforeTerminal = false
+        }
+
+        private let state = OSAllocatedUnfairLock(initialState: Snapshot())
+
+        func observeTerminalStats() {
+            state.withLock { $0.terminalStatsObserved = true }
+        }
+
+        /// Atomically commit the cancellation decision before side effects
+        /// (logging or task cancellation) can give the producer time to finish.
+        func consumerDidCancel() -> Bool {
+            state.withLock { value in
+                guard !value.terminalStatsObserved else { return false }
+                value.consumerCancelledBeforeTerminal = true
+                return true
+            }
+        }
+
+        func snapshot() -> Snapshot { state.withLock { $0 } }
+    }
+
     /// Wraps an async stream to count output tokens and log on completion.
     /// Uses Task.detached to avoid actor isolation deadlocks when consumed from MainActor.
     /// Properly handles cancellation via onTermination handler to prevent orphaned tasks.
@@ -1311,8 +1339,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         // drain and leaves the following request contending with unfinished
         // Metal/cache work.  This lock-backed latch distinguishes that normal
         // terminal race from a real pre-terminal disconnect.
-        let terminalStatsObserved = OSAllocatedUnfairLock(initialState: false)
-        let consumerCancelledBeforeTerminal = OSAllocatedUnfairLock(initialState: false)
+        let lifecycle = StreamLoggingLifecycle()
 
         // Capture the background-task id at construction time (still on
         // the parent task) so the detached producer below can forward
@@ -1420,7 +1447,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     }
                     if case .stats(let stats) = event {
                         if let count = stats.inputTokenCount { recordInputTokens(count) }
-                        terminalStatsObserved.withLock { $0 = true }
+                        lifecycle.observeTerminalStats()
                         statsHintCount += 1
                         if let count = stats.tokenCount {
                             authoritativeOutputTokens = count
@@ -1567,7 +1594,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 // almost certainly that error (the global handler swallowed the
                 // would-be fatalError, so generation just produced nothing).
                 // Surface it as a failed stream rather than an empty success.
-                if Task.isCancelled, !terminalStatsObserved.withLock({ $0 }) {
+                if Task.isCancelled, !lifecycle.snapshot().terminalStatsObserved {
                     finishReason = .cancelled
                     continuation.finish(throwing: CancellationError())
                 } else if deltaCount == 0, let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch) {
@@ -1596,7 +1623,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 // Check if this is a CancellationError (expected when consumer stops)
                 if Task.isCancelled || error is CancellationError {
                     print("[Osaurus][Stream] Stream cancelled after \(deltaCount) deltas")
-                    if !terminalStatsObserved.withLock({ $0 }) { finishReason = .cancelled }
+                    if !lifecycle.snapshot().terminalStatsObserved { finishReason = .cancelled }
                     continuation.finish(throwing: CancellationError())
                 } else {
                     print("[Osaurus][Stream] Stream error after \(deltaCount) deltas: \(error.localizedDescription)")
@@ -1609,7 +1636,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             // A terminal event may already be buffered when the consumer
             // cancels. Keep any real measured usage, but do not turn that
             // pre-terminal cancellation race into a natural-stop log.
-            if consumerCancelledBeforeTerminal.withLock({ $0 }) { finishReason = .cancelled }
+            if lifecycle.snapshot().consumerCancelledBeforeTerminal { finishReason = .cancelled }
 
             // Log once for every terminal outcome, including cancellation.
             // HTTP requests are logged by HTTPHandler instead.
@@ -1678,10 +1705,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         continuation.onTermination = { @Sendable termination in
             switch termination {
             case .cancelled:
-                let sawTerminalStats = terminalStatsObserved.withLock { $0 }
-                if !Self.shouldCancelProducerOnConsumerCancellation(
-                    terminalStatsObserved: sawTerminalStats
-                ) {
+                if !lifecycle.consumerDidCancel() {
                     // Logical generation is complete.  Keep the producer
                     // alive long enough to drain the runtime-owned terminal
                     // work; the vMLX solo lease and Metal gate are released
@@ -1689,7 +1713,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     print("[Osaurus][Stream] Consumer closed after terminal stats - draining producer")
                 } else {
                     print("[Osaurus][Stream] Consumer cancelled before terminal stats - stopping producer task")
-                    consumerCancelledBeforeTerminal.withLock { $0 = true }
                     producerTask.cancel()
                 }
             case .finished:

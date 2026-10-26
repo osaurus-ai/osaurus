@@ -22,6 +22,35 @@ struct ResponsesCancellationInsightsTests {
         }
     }
 
+    private final class DrainProbe: @unchecked Sendable {
+        struct Snapshot: Sendable {
+            var entered = false
+            var completed = false
+            var cancellationRequested = false
+            var taskWasCancelled = false
+        }
+        private let lock = NSLock()
+        private var state = Snapshot()
+        func enter(cancelled: Bool) {
+            lock.lock(); defer { lock.unlock() }
+            state.entered = true
+            state.taskWasCancelled = state.taskWasCancelled || cancelled
+        }
+        func complete(cancelled: Bool) {
+            lock.lock(); defer { lock.unlock() }
+            state.completed = true
+            state.taskWasCancelled = state.taskWasCancelled || cancelled
+        }
+        func cancel() {
+            lock.lock(); defer { lock.unlock() }
+            state.cancellationRequested = true
+        }
+        func snapshot() -> Snapshot {
+            lock.lock(); defer { lock.unlock() }
+            return state
+        }
+    }
+
     private final class Service: ResponsesGenerationService, @unchecked Sendable {
         let model: String
         let events: AsyncThrowingStream<ResponsesGenerationEvent, Error>
@@ -96,6 +125,40 @@ struct ResponsesCancellationInsightsTests {
                 continuation.finish()
             }, promptTokenCount: 73, suppressProgressUI: true
         ))
+    }
+
+    @Test func cancellationDecisionWinsBeforeBufferedInfoWithoutWaitingForTaskCancellation() async {
+        let lifecycle = ChatEngine.StreamLoggingLifecycle()
+        let decided = Gate()
+        let resumeCallback = Gate()
+        let cancellationCallback = Task.detached {
+            let shouldCancel = lifecycle.consumerDidCancel()
+            await decided.signal()
+            // Reproduce a callback preempted after its decision but before
+            // producer.cancel(), while a buffered .info reaches the logger.
+            await resumeCallback.wait()
+            return shouldCancel
+        }
+        await withTaskCancellationHandler {
+            await decided.wait()
+            lifecycle.observeTerminalStats()
+            let atLogging = lifecycle.snapshot()
+            #expect(atLogging.terminalStatsObserved)
+            #expect(atLogging.consumerCancelledBeforeTerminal,
+                "Buffered measured info cannot turn the already committed cancellation into stop/200")
+            await resumeCallback.signal()
+            #expect(await cancellationCallback.value)
+        } onCancel: {
+            Task { await decided.signal(); await resumeCallback.signal() }
+        }
+    }
+
+    @Test func genuineTerminalInfoWinsBeforeConsumerClose() {
+        let lifecycle = ChatEngine.StreamLoggingLifecycle()
+        lifecycle.observeTerminalStats()
+        #expect(!lifecycle.consumerDidCancel())
+        #expect(lifecycle.snapshot().terminalStatsObserved)
+        #expect(!lifecycle.snapshot().consumerCancelledBeforeTerminal)
     }
 
     @Test(arguments: [false, true])
@@ -198,6 +261,9 @@ struct ResponsesCancellationInsightsTests {
     @Test func consumerClosingAfterMeasuredCompletionPreservesNaturalStopAndOwnedDrain() async throws {
         let model = "completed-consumer-close-\(UUID())"
         let releaseDrain = Gate()
+        let drainEntered = Gate()
+        let drainCompleted = Gate()
+        let drainProbe = DrainProbe()
         defer { Task { await releaseDrain.signal() } }
         let measured = GenerateCompletionInfo(promptTokenCount: 73, generationTokenCount: 17,
             promptTime: 0.25, generationTime: 1, stopReason: .stop)
@@ -208,7 +274,15 @@ struct ResponsesCancellationInsightsTests {
         }
         let service = Service(model: model, events: ResponsesGenerationStream.native(
             GenerationEventMapper.map(events: source, promptTokenCount: 73, suppressProgressUI: true),
-            waitForProducerDrain: { await releaseDrain.wait() }
+            waitForProducerDrain: {
+                await withTaskCancellationHandler {
+                    drainProbe.enter(cancelled: Task.isCancelled)
+                    await drainEntered.signal()
+                    await releaseDrain.wait()
+                    drainProbe.complete(cancelled: Task.isCancelled)
+                    await drainCompleted.signal()
+                } onCancel: { drainProbe.cancel() }
+            }
         ))
         let engine = ChatEngine(services: [service], installedModelsProvider: { [] }, source: .chatUI)
         let stream = try await engine.streamResponses(request: request(model))
@@ -227,12 +301,30 @@ struct ResponsesCancellationInsightsTests {
             } catch { Issue.record("Unexpected close-after-completion error: \(error)") }
             return completions
         }
-        #expect(await consumer.value == 1)
-        await releaseDrain.signal()
-        let log = try await row(model)
-        #expect(log.statusCode == 200 && log.finishReason == .stop && log.isSuccess)
-        #expect(log.inputTokens == 73 && log.outputTokens == 17)
-        #expect(service.counts().typed == 1 && service.counts().legacy == 0)
+        try await withTaskCancellationHandler {
+            #expect(await consumer.value == 1)
+            await drainEntered.wait()
+            let pending = drainProbe.snapshot()
+            #expect(pending.entered && !pending.completed)
+            #expect(!pending.cancellationRequested && !pending.taskWasCancelled)
+            #expect(!InsightsService.shared.logs.contains { $0.model == model },
+                "Neither cleanup completion nor the final Insights row may precede the owned drain")
+            await releaseDrain.signal()
+            await drainCompleted.wait()
+            let drained = drainProbe.snapshot()
+            #expect(drained.completed && !drained.cancellationRequested && !drained.taskWasCancelled)
+            let log = try await row(model)
+            #expect(log.statusCode == 200 && log.finishReason == .stop && log.isSuccess)
+            #expect(log.inputTokens == 73 && log.outputTokens == 17)
+            #expect(service.counts().typed == 1 && service.counts().legacy == 0)
+        } onCancel: {
+            consumer.cancel()
+            Task {
+                await releaseDrain.signal()
+                await drainEntered.signal()
+                await drainCompleted.signal()
+            }
+        }
     }
 
     @Test func canonicalCancelledStatusOverridesStopLabelWithoutInventingUsage() async throws {
