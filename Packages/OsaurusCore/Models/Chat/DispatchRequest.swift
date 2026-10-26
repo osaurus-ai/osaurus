@@ -12,11 +12,19 @@ import Foundation
 /// The original task supplied by the caller, before the app adds delivery or
 /// execution instructions. Host-only provenance: never decoded from model/API
 /// output and never substituted for the complete model-visible prompt.
-public struct ChatTaskIntent: Sendable, Equatable {
-    public let userText: String
+public enum ChatTaskIntent: Sendable, Equatable {
+    case userRequest(String)
+    /// App-authored context/report delivery with no new user task. The full
+    /// message remains model-visible and tools remain available under auto.
+    case hostContinuation
 
     public init(userText: String) {
-        self.userText = userText
+        self = .userRequest(userText)
+    }
+
+    public var userText: String? {
+        if case .userRequest(let text) = self { return text }
+        return nil
     }
 }
 

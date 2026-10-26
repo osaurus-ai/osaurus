@@ -3965,7 +3965,7 @@ final class ChatSession: ObservableObject {
         isDirty = true
         rebuildVisibleBlocks()
         save()
-        send("")  // Empty send to trigger regeneration with existing history
+        send("", taskIntent: ChatTaskIntent(userText: newContent))  // Regenerate the edited user task with existing history
     }
 
     /// Delete a turn and all subsequent turns
@@ -4069,7 +4069,7 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
 
         // Regenerate
-        send("")
+        send("", taskIntent: .hostContinuation)
     }
 
     // MARK: - Share Artifact Processing
@@ -4541,7 +4541,7 @@ final class ChatSession: ObservableObject {
         guard activeRunId == nil, !isStreaming else { return }
         guard folderState.hasActiveFolder else { return }
         debugLog("send: continuing after prompt_working_folder attached a folder")
-        send("")
+        send("", taskIntent: .hostContinuation)
     }
 
     /// Outcome of the auto-title eligibility check for one clean run

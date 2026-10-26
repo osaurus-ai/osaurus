@@ -58,7 +58,12 @@ enum ChatToolChoicePolicy {
         taskIntent: ChatTaskIntent,
         attempt: Int
     ) -> ToolChoiceOption? {
-        resolve(tools: tools, userText: taskIntent.userText, attempt: attempt)
+        switch taskIntent {
+        case .userRequest(let text):
+            return resolve(tools: tools, userText: text, attempt: attempt)
+        case .hostContinuation:
+            return tools.isEmpty ? nil : .auto
+        }
     }
 
     static func resolve(
