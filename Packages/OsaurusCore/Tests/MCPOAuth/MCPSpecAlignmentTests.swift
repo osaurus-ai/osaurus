@@ -227,6 +227,15 @@ struct MCPSpecAlignmentTests {
 
     /// The registry's fixed 120s race fired before progress could extend a
     /// call; `callMCPTool` owns the deadline instead.
+    @Test func deadlineReasonNamesTheLimitThatTripped() {
+        #expect(
+            MCPProviderManager.deadlineReason(elapsed: 46, idleTimeout: 45, hardCap: 3_600)
+                == "No progress for 45s")
+        #expect(
+            MCPProviderManager.deadlineReason(elapsed: 3_600, idleTimeout: 45, hardCap: 3_600)
+                == "Reached the 60 min limit for calls that report progress")
+    }
+
     @Test func mcpToolBypassesRegistryTimeout() {
         let provider = MCPProviderTool(
             mcpTool: MCP.Tool(name: "run_eval", description: nil, inputSchema: .object([:])),

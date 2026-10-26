@@ -1020,6 +1020,7 @@ public final class MCPProviderManager: ObservableObject {
                 .init(name: toolName, arguments: arguments, meta: Metadata(progressToken: .string(token)))
             )
         )
+        let startedAt = Date()
         let work = Task { try await context.value }
         do {
             return try await valueWithActivityDeadline(
@@ -1033,13 +1034,26 @@ public final class MCPProviderManager: ObservableObject {
             notifyServerOfCancellation(
                 client: client,
                 requestID: context.requestID,
-                reason: "Timed out after \(Int(timeout))s"
+                reason: Self.deadlineReason(
+                    elapsed: Date().timeIntervalSince(startedAt), idleTimeout: timeout, hardCap: progressHardCap)
             )
             throw MCPProviderError.timeout
         } catch is CancellationError {
             notifyServerOfCancellation(client: client, requestID: context.requestID, reason: "Cancelled by user")
             throw CancellationError()
         }
+    }
+
+    /// Cancellation reason for a tripped deadline: the total cap when the call
+    /// ran that long (it kept reporting progress), otherwise the idle gap.
+    nonisolated static func deadlineReason(
+        elapsed: TimeInterval, idleTimeout: TimeInterval, hardCap: TimeInterval
+    ) -> String {
+        let cap = max(hardCap, idleTimeout)
+        if elapsed >= cap - 1 {
+            return "Reached the \(Int(cap / 60)) min limit for calls that report progress"
+        }
+        return "No progress for \(Int(idleTimeout))s"
     }
 
     /// Fire-and-forget `notifications/cancelled`. Cancellation is advisory in
