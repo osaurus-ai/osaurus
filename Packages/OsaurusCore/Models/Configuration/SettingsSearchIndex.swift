@@ -834,7 +834,8 @@ public enum SettingsSearchIndex {
             title: "Load Allocator Cap",
             keywords: ["load allocator", "inference reuse", "allocator cache", "freed buffers", "memory limit"],
             subTab: "memorySafety",
-            disambiguation: "Load-time allocator cap. Inference reuse has a separate process-wide limit; an explicit Allocator Cache Cap remains a hard maximum."
+            disambiguation:
+                "Load-time freed-buffer reuse target. Inference has a separate process-wide target. An explicit Allocator Cache Cap bounds the selected target; occupancy can exceed it until the next allocation trims the pool."
         ),
         .init(
             id: "server.decode",

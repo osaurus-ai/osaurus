@@ -251,7 +251,7 @@ struct ServerRuntimeSettingsStoreTests {
         }
     }
 
-    @Test func allocatorSummaryRetainsTheExplicitCustomHardMaximum() {
+    @Test func allocatorSummaryRetainsTheExplicitCustomReuseTarget() {
         let custom: UInt64 = 64 << 20
         for mode in [VMLXMemorySafetyMode.safeAuto, .strict, .diagnosticDangerous] {
             var settings = VMLXServerRuntimeSettings()

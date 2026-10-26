@@ -3084,9 +3084,10 @@ public actor ModelRuntime {
     ///   proportionally less, while large Macs do not turn spare RAM into an
     ///   unbounded allocator pool).
     ///
-    /// The admitted memory limit and any user-entered allocator maximum are
-    /// hard ceilings. A profile's default load allowance is not an explicit
-    /// user maximum and must not disable the dynamic reuse policy.
+    /// The selected reuse target never exceeds the admitted budget or an
+    /// explicit user maximum. Native pooled occupancy can cross that target
+    /// until the next allocation trims it. A profile's default load allowance
+    /// is not an explicit user maximum and must not disable dynamic reuse.
     nonisolated static func effectiveGenerationMLXCacheLimit(
         persistentLimit: Int,
         admittedMemoryLimit: Int,

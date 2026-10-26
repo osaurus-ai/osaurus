@@ -258237,37 +258237,37 @@
         }
       }
     },
-    "The load allocator cap applies while loading. Inference uses a separate process-wide reuse limit based on loaded models and the active execution path. An explicit Allocator Cache Cap remains a hard maximum." : {
+    "The load allocator cap sets a freed-buffer reuse target while loading. Inference uses a separate process-wide target based on loaded models and the active execution path. An explicit Allocator Cache Cap bounds the selected target in both phases. The pool can exceed that target until the next allocation trims it. These targets do not cap live weights, KV state, or physical RAM." : {
       "extractionState" : "manual",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Allocator-Obergrenze beim Laden gilt während des Ladevorgangs. Bei der Inferenz gilt eine separate prozessweite Wiederverwendungsgrenze, die von den geladenen Modellen und dem aktiven Ausführungspfad abhängt. Eine explizite Allocator-Cache-Obergrenze bleibt ein festes Maximum."
+            "value" : "Die Allocator-Obergrenze beim Laden legt ein Wiederverwendungsziel für nicht mehr benötigte Puffer fest. Bei der Inferenz gilt ein separates prozessweites Ziel, das von den geladenen Modellen und dem aktiven Ausführungspfad abhängt. Eine explizite Allocator-Cache-Obergrenze begrenzt das gewählte Ziel in beiden Phasen. Der Pufferpool kann dieses Ziel überschreiten, bis die nächste Speicherzuweisung ihn verkleinert. Diese Ziele begrenzen weder aktive Modellgewichte noch den KV-Zustand oder den physischen RAM-Verbrauch."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "로드 시 할당자 한도는 로드하는 동안 적용됩니다. 추론은 로드된 모델과 활성 실행 경로에 따라 결정되는 별도의 프로세스 전체 재사용 한도를 사용합니다. 명시적으로 설정한 할당자 캐시 한도는 계속 엄격한 최댓값으로 적용됩니다."
+            "value" : "로드 시 할당자 한도는 더 이상 사용하지 않는 버퍼의 재사용 목표를 설정합니다. 추론은 로드된 모델과 활성 실행 경로에 따라 별도의 프로세스 전체 목표를 사용합니다. 명시적인 할당자 캐시 한도는 두 단계에서 선택하는 목표의 상한입니다. 버퍼 풀은 이 목표를 초과할 수 있으며, 다음 메모리 할당 시 초과분이 정리됩니다. 이 목표는 사용 중인 모델 가중치, KV 상태 또는 실제 RAM 사용량을 제한하지 않습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Лимит распределителя при загрузке действует во время загрузки. Для инференса используется отдельный лимит повторного использования на уровне процесса, зависящий от загруженных моделей и активного пути выполнения. Явно заданный лимит кэша распределителя остаётся жёстким максимумом."
+            "value" : "Лимит распределителя при загрузке задаёт целевой объём повторного использования освобождённых буферов. При инференсе используется отдельный целевой объём для всего процесса, зависящий от загруженных моделей и активного пути выполнения. Явно заданный лимит кэша распределителя ограничивает выбранный целевой объём на обоих этапах. Пул может превышать его до следующего выделения памяти, когда излишки удаляются. Эти значения не ограничивают используемые веса модели, состояние KV или физическую оперативную память."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "加载时分配器上限仅在加载期间生效。推理使用单独的进程级复用上限，该上限取决于已加载的模型和当前执行路径。显式设置的分配器缓存上限始终是不可超过的最大值。"
+            "value" : "加载分配器上限用于设置已释放缓冲区的复用目标。推理会根据已加载的模型和当前执行路径，使用单独的进程级目标。显式设置分配器缓存上限会约束这两个阶段所选的目标。缓冲池可能超过该目标，直到下一次分配内存时清理超出部分。这些目标不限制正在使用的模型权重、KV 状态或实际 RAM 占用。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "載入時分配器上限僅在載入期間生效。推論使用單獨的程序級重複使用上限，該上限取決於已載入的模型和目前執行路徑。明確設定的分配器快取上限始終是不可超過的最大值。"
+            "value" : "載入配置器上限用於設定已釋放緩衝區的重用目標。推論會根據已載入的模型和目前執行路徑，使用獨立的處理程序層級目標。明確設定配置器快取上限會約束這兩個階段所選的目標。緩衝池可能超過該目標，直到下一次配置記憶體時清除超出部分。這些目標不限制使用中的模型權重、KV 狀態或實際 RAM 用量。"
           }
         }
       }
