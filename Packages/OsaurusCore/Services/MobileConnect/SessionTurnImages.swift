@@ -79,14 +79,21 @@ enum SessionTurnImages {
         return artifactImageFile(contextId: contextId, filename: parsed.filename)
     }
 
-    /// An image in `~/.osaurus/artifacts/{contextId}/`, the one place the
-    /// phone may fetch shared files from (§14.12), and images only: that is
-    /// all it shows. Both parts must be plain names, as `SharedArtifact`
-    /// writes them; anything it would have rewritten is refused.
+    /// An image in `~/.osaurus/artifacts/{contextId}/`: what a reply shows
+    /// under it.
     static func artifactImageFile(contextId: String, filename: String) -> URL? {
+        guard SharedArtifact.mimeType(from: filename).hasPrefix("image/") else { return nil }
+        return artifactFile(contextId: contextId, filename: filename)
+    }
+
+    /// A file in `~/.osaurus/artifacts/{contextId}/`, the one place the
+    /// phone may fetch shared files from (§14.12): only what an agent shared
+    /// is ever copied there. Both parts must be plain names, as
+    /// `SharedArtifact` writes them; anything it would have rewritten is
+    /// refused.
+    static func artifactFile(contextId: String, filename: String) -> URL? {
         guard SharedArtifact.sanitizeArtifactFilename(contextId) == contextId,
-            SharedArtifact.sanitizeArtifactFilename(filename) == filename,
-            SharedArtifact.mimeType(from: filename).hasPrefix("image/")
+            SharedArtifact.sanitizeArtifactFilename(filename) == filename
         else { return nil }
         let url = OsaurusPaths.contextArtifactsDir(contextId: contextId).appendingPathComponent(filename)
         return existingFile(url, under: OsaurusPaths.artifactsDir())
