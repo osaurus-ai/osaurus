@@ -25,6 +25,11 @@ struct HostContinuationMemoryProvenanceTests {
         private(set) var messages: [[ChatMessage]] = []
         func record(_ batch: [ChatMessage]) { messages.append(batch) }
     }
+
+    private actor DistillPrompts {
+        private(set) var values: [String] = []
+        func record(_ prompt: String) { values.append(prompt) }
+    }
     private struct Service: ResponsesGenerationService {
         let capture: Capture
         var id: String { HostContinuationMemoryProvenanceTests.modelID }
@@ -108,6 +113,116 @@ struct HostContinuationMemoryProvenanceTests {
                 agentId: Agent.defaultId, executionMode: .none, model: Self.modelID,
                 query: report, toolsDisabled: true, recallsMemory: false))
             #expect(hostAuthored.memorySection == nil)
+        }
+    }
+
+    @Test func actualDelegatedSessionPersistsProvenanceBeforeDistillation() async throws {
+        try await ChatHistoryTestStorage.run {
+            try await DynamicCatalogTestLock.shared.run {
+                let lease = await acquireSubagentStoreSandbox("delegated-memory-origin")
+                defer { lease.release() }
+                let previousScan = ModelManager.scanLocalModelsOverrideForTests
+                let previousExternal = ExternalModelLocator.testRootsOverride
+                ExternalModelLocator.testRootsOverride = []
+                ExternalModelLocator.invalidateInMemory()
+                _ = ExternalModelLocator.rescan()
+                ModelManager.scanLocalModelsOverrideForTests = { _ in [
+                    MLXModel(id: Self.modelID, name: "Memory provenance fixture", description: "Runnable metadata fixture",
+                        downloadURL: "https://example.invalid/memory-provenance")
+                ] }
+                ModelManager.invalidateLocalModelsCache()
+                _ = await ModelManager.discoverLocalModelsOffMain()
+                defer {
+                    ModelManager.scanLocalModelsOverrideForTests = previousScan
+                    ExternalModelLocator.testRootsOverride = previousExternal
+                    ExternalModelLocator.invalidateInMemory()
+                    ModelManager.invalidateLocalModelsCache()
+                }
+                DefaultAgentConfigurationStore.save(.init(defaultModel: Self.modelID,
+                    autonomousExec: .init(enabled: false), toolSelectionMode: .manual, manualToolNames: []))
+                DefaultAgentConfigurationStore.resetCacheForTests()
+                AgentManager.shared.refresh()
+                MemoryConfigurationStore.invalidateCache()
+                MemoryDatabase.shared.close()
+                try MemoryDatabase.shared.open()
+                var config = MemoryConfiguration.default
+                config.enabled = true
+                config.extractionMode = .manual
+                MemoryConfigurationStore.save(config)
+                var chatConfig = ChatConfigurationStore.load()
+                chatConfig.coreModelName = "fixture-distiller"
+                chatConfig.coreModelProvider = nil
+                ChatConfigurationStore.save(chatConfig)
+                defer {
+                    MemoryDatabase.shared.close()
+                    MemoryConfigurationStore.invalidateCache()
+                }
+                try #require(!AgentManager.shared.effectiveMemoryDisabled(for: Agent.defaultId))
+                let prompts = DistillPrompts()
+                let reply = """
+                    {"episode":{"summary":"A completed fixture conversation.","topics":[],"decisions":[],
+                    "action_items":[],"salience":0.5},"entities":[],"pinned_candidates":[],
+                    "identity_facts":["User's name is Eric"]}
+                    """
+                await MemoryService.shared.setDistillGenerateOverrideForTests { prompt, _ in
+                    await prompts.record(prompt)
+                    return reply
+                }
+                // Also reset on a failed assertion before releasing storage.
+                do {
+                    let capture = Capture()
+                    let engine = ChatEngine(services: [Service(capture: capture)],
+                        installedModelsProvider: { [] }, remoteServicesProvider: { [] })
+                    let agentKey = Agent.defaultId.uuidString
+                    for (index, origin) in [SessionSource.delegation, .chat].enumerated() {
+                        let execution = ExecutionContext(agentId: Agent.defaultId, source: origin)
+                        let session = execution.chatSession
+                        session.selectedModel = Self.modelID
+                        session.forceChatEngineRouteForTests = true
+                        session.toolsDisabledForTestingOverride = true
+                        session.chatEngineFactory = { _ in engine }
+                        let task = "My name is Eric. " + String(repeating:
+                            "Summarize this completed fixture conversation without running tools. ", count: 4)
+                        await execution.start(prompt: task)
+                        try await waitUntil { await capture.messages.count >= index + 1 && !session.isStreaming }
+                        if let send = session.currentSendTaskForTesting { await send.value }
+                        try #require(await capture.messages.count == index + 1)
+                        try #require(session.lastStreamError == nil)
+                        let conversation = try #require(session.sessionId).uuidString
+                        try await waitUntil {
+                            (try? MemoryDatabase.shared.loadPendingSignals(conversationId: conversation).count) == 1
+                        }
+                        let signals = try MemoryDatabase.shared.loadPendingSignals(conversationId: conversation)
+                        try #require(signals.count == 1)
+                        #expect(signals[0].userMessage == task)
+                        // The ordinary common-buffer session tracking stays intact;
+                        // real ChatSession workers do not add a second legacy record.
+                        #expect(await MemoryService.shared.activeConversationId(forAgent: agentKey) == conversation)
+                        MemoryDatabase.shared.close()
+                        try MemoryDatabase.shared.open()
+                        #expect(try MemoryDatabase.shared.isDelegatedConversation(conversation) == (origin == .delegation))
+                        #expect(try MemoryDatabase.shared.loadPendingSignals(conversationId: conversation).count == 1)
+                        let result = await MemoryService.shared.flushSessionAndWait(
+                            agentId: agentKey, conversationId: conversation)
+                        let episodeID = try #require(result.episodeId, "Distillation did not complete: \(result)")
+                        #expect(result == .distilled(episodeId: episodeID, pinned: 0,
+                            identityFacts: origin == .delegation ? 0 : 1))
+                        let prompt = try #require(await prompts.values.last)
+                        if origin == .delegation {
+                            #expect(prompt.contains("\nDelegating agent: " + task))
+                            #expect(!prompt.contains("\nUser: "))
+                            #expect((try MemoryDatabase.shared.loadIdentity())?.overrides ?? [] == [])
+                        } else {
+                            #expect(prompt.contains("\nUser: " + task))
+                            #expect((try MemoryDatabase.shared.loadIdentity())?.overrides == ["User's name is Eric"])
+                        }
+                    }
+                } catch {
+                    await MemoryService.shared.setDistillGenerateOverrideForTests(nil)
+                    throw error
+                }
+                await MemoryService.shared.setDistillGenerateOverrideForTests(nil)
+            }
         }
     }
 

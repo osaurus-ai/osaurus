@@ -4262,6 +4262,9 @@ final class ChatSession: ObservableObject {
         let userContentIsHostAuthored: Bool
         let memoryAgentId: String
         let memoryConversationId: String
+        /// Snapshot the real session origin; detached finalization must not
+        /// reinterpret delegated instructions as the user's own statements.
+        let memorySource: SessionSource
         /// Project membership captured at send time, so memory records the
         /// project the turn actually happened in — a later session reset or
         /// agent switch can't retroactively change it.
@@ -5090,7 +5093,8 @@ final class ChatSession: ObservableObject {
                     agentId: context.memoryAgentId,
                     conversationId: context.memoryConversationId,
                     sessionDate: today,
-                    projectId: context.memoryProjectId
+                    projectId: context.memoryProjectId,
+                    provenance: context.memorySource == .delegation ? .delegated : .user
                 )
             }
         }
@@ -6631,6 +6635,7 @@ final class ChatSession: ObservableObject {
                 userContentIsHostAuthored: hostAuthoredTurn,
                 memoryAgentId: memoryAgentId,
                 memoryConversationId: memoryConversationId,
+                memorySource: source,
                 memoryProjectId: projectId
             )
         )

@@ -72,18 +72,26 @@ public actor MemoryService {
 
     // MARK: - Buffer Turn (no LLM)
 
+    public enum TurnProvenance: Sendable, Equatable {
+        case user
+        case delegated
+    }
+
     /// Buffer a conversation turn for later distillation. This is the hot
     /// path for every chat turn — no LLM call, no extraction, no scoring.
     /// The debounce timer is (re)armed; if no new turn arrives within
     /// `summaryDebounceSeconds`, the session is distilled. Switching to a
     /// different conversation flushes the previous session immediately.
+    /// A real delegated ChatSession uses this same tracking path, but its
+    /// captured provenance prevents the agent's words writing user identity.
     public func bufferTurn(
         userMessage: String,
         assistantMessage: String?,
         agentId: String,
         conversationId: String,
         sessionDate: String? = nil,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        provenance: TurnProvenance = .user
     ) async {
         await bufferTurnCore(
             userMessage: userMessage,
@@ -92,7 +100,8 @@ public actor MemoryService {
             conversationId: conversationId,
             sessionDate: sessionDate,
             projectId: projectId,
-            startsSession: true
+            startsSession: true,
+            delegated: provenance == .delegated
         )
     }
 
@@ -150,6 +159,12 @@ public actor MemoryService {
         }
 
         do {
+            // Record provenance before a signal can become eligible for any
+            // distillation path (including restart recovery). If this fails,
+            // do not enqueue an agent's instructions as the user's words.
+            if delegated {
+                try db.markDelegatedConversation(conversationId)
+            }
             try db.insertPendingSignal(
                 PendingSignal(
                     agentId: agentId,
@@ -158,13 +173,6 @@ public actor MemoryService {
                     assistantMessage: assistantMessage
                 )
             )
-            if delegated {
-                // Durable, so a delegated session distilled after a relaunch
-                // is still attributed to the delegating agent.
-                do { try db.markDelegatedConversation(conversationId) } catch {
-                    MemoryLogger.service.error("Failed to mark delegated conversation: \(error)")
-                }
-            }
             telemetry.insertSuccesses += 1
             telemetry.lastSuccessAt = Date()
             telemetry.lastError = nil
@@ -903,7 +911,13 @@ public actor MemoryService {
         // session never writes the user's global identity: the replay minted
         // "User's token is BG_TOKEN_9 within the delegated task context" from
         // a helper run and injected it into every later request.
-        let delegated = (try? db.isDelegatedConversation(conversationId)) ?? false
+        let delegated: Bool
+        do {
+            delegated = try db.isDelegatedConversation(conversationId)
+        } catch {
+            // Unknown provenance must not be downgraded to user identity.
+            return .error(error.localizedDescription)
+        }
         let prompt = buildDistillPrompt(
             signals: signals,
             identity: identity,

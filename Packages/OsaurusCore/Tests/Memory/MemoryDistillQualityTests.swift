@@ -1,4 +1,5 @@
 import Foundation
+import OsaurusSQLCipher
 import Testing
 
 @testable import OsaurusCore
@@ -38,13 +39,74 @@ struct MemoryDistillQualityTests {
         }
     }
 
+    @Test func verbatimDurableStatementsAndPreferencesRemainPinned() {
+        let facts = [
+            "My sailboat is named Peregrine Dusk.",
+            "My name is Eric.",
+            "I prefer metric units.",
+            "Use metric units for measurements.",
+        ]
+        let parsed = MemoryService.DistillResult(pinnedCandidates: facts.map {
+            .init(content: $0, salience: 0.7, tags: [])
+        })
+        let screened = MemoryDistillateScreen.screen(parsed, userMessages: facts)
+        #expect(screened.pinnedCandidates.map(\.content) == facts)
+        #expect(MemoryDistillateScreen.screen(
+            .init(pinnedCandidates: [.init(content: Self.staleInstruction, salience: 0.8, tags: [])]),
+            userMessages: [Self.staleInstruction]
+        ).pinnedCandidates.isEmpty)
+    }
+
     @Test func realFactsThatMentionAbsenceSurvive() {
         for fact in [
             "User's name is Eric", "User is not available on weekends",
             "User wants no information shared with third parties", "User works at Unknown Worlds Entertainment",
             "User has no pets",
+            "User wants their salary not disclosed to coworkers",
+            "User prefers forms where optional information is not provided",
+            "User studies reports about no identity facts found",
         ] {
             #expect(!MemoryDistillateScreen.isAbsenceStatement(fact), "\(fact)")
+        }
+    }
+
+    @Test func failedDelegatedMarkerWriteDoesNotEnqueueUserAttributedSignal() async throws {
+        try await ChatHistoryTestStorage.run {
+            MemoryConfigurationStore.invalidateCache()
+            MemoryDatabase.shared.close()
+            try MemoryDatabase.shared.open()
+            defer {
+                MemoryDatabase.shared.close()
+                MemoryConfigurationStore.invalidateCache()
+            }
+            var config = MemoryConfiguration.default
+            config.enabled = true
+            config.extractionMode = .manual
+            MemoryConfigurationStore.save(config)
+            let connection = try OsaurusStorageOpener.open(path: OsaurusPaths.memoryDatabaseFile().path)
+            defer { sqlite3_close(connection) }
+            let trigger = """
+                CREATE TRIGGER reject_delegated_marker BEFORE INSERT ON delegated_conversations
+                BEGIN SELECT RAISE(ABORT, 'controlled delegated marker failure'); END;
+                """
+            try #require(sqlite3_exec(connection, trigger, nil, nil, nil) == SQLITE_OK)
+            let conversation = UUID().uuidString
+            let agent = UUID().uuidString
+            let before = await MemoryService.shared.bufferTelemetry()
+            await MemoryService.shared.bufferTurn(userMessage: "Delegating agent instructions",
+                assistantMessage: "Worker result", agentId: agent, conversationId: conversation,
+                provenance: .delegated)
+            #expect(try MemoryDatabase.shared.loadPendingSignals(conversationId: conversation).isEmpty)
+            #expect(try !MemoryDatabase.shared.isDelegatedConversation(conversation))
+            #expect(await MemoryService.shared.activeConversationId(forAgent: agent) == nil)
+            let after = await MemoryService.shared.bufferTelemetry()
+            #expect(after.insertFailures == before.insertFailures + 1)
+            try #require(sqlite3_exec(connection, "DROP TRIGGER reject_delegated_marker", nil, nil, nil) == SQLITE_OK)
+            // Positive control: the same common buffer accepts a normal user
+            // turn once marker failure has prevented the delegated enqueue.
+            await MemoryService.shared.bufferTurn(userMessage: "My own statement",
+                assistantMessage: "Noted", agentId: agent, conversationId: conversation)
+            #expect(try MemoryDatabase.shared.loadPendingSignals(conversationId: conversation).count == 1)
         }
     }
 
