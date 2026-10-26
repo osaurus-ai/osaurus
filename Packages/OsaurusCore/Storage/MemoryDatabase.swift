@@ -2507,7 +2507,8 @@ public final class MemoryDatabase: @unchecked Sendable {
     /// so a multi-word recall query almost never matches. OR keeps recall
     /// (BM25 still ranks rows matching more terms first), and the prefix
     /// aligns singular/plural forms under the non-stemming `unicode61`
-    /// tokenizer.
+    /// tokenizer. Function words are dropped first (`FTSQueryTerms`): under
+    /// OR they match nearly every row, so they only add unrelated hits.
     static func ftsMatchQuery(_ raw: String) -> String? {
         let allowed = CharacterSet.alphanumerics.union(.whitespaces).union(CharacterSet(charactersIn: "-_"))
         let scrubbed = String(raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : " " })
@@ -2517,7 +2518,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             .map { String($0) }
             .filter { !$0.isEmpty }
         guard !words.isEmpty else { return nil }
-        return words.map { "\"\($0)\"*" }.joined(separator: " OR ")
+        return FTSQueryTerms.droppingStopwords(words).map { "\"\($0)\"*" }.joined(separator: " OR ")
     }
 
     public func pruneTranscript(olderThanDays days: Int) throws -> Int {

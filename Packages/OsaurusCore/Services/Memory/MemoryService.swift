@@ -62,6 +62,14 @@ public actor MemoryService {
 
     private init() {}
 
+    /// Test seam for the distill model call, receiving (prompt, system
+    /// prompt). Nil in production, where `CoreModelService` answers.
+    private var distillGenerateOverride: (@Sendable (String, String) async throws -> String)?
+
+    func setDistillGenerateOverrideForTests(_ override: (@Sendable (String, String) async throws -> String)?) {
+        distillGenerateOverride = override
+    }
+
     // MARK: - Buffer Turn (no LLM)
 
     /// Buffer a conversation turn for later distillation. This is the hot
@@ -889,16 +897,26 @@ public actor MemoryService {
         )
 
         do {
-            let response = try await CoreModelService.shared.generate(
-                prompt: prompt,
-                systemPrompt: distillSystemPrompt,
-                // Distillation is housekeeping — it runs on ingest and at launch,
-                // unprompted. It must never evict the model the user is chatting
-                // with (or cancel the one they're waiting on) to summarise history.
-                intent: .background,
-                purpose: "memory_distillation"
+            let response: String
+            if let distillGenerateOverride {
+                response = try await distillGenerateOverride(prompt, distillSystemPrompt)
+            } else {
+                response = try await CoreModelService.shared.generate(
+                    prompt: prompt,
+                    systemPrompt: distillSystemPrompt,
+                    // Distillation is housekeeping — it runs on ingest and at launch,
+                    // unprompted. It must never evict the model the user is chatting
+                    // with (or cancel the one they're waiting on) to summarise history.
+                    intent: .background,
+                    purpose: "memory_distillation"
+                )
+            }
+            // Screen once, before the episode / pinned / project-mirror /
+            // identity fan-out, so every sink sees the same distillate.
+            let parsed = MemoryDistillateScreen.screen(
+                parseDistillResponse(response),
+                userMessages: signals.map(\.userMessage)
             )
-            let parsed = parseDistillResponse(response)
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
 
             guard let episode = parsed.episode else {
@@ -1379,9 +1397,14 @@ public actor MemoryService {
         "entities" (string array of person/project/place/tool names mentioned), \
         "pinned_candidates" (array of {"content": string, "salience": number 0-1, "tags": string array} for \
         facts worth remembering long-term: explicit user identity facts, strong preferences, decisions the \
-        user clearly committed to. Be conservative — most sessions yield 0-2 candidates.), \
+        user clearly committed to. Be conservative — most sessions yield 0-2 candidates. Restate each fact \
+        in your own words. Never pin a request or instruction the user gave for this session, a task \
+        result, a tool or file output, a value that may change, or a token/nonce produced during the \
+        session; those belong in the episode summary.), \
         "identity_facts" (string array of facts that should appear in the user's identity profile, e.g. \
-        "User's name is X" or "User works at Y". Empty when nothing identity-relevant came up.). \
+        "User's name is X" or "User works at Y", only when the user actually stated them. Never write a \
+        placeholder such as "not specified" or "no facts found", and never describe what the user did in \
+        this session. Use an empty array when nothing identity-relevant came up.). \
         Salience scoring: 0.9+ = critical identity/decision, 0.6-0.8 = clear preference, \
         0.3-0.5 = casual mention, <0.3 = transient chitchat. \
         Do NOT invent facts. Use only what the conversation actually contains.

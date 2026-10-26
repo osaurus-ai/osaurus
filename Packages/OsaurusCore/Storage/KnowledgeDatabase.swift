@@ -1351,7 +1351,9 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         // Keep only terms >= 3 chars that aren't all digits; if that leaves
         // nothing (e.g. the query is just "AI" or "v2"), fall back to the
         // full token list so short deliberate queries still match.
-        let meaningful = words.filter { $0.count >= 3 && !$0.allSatisfy(\.isNumber) }
+        // Function words are dropped with the same list Memory recall uses.
+        let meaningful = FTSQueryTerms.droppingStopwords(words)
+            .filter { $0.count >= 3 && !$0.allSatisfy(\.isNumber) }
         let effective = meaningful.isEmpty ? words : meaningful
         return effective.map { "\"\($0)\"*" }.joined(separator: " OR ")
     }
