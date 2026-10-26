@@ -14755,7 +14755,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         if includeUsage, let usage {
                             writerBound.value.writeUsageChunk(promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
-                                tokensPerSecond: usage.tokens_per_second, model: model, responseId: responseId, created: created, context: ctx.value)
+                                tokensPerSecond: usage.tokens_per_second, cachedPromptTokens: usage.cachedPromptTokens,
+                                model: model, responseId: responseId, created: created, context: ctx.value)
                         }
                         writerBound.value.writeEnd(ctx.value)
                     }
