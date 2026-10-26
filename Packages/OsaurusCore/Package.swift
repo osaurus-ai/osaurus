@@ -334,9 +334,10 @@ let package = Package(
         // physical capability checks and staged recurrent MTP state handling.
         // vmlx-swift#659: DeepSeek-V4.1 JANGHT bundles (JANGT trellis experts, MXFP8 projections,
         // JANGHT dSpark drafter), exact sampled dSpark at temperature > 0, multi-row MXFP8 QMV.
+        // vmlx-swift#661: JANGHT bundles keep their F32 hyper-connection / sink / router-bias parameters.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "00c369f64596164edcfe8fe036b16f85f4459a86"
+            revision: "1410c6f4464470929abba9a2756cac31697e7595"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
