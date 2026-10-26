@@ -337,7 +337,7 @@ let package = Package(
         // vmlx-swift#661: JANGHT bundles keep their F32 hyper-connection / sink / router-bias parameters.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "1410c6f4464470929abba9a2756cac31697e7595"
+            revision: "085c1c57963d603d82a6313c34f0c26ec569945d"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
