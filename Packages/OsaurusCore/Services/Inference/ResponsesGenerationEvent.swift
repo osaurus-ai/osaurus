@@ -107,6 +107,7 @@ enum ResponsesGenerationStream {
         let producer = Task {
             var calls: [ResponsesFunctionCall] = []
             var inputTokens: Int?
+            var cachedInputTokens: Int?
             var completed = false
             var hasCompletedToolPreview = false
             do {
@@ -119,6 +120,10 @@ enum ResponsesGenerationStream {
                     case .inputTokenCount(let count):
                         inputTokens = count
                         continuation.yield(.inputTokenCount(count))
+                    case .cachedInputTokenCount(let count):
+                        // Prompt tokens restored from the prefix cache (L1/L2/L3 hit): reported as
+                        // usage.prompt_tokens_details.cached_tokens on the completion.
+                        cachedInputTokens = count
                     case .tokens(let text):
                         continuation.yield(.outputTextDelta(text))
                     case .reasoning(let text):
@@ -164,7 +169,8 @@ enum ResponsesGenerationStream {
                                     stopReason: reason,
                                     promptTokensPerSecond: prefill,
                                     mtp: mtp,
-                                    inputTokenCount: inputTokens
+                                    inputTokenCount: inputTokens,
+                                    cachedInputTokenCount: cachedInputTokens
                                 )
                             )
                         )
