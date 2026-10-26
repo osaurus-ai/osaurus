@@ -349,14 +349,14 @@ final class HarnessProcess: @unchecked Sendable {
             },
             onEOF: {
                 if let tail = framer.flush() { drain.yield(tail) }
-                drain.markEOF()
+                drain.markEOF(.stdout)
             }
         )
         self.stderrReader = HarnessPipeReader(
             handle: stderrPipe.fileHandleForReading,
             queue: readQueue,
             onData: { state.appendStderr($0) },
-            onEOF: {}
+            onEOF: { drain.markEOF(.stderr) }
         )
     }
 
@@ -489,12 +489,15 @@ private final class HarnessFramerBox: @unchecked Sendable {
     }
 }
 
-/// Finishes the line stream once stdout hit EOF and the process exited — or
-/// shortly after exit when EOF never arrives.
-private final class HarnessDrainGate: @unchecked Sendable {
+/// Finish only after both pipe readers drained and the process exited. The
+/// existing post-exit deadline still bounds descendants that retain a pipe.
+final class HarnessDrainGate: @unchecked Sendable {
+    enum Pipe: Sendable { case stdout, stderr }
+
     private let lock = NSLock()
     private let continuation: AsyncStream<Data>.Continuation
-    private var sawEOF = false
+    private var stdoutEOF = false
+    private var stderrEOF = false
     private var exited = false
     private var finished = false
 
@@ -509,10 +512,13 @@ private final class HarnessDrainGate: @unchecked Sendable {
         if open { continuation.yield(line) }
     }
 
-    func markEOF() {
+    func markEOF(_ pipe: Pipe) {
         lock.lock()
-        sawEOF = true
-        let done = exited
+        switch pipe {
+        case .stdout: stdoutEOF = true
+        case .stderr: stderrEOF = true
+        }
+        let done = exited && stdoutEOF && stderrEOF
         lock.unlock()
         if done { finish() }
     }
@@ -520,7 +526,7 @@ private final class HarnessDrainGate: @unchecked Sendable {
     func markExited() {
         lock.lock()
         exited = true
-        let done = sawEOF
+        let done = stdoutEOF && stderrEOF
         lock.unlock()
         if done {
             finish()

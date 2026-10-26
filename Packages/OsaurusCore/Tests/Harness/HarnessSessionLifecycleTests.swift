@@ -20,10 +20,14 @@ struct HarnessSessionLifecycleTests {
         let runtime: HarnessRuntime
         let exitMarker: URL
 
-        init(environment: [String: String] = [:], arguments: [String] = ["--mode", "rpc"]) throws {
+        init(
+            environment: [String: String] = [:],
+            arguments: [String] = ["--mode", "rpc"],
+            script contents: String = HarnessFixtures.fakePiScript
+        ) throws {
             directory = try HarnessFixtures.temporaryDirectory("harness-session")
             let script = try HarnessFixtures.writeExecutable(
-                HarnessFixtures.fakePiScript,
+                contents,
                 named: "fake-pi",
                 in: directory
             )
@@ -166,6 +170,89 @@ struct HarnessSessionLifecycleTests {
         // A fresh process: Pi without a chat-keyed session starts over.
         #expect(recovered.visibleText == "turn1 pid=\(secondPid)")
         await session.close(grace: 2)
+    }
+
+    @Test func aCrashAfterStdoutClosesRetainsItsStderr() async throws {
+        let script = HarnessFixtures.fakePiScript.replacingOccurrences(
+            of: "printf 'fake harness crashed\\n' >&2",
+            with: "exec 1>&-\nprintf 'fake harness crashed\\n' >&2"
+        )
+        #expect(script != HarnessFixtures.fakePiScript)
+        let fixture = try Fixture(script: script)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let chatId = UUID()
+        let session = HarnessSession(chatId: chatId)
+        do {
+            _ = try await send("crash now", on: session, context: fixture.context(chatId: chatId))
+            Issue.record("a crashed harness must fail the turn")
+        } catch let error as HarnessError {
+            guard case .exited(_, let code, let stderr) = error else {
+                Issue.record("expected .exited, got \(error)")
+                return
+            }
+            #expect(code == 3)
+            #expect(stderr.contains("fake harness crashed"))
+        }
+        #expect(await !session.hasLiveProcess)
+        await session.close(grace: 2)
+    }
+
+    /// Drive the actual coordinator in both callback orders, without scheduler
+    /// timing, sleeps, or a test-only reader hook. Yield exposes whether the
+    /// real stream has already finished synchronously.
+    @Test(arguments: [true, false])
+    func exitWaitsForBothPipeReaders(stdoutFirst: Bool) {
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        defer { withExtendedLifetime(stream) {} }
+        let drain = HarnessDrainGate(continuation: continuation)
+        let first: HarnessDrainGate.Pipe = stdoutFirst ? .stdout : .stderr
+        let last: HarnessDrainGate.Pipe = stdoutFirst ? .stderr : .stdout
+        drain.markEOF(first)
+        drain.markExited()
+        if case .enqueued = continuation.yield(Data()) {
+            // The remaining pipe can still carry the crash diagnostic.
+        } else {
+            Issue.record("process exit and one pipe EOF must not finish the stream")
+        }
+        drain.markEOF(last)
+        if case .terminated = continuation.yield(Data()) {
+        } else {
+            Issue.record("both pipe EOFs and exit must finish the stream")
+        }
+    }
+
+    @Test func drainedPipesStillWaitForExitAndDuplicateCallbacksAreHarmless() {
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        defer { withExtendedLifetime(stream) {} }
+        let drain = HarnessDrainGate(continuation: continuation)
+        drain.markEOF(.stderr)
+        drain.markEOF(.stdout)
+        if case .enqueued = continuation.yield(Data()) {
+        } else {
+            Issue.record("pipe EOF alone must not finish before the exit code is recorded")
+        }
+        drain.markExited()
+        drain.markEOF(.stdout)
+        drain.markEOF(.stderr)
+        drain.markExited()
+        if case .terminated = continuation.yield(Data()) {
+        } else {
+            Issue.record("duplicate EOF and exit callbacks must leave the stream finished")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func exitedProcessStillBoundsPipesHeldOpenByDescendants() async {
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        let drain = HarnessDrainGate(continuation: continuation)
+        // Neither reader reaches EOF, as when a descendant inherited both
+        // writers. Await the existing production deadline, without a sleep.
+        drain.markExited()
+        for await _ in stream {}
+        if case .terminated = continuation.yield(Data()) {
+        } else {
+            Issue.record("the existing post-exit deadline must still finish held-open pipes")
+        }
     }
 
     @Test func stopAbortsTheTurnWithoutKillingTheProcess() async throws {

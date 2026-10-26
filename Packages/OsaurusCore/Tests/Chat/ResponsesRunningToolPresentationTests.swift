@@ -33,13 +33,13 @@ struct ResponsesRunningToolPresentationTests {
     private func descendants<T: NSView>(_ root: NSView, as type: T.Type) -> [T] {
         ((root as? T).map { [$0] } ?? []) + root.subviews.flatMap { descendants($0, as: type) }
     }
-    private func wait(_ condition: @MainActor () async -> Bool) async throws {
+    private func wait(_ phase: String, _ condition: @MainActor () async -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while ContinuousClock.now < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        throw NSError(domain: "ResponsesRunningToolPresentationTests.timeout", code: 1)
+        throw NSError(domain: "ResponsesRunningToolPresentationTests.timeout", code: 1, userInfo: [NSLocalizedDescriptionKey: phase])
     }
 
     @Test func completedToolCallAppearsBeforeAnyResultOrFurtherText() throws {
@@ -105,10 +105,10 @@ struct ResponsesRunningToolPresentationTests {
             descendants(row, as: NSTextView.self).map(\.string).joined(separator: "\n")
         }
         configure("printf old", expanded: true)
-        try await wait { text().contains("printf old") }
+        try await wait("initial arguments mounted") { text().contains("printf old") }
         configure("printf new", expanded: false)
         configure("printf new", expanded: true)
-        try await wait { text().contains("printf new") && !text().contains("printf old") }
+        try await wait("corrected arguments mounted") { text().contains("printf new") && !text().contains("printf old") }
     }
     private final class Stream: @unchecked Sendable {
         let output = PassthroughSubject<Data, Never>()
@@ -143,17 +143,17 @@ struct ResponsesRunningToolPresentationTests {
         defer { Task { await LiveExecRegistry.shared.unregister(toolCallId: id) } }
         // Registration happens after the row exists, as in real dispatch.
         await LiveExecRegistry.shared.register(entry)
-        try await wait { descendants(row, as: TerminalDisplayView.self).first != nil }
+        try await wait("live terminal mounted after registration") { descendants(row, as: TerminalDisplayView.self).first != nil }
         let terminal = try #require(descendants(row, as: TerminalDisplayView.self).first)
         defer { terminal.unbind() }
         #expect(!terminal._test_terminateHidden)
-        try await wait { terminal._test_textStorageString.contains("seed output") }
+        try await wait("seed output rendered") { terminal._test_textStorageString.contains("seed output") }
         stream.output.send(Data("live output\n".utf8))
-        try await wait { terminal._test_textStorageString.contains("live output") }
+        try await wait("live output rendered") { terminal._test_textStorageString.contains("live output") }
         let terminate = try #require(descendants(row, as: NSButton.self).first { $0.accessibilityLabel() == "Terminate" })
         terminate.performClick(nil)
-        try await wait { await terminations.count == 1 }
-        try await wait { terminal._test_terminateHidden }
+        try await wait("terminate action invoked exactly once") { await terminations.count == 1 }
+        try await wait("terminate control hidden after killed status") { terminal._test_terminateHidden }
         let result = ToolEnvelope.success(tool: "shell_run", result: [
             "stdout": "seed output\nlive output\n", "stderr": "", "exit_code": 143, "killed_by": "user",
         ])
