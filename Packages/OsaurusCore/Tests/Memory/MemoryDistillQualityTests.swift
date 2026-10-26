@@ -121,6 +121,85 @@ struct MemoryDistillQualityTests {
         }
     }
 
+    /// The replay's worker session (agent 8129DE06…) distilled "User's token
+    /// is BG_TOKEN_9 within the delegated task context" into the global
+    /// identity at 10:41:08Z. A delegated session's requester is an agent.
+    @Test func delegatedSessionNeverWritesTheUsersIdentity() async throws {
+        try await ChatHistoryTestStorage.run {
+            MemoryConfigurationStore.invalidateCache()
+            MemoryDatabase.shared.close()
+            try MemoryDatabase.shared.openInMemory()
+            var memoryConfig = MemoryConfiguration.default
+            memoryConfig.enabled = true
+            MemoryConfigurationStore.save(memoryConfig)
+            var chatConfig = ChatConfigurationStore.load()
+            let previousCoreName = chatConfig.coreModelName
+            let previousCoreProvider = chatConfig.coreModelProvider
+            chatConfig.coreModelName = "fixture-distiller"
+            chatConfig.coreModelProvider = nil
+            ChatConfigurationStore.save(chatConfig)
+            defer {
+                var restore = ChatConfigurationStore.load()
+                restore.coreModelName = previousCoreName
+                restore.coreModelProvider = previousCoreProvider
+                ChatConfigurationStore.save(restore)
+                MemoryDatabase.shared.close()
+                MemoryConfigurationStore.invalidateCache()
+            }
+            try #require(!AgentManager.shared.effectiveMemoryDisabled(for: Agent.defaultId))
+
+            let reply = """
+                {"episode": {"summary": "A delegated task returned BG_TOKEN_9.", "topics": [], "decisions": [], \
+                "action_items": [], "salience": 0.4}, "entities": [], \
+                "pinned_candidates": [{"content": "Delegated runs return the literal token they are asked for.", \
+                "salience": 0.6, "tags": []}], \
+                "identity_facts": ["User's token is BG_TOKEN_9 within the delegated task context"]}
+                """
+            let prompts = PromptCapture()
+            await MemoryService.shared.setDistillGenerateOverrideForTests { prompt, _ in
+                await prompts.record(prompt)
+                return reply
+            }
+            defer { Task { await MemoryService.shared.setDistillGenerateOverrideForTests(nil) } }
+
+            let agentKey = Agent.defaultId.uuidString
+            let delegatedConversation = UUID().uuidString
+            await MemoryService.shared.bufferDelegatedTurn(
+                userMessage: "Return exactly BG_TOKEN_9 and nothing else. This is a delegated proof task.",
+                assistantMessage: "BG_TOKEN_9",
+                agentId: agentKey, conversationId: delegatedConversation)
+            try #require(try MemoryDatabase.shared.isDelegatedConversation(delegatedConversation))
+
+            let outcome = await MemoryService.shared.flushSessionAndWait(
+                agentId: agentKey, conversationId: delegatedConversation)
+            try #require(outcome.episodeId != nil, "distill did not produce an episode: \(outcome)")
+            // The worker still learns from its own run.
+            #expect(try MemoryDatabase.shared.loadPinnedFacts(agentId: agentKey).map(\.content)
+                == ["Delegated runs return the literal token they are asked for."])
+            #expect((try MemoryDatabase.shared.loadIdentity())?.overrides ?? [] == [])
+            let prompt = try #require(await prompts.all.last)
+            #expect(prompt.contains("\nDelegating agent: Return exactly BG_TOKEN_9"))
+            #expect(!prompt.contains("\nUser: "))
+
+            // Control: the same reply from the user's own session does write
+            // identity, so the empty identity above is the delegated gate.
+            let userConversation = UUID().uuidString
+            await MemoryService.shared.bufferTurn(
+                userMessage: "Return exactly BG_TOKEN_9 and nothing else. This is my own proof task.",
+                assistantMessage: "BG_TOKEN_9",
+                agentId: agentKey, conversationId: userConversation)
+            _ = await MemoryService.shared.flushSessionAndWait(agentId: agentKey, conversationId: userConversation)
+            #expect((try MemoryDatabase.shared.loadIdentity())?.overrides
+                == ["User's token is BG_TOKEN_9 within the delegated task context"])
+            #expect(try !MemoryDatabase.shared.isDelegatedConversation(userConversation))
+        }
+    }
+
+    private actor PromptCapture {
+        private(set) var all: [String] = []
+        func record(_ prompt: String) { all.append(prompt) }
+    }
+
     // MARK: - FTS recall terms
 
     @Test func functionWordsNoLongerRecallAnUnrelatedInstruction() throws {

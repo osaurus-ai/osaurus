@@ -116,7 +116,8 @@ public actor MemoryService {
             agentId: agentId,
             conversationId: conversationId,
             sessionDate: sessionDate,
-            startsSession: false
+            startsSession: false,
+            delegated: true
         )
     }
 
@@ -127,7 +128,8 @@ public actor MemoryService {
         conversationId: String,
         sessionDate: String?,
         projectId: UUID? = nil,
-        startsSession: Bool
+        startsSession: Bool,
+        delegated: Bool = false
     ) async {
         // Telemetry intentionally precedes the early-return guards so
         // "attempts" reflects every caller invocation. The diagnostics
@@ -156,6 +158,13 @@ public actor MemoryService {
                     assistantMessage: assistantMessage
                 )
             )
+            if delegated {
+                // Durable, so a delegated session distilled after a relaunch
+                // is still attributed to the delegating agent.
+                do { try db.markDelegatedConversation(conversationId) } catch {
+                    MemoryLogger.service.error("Failed to mark delegated conversation: \(error)")
+                }
+            }
             telemetry.insertSuccesses += 1
             telemetry.lastSuccessAt = Date()
             telemetry.lastError = nil
@@ -889,11 +898,18 @@ public actor MemoryService {
             return Self.iso8601Now()
         }()
 
+        // A delegated session's "user" turns are the delegating agent's
+        // instructions. They are labeled as such for the distiller, and the
+        // session never writes the user's global identity: the replay minted
+        // "User's token is BG_TOKEN_9 within the delegated task context" from
+        // a helper run and injected it into every later request.
+        let delegated = (try? db.isDelegatedConversation(conversationId)) ?? false
         let prompt = buildDistillPrompt(
             signals: signals,
             identity: identity,
             recentEpisodes: recentEpisodes,
-            sessionDate: resolvedDate
+            sessionDate: resolvedDate,
+            requesterLabel: delegated ? "Delegating agent" : "User"
         )
 
         do {
@@ -1040,8 +1056,10 @@ public actor MemoryService {
 
             // Apply identity delta: the distillation may declare new
             // identity-grade facts. Agent namespace only, so skip it when
-            // the agent isn't building its own memory.
-            if agentMemoryOn, !parsed.identityFacts.isEmpty {
+            // the agent isn't building its own memory, and never from a
+            // delegated session (its requester is an agent, not the user).
+            let identityFactsApplied = agentMemoryOn && !delegated ? parsed.identityFacts.count : 0
+            if identityFactsApplied > 0 {
                 applyIdentityDelta(
                     facts: parsed.identityFacts,
                     currentIdentity: identity,
@@ -1059,7 +1077,7 @@ public actor MemoryService {
                 durationMs: durationMs
             )
             MemoryLogger.service.info(
-                "distill: \(conversationId) → episode #\(episodeId), \(storedPinned) pinned, \(parsed.identityFacts.count) identity facts (\(durationMs)ms)"
+                "distill: \(conversationId) → episode #\(episodeId), \(storedPinned) pinned, \(identityFactsApplied) identity facts\(delegated ? " (delegated session: identity not written)" : "") (\(durationMs)ms)"
             )
 
             await MemoryContextAssembler.shared.invalidateCache(agentId: agentId)
@@ -1067,7 +1085,7 @@ public actor MemoryService {
             return .distilled(
                 episodeId: episodeId,
                 pinned: storedPinned,
-                identityFacts: parsed.identityFacts.count
+                identityFacts: identityFactsApplied
             )
         } catch is CancellationError {
             // Interrupted (app quitting, caller walked away). Not an error
@@ -1414,7 +1432,8 @@ public actor MemoryService {
         signals: [PendingSignal],
         identity: Identity,
         recentEpisodes: [Episode],
-        sessionDate: String
+        sessionDate: String,
+        requesterLabel: String = "User"
     ) -> String {
         var prompt = "Conversation date: \(sessionDate)\n\n"
 
@@ -1455,7 +1474,7 @@ public actor MemoryService {
             if omittedCount > 0, i == headCount {
                 prompt += "\n[... \(omittedCount) middle turn(s) omitted to fit the core model's context ...]\n"
             }
-            prompt += "\nUser: \(Self.clampTurnText(signal.userMessage))"
+            prompt += "\n\(requesterLabel): \(Self.clampTurnText(signal.userMessage))"
             if let asst = signal.assistantMessage {
                 prompt += "\nAssistant: \(Self.clampTurnText(asst))"
             }
