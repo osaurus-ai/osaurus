@@ -366,8 +366,13 @@ public enum ServerRuntimeSettingsStore {
     ) -> String {
         let concurrency = plan.concurrency.maxConcurrentSequences.map(String.init) ?? "default"
         let kv = plan.cache.defaultMaxKVSize.map(String.init) ?? "unlimited"
+        // This is a configured load plan, not a sample of the process-wide
+        // inference allocator. Its actual limit is memory_status.cache_limit.
+        let inferenceAllocator = settings.memorySafety.customAllocatorCacheBytes.map {
+            "custom_max:\($0)"
+        } ?? "runtime_managed"
         return
-            "mode=\(settings.memorySafety.mode.rawValue) keep_model_in_memory=\(settings.memorySafety.keepModelInMemory) slider=\(settings.memorySafety.slider) load_cap=\(residentCapSummary(plan.loadConfiguration.memoryLimit)) allocator_cap=\(residentCapSummary(plan.loadConfiguration.maxResidentBytes)) max_concurrent=\(concurrency) kv_cap=\(kv)"
+            "mode=\(settings.memorySafety.mode.rawValue) keep_model_in_memory=\(settings.memorySafety.keepModelInMemory) slider=\(settings.memorySafety.slider) load_cap=\(residentCapSummary(plan.loadConfiguration.memoryLimit)) load_allocator_cap=\(residentCapSummary(plan.loadConfiguration.maxResidentBytes)) inference_allocator=\(inferenceAllocator) max_concurrent=\(concurrency) kv_cap=\(kv)"
     }
 
     private nonisolated static func residentCapSummary(_ cap: ResidentCap) -> String {

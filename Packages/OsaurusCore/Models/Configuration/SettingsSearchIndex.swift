@@ -828,6 +828,15 @@ public enum SettingsSearchIndex {
             subTab: "memorySafety"
         ),
         .init(
+            id: "server.memorySafety.loadAllocatorCap",
+            tab: .server,
+            section: "Memory Safety",
+            title: "Load Allocator Cap",
+            keywords: ["load allocator", "inference reuse", "allocator cache", "freed buffers", "memory limit"],
+            subTab: "memorySafety",
+            disambiguation: "Load-time allocator cap. Inference reuse has a separate process-wide limit; an explicit Allocator Cache Cap remains a hard maximum."
+        ),
+        .init(
             id: "server.decode",
             tab: .server,
             section: "Decode Performance",

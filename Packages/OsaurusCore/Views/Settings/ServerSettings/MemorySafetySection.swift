@@ -76,10 +76,15 @@ struct MemorySafetySection: View {
 
                     HStack(spacing: 12) {
                         summaryPill(L("Load"), value: loadCapSummary)
-                        summaryPill(L("Allocator"), value: allocatorCapSummary)
+                        summaryPill(L("Load Allocator Cap"), value: allocatorCapSummary)
+                            .settingsLandingAnchor("server.memorySafety.loadAllocatorCap")
                         summaryPill(L("KV"), value: kvCapSummary)
                         summaryPill(L("Concurrency"), value: concurrencySummary)
                     }
+
+                    Text("The load allocator cap applies while loading. Inference uses a separate process-wide reuse limit based on loaded models and the active execution path. An explicit Allocator Cache Cap remains a hard maximum.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
 
                     ForEach(resolvedPlan.warnings, id: \.self) { warning in
                         Text(warning)
@@ -111,8 +116,8 @@ struct MemorySafetySection: View {
 
                     OptionalIntField(
                         label: "Allocator Cache Cap (MB)",
-                        placeholder: "Blank = mode default",
-                        help: "Maximum MLX allocator cache, in MiB.",
+                        placeholder: "Blank = automatic",
+                        help: "Hard maximum for freed MLX buffers during loading and inference, in MiB. Blank uses the profile's load cap and runtime-managed inference reuse.",
                         value: allocatorCacheMB,
                         clamp: 1 ... 262144
                     )
