@@ -1863,7 +1863,7 @@ struct AgentTaskStateTests {
     @Test func pendingJobPolls_doNotNudge() {
         let state = AgentTaskState()
         state.dynamicToolClassifier = { $0 == "evals_job_status" }
-        for _ in 1 ... 8 {
+        for _ in 1 ... 14 {
             state.record(name: "evals_job_status", argsJSON: #"{"job_id":"j1"}"#, result: pollResult("running"))
             #expect(state.nextStepBias() == nil)
         }
@@ -1899,8 +1899,30 @@ struct AgentTaskStateTests {
         #expect(state.nextStepBias() != nil)
     }
 
+    /// A job-starting tool answers "queued". Re-submitting it with identical
+    /// arguments must still arm the identical-call nudge.
+    @Test func queuedSubmissionsStillNudge() {
+        let state = AgentTaskState()
+        for _ in 1 ... 3 {
+            state.record(name: "evals_run", argsJSON: #"{"suite":"full"}"#, result: pollResult("queued"))
+        }
+        #expect(state.nextStepBias()?.contains("identical arguments") == true)
+    }
+
+    /// A job stuck on "running" is waiting, but not forever: the 15th poll
+    /// in a row stages the poll-limit notice.
+    @Test func pendingJobPolls_capAtThreshold() {
+        let state = AgentTaskState()
+        for _ in 1 ... 15 {
+            state.record(name: "evals_job_status", argsJSON: #"{"job_id":"j1"}"#, result: pollResult("running"))
+        }
+        #expect(state.nextStepBias()?.contains("still running") == true)
+    }
+
     @Test func reportsPendingJob_readsTextAndNestedJob() {
-        #expect(AgentTaskState.reportsPendingJob(["text": #"{"state":"QUEUED"}"#]))
+        #expect(AgentTaskState.reportsPendingJob(["text": #"{"state":"WORKING"}"#]))
+        #expect(AgentTaskState.reportsPendingJob(["text": "\n  {\"status\":\"running\"}"]))
+        #expect(!AgentTaskState.reportsPendingJob(["text": #"{"status":"queued"}"#]))
         #expect(AgentTaskState.reportsPendingJob(["job": ["status": "in_progress"]]))
         #expect(!AgentTaskState.reportsPendingJob(["text": #"{"status":"failed"}"#]))
         #expect(!AgentTaskState.reportsPendingJob(["text": "status: running"]))

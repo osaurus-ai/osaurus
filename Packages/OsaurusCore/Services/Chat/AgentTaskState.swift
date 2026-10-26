@@ -260,10 +260,18 @@ public final class AgentTaskState {
     /// Polling one that answers with one of these is waiting, not a loop, so
     /// it arms neither the identical-call nor the dynamic-run nudge (exec
     /// tools excluded). A finished, failed, or unrecognized status counts as
-    /// usual.
+    /// usual. Submission-time states (`queued`, `pending`, `submitted`,
+    /// `started`) are deliberately absent: a job-starting tool answers with
+    /// them, and exempting it would let identical re-submissions start the
+    /// same job again and again with no nudge.
     private static let pendingJobStatuses: Set<String> = [
-        "running", "pending", "queued", "in_progress", "working", "processing", "started", "submitted",
+        "running", "in_progress", "working", "processing",
     ]
+
+    /// Consecutive pending-job polls of one tool before the poll-limit notice
+    /// fires. Far above the loop thresholds so real waiting is left alone,
+    /// but a job stuck on "running" cannot burn the whole turn unnoticed.
+    private static let pendingPollThreshold = 15
 
     /// Consecutive `invalid_args` rejections of ONE tool name (arguments
     /// ignored) before the argument-rejection notice fires. Every existing
@@ -390,6 +398,10 @@ public final class AgentTaskState {
     /// mirror of `planningRunName` (reset by any interleaved different tool).
     private var dynamicRunName: String?
     private var dynamicRunCount = 0
+    /// Consecutive pending-job polls of `lastToolName`; armed as
+    /// `pendingPollName` at `pendingPollThreshold`.
+    private var pendingPollCount = 0
+    private var pendingPollName: String?
     /// Executions per signature this message, reads and replays included —
     /// unlike `nonReadCallCounts`, which exists to arm the repeated-call
     /// nudge and deliberately excludes reads. Backs the UI's "×N" repeat
@@ -462,6 +474,8 @@ public final class AgentTaskState {
         // `biasEnabled`); only the run tracking resets with the message.
         dynamicRunName = nil
         dynamicRunCount = 0
+        pendingPollCount = 0
+        pendingPollName = nil
         callCounts.removeAll(keepingCapacity: true)
         webDiscoveryRunCount = 0
         invalidArgsRuns.removeAll(keepingCapacity: true)
@@ -880,7 +894,16 @@ public final class AgentTaskState {
         // arm the bias nudge. Any different call disarms it.
         // Exec output is arbitrary program text, so only structured tool
         // results (MCP, plugin, built-in) may claim a pending job.
-        let pollsPendingJob = !Self.execLikeTools.contains(name) && Self.reportsPendingJob(successPayload)
+        let pollsPendingJob =
+            !Self.readLikeTools.contains(name) && !Self.execLikeTools.contains(name)
+            && Self.reportsPendingJob(successPayload)
+        if pollsPendingJob {
+            pendingPollCount = (previousToolName == name && pendingPollCount > 0) ? pendingPollCount + 1 : 1
+            pendingPollName = pendingPollCount >= Self.pendingPollThreshold ? name : nil
+        } else {
+            pendingPollCount = 0
+            pendingPollName = nil
+        }
         if Self.readLikeTools.contains(name) || pollsPendingJob {
             repeatedCallName = nil
         } else {
@@ -1025,6 +1048,13 @@ public final class AgentTaskState {
             return notice
         }
 
+        // A job polled `pendingPollThreshold` times in a row and still
+        // running: waiting longer inside this turn will not help.
+        if let name = pendingPollName {
+            return
+                "`\(name)` has reported the job as still running \(Self.pendingPollThreshold)+ times in a row. Stop polling for now: tell the user the job is still in progress and how to check on it later, unless you have other work to do meanwhile."
+        }
+
         // Repeated identical write/exec call: the strongest stuck signal we
         // have, so it outranks the result-class nudges. Reactive (3rd
         // identical call) and advisory only — the call still executed.
@@ -1140,7 +1170,8 @@ public final class AgentTaskState {
         guard let payload else { return false }
         var object = payload
         if let text = payload["text"] as? String,
-            text.first == "{",
+            text.drop(while: \.isWhitespace).first == "{",
+            text.contains("\"stat"),
             let data = text.data(using: .utf8),
             let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         {
