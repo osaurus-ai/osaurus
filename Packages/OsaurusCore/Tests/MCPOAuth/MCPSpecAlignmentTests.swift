@@ -370,7 +370,7 @@ struct MCPSpecAlignmentTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(await observed.handlerCancelled)
-        #expect(await observed.reasons.first??.hasPrefix("Timed out") == true)
+        #expect(await observed.reasons.first??.hasPrefix("No progress for") == true)
         await client.disconnect()
         await server.stop()
     }
