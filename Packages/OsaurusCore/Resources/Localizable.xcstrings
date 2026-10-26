@@ -1,6 +1,21 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld of %lld iPhones paired." : {
+
+    },
+    "No iPhone is paired. Up to 3 iPhones can be paired at a time." : {
+
+    },
+    "Paired iPhones" : {
+
+    },
+    "Unpair one of the iPhones below to pair another." : {
+
+    },
+    "Up to 3 iPhones Can Be Paired" : {
+
+    },
     "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload." : {
       "extractionState" : "manual",
       "localizations" : {

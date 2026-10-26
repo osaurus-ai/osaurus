@@ -165,7 +165,7 @@ struct RemoteSessionContinuationTests {
 
     @MainActor @Test func onlyThePairedKeyCountsAsThePhone() {
         #expect(!RemoteSessionContinuation.isPairedPhoneKey(nil))
-        guard let paired = MobilePairingService.shared.pairedKeyNonce else { return }
+        guard let paired = MobilePairingService.shared.pairedKeyNonces.first else { return }
         #expect(RemoteSessionContinuation.isPairedPhoneKey(paired.uppercased()))
         #expect(!RemoteSessionContinuation.isPairedPhoneKey(paired + "x"))
     }

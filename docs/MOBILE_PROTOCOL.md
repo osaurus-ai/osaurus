@@ -814,8 +814,10 @@ sequenceDiagram
 The Osaurus iPhone app pairs with **one** Mac by typing a 6-digit code shown in
 Settings → Mobile. It needs no master key on the phone and yields a
 master-scoped `osk-v1` key covering every agent on that Mac, plus each agent's
-crypto address for the Secure Channel (§6.2). One phone per Mac: a new
-pairing revokes the previous phone's key.
+crypto address for the Secure Channel (§6.2). Up to three phones per Mac,
+each with its own key. A phone that is already paired (same `deviceId`) may
+pair again, which revokes its previous key; a new phone past the limit gets
+`409 device_limit` and Settings won't show a code until one is unpaired.
 
 ### 11.1 Discovery
 
@@ -859,6 +861,7 @@ plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
 | `400` | `bad_request` | Malformed body, unsupported `v`, missing device fields, bad `encPub` (code not consumed) |
 | `401` | `invalid_code` | Wrong, expired, locked out, or no active code — deliberately indistinguishable |
 | `403` | `lan_only` | Arrived through the relay |
+| `409` | `device_limit` | Three other phones are paired; `message` says to unpair one on the Mac (attempt not spent) |
 | `429` | — | Per-IP rate limit (shared with `/pair`) |
 
 `isSimulator` (optional) only drives a "Simulator" badge next to the paired
@@ -949,8 +952,8 @@ POST /pair/confirm         (unauthenticated, LAN only, rate-limited per IP)
   immediately (inner `401` for the phone, which should return to pairing).
 - The phone unpairs itself with `POST /pair/unpair` (no body, inside the
   Secure Channel with its Bearer): `200 {"ok":true}` revokes its key and
-  clears the Mac's "Paired iPhone"; `403 not_paired_device` for any other
-  key. If the Mac is unreachable the phone forgets the pairing anyway and
+  removes it from the Mac's "Paired iPhones", leaving the other phones
+  paired; `403 not_paired_device` for any other key. If the Mac is unreachable the phone forgets the pairing anyway and
   the stale entry stays on the Mac until removed there.
 - "Keep Mac Awake for Paired iPhone" (default on) holds an idle-system-sleep
   assertion while a phone is paired.

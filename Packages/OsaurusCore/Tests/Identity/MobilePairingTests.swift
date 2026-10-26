@@ -129,8 +129,8 @@ struct MobilePairingServiceTests {
         #expect(payload.agents.allSatisfy { $0.relayURL == nil })
 
         #expect(service.activeCode == nil)
-        #expect(service.pairedDevice?.deviceId == "device-1")
-        #expect(service.pairedDevice?.keyId == info.id)
+        #expect(service.pairedDevices.first?.deviceId == "device-1")
+        #expect(service.pairedDevices.first?.keyId == info.id)
 
         // Single use: the same code can't be redeemed twice.
         #expect(service.redeem(request(code: "123456", encPub: pub)) == .invalidCode)
@@ -150,7 +150,7 @@ struct MobilePairingServiceTests {
             Issue.record("expected pairing to succeed")
             return
         }
-        #expect(service.pairedDevice?.isSimulator == true)
+        #expect(service.pairedDevices.first?.isSimulator == true)
     }
 
     @Test func pairedDeviceWithoutSimulatorFieldDecodes() throws {
@@ -234,6 +234,90 @@ struct MobilePairingServiceTests {
 
     @Test func noConnectEntryWithoutAnIdentity() {
         #expect(MobilePairingService.connectEntry(address: nil).isEmpty)
+    }
+
+    /// Pairs `deviceId` with a fresh code and key; the outcome of `redeem`.
+    @discardableResult
+    private func pair(_ service: MobilePairingService, deviceId: String) -> MobilePairingService.RedeemOutcome {
+        service.installPendingCodeForTesting(
+            PairingCode(code: "123456", issuedAt: Date()),
+            fullKey: "osk-v1.secret",
+            info: keyInfo()
+        )
+        let (_, pub) = PairingKeyEnvelope.generateRecipientKey()
+        return service.redeem(request(code: "123456", encPub: pub, deviceId: deviceId))
+    }
+
+    @Test func upToThreePhonesPairAndAFourthIsTurnedAway() {
+        let service = makeService()
+        for n in 1 ... MobilePairingService.maxPairedDevices {
+            guard case .paired = pair(service, deviceId: "device-\(n)") else {
+                Issue.record("expected phone \(n) to pair")
+                return
+            }
+        }
+        #expect(service.pairedDevices.map(\.deviceId) == ["device-1", "device-2", "device-3"])
+        #expect(service.isAtDeviceLimit)
+        #expect(pair(service, deviceId: "device-4") == .deviceLimitReached)
+        // Turned away before the guess counts, and the code stays up.
+        #expect(service.activeCode?.failedAttempts == 0)
+        #expect(service.pairedDevices.count == MobilePairingService.maxPairedDevices)
+    }
+
+    @Test func aPairedPhonePairingAgainReplacesItsOwnEntry() {
+        let service = makeService()
+        for n in 1 ... MobilePairingService.maxPairedDevices {
+            pair(service, deviceId: "device-\(n)")
+        }
+        let before = service.pairedDevices.first { $0.deviceId == "device-2" }?.keyId
+        guard case .paired = pair(service, deviceId: "device-2") else {
+            Issue.record("expected a paired phone to pair again at the limit")
+            return
+        }
+        #expect(service.pairedDevices.count == MobilePairingService.maxPairedDevices)
+        #expect(service.pairedDevices.filter { $0.deviceId == "device-2" }.count == 1)
+        #expect(service.pairedDevices.last?.deviceId == "device-2")
+        #expect(service.pairedDevices.last?.keyId != before)
+    }
+
+    @Test func unpairingOnePhoneKeepsTheOthers() {
+        let service = makeService()
+        pair(service, deviceId: "device-1")
+        pair(service, deviceId: "device-2")
+        guard let first = service.pairedDevices.first else {
+            Issue.record("expected a paired phone")
+            return
+        }
+        service.revokeDevice(first)
+        #expect(service.pairedDevices.map(\.deviceId) == ["device-2"])
+        // Its name stays, for the chats it started.
+        #expect(service.phoneName(deviceId: "device-1") == "Test iPhone")
+    }
+
+    @Test func theOnePhonePairedBeforeIsCarriedOver() throws {
+        let defaults = UserDefaults(suiteName: "MobilePairingTests.\(UUID().uuidString)")!
+        let device = PairedMobileDevice(
+            deviceId: "old-phone",
+            name: "Old iPhone",
+            keyId: UUID(),
+            pairedAt: Date(),
+            keyExpiresAt: Date().addingTimeInterval(86_400)
+        )
+        defaults.set(try JSONEncoder().encode(device), forKey: "mobileConnectPairedDevice")
+        let service = makeService(defaults: defaults)
+        #expect(service.pairedDevices == [device])
+        #expect(service.phoneName(deviceId: "old-phone") == "Old iPhone")
+        #expect(defaults.data(forKey: "mobileConnectPairedDevice") == nil)
+        // And it is read back from the new key next launch.
+        #expect(makeService(defaults: defaults).pairedDevices == [device])
+    }
+
+    @Test func aPhoneChatKeyNamesItsPhone() {
+        #expect(RemoteSessionContinuation.isPhoneChatKey(RemoteSessionContinuation.phoneChatKey))
+        #expect(RemoteSessionContinuation.isPhoneChatKey(RemoteSessionContinuation.phoneChatKey(deviceId: "d")))
+        #expect(!RemoteSessionContinuation.isPhoneChatKey("osaurus-connect-phoneX"))
+        #expect(!RemoteSessionContinuation.isPhoneChatKey(nil))
+        #expect(RemoteSessionContinuation.phoneName(externalSessionKey: RemoteSessionContinuation.phoneChatKey) == nil)
     }
 }
 

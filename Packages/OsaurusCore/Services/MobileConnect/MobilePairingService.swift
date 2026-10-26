@@ -2,8 +2,8 @@
 //  MobilePairingService.swift
 //  osaurus
 //
-//  Mobile pairing: lets exactly one phone (the Osaurus iPhone app) pair
-//  with this Mac by typing a 6-digit code shown in Settings → Mobile.
+//  Mobile pairing: lets up to `maxPairedDevices` phones (the Osaurus iPhone
+//  app) pair with this Mac by typing a 6-digit code shown in Settings → Mobile.
 //
 //  Flow:
 //    1. The user clicks "Generate Pairing Code". We mint a master-scoped
@@ -13,8 +13,9 @@
 //    2. The phone POSTs the code with an ephemeral X25519 key to
 //       `POST /pair/code` (LAN only). On a match we HPKE-seal the key plus
 //       the agent roster (ids + crypto addresses the phone pins for the
-//       Secure Channel) to the phone's key, record the device, and revoke
-//       whatever phone was paired before (one phone per Mac).
+//       Secure Channel) to the phone's key and record the device. A phone
+//       pairing again replaces its own entry; a new phone past the limit is
+//       turned away.
 //    3. An unused code expires after `PairingCode.ttl` and its key is
 //       deleted; so is one locked out by too many wrong guesses.
 //
@@ -100,7 +101,7 @@ struct MobilePairPayload: Codable, Sendable, Equatable {
     let agents: [AgentEntry]
 }
 
-/// The one phone paired with this Mac.
+/// A phone paired with this Mac.
 struct PairedMobileDevice: Codable, Sendable, Equatable {
     let deviceId: String
     let name: String
@@ -122,7 +123,14 @@ final class MobilePairingService: ObservableObject {
     /// feature off (or unpairing) never disables a tunnel the user enabled.
     private static let relayManagedAgentsKey = "mobileConnectRelayManagedAgents"
     static let wireVersion = 1
-    private static let pairedDeviceDefaultsKey = "mobileConnectPairedDevice"
+    /// Before several phones could pair: the one paired phone. Read once to
+    /// carry it over into `pairedDevicesDefaultsKey`.
+    private static let legacyPairedDeviceDefaultsKey = "mobileConnectPairedDevice"
+    private static let pairedDevicesDefaultsKey = "mobileConnectPairedDevices"
+    /// Names of every phone that has paired, by device id, kept after it
+    /// unpairs so its chats still say which phone they came from.
+    private static let phoneNamesDefaultsKey = "mobileConnectPhoneNames"
+    static let maxPairedDevices = 3
     /// Label of every pairing key minted from now on; phone chats keep it as
     /// their caller name and it is the row label under Identity → Access Keys.
     nonisolated static let keyLabel = "Mobile"
@@ -140,11 +148,13 @@ final class MobilePairingService: ObservableObject {
         /// Wrong, expired, locked-out, or no code at all — deliberately one
         /// outcome so a guesser learns nothing about which.
         case invalidCode
+        /// `maxPairedDevices` other phones are already paired.
+        case deviceLimitReached
         case badRequest(String)
 
         static func == (lhs: RedeemOutcome, rhs: RedeemOutcome) -> Bool {
             switch (lhs, rhs) {
-            case (.invalidCode, .invalidCode): return true
+            case (.invalidCode, .invalidCode), (.deviceLimitReached, .deviceLimitReached): return true
             case (.badRequest(let a), .badRequest(let b)): return a == b
             case (.paired(_, let a), .paired(_, let b)): return a == b
             case (.answered(let a, _), .answered(let b, _)): return a == b
@@ -154,7 +164,7 @@ final class MobilePairingService: ObservableObject {
     }
 
     @Published private(set) var activeCode: PairingCode?
-    @Published private(set) var pairedDevice: PairedMobileDevice?
+    @Published private(set) var pairedDevices: [PairedMobileDevice] = []
     @Published private(set) var isGeneratingCode = false
     @Published private(set) var lastError: String?
 
@@ -169,9 +179,16 @@ final class MobilePairingService: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: Self.pairedDeviceDefaultsKey) {
-            pairedDevice = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
+        if let data = defaults.data(forKey: Self.pairedDevicesDefaultsKey) {
+            pairedDevices = (try? JSONDecoder().decode([PairedMobileDevice].self, from: data)) ?? []
+        } else if let data = defaults.data(forKey: Self.legacyPairedDeviceDefaultsKey),
+            let device = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
+        {
+            pairedDevices = [device]
+            rememberName(of: device)
+            savePairedDevices()
         }
+        defaults.removeObject(forKey: Self.legacyPairedDeviceDefaultsKey)
         refreshKeepAwake()
         // A key that lapsed while the app was closed ends the pairing now.
         scheduleDeviceExpiry()
@@ -185,9 +202,14 @@ final class MobilePairingService: ObservableObject {
 
     // MARK: Code lifecycle
 
+    /// Whether no more phones can pair until one is unpaired. Settings checks
+    /// it before showing a code, so the user isn't sent off to type one the
+    /// Mac would turn away.
+    var isAtDeviceLimit: Bool { pairedDevices.count >= Self.maxPairedDevices }
+
     /// Mint the device key (biometric prompt) and show a fresh code.
     func generateCode() async {
-        guard !isGeneratingCode else { return }
+        guard !isGeneratingCode, !isAtDeviceLimit else { return }
         cancelCode()
         lastError = nil
         guard OsaurusIdentity.exists() else {
@@ -266,6 +288,7 @@ final class MobilePairingService: ObservableObject {
         }
 
         guard var code = activeCode, let pending = pendingKey else { return .invalidCode }
+        guard canPair(deviceId: deviceId) else { return .deviceLimitReached }
         switch code.attempt(request.code, at: now) {
         case .accepted:
             break
@@ -308,8 +331,14 @@ final class MobilePairingService: ObservableObject {
         )
     }
 
-    /// Records the phone and spends the code. One phone per Mac: the
-    /// previous phone's key stops working now.
+    /// A phone already paired may always pair again (a reinstall, a lost
+    /// key); a new one only while there is room.
+    private func canPair(deviceId: String) -> Bool {
+        !isAtDeviceLimit || pairedDevices.contains { $0.deviceId == deviceId }
+    }
+
+    /// Records the phone and spends the code. A phone pairing again replaces
+    /// its own entry: its previous key stops working now.
     private func completePairing(
         _ pending: (fullKey: String, info: AccessKeyInfo),
         deviceId: String,
@@ -317,7 +346,7 @@ final class MobilePairingService: ObservableObject {
         isSimulator: Bool?,
         now: Date
     ) {
-        if let previous = pairedDevice {
+        for previous in pairedDevices where previous.deviceId == deviceId {
             APIKeyManager.shared.revoke(id: previous.keyId)
         }
         expiryTask?.cancel()
@@ -325,16 +354,16 @@ final class MobilePairingService: ObservableObject {
         activeCode = nil
         pendingKey = nil
         exchanges.removeAll()
-        setPairedDevice(
-            PairedMobileDevice(
-                deviceId: deviceId,
-                name: deviceName,
-                keyId: pending.info.id,
-                pairedAt: now,
-                keyExpiresAt: pending.info.expiresAt,
-                isSimulator: isSimulator == true ? true : nil
-            )
+        let device = PairedMobileDevice(
+            deviceId: deviceId,
+            name: deviceName,
+            keyId: pending.info.id,
+            pairedAt: now,
+            keyExpiresAt: pending.info.expiresAt,
+            isSimulator: isSimulator == true ? true : nil
         )
+        rememberName(of: device)
+        setPairedDevices(pairedDevices.filter { $0.deviceId != deviceId } + [device])
     }
 
     // MARK: Redeem v2 (POST /pair/code, then POST /pair/confirm)
@@ -365,6 +394,7 @@ final class MobilePairingService: ObservableObject {
         guard let phoneShare = Data(base64urlEncoded: request.share) else { return .badRequest("Invalid key share") }
 
         guard var code = activeCode, pendingKey != nil else { return .invalidCode }
+        guard canPair(deviceId: deviceId) else { return .deviceLimitReached }
         switch code.spendAttempt(at: now) {
         case .accepted:
             activeCode = code
@@ -455,70 +485,90 @@ final class MobilePairingService: ObservableObject {
         return [.init(id: Agent.defaultId.uuidString, name: Agent.default.name, address: address)]
     }
 
-    /// Nonce of the paired phone's access key, which run rows carry as their
-    /// caller identity — how a chat started on the phone is recognised.
-    var pairedKeyNonce: String? {
-        guard let device = pairedDevice else { return nil }
-        return APIKeyManager.shared.listKeys().first { $0.id == device.keyId }?.nonce
+    /// Nonces of the paired phones' access keys, which run rows carry as
+    /// their caller identity — how a chat started on a phone is recognised.
+    var pairedKeyNonces: Set<String> {
+        let keyIds = Set(pairedDevices.map(\.keyId))
+        return Set(APIKeyManager.shared.listKeys().filter { keyIds.contains($0.id) }.map { $0.nonce.lowercased() })
     }
 
-    // MARK: Paired device
+    // MARK: Paired devices
 
-    /// `POST /pair/unpair`: the paired phone unpairs itself. Only the key
-    /// minted for the current paired device may do this.
-    /// Whether `nonce` is the paired phone's access key.
+    /// The paired phone whose access key has `nonce`, if any.
+    func pairedDevice(forKeyNonce nonce: String) -> PairedMobileDevice? {
+        let keys = APIKeyManager.shared.listKeys()
+        return pairedDevices.first { device in
+            keys.first { $0.id == device.keyId }.map { PairingCode.constantTimeEquals($0.nonce, nonce) } ?? false
+        }
+    }
+
+    /// Whether `nonce` is a paired phone's access key.
     func isPairedKey(nonce: String) -> Bool {
-        guard let device = pairedDevice,
-            let info = APIKeyManager.shared.listKeys().first(where: { $0.id == device.keyId })
-        else { return false }
-        return PairingCode.constantTimeEquals(info.nonce, nonce)
+        pairedDevice(forKeyNonce: nonce) != nil
     }
 
+    /// `POST /pair/unpair`: a paired phone unpairs itself. Only that phone
+    /// goes; the others stay paired.
     func unpairIfCaller(keyNonce: String) -> Bool {
-        guard let device = pairedDevice,
-            let info = APIKeyManager.shared.listKeys().first(where: { $0.id == device.keyId }),
-            PairingCode.constantTimeEquals(info.nonce, keyNonce)
-        else { return false }
-        revokeDevice()
+        guard let device = pairedDevice(forKeyNonce: keyNonce) else { return false }
+        revokeDevice(device)
         return true
     }
 
-    func revokeDevice() {
-        guard let device = pairedDevice else { return }
+    func revokeDevice(_ device: PairedMobileDevice) {
         APIKeyManager.shared.revoke(id: device.keyId)
-        setPairedDevice(nil)
+        setPairedDevices(pairedDevices.filter { $0.keyId != device.keyId })
     }
 
-    private func setPairedDevice(_ device: PairedMobileDevice?) {
-        pairedDevice = device
-        if let device, let data = try? JSONEncoder().encode(device) {
-            defaults.set(data, forKey: Self.pairedDeviceDefaultsKey)
-        } else {
-            defaults.removeObject(forKey: Self.pairedDeviceDefaultsKey)
-        }
+    /// What the phone with `deviceId` was called when it last paired, kept
+    /// after it unpairs.
+    func phoneName(deviceId: String) -> String? {
+        (defaults.dictionary(forKey: Self.phoneNamesDefaultsKey) as? [String: String])?[deviceId]
+    }
+
+    private func rememberName(of device: PairedMobileDevice) {
+        var names = (defaults.dictionary(forKey: Self.phoneNamesDefaultsKey) as? [String: String]) ?? [:]
+        names[device.deviceId] = device.name
+        defaults.set(names, forKey: Self.phoneNamesDefaultsKey)
+    }
+
+    private func setPairedDevices(_ devices: [PairedMobileDevice]) {
+        pairedDevices = devices
+        savePairedDevices()
         refreshKeepAwake()
         syncRelay()
         scheduleDeviceExpiry()
     }
 
-    /// The phone's key lasts 90 days (docs/MOBILE_PROTOCOL.md §11.4); after
+    private func savePairedDevices() {
+        if let data = try? JSONEncoder().encode(pairedDevices) {
+            defaults.set(data, forKey: Self.pairedDevicesDefaultsKey)
+        }
+    }
+
+    /// Each phone's key lasts 90 days (docs/MOBILE_PROTOCOL.md §11.4); after
     /// that the phone can no longer reach this Mac, so it stops counting as
-    /// paired, as if unpaired: the keep-awake assertion and the relay
-    /// tunnels this service turned on go with it. Continuous clock, so time
+    /// paired, as if unpaired. With the last one go the keep-awake assertion
+    /// and the relay tunnels this service turned on. One timer, for the key
+    /// that lapses first; it re-arms for the next. Continuous clock, so time
     /// the Mac spends asleep counts.
     private func scheduleDeviceExpiry() {
         deviceExpiryTask?.cancel()
         deviceExpiryTask = nil
-        guard let device = pairedDevice, let expiresAt = device.keyExpiresAt else { return }
-        let remaining = expiresAt.timeIntervalSinceNow
-        guard remaining > 0 else {
-            revokeDevice()
+        let now = Date()
+        let lapsed = pairedDevices.filter { ($0.keyExpiresAt ?? .distantFuture) <= now }
+        guard lapsed.isEmpty else {
+            for device in lapsed { APIKeyManager.shared.revoke(id: device.keyId) }
+            // Comes back here for the phones left.
+            setPairedDevices(pairedDevices.filter { ($0.keyExpiresAt ?? .distantFuture) > now })
             return
         }
+        guard let next = pairedDevices.compactMap(\.keyExpiresAt).min() else { return }
+        let remaining = next.timeIntervalSince(now)
         deviceExpiryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(remaining), clock: .continuous)
-            guard !Task.isCancelled, let self, self.pairedDevice?.keyId == device.keyId else { return }
-            self.revokeDevice()
+            guard !Task.isCancelled, let self else { return }
+            self.scheduleDeviceExpiry()
         }
     }
 
@@ -528,15 +578,15 @@ final class MobilePairingService: ObservableObject {
         defaults.object(forKey: keepAwakeDefaultsKey) as? Bool ?? true
     }
 
-    /// Hold an idle-system-sleep assertion while a phone is paired and the
+    /// Hold an idle-system-sleep assertion while any phone is paired and the
     /// preference is on, so the Mac stays reachable. Display sleep, lid
     /// close, and explicit Sleep are never overridden.
     func refreshKeepAwake() {
-        let shouldHold = pairedDevice != nil && Self.isKeepAwakeEnabled(in: defaults)
+        let shouldHold = !pairedDevices.isEmpty && Self.isKeepAwakeEnabled(in: defaults)
         if shouldHold, keepAwakeToken == nil {
             keepAwakeToken = ProcessInfo.processInfo.beginActivity(
                 options: [.idleSystemSleepDisabled],
-                reason: "Osaurus Mobile: keep this Mac reachable from the paired phone"
+                reason: "Osaurus Mobile: keep this Mac reachable from paired phones"
             )
         } else if !shouldHold, let token = keepAwakeToken {
             ProcessInfo.processInfo.endActivity(token)
@@ -563,7 +613,7 @@ extension MobilePairingService {
     func syncRelay() {
         let relay = RelayTunnelManager.shared
         var managed = relayManagedAgentIds
-        let shouldReach = pairedDevice != nil && Self.isReachAnywhereEnabled(in: defaults)
+        let shouldReach = !pairedDevices.isEmpty && Self.isReachAnywhereEnabled(in: defaults)
 
         if shouldReach {
             let remoteIds = Set(Self.remoteAgents().compactMap { UUID(uuidString: $0.id) })

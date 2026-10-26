@@ -21,7 +21,8 @@ struct OsaurusConnectView: View {
     @AppStorage(PhoneChatHandoff.defaultsKey) private var continuePhoneChats: Bool = true
     @State private var hasAppeared = false
     @State private var isEnablingNetwork = false
-    @State private var showRevokeConfirm = false
+    @State private var deviceToRevoke: PairedMobileDevice?
+    @State private var showDeviceLimitAlert = false
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -54,11 +55,20 @@ struct OsaurusConnectView: View {
         }
         .onChange(of: keepMacAwake) { _, _ in pairing.refreshKeepAwake() }
         .onChange(of: reachFromAnywhere) { _, _ in pairing.syncRelay() }
-        .alert(L("Unpair this iPhone?"), isPresented: $showRevokeConfirm) {
-            Button(L("Unpair"), role: .destructive) { pairing.revokeDevice() }
+        .alert(
+            L("Unpair this iPhone?"),
+            isPresented: Binding(get: { deviceToRevoke != nil }, set: { if !$0 { deviceToRevoke = nil } }),
+            presenting: deviceToRevoke
+        ) { device in
+            Button(L("Unpair"), role: .destructive) { pairing.revokeDevice(device) }
             Button(L("Cancel"), role: .cancel) {}
-        } message: {
+        } message: { _ in
             Text("Its access key stops working immediately. You can pair again with a new code.", bundle: .module)
+        }
+        .alert(L("Up to 3 iPhones Can Be Paired"), isPresented: $showDeviceLimitAlert) {
+            Button(L("OK"), role: .cancel) {}
+        } message: {
+            Text("Unpair one of the iPhones below to pair another.", bundle: .module)
         }
     }
 
@@ -94,7 +104,11 @@ struct OsaurusConnectView: View {
                     activeCodeView(code)
                 } else {
                     Button {
-                        Task { await pairing.generateCode() }
+                        if pairing.isAtDeviceLimit {
+                            showDeviceLimitAlert = true
+                        } else {
+                            Task { await pairing.generateCode() }
+                        }
                     } label: {
                         HStack(spacing: 6) {
                             if pairing.isGeneratingCode {
@@ -162,46 +176,61 @@ struct OsaurusConnectView: View {
         }
     }
 
-    // MARK: Paired device
+    // MARK: Paired devices
 
     @ViewBuilder private var pairedDeviceSection: some View {
-        SettingsSection(title: L("Paired iPhone"), icon: "checkmark.shield") {
-            Group {
-                if let device = pairing.pairedDevice {
-                    HStack(alignment: .center, spacing: 12) {
-                        Image(systemName: "iphone")
-                            .font(.system(size: 22))
-                            .foregroundColor(theme.accentColor)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(device.name)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(theme.primaryText)
-                                if device.isSimulator == true {
-                                    simulatorBadge
-                                }
-                            }
-                            Text(Self.pairedSubtitle(device))
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
-                        }
-                        Spacer()
-                        Button {
-                            showRevokeConfirm = true
-                        } label: {
-                            Text("Unpair", bundle: .module)
-                        }
-                        .buttonStyle(SettingsButtonStyle(isDestructive: true))
-                    }
-                } else {
-                    Text("No iPhone is paired. Only one iPhone can be paired at a time; pairing a new one unpairs the old one.", bundle: .module)
+        SettingsSection(title: L("Paired iPhones"), icon: "checkmark.shield") {
+            VStack(alignment: .leading, spacing: 12) {
+                if pairing.pairedDevices.isEmpty {
+                    Text("No iPhone is paired. Up to 3 iPhones can be paired at a time.", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
+                } else {
+                    ForEach(pairing.pairedDevices, id: \.keyId) { device in
+                        pairedDeviceRow(device)
+                    }
+                    Text(
+                        String(
+                            format: L("%lld of %lld iPhones paired."),
+                            pairing.pairedDevices.count,
+                            MobilePairingService.maxPairedDevices
+                        )
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .settingsLandingAnchor("settings.connect.pairedDevice")
+    }
+
+    private func pairedDeviceRow(_ device: PairedMobileDevice) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "iphone")
+                .font(.system(size: 22))
+                .foregroundColor(theme.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(device.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    if device.isSimulator == true {
+                        simulatorBadge
+                    }
+                }
+                Text(Self.pairedSubtitle(device))
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+            }
+            Spacer()
+            Button {
+                deviceToRevoke = device
+            } label: {
+                Text("Unpair", bundle: .module)
+            }
+            .buttonStyle(SettingsButtonStyle(isDestructive: true))
+        }
     }
 
     private var simulatorBadge: some View {
@@ -229,7 +258,7 @@ struct OsaurusConnectView: View {
                 )
                 .settingsLandingAnchor("settings.connect.reachAnywhere")
 
-                if reachFromAnywhere, pairing.pairedDevice != nil {
+                if reachFromAnywhere, !pairing.pairedDevices.isEmpty {
                     relayStatusRow
                 }
 

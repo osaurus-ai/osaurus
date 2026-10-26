@@ -4992,6 +4992,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     PairingRateLimiter.shared.penalize(ip: pairingIP)
                     status = .unauthorized
                     body = #"{"error":"invalid_code","message":"That code is wrong or has expired."}"#
+                case .deviceLimitReached:
+                    MobileConnectLog.write("\(path): turned a phone away, \(MobilePairingService.maxPairedDevices) paired")
+                    status = .conflict
+                    // The phone shows `message` as it is.
+                    body =
+                        #"{"error":"device_limit","message":"Up to 3 iPhones can be paired with this Mac. "#
+                        + #"Unpair one in Osaurus Settings → Mobile on your Mac, then try again."}"#
                 case .badRequest(let message):
                     MobileConnectLog.write("pair/code: bad request from \(pairingIP): \(message)")
                     status = .badRequest
@@ -5022,7 +5029,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     /// POST /pair/unpair — the paired phone unpairs itself (revokes its own
     /// key and clears Settings → Mobile). Authenticated by the auth
-    /// gate; only the key minted for the current paired device is accepted.
+    /// gate; only a paired phone's own key is accepted, and only that phone goes.
     private func handlePairUnpairEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -10420,6 +10427,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let started = await RemoteSessionContinuation.startPhoneChat(
                     id,
                     agentId: agentId,
+                    keyNonce: callerKeyNonce,
                     messages: req.messages
                 )
                 return started ? id : nil

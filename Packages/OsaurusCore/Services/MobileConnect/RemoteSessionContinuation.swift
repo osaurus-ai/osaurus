@@ -62,11 +62,11 @@ enum RemoteSessionContinuation {
         model: String
     ) async {
         // A new phone chat whose first message is this image prompt.
-        if let agentId = pendingImageChats.removeValue(forKey: sessionId), !generated.isEmpty,
+        if let pending = pendingImageChats.removeValue(forKey: sessionId), !generated.isEmpty,
             !isContinuable(sessionId)
         {
             let asked = [ChatMessage(role: "user", content: prompt)]
-            _ = await startPhoneChat(sessionId, agentId: agentId, messages: asked)
+            _ = await startPhoneChat(sessionId, agentId: pending.agentId, keyNonce: pending.keyNonce, messages: asked)
         }
         guard !generated.isEmpty, isContinuable(sessionId) else { return }
         let now = Date()
@@ -188,29 +188,45 @@ enum RemoteSessionContinuation {
     /// "Mobile" (or pre-rename "Osaurus Connect") label on the row. Pairing again mints a new key, and
     /// matching only the current one turned every older phone chat into a
     /// teammate's read-only one (tagged "via workspace", titled "caller →
-    /// agent"). One phone per Mac, so an earlier key was the owner's too.
+    /// agent"). Only the owner's phones pair, so an earlier key was theirs too.
     static func isFromPairedPhone(_ workspace: WorkspaceSessionContext) -> Bool {
         guard workspace.workspaceId.isEmpty, let caller = workspace.callerWallet?.lowercased() else { return false }
         if let name = workspace.callerName, MobilePairingService.allKeyLabels.contains(name) { return true }
-        guard let nonce = MobilePairingService.shared.pairedKeyNonce?.lowercased() else { return false }
-        return caller == nonce
+        return MobilePairingService.shared.pairedKeyNonces.contains(caller)
     }
 
     /// Whether `session` is one of the phone's chats: one it started (see
     /// `startPhoneChat`), or an older hosted row (see `isFromPairedPhone`).
     static func isFromPairedPhone(_ session: ChatSessionData) -> Bool {
-        if session.source == .chat, session.externalSessionKey == phoneChatKey { return true }
+        if session.source == .chat, isPhoneChatKey(session.externalSessionKey) { return true }
         return session.workspace.map(isFromPairedPhone) ?? false
     }
 
-    /// Marks a chat the phone started. It is otherwise an ordinary chat:
+    /// Marks a chat a phone started. It is otherwise an ordinary chat:
     /// no workspace stamp, so the Mac can open and continue it as its own.
+    /// Chats started since several phones could pair add `:<device id>`
+    /// (see `phoneChatKey(deviceId:)`), naming the phone.
     static let phoneChatKey = "osaurus-connect-phone"
 
-    /// Whether the caller's access key is the one the phone was paired with.
+    static func phoneChatKey(deviceId: String) -> String { "\(phoneChatKey):\(deviceId)" }
+
+    static func isPhoneChatKey(_ key: String?) -> Bool {
+        guard let key else { return false }
+        return key == phoneChatKey || key.hasPrefix("\(phoneChatKey):")
+    }
+
+    /// The name of the phone a chat with `externalSessionKey` came from, as
+    /// it was when it last paired; nil for a chat from before phones were
+    /// told apart.
+    @MainActor static func phoneName(externalSessionKey key: String?) -> String? {
+        guard let key, key.hasPrefix("\(phoneChatKey):") else { return nil }
+        return MobilePairingService.shared.phoneName(deviceId: String(key.dropFirst(phoneChatKey.count + 1)))
+    }
+
+    /// Whether the caller's access key is one a phone was paired with.
     static func isPairedPhoneKey(_ keyNonce: String?) -> Bool {
-        guard let keyNonce, let paired = MobilePairingService.shared.pairedKeyNonce else { return false }
-        return keyNonce.lowercased() == paired.lowercased()
+        guard let keyNonce else { return false }
+        return MobilePairingService.shared.pairedKeyNonces.contains(keyNonce.lowercased())
     }
 
     /// An older phone chat, a hosted row the Mac shows read-only, becomes an
@@ -258,30 +274,37 @@ enum RemoteSessionContinuation {
 
     /// Image prompts starting a phone chat, by chat id, with the agent to
     /// start it under. The chat is created once the image is in, with it.
-    private static var pendingImageChats: [UUID: UUID] = [:]
+    private static var pendingImageChats: [UUID: (agentId: UUID, keyNonce: String?)] = [:]
 
     /// The phone starts chat `sessionId` with an image prompt (§14.5).
     /// Honoured for the paired phone's key and an agent this Mac has.
     static func notePhoneImageChat(_ sessionId: UUID, agentId: UUID, keyNonce: String?) {
         guard isPairedPhoneKey(keyNonce), AgentManager.shared.agent(for: agentId) != nil else { return }
-        pendingImageChats[sessionId] = agentId
+        pendingImageChats[sessionId] = (agentId, keyNonce)
     }
 
     /// Starts the chat the phone named `sessionId` on its first run
     /// (docs/MOBILE_PROTOCOL.md §14.5), titled from what was asked. The run
     /// appends its turns when it ends, as for any continued chat. False when
     /// the id is already taken: an existing chat is never replaced.
-    static func startPhoneChat(_ sessionId: UUID, agentId: UUID, messages: [ChatMessage]) async -> Bool {
+    /// `keyNonce`, the caller's access key, names the phone on the chat.
+    static func startPhoneChat(
+        _ sessionId: UUID,
+        agentId: UUID,
+        keyNonce: String?,
+        messages: [ChatMessage]
+    ) async -> Bool {
         guard ChatSessionsManager.shared.session(for: sessionId) == nil,
             await ChatSessionStore.loadAsync(id: sessionId) == nil
         else { return false }
         let asked = ChatHistoryWriter.turns(from: messages.filter { $0.role == "user" })
+        let device = keyNonce.flatMap { MobilePairingService.shared.pairedDevice(forKeyNonce: $0) }
         let session = ChatSessionData(
             id: sessionId,
             title: ChatSessionData.generateTitle(from: asked),
             // As a hosted phone row does, so `GET /sessions?agent_id=` lists it.
             agentId: agentId,
-            externalSessionKey: phoneChatKey
+            externalSessionKey: device.map { phoneChatKey(deviceId: $0.deviceId) } ?? phoneChatKey
         )
         ChatSessionsManager.shared.save(session)
         NotificationCenter.default.post(name: ChatHistoryWriter.didPersistExternallyNotification, object: nil)
