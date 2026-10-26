@@ -1802,7 +1802,7 @@ public actor ModelRuntime {
     }
 
     nonisolated static func isChatOwnedResidencySource(_ source: RequestSource?) -> Bool {
-        source == nil || source == .chatUI
+        source == nil || source == .chatUI || source == .evaluation
     }
 
     /// Nested subagents may reuse a model resident for another surface. They

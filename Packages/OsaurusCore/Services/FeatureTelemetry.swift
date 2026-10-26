@@ -758,6 +758,7 @@ enum FeatureTelemetry {
     nonisolated static func sourceToken(_ source: InferenceSource) -> String {
         switch source {
         case .chatUI: return "chat_ui"
+        case .evaluation: return "evaluation"
         case .agent: return "agent"
         case .httpAPI: return "http_api"
         case .plugin: return "plugin"

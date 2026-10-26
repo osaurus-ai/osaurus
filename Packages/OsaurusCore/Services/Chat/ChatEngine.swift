@@ -16,8 +16,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
     private let agentModelOptionsProvider:
         @Sendable (String) async -> [String: ModelOptionValue]?
 
-    /// Source of the inference (for logging purposes)
-    private var inferenceSource: InferenceSource = .httpAPI
+    /// Host execution source controls residency as well as attribution. The
+    /// evaluation override is scoped to this run, never sticky on a reused engine.
+    private let baseInferenceSource: InferenceSource
+    private var inferenceSource: InferenceSource {
+        ChatExecutionContext.resolvedInferenceSource(baseInferenceSource)
+    }
     /// Display-only producer attribution. Residency continues to use
     /// `inferenceSource`; delegated helpers are chat-owned but shown as Agent.
     private let activitySource: InferenceSource?
@@ -88,7 +92,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         self.remoteServicesProvider = remoteServicesProvider
         self.reasoningCapabilityProvider = reasoningCapabilityProvider
         self.agentModelOptionsProvider = agentModelOptionsProvider
-        self.inferenceSource = source
+        self.baseInferenceSource = source
         self.activitySource = activitySource
         self.privacyReviewMode = privacyReviewMode
     }
@@ -217,13 +221,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         // delegated text agents) construct fresh requests on every step. They
         // do not own a composer-local option snapshot, so resolve the same
         // persisted per-model choice the visible picker writes. Keep this
-        // strictly on `.chatUI` + explicit agent requests: ordinary chat,
+        // on chat-owned UI/evaluation + explicit agent requests: ordinary chat,
         // OpenAI tool requests, plugins, scheduled work, P2P, and remote-agent
         // execution must not silently inherit GUI preferences.
         let requestModelOptions: [String: ModelOptionValue]? =
             if let explicit = request.context.modelOptions {
                 explicit
-            } else if inferenceSource == .chatUI,
+            } else if (inferenceSource == .chatUI || inferenceSource == .evaluation),
                 request.context.isAgentRequest,
                 !request.context.runAsRemoteAgent
             {

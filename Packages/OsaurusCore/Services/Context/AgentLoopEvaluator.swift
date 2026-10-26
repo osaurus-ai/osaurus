@@ -604,6 +604,9 @@ struct AgentLoopStepProgressTracker: Sendable {
 /// registration are.
 @MainActor
 public enum AgentLoopEvaluator {
+    /// A headless run has no chat window, but remains eligible for the
+    /// ordinary local-parent handoff/restore ownership contract.
+    static let inferenceSource: RequestSource = .evaluation
 
     /// A processed-call cancellation fixture specifies an exact interruption
     /// boundary, which cannot be observed after parallel dispatch has already
@@ -676,22 +679,24 @@ public enum AgentLoopEvaluator {
         useHostFolder: Bool = true,
         cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
-        await runConversation(
-            task: task,
-            workspace: workspace,
-            agentId: agentId,
-            maxIterations: maxIterations,
-            model: model,
-            contextWindowOverride: contextWindowOverride,
-            streaming: streaming,
-            maxTokens: maxTokens,
-            enableThinking: enableThinking,
-            stopOnToolRejection: stopOnToolRejection,
-            sandbox: sandbox,
-            useHostFolder: useHostFolder,
-            cancelAfterToolCalls: cancelAfterToolCalls,
-            engine: ChatEngine(source: SessionSource.chat.inferenceSource)
-        )
+        await ChatExecutionContext.$inferenceSourceOverride.withValue(inferenceSource) {
+            await runConversation(
+                task: task,
+                workspace: workspace,
+                agentId: agentId,
+                maxIterations: maxIterations,
+                model: model,
+                contextWindowOverride: contextWindowOverride,
+                streaming: streaming,
+                maxTokens: maxTokens,
+                enableThinking: enableThinking,
+                stopOnToolRejection: stopOnToolRejection,
+                sandbox: sandbox,
+                useHostFolder: useHostFolder,
+                cancelAfterToolCalls: cancelAfterToolCalls,
+                engine: ChatEngine(source: inferenceSource)
+            )
+        }
     }
 
     static func runConversation(

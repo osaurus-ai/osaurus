@@ -101,6 +101,14 @@ final class WeakChatSessionBox: @unchecked Sendable {
 /// `ChatSession.send` (and equivalent headless paths) so any tool reading
 /// them picks up the right scope without an explicit parameter.
 public enum ChatExecutionContext {
+    /// Host-only provenance for a headless evaluation and its delegated work.
+    /// Kept separate from persisted SessionSource and model-visible content.
+    @TaskLocal static var inferenceSourceOverride: RequestSource?
+
+    static func resolvedInferenceSource(_ source: RequestSource) -> RequestSource {
+        source == .chatUI && inferenceSourceOverride == .evaluation ? .evaluation : source
+    }
+
     /// The current chat session id whose tool calls are running. Tools that
     /// need per-conversation state (todo store, file history, method
     /// telemetry) key off this.

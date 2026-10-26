@@ -29,6 +29,9 @@ public struct DispatchRequest: Sendable {
     /// Optional original-task provenance when `prompt` contains app-authored
     /// wrappers. Nil means the prompt itself is the caller's task.
     public let taskIntent: ChatTaskIntent?
+    /// Host-only execution provenance; never persisted or supplied by a model
+    /// or an HTTP payload. Delegation explicitly carries it across queued work.
+    var inferenceSourceOverride: RequestSource? = nil
     /// Who runs this: an agent hosted here, or a teammate's shared workspace
     /// agent (run on their Mac over the relay). nil = anonymous, which every
     /// non-Chat surface refuses (`Agent.rejectBuiltInForExternalSurface`).

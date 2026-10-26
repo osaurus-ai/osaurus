@@ -35,6 +35,7 @@ struct QueuedSend: Equatable {
     var attachments: [Attachment]
     var oneOffSkillId: UUID?
     var taskIntent: ChatTaskIntent? = nil
+    var inferenceSourceOverride: RequestSource? = nil
 }
 
 /// A manual model change made after a conversation already has content.
@@ -2822,7 +2823,8 @@ final class ChatSession: ObservableObject {
         queuedSend = QueuedSend(
             text: trimmed,
             attachments: attachments,
-            oneOffSkillId: pendingOneOffSkillId
+            oneOffSkillId: pendingOneOffSkillId,
+            inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride
         )
         input = ""
         pendingAttachments = []
@@ -2916,7 +2918,9 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        }
     }
 
     /// Appends a `user`-role turn carrying a plugin-supplied interrupt
@@ -4862,7 +4866,9 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        }
     }
 
     /// Dispatch any queued send when the run ended naturally (no `stop()`
@@ -4876,7 +4882,9 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        }
     }
 
     /// Reused across runs so we don't pay the ICU date-symbol allocation that a
@@ -6363,7 +6371,7 @@ final class ChatSession: ObservableObject {
         // the phone's run in this chat too; a message is held, not lost.
         if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
             if hasContent {
-                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId, taskIntent: resolvedTaskIntent)
+                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId, taskIntent: resolvedTaskIntent, inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride)
             }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
