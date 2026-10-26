@@ -2479,6 +2479,11 @@ final class ChatSession: ObservableObject {
     /// the next request; a preserved progress turn immediately before it must
     /// appear exactly once. Kept as a pure helper so continuation history is
     /// testable without launching a model.
+    private static func hasAssistantReplayState(_ turn: ChatTurn) -> Bool {
+        turn.reasoningItemId?.isEmpty == false || turn.reasoningEncrypted?.isEmpty == false
+            || !turn.responsesOutputItems.isEmpty || !turn.anthropicThinkingBlocks.isEmpty
+    }
+
     static func modelVisibleAssistantMessage(
         _ turn: ChatTurn,
         isLastTurn: Bool,
@@ -2489,16 +2494,14 @@ final class ChatSession: ObservableObject {
             turn.contentIsBlank,
             turn.thinkingIsBlank,
             turn.toolCalls == nil,
-            turn.responsesOutputItems.isEmpty,
-            turn.anthropicThinkingBlocks.isEmpty
+            !hasAssistantReplayState(turn)
         {
             return nil
         }
         if turn.contentIsBlank,
             turn.thinkingIsBlank,
             (turn.toolCalls == nil || turn.toolCalls!.isEmpty),
-            turn.responsesOutputItems.isEmpty,
-            turn.anthropicThinkingBlocks.isEmpty
+            !hasAssistantReplayState(turn)
         {
             return nil
         }
@@ -4409,6 +4412,7 @@ final class ChatSession: ObservableObject {
             lastTurn.contentIsBlank,
             lastTurn.toolCalls == nil,
             !lastTurn.hasRenderableThinking,
+            !Self.hasAssistantReplayState(lastTurn),
             lastTurn.generationTokenCount == nil,
             lastTurn.generationTokensPerSecond == nil,
             // Never drop a turn the router billed — even a zero-output charge

@@ -9,10 +9,12 @@ struct ResponsesVisualLifecycleTests {
     private actor Engine: ChatEngineProtocol {
         private var continuation: AsyncThrowingStream<ResponsesGenerationEvent, Error>.Continuation?
         private(set) var requestCount = 0
-        func streamResponses(request _: ResponsesInferenceRequest) async throws
+        private(set) var requests: [ResponsesInferenceRequest] = []
+        func streamResponses(request: ResponsesInferenceRequest) async throws
             -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
         {
             requestCount += 1
+            requests.append(request)
             let pair = AsyncThrowingStream<ResponsesGenerationEvent, Error>.makeStream()
             continuation = pair.continuation
             return pair.stream
@@ -59,6 +61,67 @@ struct ResponsesVisualLifecycleTests {
         .responseCompleted(.init(responseID: "resp_ui_fixture", status: .completed,
             functionCalls: [], tokenCount: 7, tokensPerSecond: 40.123,
             unclosedReasoning: false, stopReason: "stop", promptTokensPerSecond: nil, mtp: nil))
+    }
+
+    @Test(arguments: ["id", "encrypted", "items", "signed"])
+    func providerOnlyTurnSurvivesRealCleanupAndTheNextCanonicalSend(_ carrier: String) async throws {
+        try await ChatHistoryTestStorage.run {
+            let smooth = UserDefaults.standard.object(forKey: "chatSmoothStreamingEnabled")
+            defer {
+                if let smooth { UserDefaults.standard.set(smooth, forKey: "chatSmoothStreamingEnabled") }
+                else { UserDefaults.standard.removeObject(forKey: "chatSmoothStreamingEnabled") }
+            }
+            configure()
+            let engine = Engine()
+            let session = self.session(engine)
+            let owner = ChatTurn(role: .assistant, content: "")
+            switch carrier {
+            case "id": owner.reasoningItemId = "rs_actual_fixture"
+            case "encrypted": owner.reasoningEncrypted = "actual-opaque-provider-bytes"
+            case "items": owner.responsesOutputItems = [.object([
+                "type": .string("reasoning"), "id": .string("rs_raw_fixture"),
+                "encrypted_content": .string("actual-raw-provider-bytes"),
+            ])]
+            default: owner.anthropicThinkingBlocks = [.object([
+                "type": .string("thinking"), "thinking": .string("Native signed state"),
+                "signature": .string("actual-provider-signature"),
+            ])]
+            }
+            session.turns = [ChatTurn(role: .user, content: "Earlier actual user turn"), owner]
+            #expect(ChatSession.modelVisibleAssistantMessage(owner, isLastTurn: true) != nil)
+            // Real lifecycle cleanup exercises the trim, without manufacturing
+            // a completed/charged/cancelled marker to keep the carrier alive.
+            session.stop(preservesCancelledMarker: false)
+            #expect(session.turns.contains { $0.id == owner.id })
+            #expect(owner.contentIsBlank && owner.thinkingIsBlank && owner.generationTokenCount == nil)
+            session.send("Continue from the provider's earlier state.")
+            try await wait { await engine.requestCount == 1 }
+            let request = try #require(await engine.requests.first)
+            let replay = try #require(request.input.first { $0.role == "assistant" })
+            #expect(replay.reasoning_item_id == owner.reasoningItemId)
+            #expect(replay.reasoning_encrypted == owner.reasoningEncrypted)
+            #expect((replay.responses_output_items ?? []) == owner.responsesOutputItems)
+            #expect((replay.anthropic_thinking_blocks ?? []) == owner.anthropicThinkingBlocks)
+            await engine.emit(.outputTextDelta("Continued actual fixture answer."))
+            await engine.emit(completion())
+            await engine.emit(.drained)
+            await engine.end()
+            try await wait { !session.isSendActiveForComposer }
+            #expect(session.lastStreamError == nil)
+        }
+    }
+
+    @Test func emptyProviderPlaceholdersDoNotPreventCleanup() async throws {
+        try await ChatHistoryTestStorage.run {
+            let owner = ChatTurn(role: .assistant, content: "")
+            owner.reasoningItemId = ""
+            owner.reasoningEncrypted = ""
+            let session = ChatSession()
+            session.turns = [ChatTurn(role: .user, content: "User turn"), owner]
+            #expect(ChatSession.modelVisibleAssistantMessage(owner, isLastTurn: false) == nil)
+            session.stop(preservesCancelledMarker: false)
+            #expect(!session.turns.contains { $0.id == owner.id })
+        }
     }
 
     @Test func progressIsOwnedByItsTurnAndInvalidatesTheBlockCache() throws {

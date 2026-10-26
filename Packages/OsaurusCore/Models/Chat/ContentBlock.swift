@@ -33,7 +33,10 @@ struct ToolCallItem: Equatable {
     var repeatCount: Int = 1
 
     static func == (lhs: ToolCallItem, rhs: ToolCallItem) -> Bool {
-        lhs.call.id == rhs.call.id && lhs.result == rhs.result && lhs.duration == rhs.duration
+        lhs.call.id == rhs.call.id && lhs.call.type == rhs.call.type
+            && lhs.call.function.name == rhs.call.function.name
+            && lhs.call.function.arguments == rhs.call.function.arguments
+            && lhs.result == rhs.result && lhs.duration == rhs.duration
             && lhs.repeatCount == rhs.repeatCount && lhs.unobservedResult == rhs.unobservedResult
     }
 }
