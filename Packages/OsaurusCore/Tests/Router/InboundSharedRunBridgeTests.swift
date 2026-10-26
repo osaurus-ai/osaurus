@@ -569,7 +569,7 @@ struct InboundSharedRunBridgeTests {
             let committed = try #require(
                 ChatHistoryDatabase.shared.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID }
             )
-            let committedDifferences = try ResponsesHistoryFixture.differingFields(committed, expected)
+            let committedDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(committed, expected)
             #expect(committedDifferences.isEmpty)
             // Drain/close the actual writer and clear pending overlays, then
             // read through an independent connection as after process restart.
@@ -578,7 +578,7 @@ struct InboundSharedRunBridgeTests {
             try disk.open()
             defer { disk.close() }
             let loaded = try #require(disk.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID })
-            let reloadedDifferences = try ResponsesHistoryFixture.differingFields(loaded, expected)
+            let reloadedDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(loaded, expected)
             #expect(reloadedDifferences.isEmpty)
         }
     }

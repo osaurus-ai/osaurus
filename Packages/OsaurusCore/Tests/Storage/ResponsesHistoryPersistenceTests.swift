@@ -65,10 +65,60 @@ enum ResponsesHistoryFixture {
             return "\(key): actual=\(String(describing: actualFields[key])) expected=\(String(describing: expectedFields[key]))"
         }
     }
+
+    /// SQL REAL dates cross the reference-date/Unix-epoch Double boundary.
+    /// Require the exact stored Unix value and bound reference-date rounding
+    /// by that value's ULP; every other field still uses the exact keyed diff.
+    static func sqliteRoundTripDifferences(_ actual: ChatTurnData, _ expected: ChatTurnData) throws -> [String] {
+        var represented = expected
+        var dateDifferences: [String] = []
+        let dates: [(String, WritableKeyPath<ChatTurnData, Date?>)] = [
+            ("createdAt", \.createdAt), ("completedAt", \.completedAt),
+            ("lastOutputAt", \.lastOutputAt), ("requestedAt", \.requestedAt),
+        ]
+        for (name, key) in dates {
+            switch (actual[keyPath: key], expected[keyPath: key]) {
+            case (nil, nil): break
+            case (.some(let actualDate), .some(let expectedDate)):
+                let storedUnix = expectedDate.timeIntervalSince1970
+                let error = abs(actualDate.timeIntervalSinceReferenceDate - expectedDate.timeIntervalSinceReferenceDate)
+                if actualDate.timeIntervalSince1970 == storedUnix, error <= storedUnix.ulp {
+                    represented[keyPath: key] = actualDate
+                } else {
+                    dateDifferences.append("\(name): reference-date error=\(error), Unix Double ULP=\(storedUnix.ulp), actual Unix=\(actualDate.timeIntervalSince1970), expected Unix=\(storedUnix)")
+                }
+            default:
+                dateDifferences.append("\(name): optional date presence changed")
+            }
+        }
+        return dateDifferences + (try differingFields(actual, represented))
+    }
 }
 
 @Suite(.serialized)
 struct ResponsesHistoryPersistenceTests {
+    @Test func sqliteComparisonAcceptsOnlyDateRepresentationAndRetainsExactNativeChecks() throws {
+        var expected = try ResponsesHistoryFixture.turn()
+        expected.createdAt = Date(timeIntervalSinceReferenceDate: 814_669_037.393262)
+        var actual = expected
+        actual.createdAt = expected.createdAt.map { Date(timeIntervalSince1970: $0.timeIntervalSince1970) }
+        let strictDifferences = try ResponsesHistoryFixture.differingFields(actual, expected)
+        #expect(strictDifferences.contains { $0.hasPrefix("createdAt:") })
+        let representedDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(actual, expected)
+        #expect(representedDifferences.isEmpty)
+        actual.reasoningEncrypted = "changed native bytes"
+        let nativeDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(actual, expected)
+        #expect(nativeDifferences.contains { $0.hasPrefix("reasoningEncrypted:") })
+        actual = expected
+        actual.createdAt = expected.createdAt.map { $0.addingTimeInterval($0.timeIntervalSince1970.ulp * 4) }
+        let shiftedDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(actual, expected)
+        #expect(shiftedDifferences.contains { $0.hasPrefix("createdAt:") })
+        actual = expected
+        actual.completedAt = nil
+        let presenceDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(actual, expected)
+        #expect(presenceDifferences.contains { $0 == "completedAt: optional date presence changed" })
+    }
+
     private func withPlaintextRoot(_ body: @Sendable () async throws -> Void) async throws {
         try await StoragePathsTestLock.shared.run {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("responses-sqlite-\(UUID().uuidString)")
