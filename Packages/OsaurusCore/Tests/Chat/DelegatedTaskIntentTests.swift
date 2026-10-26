@@ -70,15 +70,20 @@ struct DelegatedTaskIntentTests {
             config.warmModelsOnLoad = false
             config.autoGenerateChatTitles = false
             ChatConfigurationStore.save(config)
-            DefaultAgentConfigurationStore.save(.init(
-                autonomousExec: nil, toolSelectionMode: .manual, manualToolNames: ["share_artifact"]))
-            DefaultAgentConfigurationStore.resetCacheForTests()
+            // The Default agent is the orchestrator and intentionally excludes
+            // share_artifact. The observed failure was a persisted worker.
+            let worker = Agent(name: "Task intent worker \(UUID())",
+                systemPrompt: "Return the requested result.", defaultModel: "task-intent-fixture",
+                autonomousExec: .init(enabled: false), toolSelectionMode: .manual,
+                manualToolNames: ["share_artifact"], toolsEnabled: true, memoryEnabled: false)
+            AgentStore.save(worker)
             AgentManager.shared.refresh()
+            defer { AgentStore.delete(id: worker.id); AgentManager.shared.refresh() }
 
             let capture = Capture()
             let engine = ChatEngine(services: [Service(capture: capture)],
                 installedModelsProvider: { [] }, remoteServicesProvider: { [] })
-            let context = ExecutionContext(agentId: Agent.defaultId, source: .delegation)
+            let context = ExecutionContext(agentId: worker.id, source: .delegation)
             let session = context.chatSession
             session.selectedModel = "task-intent-fixture"
             session.forceChatEngineRouteForTests = true
@@ -89,6 +94,16 @@ struct DelegatedTaskIntentTests {
             session.chatEngineFactory = { _ in engine }
             let input = " \nReturn exactly BG_TOKEN_9.\t "
             let prompt = AgentDelegationDispatcher.delegatedPrompt(input: input)
+            let workerContext = await ChatExecutionContext.$currentSessionSource.withValue(.delegation) {
+                await SystemPromptComposer.composeChatContext(agentId: worker.id, executionMode: .none,
+                    model: "task-intent-fixture", query: prompt,
+                    messages: [.init(role: "user", content: prompt)])
+            }
+            // Establish the actual callable schema before dispatch, rather
+            // than allowing an empty toolset to make the choice assertions vacuous.
+            try #require(workerContext.tools.contains { $0.function.name == "share_artifact" })
+            #expect(isRequired(ChatToolChoicePolicy.resolve(tools: workerContext.tools,
+                userText: prompt, attempt: 1)), "The app-added wrapper would cause the original false requirement")
             await context.start(prompt: prompt, taskIntent: .init(userText: input))
             let sendTask1 = try #require(session.currentSendTaskForTesting)
             await sendTask1.value
