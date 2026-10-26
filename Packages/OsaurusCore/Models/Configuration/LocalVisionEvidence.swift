@@ -1,5 +1,6 @@
 import Foundation
 import MLXLLM
+import MLXLMCommon
 import MLXVLM
 
 /// Installed-checkpoint evidence, not a claim about inference quality. Names are
@@ -108,6 +109,18 @@ enum LocalVisionEvidence {
         return nil
     }
 
+    /// True when the linked vMLX builds the DeepSeek-V4.1 vision tower: its `DeepseekV4Model`
+    /// reports its lanes through `ModalityBearing` (the load-time tower check reads it), and the
+    /// tower is not switched off with vMLX's `VMLX_DSV41_VL=0`. Otherwise a V4.1 bundle stays
+    /// text-only instead of being refused at load.
+    static var deepseekV41VisionRuntimeAvailable: Bool {
+        let type: Any.Type = DeepseekV4Model.self
+        guard type is ModalityBearing.Type else { return false }
+        let flag = (ProcessInfo.processInfo.environment["VMLX_DSV41_VL"] ?? "")
+            .trimmingCharacters(in: .whitespaces).lowercased()
+        return !["0", "false", "off", "no"].contains(flag)
+    }
+
     private static func object(_ url: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: url),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -132,6 +145,41 @@ enum LocalVisionEvidence {
         let mimo = (try? JSONSerialization.data(withJSONObject: config)).map(MiMoV26Contract.matches) ?? false
         if modelType == "mimo_v2", !mimo {
             return result(false, "The configured MiMo representation has no registered multimodal runtime.")
+        }
+        if modelType == "deepseek_v41" {
+            guard deepseekV41VisionRuntimeAvailable else {
+                return result(false, "The linked vMLX runtime has no DeepSeek-V4.1 vision lane.")
+            }
+            // DeepSeek-V4.1-Flash loads through vMLX's LLM factory (`DeepseekV4Model`), which builds
+            // the vision tower from `vision_config` inside the text bundle and reports `.vision`
+            // through `ModalityBearing`. The bundle ships no processor file: the runtime places the
+            // image placeholders itself. Require the declared encoder depth, the aligner, the
+            // learned delimiters and the placeholder token.
+            guard let vision = config["vision_config"] as? [String: Any],
+                let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ((config["image_token_id"] as? NSNumber)?.intValue ?? -1) >= 0
+            else {
+                return result(false, "The DeepSeek-V4.1 bundle has no vision configuration or image token.")
+            }
+            do {
+                names = try tensorNames(directory)
+            } catch {
+                return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+            }
+            guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
+                return result(false, "The installed weight format is rejected by the local runtime preflight.")
+            }
+            let required = ["vision.patch_embed.proj.weight", "vision.norm.weight", "aligner.w1.weight",
+                "aligner.w2.weight", "image_start", "image_end", "image_newline"]
+            guard required.allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ i in
+                    names.contains("vision.blocks.\(i).attn.wqkv.weight")
+                        && names.contains("vision.blocks.\(i).mlp.w1.weight")
+                })
+            else {
+                return result(false, "The DeepSeek-V4.1 vision tower is missing encoder, aligner or delimiter weights.")
+            }
+            return result(true, "Image input is backed by the DeepSeek-V4.1 vision tower, aligner and delimiter weights in the bundle.")
         }
         guard VLMTypeRegistry.supportedModelTypes.contains(modelType) else {
             return result(false, "The configured architecture has no local vision runtime.")
