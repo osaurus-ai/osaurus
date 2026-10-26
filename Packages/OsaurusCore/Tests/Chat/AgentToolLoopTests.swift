@@ -1743,8 +1743,10 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.map(\.name) == ["bad_tool"])
         #expect(state.lastResultClass == .error)
         #expect(surface.emittedToolRejectionTexts == ["no"])
-        // No batch-complete callback on early stop.
-        #expect(surface.batchOutcomes.isEmpty)
+        // Per-batch history consumers need the processed rejection even
+        // when the remainder of the model's batch does not execute.
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes.first?.map(\.invocation.toolName) == ["bad_tool"])
     }
 
     @Test func rejectionContinuesUnderHeadlessPolicy() async throws {
@@ -2201,6 +2203,24 @@ struct AgentToolLoopTests {
         #expect(state.lastResultEnvelope == nil)
     }
 
+    @Test func serialInterceptCommitsEarlierOutcomesWithoutExecutingLaterCalls() async throws {
+        let surface = ScriptedLoopSurface(steps: [.toolCalls([
+            inv("first", callId: "call_first"),
+            inv("complete", #"{"summary":"done"}"#, callId: "call_complete"),
+            inv("never_runs", callId: "call_never"),
+        ])])
+        surface.toolResults["complete"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(tool: "complete", text: "done"), endRun: true
+        )
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(), state: AgentTaskState(), hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .endedBySurface)
+        #expect(surface.executedCalls.map(\.name) == ["first", "complete"])
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes.first?.map(\.callId) == ["call_first"])
+    }
+
     @Test func processedCallCancellationDoesNotExecuteLaterBatchWrites() async throws {
         for limit in [0, 1, 2] {
             let surface = ScriptedLoopSurface(steps: [
@@ -2292,6 +2312,8 @@ struct AgentToolLoopTests {
         #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
         #expect(surface.executedCalls.map(\.name) == ["first_tool"])
         #expect(surface.emittedToolRejectionTexts.isEmpty)
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes.first?.map(\.invocation.toolName) == ["first_tool"])
     }
 
     @Test func cancellationWinsOverAConcurrentDenialWithoutSyntheticText() async throws {

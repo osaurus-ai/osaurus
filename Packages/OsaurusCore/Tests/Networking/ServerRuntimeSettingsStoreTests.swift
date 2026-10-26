@@ -225,9 +225,49 @@ struct ServerRuntimeSettingsStoreTests {
         #expect(plan.cache.defaultMaxKVSize == nil)
         #expect(plan.concurrency.maxConcurrentSequences == nil)
         #expect(plan.displaySummary.contains("load_cap=unlimited"))
-        #expect(plan.displaySummary.contains("allocator_cap=unlimited"))
+        #expect(plan.displaySummary.contains("load_allocator_cap=unlimited"))
+        #expect(plan.displaySummary.contains("inference_allocator=runtime_managed"))
         #expect(plan.displaySummary.contains("max_concurrent=default"))
         #expect(plan.displaySummary.contains("kv_cap=unlimited"))
+    }
+
+    @Test func allocatorSummarySeparatesProfileLoadCapFromInferenceReuse() {
+        for mode in [VMLXMemorySafetyMode.safeAuto, .strict] {
+            var settings = VMLXServerRuntimeSettings()
+            settings.memorySafety.mode = mode
+            let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(for: settings)
+            #expect(plan.loadConfiguration.maxResidentBytes == .absolute(128 << 20))
+            #expect(settings.memorySafety.customAllocatorCacheBytes == nil)
+            #expect(plan.displaySummary.contains("load_allocator_cap=134217728"))
+            #expect(plan.displaySummary.contains("inference_allocator=runtime_managed"))
+            #expect(!plan.displaySummary.contains(" allocator_cap="))
+            // A profile's load allowance must not be mislabeled as the
+            // persistent inference maximum. Keep the existing runtime policy.
+            let runtimeCap = ModelRuntime.explicitAllocatorCacheLimitBytes(
+                customAllocatorCacheBytes: settings.memorySafety.customAllocatorCacheBytes)
+            #expect(runtimeCap == nil)
+            #expect(ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 5_421_024_670, configuredLimits: [runtimeCap]) == 5_421_024_670)
+        }
+    }
+
+    @Test func allocatorSummaryRetainsTheExplicitCustomReuseTarget() {
+        let custom: UInt64 = 64 << 20
+        for mode in [VMLXMemorySafetyMode.safeAuto, .strict, .diagnosticDangerous] {
+            var settings = VMLXServerRuntimeSettings()
+            settings.memorySafety.mode = mode
+            settings.memorySafety.customAllocatorCacheBytes = custom
+            let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(for: settings)
+            #expect(plan.loadConfiguration.maxResidentBytes == .absolute(custom))
+            #expect(plan.displaySummary.contains("load_allocator_cap=67108864"))
+            #expect(plan.displaySummary.contains("inference_allocator=custom_max:67108864"))
+            #expect(!plan.displaySummary.contains("inference_allocator=runtime_managed"))
+            let runtimeCap = ModelRuntime.explicitAllocatorCacheLimitBytes(
+                customAllocatorCacheBytes: settings.memorySafety.customAllocatorCacheBytes)
+            #expect(runtimeCap == Int(custom))
+            #expect(ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 5_421_024_670, configuredLimits: [runtimeCap]) == Int(custom))
+        }
     }
 
     @Test func batchEngineCapacityMatchesResolvedMemorySafetyConcurrency() {

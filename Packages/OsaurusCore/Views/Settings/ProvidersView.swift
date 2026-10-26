@@ -1199,6 +1199,7 @@ private struct ProviderEditSheet: View {
     @State private var streamingEnabled: Bool = false
     @State private var discoveryTimeout: Double = 20
     @State private var toolCallTimeout: Double = 45
+    @State private var progressHardCap: Double = MCPProvider.defaultProgressHardCap
     @State private var autoConnect: Bool = true
     @State private var authType: MCPProviderAuthType = .bearerToken
     @State private var oauthConfig: MCPOAuthConfig?
@@ -1598,6 +1599,7 @@ private struct ProviderEditSheet: View {
         self.authType = authType
         customHeaders.removeAll()
         toolCallTimeout = 45
+        progressHardCap = MCPProvider.defaultProgressHardCap
         testResult = nil
         manualAuthEndpoint = ""
         manualTokenEndpoint = ""
@@ -2442,11 +2444,47 @@ private struct ProviderEditSheet: View {
                                 Slider(value: $toolCallTimeout, in: 10 ... 120, step: 5)
                                     .tint(themeManager.currentTheme.accentColor)
                             }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Max Duration with Progress", bundle: .module)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(themeManager.currentTheme.primaryText)
+                                    Spacer()
+                                    progressHardCapLabel
+                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                        .foregroundColor(themeManager.currentTheme.accentColor)
+                                }
+                                Slider(value: $progressHardCap, in: MCPProvider.progressHardCapRange, step: 300)
+                                    .tint(themeManager.currentTheme.accentColor)
+                                Text(
+                                    "Calls that keep reporting progress can run this long. The timeout above is the longest gap between updates.",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 11))
+                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
+        }
+    }
+
+    /// Minutes, with the hour form in parentheses past an hour so long caps
+    /// stay readable ("90 min (1 h 30 min)").
+    private var progressHardCapLabel: Text {
+        let minutes = Int(progressHardCap / 60)
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        if minutes <= 60 {
+            return Text("\(minutes) min", bundle: .module)
+        } else if remainder == 0 {
+            return Text("\(minutes) min (\(hours) h)", bundle: .module)
+        } else {
+            return Text("\(minutes) min (\(hours) h \(remainder) min)", bundle: .module)
         }
     }
 
@@ -2749,6 +2787,7 @@ private struct ProviderEditSheet: View {
         streamingEnabled = provider.streamingEnabled
         discoveryTimeout = provider.discoveryTimeout
         toolCallTimeout = provider.toolCallTimeout
+        progressHardCap = provider.progressHardCap
         autoConnect = provider.autoConnect
         authType = provider.authType
         oauthConfig = provider.oauth
@@ -2965,6 +3004,7 @@ private struct ProviderEditSheet: View {
             streamingEnabled: streamingEnabled,
             discoveryTimeout: discoveryTimeout,
             toolCallTimeout: toolCallTimeout,
+            progressHardCap: progressHardCap,
             autoConnect: autoConnect,
             secretHeaderKeys: secretKeys,
             authType: authType,

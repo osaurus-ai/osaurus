@@ -76,10 +76,19 @@ struct MemorySafetySection: View {
 
                     HStack(spacing: 12) {
                         summaryPill(L("Load"), value: loadCapSummary)
-                        summaryPill(L("Allocator"), value: allocatorCapSummary)
+                        summaryPill(L("Load Allocator Cap"), value: allocatorCapSummary)
+                            .settingsLandingAnchor("server.memorySafety.loadAllocatorCap")
                         summaryPill(L("KV"), value: kvCapSummary)
                         summaryPill(L("Concurrency"), value: concurrencySummary)
                     }
+
+                    Text(
+                        L(
+                            "The load allocator cap sets a freed-buffer reuse target while loading. Inference uses a separate process-wide target based on loaded models and the active execution path. An explicit Allocator Cache Cap bounds the selected target in both phases. The pool can exceed that target until the next allocation trims it. These targets do not cap live weights, KV state, or physical RAM."
+                        )
+                    )
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
 
                     ForEach(resolvedPlan.warnings, id: \.self) { warning in
                         Text(warning)
@@ -111,8 +120,9 @@ struct MemorySafetySection: View {
 
                     OptionalIntField(
                         label: "Allocator Cache Cap (MB)",
-                        placeholder: "Blank = mode default",
-                        help: "Maximum MLX allocator cache, in MiB.",
+                        placeholder: "Blank = automatic",
+                        help:
+                            "Freed-buffer reuse target for loading and inference, in MiB. The pool can temporarily exceed it; the next allocation trims it. Blank retains the profile's load target and runtime-managed inference reuse. This is not a physical RAM cap.",
                         value: allocatorCacheMB,
                         clamp: 1 ... 262144
                     )

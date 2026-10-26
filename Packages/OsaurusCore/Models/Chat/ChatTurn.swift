@@ -10,6 +10,20 @@ import Combine
 import Foundation
 import os
 
+/// Why observation of an active remote tool stopped. This says nothing
+/// about whether its remote side effects succeeded or failed.
+enum RemoteToolStreamEnd: String, Sendable, Equatable {
+    case completed, failed, cancelled
+
+    var localizedUnobservedResult: String {
+        switch self {
+        case .completed: return L("The remote stream ended without a tool result. Its outcome is unknown.")
+        case .failed: return L("The remote connection failed before a tool result was received. Its outcome is unknown.")
+        case .cancelled: return L("Stopped waiting before a remote tool result was received. Its outcome is unknown.")
+        }
+    }
+}
+
 final class ChatTurn: ObservableObject, Identifiable {
     // MARK: - Token-estimate revision
 
@@ -246,9 +260,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     }
 
     /// Efficiently append thinking without triggering immediate UI update.
-    func appendThinking(_ s: String) {
+    func appendThinking(_ s: String, at: Date = Date()) {
         guard !s.isEmpty else { return }
-        if thinkingStartedAt == nil { thinkingStartedAt = Date() }
+        if thinkingStartedAt == nil { thinkingStartedAt = at }
         thinkingChunks.append(s)
         _thinkingLength += s.count
         _cachedThinking = nil  // Invalidate cache
@@ -306,6 +320,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// the flattened ChatTurn fields cannot represent (notably assistant
     /// commentary/final phase and future typed item fields).
     var responsesOutputItems: [JSONValue] = []
+    /// Exact provider-tagged signed/redacted Anthropic blocks for history.
+    var anthropicThinkingBlocks: [JSONValue] = []
     /// Provider-reported prompt usage for this assistant response, including
     /// the subset served from OpenAI's prompt cache when available.
     var inputTokenCount: Int? = nil
@@ -370,6 +386,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// (renders the live shimmer); a failure envelope ⇒ red node; any other
     /// non-error string ⇒ green/done node.
     @Published var remoteToolResults: [String: String] = [:]
+    /// Terminal display state when no result was observed. Separate from
+    /// results so transport end can never manufacture success/failure.
+    private(set) var remoteToolUnobservedResults: [String: RemoteToolStreamEnd] = [:]
     /// Bumped on every `remoteToolActivity` / `remoteToolResults` mutation so
     /// `BlockMemoizer`'s streaming fast-path can't short-circuit a trace that
     /// changed neither visible content nor thinking. Read-only to callers;
@@ -383,6 +402,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     @Published var thinkingDuration: TimeInterval?
     /// First reasoning-token time (ephemeral), used to compute `thinkingDuration`.
     private var thinkingStartedAt: Date?
+    private var accumulatedThinkingDuration: TimeInterval = 0
+    /// Ephemeral phase, separate from whether this turn contains reasoning.
+    /// Later reasoning can resume after a confirmed content/tool boundary.
+    var isReasoningActive: Bool { thinkingStartedAt != nil }
+    /// Request-owned prompt progress; never restored as a live phase.
+    var prefillProgress: PrefillProgressState?
     /// Tool name detected during streaming before the full invocation is ready.
     var pendingToolName: String? = nil {
         didSet {
@@ -420,21 +445,15 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Generation Benchmarks
 
-    /// Time from request start to first visible token, EXCLUDING any cold
-    /// model load that happened inside that window.
-    /// Persisted with the turn for billing / latency reporting.
-    ///
-    /// The exclusion matters. Loading a container happens between the send and
-    /// the first token, so it used to be billed here: a 64 GB M3 Max reported
-    /// "TTFT 215.61s" for a ~1.8k-token prompt, which is not a prefill rate any
-    /// machine produces — it was a 27 GB bundle loading. Reporting the sum made
-    /// a healthy engine look broken. The load is now carried separately in
-    /// `modelLoadSeconds`; neither number is hidden.
+    /// Request-step start to first generated text, reasoning or tool syntax.
+    /// Includes this request's queue/setup/load/prefill waits. New turns do
+    /// not subtract process-wide model-load intervals: those may belong to
+    /// another window. Older persisted turns may use load-excluded semantics.
     var timeToFirstToken: TimeInterval?
 
-    /// Seconds of cold model loading that fell inside this turn's
-    /// time-to-first-token window, or nil when the model was already resident
-    /// (the overwhelmingly common case, and the one that must look unchanged).
+    /// Separately attributed model load, when known for this request. New
+    /// typed UI streams leave this nil until runtime supplies correlation;
+    /// historical persisted rows may contain globally derived values.
     var modelLoadSeconds: TimeInterval?
     /// When the user pressed Enter (or Regenerate / Save & Regenerate) for the
     /// run this turn opened. Earlier than `createdAt` by the pre-send warm-up
@@ -493,11 +512,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Record the thinking duration once, at the first content/tool that follows
     /// reasoning. No-op for turns without thinking, after it's measured, or below
     /// the display threshold.
-    private func finalizeThinkingDuration() {
-        guard thinkingDuration == nil, let start = thinkingStartedAt else { return }
-        let elapsed = Date().timeIntervalSince(start)
-        if elapsed >= Self.minDisplayableToolDuration {
-            thinkingDuration = elapsed
+    func finalizeThinkingDuration(at: Date = Date()) {
+        guard let start = thinkingStartedAt else { return }
+        accumulatedThinkingDuration += max(0, at.timeIntervalSince(start))
+        thinkingStartedAt = nil
+        if accumulatedThinkingDuration >= Self.minDisplayableToolDuration {
+            thinkingDuration = accumulatedThinkingDuration
         }
     }
 
@@ -560,6 +580,7 @@ final class ChatTurn: ObservableObject, Identifiable {
                 )
             )
         }
+        remoteToolUnobservedResults.removeValue(forKey: callId)
         remoteToolResults[callId] =
             isError
             ? ToolEnvelope.failure(
@@ -571,15 +592,18 @@ final class ChatTurn: ObservableObject, Identifiable {
         remoteToolActivityTick &+= 1
     }
 
-    /// Flip any still-"running" remote tool rows to a neutral completed state.
+    /// Settle observation of still-running remote tools as explicitly unknown.
     /// Called when a Mode 2 stream ends (or is cancelled) so a missing terminal
-    /// trace can't leave a row shimmering forever.
+    /// trace can't leave a row shimmering forever. Missing completion is
+    /// unknown, never proof the remote tool succeeded.
     @MainActor
-    func finalizeRemoteToolActivity() {
+    func finalizeRemoteToolActivity(endedBy reason: RemoteToolStreamEnd = .completed) {
         guard !remoteToolActivity.isEmpty else { return }
         var changed = false
-        for call in remoteToolActivity where remoteToolResults[call.id] == nil {
-            remoteToolResults[call.id] = Self.remoteToolSuccessResult
+        for call in remoteToolActivity
+            where remoteToolResults[call.id] == nil && remoteToolUnobservedResults[call.id] == nil
+        {
+            remoteToolUnobservedResults[call.id] = reason
             changed = true
         }
         if changed { remoteToolActivityTick &+= 1 }
@@ -681,7 +705,8 @@ final class ChatTurn: ObservableObject, Identifiable {
 // MARK: - Persistence
 
 extension ChatTurn {
-    /// Lightweight Codable representation for database persistence
+    /// Lightweight Codable snapshot. Production SQLite persistence uses
+    /// `ChatTurnData` and `ChatHistoryDatabase`'s explicit column codec.
     struct Persisted: Codable {
         let id: String
         let role: String
@@ -692,6 +717,12 @@ extension ChatTurn {
         let toolCallId: String?
         var injectedContextPrefix: String? = nil
         var modelContextExcluded: Bool? = nil
+        var reasoningItemId: String? = nil
+        var reasoningEncrypted: String? = nil
+        var responsesOutputItems: [JSONValue]? = nil
+        var anthropicThinkingBlocks: [JSONValue]? = nil
+        var inputTokenCount: Int? = nil
+        var cachedInputTokenCount: Int? = nil
     }
 
     /// Converts this turn to a persistable representation
@@ -705,7 +736,13 @@ extension ChatTurn {
             toolResults: toolResults.isEmpty ? nil : toolResults,
             toolCallId: toolCallId,
             injectedContextPrefix: injectedContextPrefix,
-            modelContextExcluded: modelContextExcluded ? true : nil
+            modelContextExcluded: modelContextExcluded ? true : nil,
+            reasoningItemId: reasoningItemId,
+            reasoningEncrypted: reasoningEncrypted,
+            responsesOutputItems: responsesOutputItems.isEmpty ? nil : responsesOutputItems,
+            anthropicThinkingBlocks: anthropicThinkingBlocks.isEmpty ? nil : anthropicThinkingBlocks,
+            inputTokenCount: inputTokenCount,
+            cachedInputTokenCount: cachedInputTokenCount
         )
     }
 
@@ -728,6 +765,12 @@ extension ChatTurn {
         turn.toolCallId = p.toolCallId
         turn.injectedContextPrefix = p.injectedContextPrefix
         turn.modelContextExcluded = p.modelContextExcluded ?? false
+        turn.reasoningItemId = p.reasoningItemId
+        turn.reasoningEncrypted = p.reasoningEncrypted
+        turn.responsesOutputItems = p.responsesOutputItems ?? []
+        turn.anthropicThinkingBlocks = p.anthropicThinkingBlocks ?? []
+        turn.inputTokenCount = p.inputTokenCount
+        turn.cachedInputTokenCount = p.cachedInputTokenCount
 
         return turn
     }

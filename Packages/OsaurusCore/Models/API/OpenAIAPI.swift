@@ -334,6 +334,9 @@ struct ChatMessage: Codable, Sendable {
     /// replayed verbatim on later Responses turns so item ids, assistant phase,
     /// encrypted reasoning, and future typed fields survive.
     var responses_output_items: [JSONValue]? = nil
+    /// In-process provider-tagged signed/opaque thinking blocks. Never encoded
+    /// on the OpenAI Chat Completions wire or replayed as Responses Items.
+    var anthropic_thinking_blocks: [JSONValue]? = nil
 
     /// Extract image URLs from content parts (supports both data URLs and http URLs)
     var imageUrls: [String] {
@@ -485,7 +488,8 @@ extension ChatMessage {
         reasoning_content: String? = nil,
         reasoning_item_id: String? = nil,
         reasoning_encrypted: String? = nil,
-        responses_output_items: [JSONValue]? = nil
+        responses_output_items: [JSONValue]? = nil,
+        anthropic_thinking_blocks: [JSONValue]? = nil
     ) {
         self.role = role
         self.content = content
@@ -497,6 +501,7 @@ extension ChatMessage {
         self.reasoning_item_id = reasoning_item_id
         self.reasoning_encrypted = reasoning_encrypted
         self.responses_output_items = responses_output_items
+        self.anthropic_thinking_blocks = anthropic_thinking_blocks
     }
 
     /// Initialize from a route adapter that already normalized OpenAI-style
@@ -762,15 +767,28 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// typed 400 instead of being silently dropped.
     var logprobs: Bool? = nil
     var top_logprobs: Int? = nil
+    /// Host execution state is independent of the public chat/Responses wire body.
+    /// Copy it as one value across adapters so new controls cannot be dropped.
+    var inferenceContext = InferenceRequestContext()
+
     /// Model-specific options from the active ModelProfile (not serialized to JSON).
-    var modelOptions: [String: ModelOptionValue]? = nil
+    var modelOptions: [String: ModelOptionValue]? {
+        get { inferenceContext.modelOptions }
+        set { inferenceContext.modelOptions = newValue }
+    }
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
-    var ttftTrace: TTFTTrace? = nil
+    var ttftTrace: TTFTTrace? {
+        get { inferenceContext.ttftTrace }
+        set { inferenceContext.ttftTrace = newValue }
+    }
     /// Local-only correlation id tying this request to the chat assistant
     /// turn that produced it, so the Insights tab can be opened focused on a
     /// specific response. Not decoded from OpenAI JSON, not forwarded to
     /// remote providers.
-    var turnId: UUID? = nil
+    var turnId: UUID? {
+        get { inferenceContext.turnId }
+        set { inferenceContext.turnId = newValue }
+    }
     /// Per-request thinking toggle. Translated to `modelOptions["disableThinking"]`
     /// at request entry; absent preserves server defaults.
     var enable_thinking: Bool? = nil
@@ -781,17 +799,26 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// Local-only marker for app/UI requests whose sampling values came from
     /// profile defaults. Not decoded from OpenAI JSON and not forwarded to
     /// remote providers.
-    var samplingParametersAreImplicit: Bool = false
+    var samplingParametersAreImplicit: Bool {
+        get { inferenceContext.samplingParametersAreImplicit }
+        set { inferenceContext.samplingParametersAreImplicit = newValue }
+    }
     /// Local-only marker set by agent-driven surfaces (the `/agents/{id}/run`
     /// endpoint, dispatch, and agent-bound Chat sessions) so `message_sent`
     /// telemetry can label the turn `is_agent`. Not decoded from OpenAI JSON
     /// and not forwarded to remote providers.
-    var isAgentRequest: Bool = false
+    var isAgentRequest: Bool {
+        get { inferenceContext.isAgentRequest }
+        set { inferenceContext.isAgentRequest = newValue }
+    }
     /// Stable per-logical-step idempotency token. Set by the chat surface and
     /// reused across connect-phase and transient agent-loop retries so the
     /// Osaurus Router can dedupe billing on a re-POST. Not decoded from inbound
     /// OpenAI JSON; forwarded ONLY to the router (in the signed request body).
-    var idempotencyKey: String? = nil
+    var idempotencyKey: String? {
+        get { inferenceContext.idempotencyKey }
+        set { inferenceContext.idempotencyKey = newValue }
+    }
     /// Local-only marker set by a chat session that targets a paired/discovered
     /// remote Osaurus *agent* (Mode 2). When true the request is routed to the
     /// remote `/agents/{address}/run` endpoint so the agent runs fully
@@ -799,7 +826,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// stream back. When false an `.osaurus` provider is used as a plain
     /// OpenAI-compatible inference backend (`/chat/completions`, Mode 1). Not
     /// decoded from OpenAI JSON and not forwarded to remote providers.
-    var runAsRemoteAgent: Bool = false
+    var runAsRemoteAgent: Bool {
+        get { inferenceContext.runAsRemoteAgent }
+        set { inferenceContext.runAsRemoteAgent = newValue }
+    }
     /// Local-only: the remote agent's live effective model (the model the peer
     /// will actually run), carried purely so the Insights log records *that*
     /// instead of the local prefixed fallback (e.g. `coco/foundation`) the
@@ -807,33 +837,54 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// Only meaningful for Mode 2 (`runAsRemoteAgent`); over the wire Mode 2
     /// omits `model` entirely (the peer resolves its own effective model).
     /// Not decoded from OpenAI JSON and not forwarded to remote providers.
-    var remoteAgentLogModel: String? = nil
+    var remoteAgentLogModel: String? {
+        get { inferenceContext.remoteAgentLogModel }
+        set { inferenceContext.remoteAgentLogModel = newValue }
+    }
     /// Local-only: the `RemoteProvider` id of the remote agent this Mode 2 run
     /// targets. With `runAsRemoteAgent`, `ChatEngine` routes directly to this
     /// provider's service instead of by model string, so a stale `selectedModel`
     /// (e.g. a leftover prefix like `fugu/...`) can't redirect an agent run to a
     /// different provider. Not decoded from OpenAI JSON, not sent to providers.
-    var remoteAgentProviderId: UUID? = nil
+    var remoteAgentProviderId: UUID? {
+        get { inferenceContext.remoteAgentProviderId }
+        set { inferenceContext.remoteAgentProviderId = newValue }
+    }
     /// Local-only: when true, model-load and prefill progress are not surfaced
     /// through `InferenceProgressManager` (background warm-up requests).
-    var suppressProgressUI: Bool = false
+    var suppressProgressUI: Bool {
+        get { inferenceContext.suppressProgressUI }
+        set { inferenceContext.suppressProgressUI = newValue }
+    }
     /// Local-only: when true, the prompt is truncated to the processor's
     /// canonical history cache boundary (rendered without the generation
     /// prompt) before prefill. Background warm-up requests set this so the
     /// KV the engine stores is an exact token-prefix of the next real send —
     /// required for sliding-window models whose caches cannot be trimmed to
     /// a boundary at store time.
-    var warmupPrefill: Bool = false
+    var warmupPrefill: Bool {
+        get { inferenceContext.warmupPrefill }
+        set { inferenceContext.warmupPrefill = newValue }
+    }
     /// Local-only: byte-exact reusable leading system-prompt text from
     /// `SystemPromptComposer.staticPrefix`. vmlx uses this only as a
     /// tokenizer-validated SSD-prefix boundary hint after the full prompt has
     /// already been rendered; it is not decoded from OpenAI JSON and is not
     /// forwarded to remote providers.
-    var cacheStableSystemPrefix: String? = nil
+    var cacheStableSystemPrefix: String? {
+        get { inferenceContext.cacheStableSystemPrefix }
+        set { inferenceContext.cacheStableSystemPrefix = newValue }
+    }
     /// Local admission contract, checked against exact prepared tokens before prefill.
-    var admissionPositionLimit: Int? = nil
+    var admissionPositionLimit: Int? {
+        get { inferenceContext.admissionPositionLimit }
+        set { inferenceContext.admissionPositionLimit = newValue }
+    }
     /// Internal delegation ceiling, not a user output reservation. Never decoded from API JSON.
-    var admissionOutputTokensAreImplicit: Bool = false
+    var admissionOutputTokensAreImplicit: Bool {
+        get { inferenceContext.admissionOutputTokensAreImplicit }
+        set { inferenceContext.admissionOutputTokensAreImplicit = newValue }
+    }
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on
@@ -842,9 +893,15 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// entitled to the GPU.
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.
-    var backgroundModelLoad: Bool = false
+    var backgroundModelLoad: Bool {
+        get { inferenceContext.backgroundModelLoad }
+        set { inferenceContext.backgroundModelLoad = newValue }
+    }
     /// Internal direct-Send capability, never decoded from or encoded to the wire.
-    var alignmentRepairModel: String? = nil
+    var alignmentRepairModel: String? {
+        get { inferenceContext.alignmentRepairModel }
+        set { inferenceContext.alignmentRepairModel = newValue }
+    }
     /// Local-only: a nested subagent may reuse a model that another surface
     /// already owns (for example an HTTP API model under manual multi-model
     /// residency). In that case the child request must not relabel the
@@ -853,7 +910,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// models still acquire the normal Chat UI ownership marker.
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.
-    var preserveExistingResidencyOwner: Bool = false
+    var preserveExistingResidencyOwner: Bool {
+        get { inferenceContext.preserveExistingResidencyOwner }
+        set { inferenceContext.preserveExistingResidencyOwner = newValue }
+    }
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -901,27 +961,11 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        // Preserve admission, residency, routing and attribution as one value.
+        copy.inferenceContext = inferenceContext
         copy.min_p = min_p
-        copy.modelOptions = modelOptions
-        copy.ttftTrace = ttftTrace
-        copy.turnId = turnId
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
-        copy.samplingParametersAreImplicit = samplingParametersAreImplicit
-        copy.isAgentRequest = isAgentRequest
-        copy.idempotencyKey = idempotencyKey
-        copy.runAsRemoteAgent = runAsRemoteAgent
-        copy.remoteAgentLogModel = remoteAgentLogModel
-        copy.remoteAgentProviderId = remoteAgentProviderId
-        copy.suppressProgressUI = suppressProgressUI
-        copy.warmupPrefill = warmupPrefill
-        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
-        // Must be copied with the other local-only flags. Dropping it silently
-        // promotes a background request back to interactive — and an interactive
-        // request is allowed to evict the model someone is using.
-        copy.backgroundModelLoad = backgroundModelLoad
-        copy.alignmentRepairModel = alignmentRepairModel
-        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy
@@ -952,27 +996,11 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        // Preserve admission, residency, routing and attribution as one value.
+        copy.inferenceContext = inferenceContext
         copy.min_p = min_p
-        copy.modelOptions = modelOptions
-        copy.ttftTrace = ttftTrace
-        copy.turnId = turnId
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
-        copy.samplingParametersAreImplicit = samplingParametersAreImplicit
-        copy.isAgentRequest = isAgentRequest
-        copy.idempotencyKey = idempotencyKey
-        copy.runAsRemoteAgent = runAsRemoteAgent
-        copy.remoteAgentLogModel = remoteAgentLogModel
-        copy.remoteAgentProviderId = remoteAgentProviderId
-        copy.suppressProgressUI = suppressProgressUI
-        copy.warmupPrefill = warmupPrefill
-        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
-        // Must be copied with the other local-only flags. Dropping it silently
-        // promotes a background request back to interactive — and an interactive
-        // request is allowed to evict the model someone is using.
-        copy.backgroundModelLoad = backgroundModelLoad
-        copy.alignmentRepairModel = alignmentRepairModel
-        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy

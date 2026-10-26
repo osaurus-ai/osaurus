@@ -15,7 +15,7 @@ private struct LocalModelRef {
     let modelId: String
 }
 
-actor MLXService: ToolCapableService {
+actor MLXService: ToolCapableService, ResponsesGenerationService {
 
     /// Shared instance for convenience (actor is stateless, delegates to ModelRuntime.shared)
     static let shared = MLXService()
@@ -212,6 +212,38 @@ actor MLXService: ToolCapableService {
             toolChoice: toolChoice,
             modelId: model.modelId,
             modelName: model.name
+        )
+    }
+
+    func streamResponses(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        requestedModel: String?
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+        let model = try selectModel(requestedName: requestedModel)
+        try Self.validateRuntimePolicy(
+            modelName: model.name,
+            modelId: model.modelId,
+            messages: messages,
+            parameters: parameters,
+            tools: tools,
+            runtime: ServerRuntimeSettingsStore.snapshot()
+        )
+        let events = try await ModelRuntime.shared.streamResponseEvents(
+            messages: messages,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools,
+            toolChoice: toolChoice,
+            modelId: model.modelId,
+            modelName: model.name
+        )
+        return ResponsesGenerationStream.native(
+            events.events,
+            waitForProducerDrain: events.waitForProducerDrain
         )
     }
 

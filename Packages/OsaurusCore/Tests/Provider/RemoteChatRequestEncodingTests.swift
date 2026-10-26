@@ -20,6 +20,34 @@ import Testing
 @Suite("RemoteChatRequest encoding")
 struct RemoteChatRequestEncodingTests {
 
+    @Test func wireProbeCapturesSelectedProtocolEndpointAtRequestConstruction() async throws {
+        let rows: [(RemoteProviderType, String)] = [
+            (.openResponses, "/v1/responses"),
+            (.openaiLegacy, "/v1/chat/completions"),
+            (.anthropic, "/v1/messages"),
+            (.gemini, "/v1/models/fixture-model:streamGenerateContent"),
+        ]
+        for (type, path) in rows {
+            let service = RemoteProviderService(
+                provider: RemoteProvider(
+                    name: "wire-fixture", host: "example.test", providerProtocol: .https,
+                    port: nil, basePath: "/v1", authType: .none, providerType: type
+                ),
+                models: ["fixture-model"], resolvedHeaders: [:]
+            )
+            let probe = WireTransportProbe()
+            let built = try await WireTransportProbe.$current.withValue(probe) {
+                try await service.buildURLRequest(for: Self.makeRequest(
+                    model: "fixture-model", maxTokens: nil, stream: true
+                ))
+            }
+            #expect(built.url?.path == path)
+            #expect(probe.requestEndpointURL?.path == path)
+            #expect(probe.requestEndpointURL?.query == nil)
+            #expect(probe.snapshot().request == built.httpBody)
+        }
+    }
+
     @Test func encode_nonReasoningModel_usesMaxTokens() throws {
         let request = Self.makeRequest(model: "mistral-large-latest", maxTokens: 1024)
         let payload = try Self.encodeAsDictionary(request)
@@ -4624,7 +4652,9 @@ struct RemoteChatRequestEncodingTests {
                         assertNonWhitespace(textBlock.text)
                     case .toolResult(let result):
                         assertNonWhitespace(result.content?.plainText ?? "")
-                    case .toolUse, .image:
+                    case .toolUse, .image, .thinking, .redactedThinking:
+                        // Opaque/signed reasoning is not a text/tool-result
+                        // payload. Its dedicated continuity tests own it.
                         break
                     }
                 }

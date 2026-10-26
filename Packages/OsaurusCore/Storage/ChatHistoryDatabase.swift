@@ -174,7 +174,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 21
+    static let latestSchemaVersion = 22
 
     /// Forward-compatibility invariant. Every chat-history migration is
     /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
@@ -223,7 +223,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             migrateToV1, migrateToV2, migrateToV3, migrateToV4, migrateToV5, migrateToV6,
             migrateToV7, migrateToV8, migrateToV9, migrateToV10, migrateToV11, migrateToV12,
             migrateToV13, migrateToV14, migrateToV15, migrateToV16, migrateToV17,
-            migrateToV18, migrateToV19, migrateToV20, migrateToV21,
+            migrateToV18, migrateToV19, migrateToV20, migrateToV21, migrateToV22,
         ]
     }
 
@@ -267,6 +267,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         "terminal_stop_reason", "model_context_excluded", "tool_call_logs",
         "injected_context_prefix", "generation_tokens_per_second", "model_load_seconds", "last_output_at",
         "requested_at",
+        "reasoning_item_id", "reasoning_encrypted", "responses_output_items",
+        "anthropic_thinking_blocks", "input_token_count", "cached_input_token_count",
     ]
 
     private func assertWritableSchema() throws {
@@ -580,6 +582,19 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV21() throws {
         try addColumnIfMissing("turns", "requested_at", "REAL")
         try setSchemaVersion(21)
+    }
+
+    /// v22: native provider state is part of the conversation, not a display
+    /// projection. Nullable columns keep legacy chats readable without
+    /// inventing IDs, signatures, opaque payloads or token measurements.
+    private func migrateToV22() throws {
+        try addColumnIfMissing("turns", "reasoning_item_id", "TEXT")
+        try addColumnIfMissing("turns", "reasoning_encrypted", "TEXT")
+        try addColumnIfMissing("turns", "responses_output_items", "TEXT")
+        try addColumnIfMissing("turns", "anthropic_thinking_blocks", "TEXT")
+        try addColumnIfMissing("turns", "input_token_count", "INTEGER")
+        try addColumnIfMissing("turns", "cached_input_token_count", "INTEGER")
+        try setSchemaVersion(22)
     }
 
     /// v20: git-like file history. One `file_change_sets` row per mutating
@@ -1977,6 +1992,23 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if let billing = turn.routerBilling, let encoded = try? encoder.encode(billing) {
             hasher.update(data: encoded)
         }
+        // Native state can arrive after the visible answer's first save.
+        // Hash an explicitly keyed envelope so a carrier-only change cannot
+        // be skipped, and absent versus reported-zero usage stay distinct.
+        struct NativeState: Encodable {
+            let reasoningItemId: String?
+            let reasoningEncrypted: String?
+            let responsesOutputItems: [JSONValue]
+            let anthropicThinkingBlocks: [JSONValue]
+            let inputTokenCount: Int?
+            let cachedInputTokenCount: Int?
+        }
+        if let native = try? encoder.encode(NativeState(
+            reasoningItemId: turn.reasoningItemId, reasoningEncrypted: turn.reasoningEncrypted,
+            responsesOutputItems: turn.responsesOutputItems, anthropicThinkingBlocks: turn.anthropicThinkingBlocks,
+            inputTokenCount: turn.inputTokenCount, cachedInputTokenCount: turn.cachedInputTokenCount)) {
+            hasher.update(data: native)
+        }
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -2085,8 +2117,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
              created_at, completed_at, generation_token_count, time_to_first_token,
              tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
              model_context_excluded, tool_call_logs, injected_context_prefix,
-             generation_tokens_per_second, model_load_seconds, last_output_at, requested_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+             generation_tokens_per_second, model_load_seconds, last_output_at, requested_at,
+             reasoning_item_id, reasoning_encrypted, responses_output_items, anthropic_thinking_blocks,
+             input_token_count, cached_input_token_count)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -2113,7 +2147,13 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             generation_tokens_per_second = excluded.generation_tokens_per_second,
             model_load_seconds = excluded.model_load_seconds,
             last_output_at = excluded.last_output_at,
-            requested_at = excluded.requested_at
+            requested_at = excluded.requested_at,
+            reasoning_item_id = excluded.reasoning_item_id,
+            reasoning_encrypted = excluded.reasoning_encrypted,
+            responses_output_items = excluded.responses_output_items,
+            anthropic_thinking_blocks = excluded.anthropic_thinking_blocks,
+            input_token_count = excluded.input_token_count,
+            cached_input_token_count = excluded.cached_input_token_count
         """
 
     private static let selectTurnsSQL = """
@@ -2122,7 +2162,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                created_at, completed_at, generation_token_count, time_to_first_token,
                tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
                model_context_excluded, tool_call_logs, injected_context_prefix,
-               generation_tokens_per_second, model_load_seconds, last_output_at, requested_at
+               generation_tokens_per_second, model_load_seconds, last_output_at, requested_at,
+               reasoning_item_id, reasoning_encrypted, responses_output_items, anthropic_thinking_blocks,
+               input_token_count, cached_input_token_count
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -2223,7 +2265,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             content = injected.rest
             injectedContextPrefix = injected.prefix
         }
-        return ChatTurnData(
+        var turn = ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
             content: content,
@@ -2244,11 +2286,19 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             modelLoadSeconds: readNullableDouble(stmt, index: 21),
             requestedAt: readNullableDate(stmt, index: 23),
             terminalStopReason: terminalStopReason,
+            reasoningItemId: sqlite3_column_text(stmt, 24).map { String(cString: $0) },
+            reasoningEncrypted: sqlite3_column_text(stmt, 25).map { String(cString: $0) },
+            responsesOutputItems: sqlite3_column_text(stmt, 26).map { String(cString: $0) }.flatMap(decodeJSON) ?? [],
+            inputTokenCount: readNullableInt(stmt, index: 28),
+            cachedInputTokenCount: readNullableInt(stmt, index: 29),
             modelContextExcluded: modelContextExcluded,
             routerBilling: routerBilling,
             injectedContextPrefix: injectedContextPrefix,
             toolCallLogs: toolCallLogs
         )
+        turn.anthropicThinkingBlocks = sqlite3_column_text(stmt, 27)
+            .map { String(cString: $0) }.flatMap(decodeJSON) ?? []
+        return turn
     }
 
     private static func readNullableDate(_ stmt: OpaquePointer, index: Int32) -> Date? {
@@ -2300,6 +2350,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindNullableDouble(stmt, index: 25, value: turn.modelLoadSeconds)
         bindNullableDouble(stmt, index: 26, value: turn.lastOutputAt?.timeIntervalSince1970)
         bindNullableDouble(stmt, index: 27, value: turn.requestedAt?.timeIntervalSince1970)
+        bindText(stmt, index: 28, value: turn.reasoningItemId)
+        bindText(stmt, index: 29, value: turn.reasoningEncrypted)
+        bindText(stmt, index: 30, value: turn.responsesOutputItems.isEmpty ? nil : encodeJSON(turn.responsesOutputItems))
+        bindText(stmt, index: 31, value: turn.anthropicThinkingBlocks.isEmpty ? nil : encodeJSON(turn.anthropicThinkingBlocks))
+        bindNullableInt(stmt, index: 32, value: turn.inputTokenCount)
+        bindNullableInt(stmt, index: 33, value: turn.cachedInputTokenCount)
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

@@ -34,6 +34,8 @@ struct QueuedSend: Equatable {
     var text: String
     var attachments: [Attachment]
     var oneOffSkillId: UUID?
+    var taskIntent: ChatTaskIntent? = nil
+    var inferenceSourceOverride: RequestSource? = nil
 }
 
 /// A manual model change made after a conversation already has content.
@@ -815,6 +817,9 @@ final class ChatSession: ObservableObject {
     }
 
     private var currentTask: Task<Void, Never>?
+    /// Tests capture the task before Stop clears session state, then await
+    /// its actual unwind rather than treating composer unlock as termination.
+    var currentSendTaskForTesting: Task<Void, Never>? { currentTask }
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
     /// A native image progress row still awaiting its terminal event.
@@ -1833,7 +1838,7 @@ final class ChatSession: ObservableObject {
     /// outbound request while the UI still displayed them in the bubble —
     /// far worse than the alternative failure, where a text-only remote
     /// model rejects the image part with a visible provider error.
-    static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
+    nonisolated static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
         if let local = ModelManager.findInstalledMLXModelFromCache(named: modelId) {
             return local.mediaCapabilities.supportsImage
@@ -2476,6 +2481,11 @@ final class ChatSession: ObservableObject {
     /// the next request; a preserved progress turn immediately before it must
     /// appear exactly once. Kept as a pure helper so continuation history is
     /// testable without launching a model.
+    private static func hasAssistantReplayState(_ turn: ChatTurn) -> Bool {
+        turn.reasoningItemId?.isEmpty == false || turn.reasoningEncrypted?.isEmpty == false
+            || !turn.responsesOutputItems.isEmpty || !turn.anthropicThinkingBlocks.isEmpty
+    }
+
     static func modelVisibleAssistantMessage(
         _ turn: ChatTurn,
         isLastTurn: Bool,
@@ -2485,13 +2495,15 @@ final class ChatSession: ObservableObject {
         if isLastTurn,
             turn.contentIsBlank,
             turn.thinkingIsBlank,
-            turn.toolCalls == nil
+            turn.toolCalls == nil,
+            !hasAssistantReplayState(turn)
         {
             return nil
         }
         if turn.contentIsBlank,
             turn.thinkingIsBlank,
-            (turn.toolCalls == nil || turn.toolCalls!.isEmpty)
+            (turn.toolCalls == nil || turn.toolCalls!.isEmpty),
+            !hasAssistantReplayState(turn)
         {
             return nil
         }
@@ -2505,7 +2517,8 @@ final class ChatSession: ObservableObject {
             reasoning_item_id: turn.reasoningItemId,
             reasoning_encrypted: turn.reasoningEncrypted,
             responses_output_items: turn.responsesOutputItems.isEmpty
-                ? nil : turn.responsesOutputItems
+                ? nil : turn.responsesOutputItems,
+            anthropic_thinking_blocks: turn.anthropicThinkingBlocks.isEmpty ? nil : turn.anthropicThinkingBlocks
         )
     }
 
@@ -2810,7 +2823,8 @@ final class ChatSession: ObservableObject {
         queuedSend = QueuedSend(
             text: trimmed,
             attachments: attachments,
-            oneOffSkillId: pendingOneOffSkillId
+            oneOffSkillId: pendingOneOffSkillId,
+            inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride
         )
         input = ""
         pendingAttachments = []
@@ -2904,7 +2918,9 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments)
+        ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        }
     }
 
     /// Appends a `user`-role turn carrying a plugin-supplied interrupt
@@ -3949,7 +3965,7 @@ final class ChatSession: ObservableObject {
         isDirty = true
         rebuildVisibleBlocks()
         save()
-        send("")  // Empty send to trigger regeneration with existing history
+        send("", taskIntent: ChatTaskIntent(userText: newContent))  // Regenerate the edited user task with existing history
     }
 
     /// Delete a turn and all subsequent turns
@@ -4053,7 +4069,7 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
 
         // Regenerate
-        send("")
+        send("", taskIntent: .hostContinuation)
     }
 
     // MARK: - Share Artifact Processing
@@ -4239,6 +4255,11 @@ final class ChatSession: ObservableObject {
     private struct RunContext {
         let hasContent: Bool
         let userContent: String
+        /// True when `userContent` is a host-authored helper report rather
+        /// than something the user typed. Memory must never record it as a
+        /// user turn: the distiller reads every buffered `userMessage` as
+        /// "User:", so a report became pinned "facts" about the delegated task.
+        let userContentIsHostAuthored: Bool
         let memoryAgentId: String
         let memoryConversationId: String
         /// Project membership captured at send time, so memory records the
@@ -4401,6 +4422,7 @@ final class ChatSession: ObservableObject {
             lastTurn.contentIsBlank,
             lastTurn.toolCalls == nil,
             !lastTurn.hasRenderableThinking,
+            !Self.hasAssistantReplayState(lastTurn),
             lastTurn.generationTokenCount == nil,
             lastTurn.generationTokensPerSecond == nil,
             // Never drop a turn the router billed — even a zero-output charge
@@ -4524,7 +4546,7 @@ final class ChatSession: ObservableObject {
         guard activeRunId == nil, !isStreaming else { return }
         guard folderState.hasActiveFolder else { return }
         debugLog("send: continuing after prompt_working_folder attached a folder")
-        send("")
+        send("", taskIntent: .hostContinuation)
     }
 
     /// Outcome of the auto-title eligibility check for one clean run
@@ -4814,6 +4836,7 @@ final class ChatSession: ObservableObject {
     private func markUnfinishedToolCallsInterrupted() {
         guard stopRequested || lastStreamError != nil else { return }
         for turn in turns where turn.role == .assistant {
+            turn.finalizeRemoteToolActivity(endedBy: stopRequested ? .cancelled : .failed)
             // A tool the model was still naming/arguing (or whose parsed
             // invocation was withheld by the engine tail) never became a
             // call. Drop the ephemeral placeholder: with the run closed the
@@ -4848,7 +4871,9 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments)
+        ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        }
     }
 
     /// Dispatch any queued send when the run ended naturally (no `stop()`
@@ -4862,7 +4887,9 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments)
+        ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+        }
     }
 
     /// Reused across runs so we don't pay the ICU date-symbol allocation that a
@@ -4948,31 +4975,34 @@ final class ChatSession: ObservableObject {
             // synchronously here (against the database's serial
             // queue), which blocked the chat view's main-thread
             // post-stream cleanup. The companion Vectura calls were
-            // already detached.
-            Task.detached {
-                let db = MemoryDatabase.shared
-                do {
-                    try db.insertTranscriptTurn(
-                        agentId: aid,
+            // already detached. A helper report is not indexed as a user
+            // turn; the assistant's reply to it still is.
+            if !context.userContentIsHostAuthored {
+                Task.detached {
+                    let db = MemoryDatabase.shared
+                    do {
+                        try db.insertTranscriptTurn(
+                            agentId: aid,
+                            conversationId: convId,
+                            chunkIndex: userChunkIndex,
+                            role: "user",
+                            content: userContent,
+                            tokenCount: userTokenCount,
+                            title: conversationTitle
+                        )
+                    } catch {
+                        MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
+                    }
+                    let userTurn = TranscriptTurn(
                         conversationId: convId,
                         chunkIndex: userChunkIndex,
                         role: "user",
                         content: userContent,
                         tokenCount: userTokenCount,
-                        title: conversationTitle
+                        agentId: aid
                     )
-                } catch {
-                    MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
+                    await MemorySearchService.shared.indexTranscriptTurn(userTurn)
                 }
-                let userTurn = TranscriptTurn(
-                    conversationId: convId,
-                    chunkIndex: userChunkIndex,
-                    role: "user",
-                    content: userContent,
-                    tokenCount: userTokenCount,
-                    agentId: aid
-                )
-                await MemorySearchService.shared.indexTranscriptTurn(userTurn)
             }
 
             if let assistantContent, !assistantContent.isEmpty {
@@ -5018,16 +5048,18 @@ final class ChatSession: ObservableObject {
             let conversationTitle = title
             let userContent = context.userContent
             let userTokenCount = TokenEstimator.estimate(userContent)
-            Task.detached {
-                await MemoryService.shared.mirrorTranscriptToProject(
-                    projectId: projectId,
-                    conversationId: convId,
-                    chunkIndex: userChunkIndex,
-                    role: "user",
-                    content: userContent,
-                    tokenCount: userTokenCount,
-                    title: conversationTitle
-                )
+            if !context.userContentIsHostAuthored {
+                Task.detached {
+                    await MemoryService.shared.mirrorTranscriptToProject(
+                        projectId: projectId,
+                        conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: userTokenCount,
+                        title: conversationTitle
+                    )
+                }
             }
             if let assistantContent, !assistantContent.isEmpty {
                 let assistantTokenCount = TokenEstimator.estimate(assistantContent)
@@ -5045,7 +5077,9 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        if bufferForMemory, context.hasContent {
+        // Distillation reads each buffered `userMessage` as the user's words,
+        // so a helper-report turn is never buffered.
+        if bufferForMemory, context.hasContent, !context.userContentIsHostAuthored {
             let formatter = Self.sessionDateFormatter
             formatter.timeZone = .current
             let today = formatter.string(from: Date())
@@ -5142,7 +5176,7 @@ final class ChatSession: ObservableObject {
     /// resolved to nil, the fresh assistant turn rendered as finished (no
     /// typing indicator during its load/prefill, so no "Loading Model..."),
     /// and every delta took the non-streaming table path (per-token height
-    /// notes — the visible jump). Clear it BEFORE awaiting `streamChat`, which
+    /// notes — the visible jump). Clear it BEFORE awaiting `streamResponses`, which
     /// may span the whole model load, so the indicator covers that wait.
     private func beginModelStep() -> Date {
         if outputComplete {
@@ -5153,7 +5187,7 @@ final class ChatSession: ObservableObject {
     }
 
     private func processStreamDeltas(
-        stream: AsyncThrowingStream<String, Error>,
+        stream: AsyncThrowingStream<ResponsesGenerationEvent, Error>,
         assistantTurn: ChatTurn,
         runId: UUID,
         streamStartTime: Date,
@@ -5166,7 +5200,7 @@ final class ChatSession: ObservableObject {
         // write anything: the run's cleanup already finished, so every
         // mutation here would ghost into the transcript — starting with the
         // reset below erasing the `cancelled` stamp finalizeRun recorded.
-        guard activeRunId == runId else { throw CancellationError() }
+        guard isRunActive(runId) else { throw CancellationError() }
         // A continuation or transient retry may reuse this stream processor
         // after the prior assistant step set terminal metadata. Each model
         // generation owns fresh terminal state; carrying `stop` or an
@@ -5176,24 +5210,29 @@ final class ChatSession: ObservableObject {
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
         currentTurn.lastOutputAt = nil
+        currentTurn.prefillProgress = nil
         // Same contract for the session-level flag: the previous step's
-        // relay completion set it, and `isStreaming` (which resets it) stays
+        // typed completion set it, and `isStreaming` (which resets it) stays
         // true across the whole run. Callers already reset it before awaiting
-        // `streamChat` (see `beginModelStep`); this covers any path that
+        // `streamResponses` (see `beginModelStep`); this covers any path that
         // reaches the processor without it.
         if outputComplete {
             outputComplete = false
             rebuildVisibleBlocks()
         }
-        // Output-complete relay: the adapter announces the instant vmlx's
-        // terminal info arrives (before the cache-store tail it withholds the
-        // stream end for). Stop the cursor and stamp completion right then.
+        // The request's ordered typed completion separates finished output
+        // from the producer/cache tail without a process-wide relay.
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
         // can't persist on the finalized turn. No-op for real pending calls
         // (the committed `\u{FFFE}tool:` name overwrites the sentinel first).
-        defer { Self.clearPendingToolCallProgressPlaceholder(on: currentTurn) }
+        defer {
+            currentTurn.prefillProgress = nil
+            currentTurn.finalizeThinkingDuration()
+            currentTurn.finalizeRemoteToolActivity()
+            Self.clearPendingToolCallProgressPlaceholder(on: currentTurn)
+        }
         var uiDeltaCount = 0
         var uiReasoningDeltaCount = 0
         var uiToolSentinelCount = 0
@@ -5242,68 +5281,68 @@ final class ChatSession: ObservableObject {
         var processor = StreamingDeltaProcessor(turn: currentTurn) { [weak self] in
             self?.rebuildVisibleBlocks()
         }
-        // The relay fires when the ENGINE is done; the last deltas may still
-        // be in flight to this loop and the smooth-streaming pacer may still be
-        // painting them (live: "…247 248 249 2" shown as complete for the
-        // whole tail — the "50" was in the pacing buffer). So completion is
-        // settled, not stamped: wait for a quiet window with no new delta,
-        // drain the processor so every character is painted, THEN stop the
-        // cursor and stamp. No engine output can follow `.info`, so the quiet
-        // window only ever waits on delivery, never on generation.
-        var lastDeltaAt = Date()
-        // Only THIS session's own (non-utility) generation may complete this
-        // step. The relay is process-wide, and the previous turn's title /
-        // follow-up / memory jobs queue behind the same solo lease, so they
-        // finish right after a new send starts — a bare timestamp filter let
-        // them mark this turn complete before its model emitted a token.
-        let relaySessionId = sessionId?.uuidString
-        let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
-            .compactMap { $0 }
-            .filter { $0.matches(sessionId: relaySessionId, startedAt: streamStartTime) }
-            .first()
-            .receive(on: RunLoop.main)
-            .sink { [weak self, weak currentTurn] completion in
-                guard let self else { return }
-                Task { @MainActor [weak self, weak currentTurn] in
-                    let quiet: TimeInterval = 0.15
-                    var waited: TimeInterval = 0
-                    while Date().timeIntervalSince(lastDeltaAt) < quiet, waited < 3 {
-                        try? await Task.sleep(nanoseconds: 50_000_000); waited += 0.05
-                    }
-                    await processor.finalize()
-                    guard let self, self.activeRunId == runId else { return }
-                    let at = Date()
-                    if let turn = currentTurn {
-                        if turn.completedAt == nil { turn.completedAt = at }
-                        if turn.lastOutputAt == nil { turn.lastOutputAt = at }
-                    }
-                    self.outputComplete = true
-                    // The rebuild keeps the last turn "active" (pending tool
-                    // chip / finishing indicator) while the engine tail
-                    // drains — only the cursor and live-content path end here.
-                    self.rebuildVisibleBlocks()
-                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail, finishing indicator shown)")
-                }
-            }
-        defer { outputCompleteSub.cancel() }
+        defer { processor.finishImmediately() }
+        // Completion is ordered in this request's typed event stream. A
+        // process-wide relay plus a quiet-time guess can run ahead of buffered
+        // content/reasoning, or finish a different step in the same session.
+        var receivedCompletion = false
 
-        // The engine surfaces parsed tool calls by *throwing* a
-        // `ServiceToolInvocation` (or `ServiceToolInvocations`) at end-of-
-        // stream. Catch them so this function can return them as data —
-        // letting the throw escape would surface as an "Error: …
-        // ServiceToolInvocation error 1" string in the UI.
+        // Parsed calls are previews until the typed response completion
+        // publishes the complete ordered batch. Tool execution is data, never
+        // an exception that can be mistaken for a failed model response.
         var capturedInvocations: [ServiceToolInvocation] = []
 
         debugLog("send: got stream, entering delta loop")
         do {
-            for try await delta in stream {
+            responseLoop: for try await event in stream {
                 noteRunProgress(.stream)
                 if !isRunActive(runId) {
-                    await processor.finalize()
+                    processor.finishImmediately()
                     // Cancelled mid-run: don't leave a remote tool chip
                     // shimmering forever — settle any still-running rows.
-                    currentTurn.finalizeRemoteToolActivity()
-                    return ([], currentTurn)
+                    currentTurn.finalizeRemoteToolActivity(endedBy: .cancelled)
+                    throw CancellationError()
+                }
+                if receivedCompletion {
+                    switch event {
+                    case .outputTextDelta, .reasoningDelta, .providerOutputItem, .reasoningItem, .anthropicThinkingBlock:
+                        throw ResponsesGenerationResult.CollectionError.outputAfterCompletion
+                    default: break
+                    }
+                } else {
+                    switch event {
+                    case .drained, .compatibilityStreamClosed:
+                        throw ResponsesGenerationResult.CollectionError.drainBeforeCompletion
+                    default: break
+                    }
+                }
+                if event.isGeneratedOutput {
+                    currentTurn.prefillProgress = nil
+                    let now = Date()
+                    if firstDeltaTime == nil {
+                        firstDeltaTime = now
+                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
+                        ttftTrace?.mark("first_generated_delta")
+                        ttftTrace?.set("model", selectedModel ?? "unknown")
+                        ttftTrace?.emit()
+                    }
+                    currentTurn.lastOutputAt = now
+                }
+                if case .functionPreviewReset = event {
+                    let hadPreview = currentTurn.pendingToolName != nil || currentTurn.pendingToolArgSize > 0
+                    currentTurn.pendingToolName = nil
+                    currentTurn.clearPendingToolArgs()
+                    if hadPreview { rebuildVisibleBlocks() }
+                    continue
+                }
+                if case .functionCallAdded(let call) = event {
+                    currentTurn.finalizeThinkingDuration()
+                    uiToolSentinelCount += 1
+                    currentTurn.pendingToolName = call.name
+                    currentTurn.clearPendingToolArgs()
+                    currentTurn.appendToolArgFragment(call.arguments)
+                    rebuildVisibleBlocks()
+                    continue
                 }
                 // Mode 2 (remote agent run): the remote device executes the
                 // tools and streams back only a sanitized trace (name + phase +
@@ -5313,7 +5352,7 @@ final class ChatSession: ObservableObject {
                 // (running → done/failed), instead of a chip that vanished the
                 // instant the tool finished. The activity is display-only and is
                 // never re-sent as history (see `ChatTurn.remoteToolActivity`).
-                if let trace = StreamingAgentToolHint.decode(delta) {
+                if case .agentTool(let trace) = event {
                     let callKey =
                         (trace.callId?.isEmpty == false) ? trace.callId! : trace.name
                     switch trace.phase {
@@ -5339,7 +5378,7 @@ final class ChatSession: ObservableObject {
                     continue
                 }
                 // Server-side tool call complete: add the call card + result turn to the chat log
-                if let done = StreamingToolHint.decodeDone(delta) {
+                if case .remoteToolCompleted(let done) = event {
                     uiToolSentinelCount += 1
                     await processor.finalize()
                     let call = ToolCall(
@@ -5366,7 +5405,7 @@ final class ChatSession: ObservableObject {
                     rebuildVisibleBlocks()
                     continue
                 }
-                if let toolName = StreamingToolHint.decode(delta) {
+                if case .functionNamePreview(let toolName) = event {
                     uiToolSentinelCount += 1
                     // Local models stream the raw envelope as args fragments
                     // BEFORE the parsed call's name hint. When the hint lands
@@ -5403,7 +5442,7 @@ final class ChatSession: ObservableObject {
                 // the real tool name once the envelope closes. The raw envelope
                 // text itself is intentionally NOT rendered (it isn't parsed args
                 // and could be any format), so it never leaks as message text.
-                if let envelopeDelta = StreamingToolCallProgressHint.decode(delta) {
+                if case .toolEnvelopeDelta(let envelopeDelta) = event {
                     uiToolSentinelCount += 1
                     // Also accumulate the raw envelope: the live diff preview
                     // extracts path/content from it mid-stream, and the tool
@@ -5433,20 +5472,24 @@ final class ChatSession: ObservableObject {
                 // Preserve the complete provider-authored Responses output Item
                 // for exact stateless replay (phase, ids, reasoning, and future
                 // fields), independently of the flattened visible transcript.
-                if let responseItem = StreamingResponsesOutputItemHint.decode(delta) {
+                if case .providerOutputItem(let responseItem) = event {
                     currentTurn.responsesOutputItems.append(responseItem)
                     continue
                 }
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).
-                if let reasoningItem = StreamingReasoningItemHint.decode(delta) {
+                if case .anthropicThinkingBlock(let block) = event {
+                    currentTurn.anthropicThinkingBlocks.append(block)
+                    continue
+                }
+                if case .reasoningItem(let reasoningItem) = event {
                     uiReasoningItemCount += 1
                     currentTurn.reasoningItemId = reasoningItem.id
                     currentTurn.reasoningEncrypted = reasoningItem.encryptedContent
                     continue
                 }
-                if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                if case .functionArgumentsPreview(let argFragment) = event {
                     uiToolSentinelCount += 1
                     currentTurn.appendToolArgFragment(argFragment)
                     // Envelope-first flow (local models): the tool name rides
@@ -5469,11 +5512,15 @@ final class ChatSession: ObservableObject {
                         lastToolArgRebuildAt = now
                         rebuildVisibleBlocks()
                     }
-                } else if let inputTokenCount = StreamingInputTokenHint.decode(delta) {
+                } else if case .inputTokenCount(let inputTokenCount) = event {
                     // Prepared input is metadata, not the first output token.
                     // Keep it out of text/history and the TTFT/rolling-rate path.
                     currentTurn.inputTokenCount = inputTokenCount
-                } else if let stats = StreamingStatsHint.decode(delta) {
+                } else if case .responseCompleted(let stats) = event {
+                    guard !receivedCompletion else {
+                        throw ResponsesGenerationResult.CollectionError.duplicateCompletion
+                    }
+                    receivedCompletion = true
                     uiStatsHintCount += 1
                     // Final stats from vmlx — captured for the post-loop stamp.
                     // We do NOT overwrite the live rolling rate here: while the
@@ -5484,10 +5531,10 @@ final class ChatSession: ObservableObject {
                     // available for replies too short for the window to converge
                     // — the case that used to be filled in with an average over
                     // the delivery burst and render as `2397.3 tok/s • 7 tokens`.
-                    if stats.tokensPerSecond.isFinite, stats.tokensPerSecond > 0 {
-                        engineTokensPerSecond = stats.tokensPerSecond
+                    if let rate = stats.tokensPerSecond, rate.isFinite, rate > 0 {
+                        engineTokensPerSecond = rate
                     }
-                    currentTurn.generationTokenCount = stats.tokenCount
+                    currentTurn.generationTokenCount = stats.tokenCount ?? currentTurn.generationTokenCount
                     currentTurn.terminalStopReason = stats.stopReason
                     currentTurn.inputTokenCount = stats.inputTokenCount ?? currentTurn.inputTokenCount
                     currentTurn.cachedInputTokenCount = stats.cachedInputTokenCount ?? currentTurn.cachedInputTokenCount
@@ -5496,7 +5543,44 @@ final class ChatSession: ObservableObject {
                     // renderer can surface a one-line banner suggesting
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
-                } else if let billing = StreamingBillingHint.decode(delta) {
+                    // Paint every already-delivered character before removing
+                    // the cursor. The producer's independent drain is still
+                    // represented by the finishing row and live Stop control.
+                    if stats.dispatchableFunctionCalls.isEmpty {
+                        await processor.finalize()
+                    } else {
+                        // A ready tool must not wait for a decorative text
+                        // reveal. Paint its received preamble now, then let
+                        // the complete batch dispatch without a pacing tail.
+                        processor.finishImmediately()
+                    }
+                    guard isRunActive(runId) else { throw CancellationError() }
+                    currentTurn.finalizeThinkingDuration()
+                    currentTurn.prefillProgress = nil
+                    if case .cancelled = stats.status { throw CancellationError() }
+                    capturedInvocations = stats.dispatchableFunctionCalls.map {
+                        ServiceToolInvocation(
+                            toolName: $0.name,
+                            jsonArguments: $0.arguments,
+                            toolCallId: $0.callID,
+                            geminiThoughtSignature: $0.geminiThoughtSignature
+                        )
+                    }
+                    // A parsed preview that was not in the completed batch
+                    // must not leave a live chip. Keep a length-truncated
+                    // argument buffer until the outer loop records its exact
+                    // truncated-tool diagnostic.
+                    if stats.stopReason != "length" {
+                        currentTurn.pendingToolName = nil
+                        currentTurn.clearPendingToolArgs()
+                    }
+                    if currentTurn.completedAt == nil { currentTurn.completedAt = Date() }
+                    outputComplete = true
+                    rebuildVisibleBlocks()
+                    // Execute the complete ordered batch at logical completion;
+                    // the engine keeps draining its GPU/cache lease independently.
+                    if !capturedInvocations.isEmpty { break responseLoop }
+                } else if case .billing(let billing) = event {
                     uiBillingHintCount += 1
                     // Osaurus Router billed this turn. Stamp it so the run can't
                     // silently drop a billed-but-empty turn (see
@@ -5504,10 +5588,13 @@ final class ChatSession: ObservableObject {
                     // explain the charge. Adopt the server-authoritative output
                     // token count over our rolling estimate.
                     recordRouterBilling(billing, on: currentTurn)
-                } else if let progress = StreamingPrefillProgressHint.decode(delta) {
+                } else if case .prefillProgress(let progress) = event {
                     uiPrefillHintCount += 1
-                    InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
-                } else if let remoteArtifacts = StreamingArtifactHint.decode(delta) {
+                    if !receivedCompletion {
+                        currentTurn.prefillProgress = progress.stage == .complete ? nil : progress
+                        rebuildVisibleBlocks()
+                    }
+                } else if case .artifacts(let remoteArtifacts) = event {
                     // A teammate's host returned the small files its agent
                     // shared: import them into THIS session's store and show
                     // them on the turn exactly like local `share_artifact`
@@ -5515,7 +5602,9 @@ final class ChatSession: ObservableObject {
                     // from `sharedArtifacts` afterwards.
                     if let sid = sessionId {
                         let imported = SharedArtifact.importRemoteArtifacts(
-                            remoteArtifacts, contextId: sid.uuidString)
+                            remoteArtifacts,
+                            contextId: sid.uuidString
+                        )
                         if !imported.isEmpty {
                             currentTurn.sharedArtifacts.append(contentsOf: imported)
                             for artifact in imported {
@@ -5523,16 +5612,9 @@ final class ChatSession: ObservableObject {
                             }
                         }
                     }
-                } else if let reasoning = StreamingReasoningHint.decode(delta) {
+                } else if case .reasoningDelta(let reasoning) = event {
                     uiReasoningDeltaCount += 1
                     let now = Date()
-                    if firstDeltaTime == nil {
-                        firstDeltaTime = now
-                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
-                        ttftTrace?.mark("first_text_delta")
-                        ttftTrace?.set("model", selectedModel ?? "unknown")
-                        ttftTrace?.emit()
-                    }
                     // Reasoning tokens count toward the rolling rate so
                     // thinking-ON and thinking-OFF show the same decode
                     // rate at steady state. See RollingTokenRate doc.
@@ -5546,21 +5628,16 @@ final class ChatSession: ObservableObject {
                     )
                     currentTurn.lastOutputAt = now
                     processor.receiveReasoning(reasoning)
-                } else if StreamingToolHint.isSentinel(delta) {
-                    // Other reserved stream metadata must never become model
-                    // output merely because this client does not consume it.
-                    continue
-                } else if !delta.isEmpty {
+                } else if case .drainFailed(let message) = event {
+                    throw NSError(
+                        domain: "OsaurusResponseDrain",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: message]
+                    )
+                } else if case .outputTextDelta(let delta) = event, !delta.isEmpty {
                     let now = Date()
-                    if firstDeltaTime == nil {
-                        firstDeltaTime = now
-                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
-                        ttftTrace?.mark("first_text_delta")
-                        ttftTrace?.set("model", selectedModel ?? "unknown")
-                        ttftTrace?.emit()
-                    }
+                    currentTurn.finalizeThinkingDuration(at: now)
                     uiDeltaCount += 1
-                    lastDeltaAt = now
                     // Content delta — counted uniformly with reasoning.
                     let tokens = ContextBudgetManager.estimateTokens(for: delta)
                     rollingRate.observe(tokens: tokens, at: now)
@@ -5587,18 +5664,32 @@ final class ChatSession: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_000_000)
                 }
             }
-        } catch let invs as ServiceToolInvocations {
-            capturedInvocations = invs.invocations
-        } catch let inv as ServiceToolInvocation {
-            capturedInvocations = [inv]
+        } catch {
+            // Cancelling an AsyncThrowingStream may end its iterator
+            // normally, or a compatibility adapter may report its missing
+            // terminal after that cancellation. Neither is a fresh provider
+            // error belonging in the already-stopped transcript.
+            guard isRunActive(runId) else {
+                currentTurn.finalizeRemoteToolActivity(endedBy: .cancelled)
+                throw CancellationError()
+            }
+            currentTurn.finalizeRemoteToolActivity(
+                endedBy: error is CancellationError ? .cancelled : .failed
+            )
+            throw error
         }
 
+        guard isRunActive(runId) else { throw CancellationError() }
+        guard receivedCompletion else {
+            throw ResponsesGenerationResult.CollectionError.missingCompletion
+        }
         // Flush any remaining buffered content (including partial tags).
         // In smooth-streaming mode this awaits until the pacing tail
         // finishes typing out — keeping the processor alive past
         // `send()`'s return so the residual buffer is rendered, not
         // dropped on dealloc.
         await processor.finalize()
+        guard isRunActive(runId) else { throw CancellationError() }
 
         // Mode 2 safety net: if the stream ended without an explicit
         // `endRun` trace (clean end, network cutoff, or a peer that doesn't
@@ -5614,24 +5705,13 @@ final class ChatSession: ObservableObject {
         }
 
         if let first = firstDeltaTime {
-            // Split cold model load out of TTFT.
-            //
-            // `streamStartTime` is stamped immediately before `streamChat`, and
-            // no delta can arrive until the weights are resident — so a cold
-            // container load lands inside this window and used to be reported
-            // as time-to-first-token. A 64 GB M3 Max showed "TTFT 215.61s" on a
-            // ~1.8k-token prompt: no machine prefills 1.8k tokens in 215s, so
-            // the number was measuring a 27 GB load and reading as an engine
-            // fault. Both halves are kept; neither is hidden.
-            //
-            // `modelLoadSeconds` is clamped to the window by the manager, so
-            // the subtraction cannot go negative and cannot turn an honest
-            // slow turn into a reassuring fast one.
-            let wallClock = first.timeIntervalSince(streamStartTime)
-            let loadSeconds = InferenceProgressManager.shared.modelLoadSeconds(
-                from: streamStartTime, to: first)
-            currentTurn.modelLoadSeconds = loadSeconds > 0 ? loadSeconds : nil
-            currentTurn.timeToFirstToken = max(0, wallClock - loadSeconds)
+            // TTFT spans this request's setup, queue, load and prefill up to
+            // its first generated event. Global model-load intervals can
+            // belong to another chat/background request, so subtracting them
+            // would manufacture a shorter number. A load-excluded metric
+            // requires request-correlated runtime timing, not a global union.
+            currentTurn.modelLoadSeconds = nil
+            currentTurn.timeToFirstToken = max(0, first.timeIntervalSince(streamStartTime))
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //
@@ -6270,7 +6350,12 @@ final class ChatSession: ObservableObject {
         isDirty = true
     }
 
-    func send(_ text: String, attachments: [Attachment] = [], directUserSend: Bool = false) {
+    func send(
+        _ text: String,
+        attachments: [Attachment] = [],
+        directUserSend: Bool = false,
+        taskIntent: ChatTaskIntent? = nil
+    ) {
         let alignmentRepairModel = directUserSend && source == .chat && !isRemoteAgentTarget
             ? selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id } : nil
         // The user's clock starts here, not when generation does. Everything
@@ -6279,6 +6364,7 @@ final class ChatSession: ObservableObject {
         // reported TTFT excluded it and the wait was unattributable. See #2347.
         let sendRequestedAt = Date()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTaskIntent = taskIntent ?? ChatTaskIntent(userText: text)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
@@ -6297,7 +6383,7 @@ final class ChatSession: ObservableObject {
         // the phone's run in this chat too; a message is held, not lost.
         if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
             if hasContent {
-                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId)
+                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId, taskIntent: resolvedTaskIntent, inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride)
             }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
@@ -6348,6 +6434,7 @@ final class ChatSession: ObservableObject {
         guard warmupController.needsPreSendHandshake else {
             dispatchSend(
                 trimmed: trimmed,
+                taskIntent: resolvedTaskIntent,
                 attachments: attachments,
                 hasContent: hasContent,
                 sendRequestedAt: sendRequestedAt,
@@ -6392,6 +6479,7 @@ final class ChatSession: ObservableObject {
             self.awaitingPreSendHandshake = false
             self.dispatchSend(
                 trimmed: trimmed,
+                taskIntent: resolvedTaskIntent,
                 attachments: attachments,
                 hasContent: hasContent,
                 preAppendedUserTurn: preAppendedUserTurn,
@@ -6409,6 +6497,7 @@ final class ChatSession: ObservableObject {
     /// yielded the MainActor.
     private func dispatchSend(
         trimmed: String,
+        taskIntent: ChatTaskIntent,
         attachments: [Attachment],
         hasContent: Bool,
         preAppendedUserTurn: ChatTurn? = nil,
@@ -6527,6 +6616,11 @@ final class ChatSession: ObservableObject {
 
         let memoryAgentId = (agentId ?? Agent.defaultId).uuidString
         let memoryConversationId = (sessionId ?? UUID()).uuidString
+        // A helper report sent as `.hostContinuation` carries host text, not
+        // user words. Regenerate and folder continuation are also host
+        // continuations but send no text: their latest user turn is genuine
+        // and already carries its frozen recall.
+        let hostAuthoredTurn = hasContent && taskIntent == .hostContinuation
 
         let runId = UUID()
         beginRun(
@@ -6534,6 +6628,7 @@ final class ChatSession: ObservableObject {
             context: RunContext(
                 hasContent: hasContent,
                 userContent: trimmed,
+                userContentIsHostAuthored: hostAuthoredTurn,
                 memoryAgentId: memoryAgentId,
                 memoryConversationId: memoryConversationId,
                 memoryProjectId: projectId
@@ -6884,7 +6979,10 @@ final class ChatSession: ObservableObject {
                             frozenManifest: cachedSession?.frozenManifest,
                             frozenSoul: cachedSession?.frozenSoul,
                             trace: ttftTrace,
-                            projectId: projectId
+                            projectId: projectId,
+                            // No recall keyed on a helper report: it froze the
+                            // delegated task's own memory onto the report.
+                            recallsMemory: !hostAuthoredTurn
                         )
                     )
                     guard isRunActive(runId) else { return }
@@ -8055,33 +8153,30 @@ final class ChatSession: ObservableObject {
                             #endif
                             let requestedToolChoice = ChatToolChoicePolicy.resolve(
                                 tools: iterationToolSpecs,
-                                userText: trimmed,
+                                taskIntent: taskIntent,
                                 attempt: attempt
                             )
                             forcedToolGate.arm(requestedToolChoice)
-                            var req = ChatCompletionRequest(
+                            var req = ResponsesInferenceRequest(
                                 // Mode 2: the wire omits the model and routing is
                                 // by provider id, so don't pass the local
                                 // `selectedModel` — it can lag the async agent pin
                                 // and would only leak a stale prefix internally.
                                 model: self.isRemoteAgentTarget
                                     ? "default" : (turnModelId ?? "default"),
-                                messages: msgs,
-                                temperature: effectiveTemp,
-                                max_tokens: effectiveMaxTokensForAgent,
-                                stream: true,
-                                top_p: chatCfg.topPOverride,
-                                frequency_penalty: nil,
-                                presence_penalty: nil,
-                                stop: nil,
-                                n: nil,
+                                input: msgs,
+                                generation: ResponsesGenerationOptions(
+                                    temperature: effectiveTemp,
+                                    maxOutputTokens: effectiveMaxTokensForAgent,
+                                    topP: chatCfg.topPOverride
+                                ),
                                 tools: iterationToolSpecs.isEmpty ? nil : iterationToolSpecs,
-                                tool_choice: requestedToolChoice,
-                                session_id: self.sessionId?.uuidString
+                                toolChoice: requestedToolChoice,
+                                sessionID: self.sessionId?.uuidString
                             )
-                            req.admissionPositionLimit = self.delegationBudget?.contextPositions
-                            req.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
-                            req.samplingParametersAreImplicit = true
+                            req.context.admissionPositionLimit = self.delegationBudget?.contextPositions
+                            req.context.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
+                            req.context.samplingParametersAreImplicit = true
                             // Mode 2 routing signal: tells `RemoteProviderService`
                             // to target the peer's `/agents/{address}/run`
                             // endpoint (remote agent runs fully server-side). The
@@ -8090,8 +8185,8 @@ final class ChatSession: ObservableObject {
                             // peer resolves its own live effective model. False =
                             // Mode 1 (plain remote inference via
                             // `/chat/completions`).
-                            req.runAsRemoteAgent = self.isRemoteAgentTarget
-                            req.cacheStableSystemPrefix =
+                            req.context.runAsRemoteAgent = self.isRemoteAgentTarget
+                            req.context.cacheStableSystemPrefix =
                                 self.isRemoteAgentTarget ? nil : context.staticPrefix
                             // Mode 2 routing: target the selected agent's
                             // provider directly (by id), so a stale
@@ -8099,29 +8194,29 @@ final class ChatSession: ObservableObject {
                             // different local provider. `ChatEngine` resolves
                             // the service from this id and ignores the model
                             // string for agent runs.
-                            req.remoteAgentProviderId = self.remoteAgentProviderId
+                            req.context.remoteAgentProviderId = self.remoteAgentProviderId
                             // Insights fidelity: in Mode 2 the wire omits the
                             // model, so log the agent's live effective model
                             // instead of the local prefixed fallback.
-                            req.remoteAgentLogModel =
+                            req.context.remoteAgentLogModel =
                                 self.isRemoteAgentTarget ? self.remoteAgentEffectiveModel : nil
                             // Freeze agent semantics for the whole logical run.
                             // Tool schemas stay present on ordinary iterations,
                             // but the cap finalizer below intentionally removes
                             // them; the explicit marker keeps both paths on the
                             // same reasoning policy.
-                            req.isAgentRequest =
+                            req.context.isAgentRequest =
                                 !iterationToolSpecs.isEmpty || self.isRemoteAgentTarget
                             turnGenerationControls.apply(to: &req)
-                            req.backgroundModelLoad = (self.loadIntent == .background)
+                            req.context.backgroundModelLoad = (self.loadIntent == .background)
                             // Only the first inference of this direct Send. Tool
                             // continuations and parent restoration cannot authorize repair.
-                            req.alignmentRepairModel = attempt == 1 ? alignmentRepairModel : nil
-                            req.ttftTrace = ttftTrace
+                            req.context.alignmentRepairModel = attempt == 1 ? alignmentRepairModel : nil
+                            req.context.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
                             // assistant turn, so the per-message "Insights" button can
                             // open this exact response.
-                            req.turnId = assistantTurn.id
+                            req.context.turnId = assistantTurn.id
                             // Stable per-logical-step idempotency token. The
                             // agent loop holds `attempt` constant across
                             // transient retries (it decrements then re-increments
@@ -8136,7 +8231,7 @@ final class ChatSession: ObservableObject {
                             // IDEMPOTENCY_CONFLICT — the body fingerprint suffix
                             // keys those as distinct requests while identical
                             // retryWithoutCharge re-POSTs still dedupe.
-                            req.idempotencyKey =
+                            req.context.idempotencyKey =
                                 "\(runId.uuidString):\(attempt):"
                                 + AgentToolLoop.recoveryAwareIdempotencySuffix(
                                     messages: msgs,
@@ -8144,7 +8239,7 @@ final class ChatSession: ObservableObject {
                                         incompleteReasoningRetryOrdinal
                                 )
                             debugLog(
-                                "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
+                                "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.sessionID ?? "nil")"
                             )
                             // Cache-fingerprint diagnostic: one `[Cache]` log line +
                             // matching TTFT fields per send so we can audit KV reuse
@@ -8166,7 +8261,7 @@ final class ChatSession: ObservableObject {
                             do {
                                 let streamStartTime = self.beginModelStep()
                                 let (invocations, finalTurn) = try await self.processStreamDeltas(
-                                    stream: try await engine.streamChat(request: req),
+                                    stream: try await engine.streamResponses(request: req),
                                     assistantTurn: assistantTurn,
                                     runId: runId,
                                     streamStartTime: streamStartTime,
@@ -8625,51 +8720,48 @@ final class ChatSession: ObservableObject {
                                         [notice],
                                         to: trimmedFinalMessages
                                     )
-                                var finalReq = ChatCompletionRequest(
-                                    model: turnModelId ?? "default",
-                                    // Same watermark-trimmed view of history the
-                                    // loop iterations used — the raw array can
-                                    // exceed the window precisely when the cap
-                                    // hits after heavy tool traffic.
-                                    messages: finalMessages,
+                            var finalReq = ResponsesInferenceRequest(
+                                model: turnModelId ?? "default",
+                                // Same watermark-trimmed view of history the
+                                // loop iterations used — the raw array can
+                                // exceed the window precisely when the cap
+                                // hits after heavy tool traffic.
+                                input: finalMessages,
+                                generation: ResponsesGenerationOptions(
                                     temperature: effectiveTemp,
-                                    max_tokens: effectiveMaxTokensForAgent,
-                                    stream: true,
-                                    top_p: chatCfg.topPOverride,
-                                    frequency_penalty: nil,
-                                    presence_penalty: nil,
-                                    stop: nil,
-                                    n: nil,
-                                    tools: nil,
-                                    tool_choice: nil,
-                                    session_id: sessionId?.uuidString
+                                    maxOutputTokens: effectiveMaxTokensForAgent,
+                                    topP: chatCfg.topPOverride
+                                ),
+                                tools: nil,
+                                toolChoice: nil,
+                                sessionID: sessionId?.uuidString
                                 )
-                                finalReq.admissionPositionLimit = self.delegationBudget?.contextPositions
-                                finalReq.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
-                                finalReq.samplingParametersAreImplicit = true
-                                finalReq.runAsRemoteAgent = isRemoteAgentTarget
-                                finalReq.cacheStableSystemPrefix =
+                                finalReq.context.admissionPositionLimit = self.delegationBudget?.contextPositions
+                                finalReq.context.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
+                                finalReq.context.samplingParametersAreImplicit = true
+                                finalReq.context.runAsRemoteAgent = isRemoteAgentTarget
+                                finalReq.context.cacheStableSystemPrefix =
                                     isRemoteAgentTarget ? nil : context.staticPrefix
                                 // Carry the agent provider id on this path too so
                                 // the route-by-provider invariant holds for *every*
                                 // Mode 2 request — a `runAsRemoteAgent` send with no
                                 // provider id would fall back to model-string
                                 // routing (the exact mis-route this fix removes).
-                                finalReq.remoteAgentProviderId = remoteAgentProviderId
-                                finalReq.remoteAgentLogModel =
+                                finalReq.context.remoteAgentProviderId = remoteAgentProviderId
+                                finalReq.context.remoteAgentLogModel =
                                     isRemoteAgentTarget ? remoteAgentEffectiveModel : nil
-                                finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
+                                finalReq.context.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
                                 turnGenerationControls.apply(to: &finalReq)
-                                finalReq.backgroundModelLoad = (loadIntent == .background)
-                                finalReq.turnId = assistantTurn.id
+                                finalReq.context.backgroundModelLoad = (loadIntent == .background)
+                                finalReq.context.turnId = assistantTurn.id
                                 // Distinct logical step (the post-cap summarizing
                                 // call) so it bills once and dedupes on its own
                                 // connect-phase retry without colliding with the
                                 // loop's per-iteration keys.
-                                finalReq.idempotencyKey = "\(runId.uuidString):final"
+                                finalReq.context.idempotencyKey = "\(runId.uuidString):final"
 
                                 // Route the capped-run wrap-up through the exact
-                                // same typed sentinel decoder as every ordinary
+                                // same typed event consumer as every ordinary
                                 // chat step. Feeding this stream directly into a
                                 // StreamingDeltaProcessor leaked U+FFFE prefill and
                                 // stats envelopes into ChatTurn.content (and then
@@ -8677,7 +8769,7 @@ final class ChatSession: ObservableObject {
                                 // its iteration cap.
                                 let finalStreamStartTime = beginModelStep()
                                 let (_, finalTurn) = try await processStreamDeltas(
-                                    stream: try await engine.streamChat(request: finalReq),
+                                    stream: try await engine.streamResponses(request: finalReq),
                                     assistantTurn: assistantTurn,
                                     runId: runId,
                                     streamStartTime: finalStreamStartTime,

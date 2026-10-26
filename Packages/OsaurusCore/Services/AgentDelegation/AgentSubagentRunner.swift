@@ -9,13 +9,12 @@
 //  (`SubagentSession`) owns the recursion guard, feed, permission, and
 //  residency handoff; this owns only the loop + digest.
 //
-//  The model step STREAMS (`ChatEngine.streamChat`) instead of buffering a
+//  The model step STREAMS (`ChatEngine.streamResponses`) instead of buffering a
 //  completion, which buys three things at once:
 //    - live token progress for the subagent feed (`onProgress`),
 //    - chunk-granular cancellation (user interrupt / deadline / parent task
 //      cancel take effect mid-generation, not at iteration boundaries), and
-//    - authoritative usage capture from the terminal stats sentinel
-//      (`StreamingStatsHint`) with an estimator fallback for remote providers.
+//    - authoritative usage capture from typed response completion with an estimator fallback for remote providers.
 //
 //  A watchdog task races the stream so the silent phases (prefill, remote
 //  first-token waits) are also interruptible; cancelling the consumer tears
@@ -36,6 +35,9 @@ enum SubagentCancelCause: String, Sendable {
     case deadline
     /// The surrounding task (parent chat turn / HTTP request) was cancelled.
     case parentTask = "parent_task"
+    /// The model/provider reported cancellation while the local caller was
+    /// still active. Do not attribute this to the user, parent or deadline.
+    case upstream
 }
 
 /// Aggregated model usage across every iteration of one subagent run.
@@ -43,7 +45,7 @@ struct AgentSubagentUsage: Sendable {
     /// Prompt tokens of the LAST model step (the largest composed prompt —
     /// what the run actually cost to re-prefill on its final iteration).
     var promptTokens: Int = 0
-    /// Completion tokens summed across steps. Authoritative (stats sentinel)
+    /// Completion tokens summed across steps. Authoritative (completion event)
     /// when the runtime reports them, estimator fallback otherwise.
     var completionTokens: Int = 0
     /// Decode speed of the last step that reported one (tok/s).
@@ -66,8 +68,7 @@ struct AgentSubagentRunResult: Sendable {
 /// enforces its own allowlist + error conversion inside the operation).
 struct AgentSubagentToolset: Sendable {
     var specs: [Tool]
-    var beginExecution:
-        @Sendable (_ invocation: ServiceToolInvocation) -> OwnedSubagentOperation<String>
+    var beginExecution: @Sendable (_ invocation: ServiceToolInvocation) -> OwnedSubagentOperation<String>
 
     init(
         specs: [Tool],
@@ -118,10 +119,12 @@ enum AgentSubagentRunner {
         case content(String)
     }
     typealias ChannelObserver = @Sendable (ChannelDelta) -> Void
-    /// Injectable stream producer used by deterministic runner regressions.
-    /// Production callers omit it and continue through `ChatEngine`.
+    /// Compatibility boundary for older private/injected producers.
+    /// Production callers use the typed Responses engine below.
     typealias StreamProvider =
         @Sendable (ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error>
+    typealias ResponsesStreamProvider =
+        @Sendable (ResponsesInferenceRequest) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
 
     /// Internal cancel signal carrying its cause. Thrown out of the stream
     /// consumption (or its watchdog) and converted to a `.cancelled` exit at
@@ -135,13 +138,19 @@ enum AgentSubagentRunner {
         var text = ""
         var reasoning = ""
         var toolCalls: [ServiceToolInvocation] = []
-        /// Authoritative completion-token count from the stats sentinel, or
+        /// Authoritative completion-token count from response completion, or
         /// a character-based estimate when the provider never reported one.
         var completionTokens = 0
         var tokensPerSecond: Double?
         /// Tokens the runtime actually prefilled for this step (rendered template, tool schemas, history), from the
-        /// input-token hint or the stats sentinel. `nil` when the provider reported neither.
+        /// input-token or completion event. `nil` when the provider reported neither.
         var promptTokens: Int?
+        var providerOutputItems: [JSONValue] = []
+        var anthropicThinkingBlocks: [JSONValue] = []
+        var reasoningItemID: String?
+        var reasoningEncrypted: String?
+        var stopReason: String?
+        var unclosedReasoning = false
     }
 
     /// Run a bounded subagent loop. The caller (kind) owns model resolution,
@@ -165,7 +174,8 @@ enum AgentSubagentRunner {
         toolset: AgentSubagentToolset? = nil,
         onProgress: Progress? = nil,
         onChannelDelta: ChannelObserver? = nil,
-        streamProvider: StreamProvider? = nil
+        streamProvider: StreamProvider? = nil,
+        responsesStreamProvider: ResponsesStreamProvider? = nil
     ) async throws -> AgentSubagentRunResult {
         var messages = seedMessages
         var finalDigest: String?
@@ -226,43 +236,42 @@ enum AgentSubagentRunner {
             },
             modelStep: { effective, _ in
                 iterationsSeen += 1
-                var request = ChatCompletionRequest(
+                var request = ResponsesInferenceRequest(
                     model: modelName,
-                    messages: effective,
-                    temperature: temperature,
-                    max_tokens: maxTokens,
-                    stream: true,
-                    top_p: nil,
-                    frequency_penalty: nil,
-                    presence_penalty: nil,
-                    stop: nil,
-                    n: nil,
+                    input: effective,
+                    generation: ResponsesGenerationOptions(
+                        temperature: temperature,
+                        maxOutputTokens: maxTokens,
+                        enableThinking: enableThinking,
+                        reasoningEffort: reasoningEffort
+                    ),
                     tools: toolset?.specs,
-                    tool_choice: nil,
-                    session_id: sessionId
+                    sessionID: sessionId
                 )
                 // Same posture as the main chat surface: a per-agent
                 // temperature override rides along, everything else stays on
                 // the model bundle's own generation defaults.
-                request.admissionPositionLimit = admissionPositionLimit ?? contextWindow
-                request.samplingParametersAreImplicit = true
-                request.isAgentRequest = isAgentRequest
-                request.enable_thinking = enableThinking
-                request.reasoning_effort = reasoningEffort
+                request.context.admissionPositionLimit = admissionPositionLimit ?? contextWindow
+                request.context.samplingParametersAreImplicit = true
+                request.context.isAgentRequest = isAgentRequest
                 // A child is user-visible work, but its cold load must not
                 // evict an unrelated resident owned by HTTP/plugin traffic.
                 // The runtime's background intent is atomic: same-model cache
                 // hits and empty/flexible slots proceed, conflicting strict or
                 // over-budget loads fail honestly before eviction.
-                request.backgroundModelLoad = true
-                request.preserveExistingResidencyOwner = true
+                request.context.backgroundModelLoad = true
+                request.context.preserveExistingResidencyOwner = true
 
                 let stepStarted = Date()
-                let stream: AsyncThrowingStream<String, Error>
-                if let streamProvider {
-                    stream = try await streamProvider(request)
+                let stream: AsyncThrowingStream<ResponsesGenerationEvent, Error>
+                if let responsesStreamProvider {
+                    stream = try await responsesStreamProvider(request)
+                } else if let streamProvider {
+                    stream = ResponsesGenerationStream.compatibility(
+                        try await streamProvider(request.chatCompletionsCompatibilityRequest())
+                    )
                 } else {
-                    stream = try await engine.streamChat(request: request)
+                    stream = try await engine.streamResponses(request: request)
                 }
                 let outcome = try await Self.consumeStream(
                     stream,
@@ -289,11 +298,14 @@ enum AgentSubagentRunner {
                         + TokenEstimator.estimate(outcome.reasoning)
                 }
                 usage.completionTokens += stepCompletion
-                usage.tokensPerSecond = resolvedTokensPerSecond(
-                    reported: outcome.tokensPerSecond,
-                    completionTokens: stepCompletion,
-                    elapsed: Date().timeIntervalSince(stepStarted)
-                ) ?? usage.tokensPerSecond
+                usage.tokensPerSecond =
+                    resolvedTokensPerSecond(
+                        reported: outcome.tokensPerSecond,
+                        completionTokens: stepCompletion,
+                        elapsed: Date().timeIntervalSince(stepStarted)
+                    ) ?? usage.tokensPerSecond
+
+                if outcome.stopReason == "length" { return .lengthExhausted }
 
                 if !outcome.toolCalls.isEmpty {
                     // Frame the assistant tool_calls message exactly as the
@@ -314,12 +326,17 @@ enum AgentSubagentRunner {
                     messages.append(
                         ChatMessage(
                             role: "assistant",
-                            content: nil,
+                            content: outcome.text.isEmpty ? nil : outcome.text,
                             tool_calls: calls,
                             tool_call_id: nil,
                             reasoning_content: outcome.reasoning.isEmpty
                                 ? nil
-                                : outcome.reasoning
+                                : outcome.reasoning,
+                            reasoning_item_id: outcome.reasoningItemID,
+                            reasoning_encrypted: outcome.reasoningEncrypted,
+                            responses_output_items: outcome.providerOutputItems.isEmpty
+                                ? nil : outcome.providerOutputItems,
+                            anthropic_thinking_blocks: outcome.anthropicThinkingBlocks.isEmpty ? nil : outcome.anthropicThinkingBlocks
                         )
                     )
                     return .toolCalls(
@@ -334,6 +351,10 @@ enum AgentSubagentRunner {
                     )
                 }
 
+                if outcome.unclosedReasoning {
+                    return outcome.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? .incompleteReasoning : .incompleteVisibleResponse
+                }
                 let text = outcome.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty {
                     return treatEmptyChoicesAsFinal ? .finalResponse : .emptyResponse
@@ -489,11 +510,10 @@ enum AgentSubagentRunner {
 
     /// Consume one model step's stream with chunk-granular cancellation and a
     /// watchdog covering the silent phases (prefill, remote first-token
-    /// waits). Tool calls surface as thrown
-    /// `ServiceToolInvocations`/`ServiceToolInvocation` from the stream and
-    /// are captured into the outcome; a tripped cancel throws `RunCancelled`.
+    /// waits). Only a completed ordered call batch is executable; cache drain
+    /// remains owned by the typed engine. A tripped cancel throws `RunCancelled`.
     private static func consumeStream(
-        _ stream: AsyncThrowingStream<String, Error>,
+        _ stream: AsyncThrowingStream<ResponsesGenerationEvent, Error>,
         cancelCause: @escaping @Sendable () -> SubagentCancelCause?,
         onProgress: Progress?,
         onChannelDelta: ChannelObserver?
@@ -502,55 +522,74 @@ enum AgentSubagentRunner {
             group.addTask {
                 var outcome = StepOutcome()
                 // Cheap running counters so per-chunk progress stays O(1):
-                // estimate = chars/4 until the authoritative stats sentinel
+                // estimate = chars/4 until the authoritative completion event
                 // arrives (local runtimes emit it; remote providers may not).
                 var visibleChars = 0
                 var sawStats = false
                 var lastProgressEmit = Date.distantPast
-                do {
-                    for try await delta in stream {
-                        if let cause = cancelCause() { throw RunCancelled(cause: cause) }
-                        if let inputTokens = StreamingInputTokenHint.decode(delta) {
-                            outcome.promptTokens = inputTokens
-                            continue
+                responseLoop: for try await event in stream {
+                    if let cause = cancelCause() { throw RunCancelled(cause: cause) }
+                    switch event {
+                    case .inputTokenCount(let count):
+                        outcome.promptTokens = count
+                        continue
+                    case .responseCompleted(let completion):
+                        if case .cancelled = completion.status {
+                            throw RunCancelled(cause: cancelCause() ?? .upstream)
                         }
-                        if let stats = StreamingStatsHint.decode(delta) {
+                        if let count = completion.tokenCount {
                             sawStats = true
-                            outcome.completionTokens = stats.tokenCount
-                            outcome.tokensPerSecond = stats.tokensPerSecond
-                            if let inputTokens = stats.inputTokenCount { outcome.promptTokens = inputTokens }
-                            onProgress?(stats.tokenCount, stats.tokensPerSecond)
-                            continue
+                            outcome.completionTokens = count
                         }
-                        if let reasoningDelta = StreamingReasoningHint.decode(delta) {
-                            outcome.reasoning += reasoningDelta
-                            visibleChars += reasoningDelta.count
-                            onChannelDelta?(.reasoning(reasoningDelta))
-                        } else if StreamingToolHint.isSentinel(delta) {
-                            // Other in-band hints (tool/args fragments, prefill
-                            // progress, billing) — not visible text.
-                            continue
-                        } else {
-                            outcome.text += delta
-                            visibleChars += delta.count
-                            if !delta.isEmpty {
-                                onChannelDelta?(.content(delta))
-                            }
+                        outcome.tokensPerSecond = completion.tokensPerSecond
+                        outcome.promptTokens = completion.inputTokenCount ?? outcome.promptTokens
+                        outcome.stopReason = completion.stopReason
+                        outcome.unclosedReasoning = completion.unclosedReasoning
+                        outcome.toolCalls = completion.dispatchableFunctionCalls.map {
+                            ServiceToolInvocation(
+                                toolName: $0.name,
+                                jsonArguments: $0.arguments,
+                                toolCallId: $0.callID,
+                                geminiThoughtSignature: $0.geminiThoughtSignature
+                            )
                         }
-                        if !sawStats {
-                            outcome.completionTokens =
-                                visibleChars / TokenEstimator.charsPerToken
-                        }
-                        // Throttle the feed callback to ~4 Hz.
-                        if let onProgress, Date().timeIntervalSince(lastProgressEmit) >= 0.25 {
-                            lastProgressEmit = Date()
-                            onProgress(outcome.completionTokens, outcome.tokensPerSecond)
-                        }
+                        onProgress?(outcome.completionTokens, outcome.tokensPerSecond)
+                        if !outcome.toolCalls.isEmpty { break responseLoop }
+                        continue
+                    case .anthropicThinkingBlock(let block):
+                        outcome.anthropicThinkingBlocks.append(block)
+                        continue
+                    case .providerOutputItem(let item):
+                        outcome.providerOutputItems.append(item)
+                        continue
+                    case .reasoningItem(let item):
+                        outcome.reasoningItemID = item.id
+                        outcome.reasoningEncrypted = item.encryptedContent
+                        continue
+                    case .reasoningDelta(let text):
+                        outcome.reasoning += text
+                        visibleChars += text.count
+                        onChannelDelta?(.reasoning(text))
+                    case .outputTextDelta(let text):
+                        outcome.text += text
+                        visibleChars += text.count
+                        if !text.isEmpty { onChannelDelta?(.content(text)) }
+                    case .drainFailed(let message):
+                        throw NSError(
+                            domain: "OsaurusResponseDrain",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: message]
+                        )
+                    default:
+                        continue
                     }
-                } catch let batch as ServiceToolInvocations {
-                    outcome.toolCalls = batch.invocations
-                } catch let single as ServiceToolInvocation {
-                    outcome.toolCalls = [single]
+                    if !sawStats {
+                        outcome.completionTokens = visibleChars / TokenEstimator.charsPerToken
+                    }
+                    if let onProgress, Date().timeIntervalSince(lastProgressEmit) >= 0.25 {
+                        lastProgressEmit = Date()
+                        onProgress(outcome.completionTokens, outcome.tokensPerSecond)
+                    }
                 }
                 // The producer can FINISH (rather than throw) when its own
                 // task is cancelled. Re-probe after every clean stream end:

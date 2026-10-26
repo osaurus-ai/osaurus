@@ -115,6 +115,43 @@ struct RemoteSessionContinuationTests {
         )
     }
 
+    @Test func diskReloadHistoryReplaysOpaqueSignedAndReasoningOnlyTurns() async throws {
+        try await ChatHistoryTestStorage.run {
+            let native = try ResponsesHistoryFixture.turn()
+            let items = try ResponsesHistoryFixture.items()
+            let opaqueItem = try #require(items.last)
+            let opaqueOnly = ChatTurnData(
+                role: .assistant, content: "", responsesOutputItems: [opaqueItem]
+            )
+            var signedOnly = ChatTurnData(role: .assistant, content: "")
+            signedOnly.anthropicThinkingBlocks = try ResponsesHistoryFixture.signedBlocks()
+            let reasoningOnly = ChatTurnData(role: .assistant, content: "", thinking: "Retained earlier reasoning")
+            var excluded = try ResponsesHistoryFixture.turn()
+            excluded.modelContextExcluded = true
+            try #require(excluded.id != native.id, "Excluded fixture is a distinct SQL row, not an update of the native row")
+            let session = ChatSessionData(turns: [
+                ChatTurnData(role: .system, content: "Not replayed"), native, opaqueOnly, signedOnly, reasoningOnly, excluded,
+            ])
+            let disk = ChatHistoryDatabase()
+            try disk.open()
+            try disk.saveSession(session)
+            disk.close()
+            // No store/manager save or pending overlay was populated. The
+            // production continuation reader must reopen the committed row.
+            let history = await RemoteSessionContinuation.history(for: session.id)
+            try #require(history.count == 4)
+            let replay = try #require(history.first)
+            #expect(replay.reasoning_content == native.thinking)
+            #expect(replay.reasoning_item_id == native.reasoningItemId && replay.reasoning_encrypted == native.reasoningEncrypted)
+            #expect(replay.responses_output_items == native.responsesOutputItems)
+            #expect(replay.tool_calls?.map(\.id) == ["call_b", "call_a"])
+            #expect(replay.tool_calls?.first?.function.arguments == #"{"count":"7"}"#)
+            #expect(history[1].content == "" && history[1].responses_output_items == opaqueOnly.responsesOutputItems)
+            #expect(history[2].content == "" && history[2].anthropic_thinking_blocks == signedOnly.anthropicThinkingBlocks)
+            #expect(history[3].content == "" && history[3].reasoning_content == "Retained earlier reasoning")
+        }
+    }
+
     /// What the model was sent ahead of a user message stays out of the
     /// stored turn's text, and goes back in front when the chat is continued.
     @Test func injectedBlocksStayOutOfTheStoredTurn() throws {

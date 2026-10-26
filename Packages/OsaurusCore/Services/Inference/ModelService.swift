@@ -8,6 +8,7 @@
 import Foundation
 
 struct GenerationParameters: Sendable {
+    let responsesProviderOptions: ResponsesProviderOptions?
     let temperature: Float?
     let maxTokens: Int
     /// Whether `maxTokens` came from an explicit client request. When false,
@@ -179,8 +180,10 @@ struct GenerationParameters: Sendable {
         preserveExistingResidencyOwner: Bool = false,
         auxiliaryCacheIntent: Bool = false,
         collectCompleteToolResponse: Bool = false,
-        requireCompleteOutput: Bool = false
+        requireCompleteOutput: Bool = false,
+        responsesProviderOptions: ResponsesProviderOptions? = nil
     ) {
+        self.responsesProviderOptions = responsesProviderOptions
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.maxTokensExplicit = maxTokensExplicit
@@ -739,6 +742,19 @@ protocol ToolCapableService: ModelService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> AsyncThrowingStream<String, Error>
+}
+
+/// A service with an ordered typed Responses generation stream. Compatibility
+/// providers may continue implementing the legacy boundary during migration.
+protocol ResponsesGenerationService: ModelService {
+    func streamResponses(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        requestedModel: String?
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
 }
 
 /// Simple router that selects a service based on the request and environment.

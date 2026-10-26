@@ -9,12 +9,37 @@
 
 import Foundation
 
+/// The original task supplied by the caller, before the app adds delivery or
+/// execution instructions. Host-only provenance: never decoded from model/API
+/// output and never substituted for the complete model-visible prompt.
+public enum ChatTaskIntent: Sendable, Equatable {
+    case userRequest(String)
+    /// App-authored context/report delivery with no new user task. The full
+    /// message remains model-visible and tools remain available under auto.
+    case hostContinuation
+
+    public init(userText: String) {
+        self = .userRequest(userText)
+    }
+
+    public var userText: String? {
+        if case .userRequest(let text) = self { return text }
+        return nil
+    }
+}
+
 // MARK: - Request
 
 /// Describes a task to dispatch as a (possibly headless) chat session.
 public struct DispatchRequest: Sendable {
     public let id: UUID
     public let prompt: String
+    /// Optional original-task provenance when `prompt` contains app-authored
+    /// wrappers. Nil means the prompt itself is the caller's task.
+    public let taskIntent: ChatTaskIntent?
+    /// Host-only execution provenance; never persisted or supplied by a model
+    /// or an HTTP payload. Delegation explicitly carries it across queued work.
+    var inferenceSourceOverride: RequestSource? = nil
     /// Who runs this: an agent hosted here, or a teammate's shared workspace
     /// agent (run on their Mac over the relay). nil = anonymous, which every
     /// non-Chat surface refuses (`Agent.rejectBuiltInForExternalSurface`).
@@ -137,10 +162,12 @@ public struct DispatchRequest: Sendable {
         delegationResponseTokenCap: Int? = nil,
         delegationContextPositionCap: Int? = nil,
         delegationAssistantTurnCap: Int? = nil,
-        delegationModel: String? = nil
+        delegationModel: String? = nil,
+        taskIntent: ChatTaskIntent? = nil
     ) {
         self.id = id
         self.prompt = prompt
+        self.taskIntent = taskIntent
         self.target = target ?? agentId.map(AgentDispatchTarget.local)
         self.title = title
         self.parameters = parameters

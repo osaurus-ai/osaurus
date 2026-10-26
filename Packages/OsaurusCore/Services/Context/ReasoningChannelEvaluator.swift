@@ -13,30 +13,30 @@
 //  reasoning must ride the structured channel, and multi-turn runs must
 //  stay coherent without echoing an earlier turn's reasoning.
 //
-//  Lives in OsaurusCore (not the evals kit) because the streaming hint
-//  decoders and `LocalReasoningCapability` are internal runtime surface.
+//  Lives in OsaurusCore because typed Responses generation and
+//  `LocalReasoningCapability` are internal runtime surface.
 //
 
 import Foundation
 
-/// One completed chat turn, split by channel.
+/// One terminal chat turn, split by channel; interrupted rows remain diagnostic.
 public struct ReasoningChannelTurn: Sendable, Codable {
     /// Text that streamed on the visible content channel.
     public let visibleText: String
     /// Text that streamed on the structured reasoning channel
-    /// (`StreamingReasoningHint` deltas). Empty when the model produced
+    /// (typed reasoning deltas). Empty when the model produced
     /// no reasoning output for the turn.
     public let reasoningText: String
     /// The runtime's own end-of-step signal that a reasoning span was
-    /// opened but never closed (`StreamingStatsHint.unclosedReasoning`).
+    /// opened but never closed (typed completion unclosedReasoning).
     /// A true value is a parser-boundary violation regardless of what
     /// the visible text looks like.
     public let unclosedReasoning: Bool
-    /// Authoritative generated-token count from the stats hint, when
+    /// Authoritative generated-token count from completion, when
     /// the path emitted one.
     public let tokenCount: Int?
     /// Token-weighted decode speed for the turn (tokens/sec), when the
-    /// stats hint reported one — keeps every generation row carrying
+    /// completion reported one — keeps every generation row carrying
     /// token/s per the runtime proof rules.
     public let decodeTokensPerSecond: Double?
 
@@ -59,7 +59,7 @@ public struct ReasoningChannelTurn: Sendable, Codable {
 /// the error that stopped it (completed turns are kept for forensics).
 public struct ReasoningChannelTranscript: Sendable, Codable {
     public let turns: [ReasoningChannelTurn]
-    /// Non-nil when a turn failed; `turns` holds the turns that finished.
+    /// Non-nil when a turn failed; terminal diagnostic rows are retained.
     public let error: String?
     /// Whether the resolved model advertises a reasoning channel at all
     /// (chat-template / runtime-config detection). Cases use this to
@@ -98,94 +98,48 @@ public enum ReasoningChannelEvaluator {
     public static func run(
         queries: [String],
         model: String? = nil,
-        maxTokens: Int = 1_024
+        maxTokens: Int = 1_024,
+        temperature: Float? = nil
     ) async -> ReasoningChannelTranscript {
-        let resolvedModel =
-            model
-            ?? ChatConfigurationStore.load().coreModelIdentifier
-            ?? "foundation"
-        let supportsThinking = modelSupportsThinking(modelId: resolvedModel)
-        let engine = ChatEngine()
-        // One session for the whole conversation so multi-turn prefix
-        // reuse behaves like production.
-        let sessionId = UUID().uuidString
+        let resolvedModel = model ?? ChatConfigurationStore.load().coreModelIdentifier ?? "foundation"
+        return await runConversation(
+            queries: queries, model: resolvedModel, maxTokens: maxTokens, temperature: temperature,
+            supportsThinking: modelSupportsThinking(modelId: resolvedModel), engine: ChatEngine()
+        )
+    }
 
+    static func runConversation(
+        queries: [String], model: String, maxTokens: Int, temperature: Float? = nil,
+        supportsThinking: Bool, engine: any ResponsesEngineProtocol
+    ) async -> ReasoningChannelTranscript {
+        let sessionId = UUID().uuidString
         var history: [ChatMessage] = []
         var turns: [ReasoningChannelTurn] = []
-
-        for query in queries {
+        for (index, query) in queries.enumerated() {
             history.append(ChatMessage(role: "user", content: query))
-            let request = ChatCompletionRequest(
-                model: resolvedModel,
-                messages: history,
-                temperature: 0.0,
-                max_tokens: maxTokens,
-                stream: true,
-                top_p: nil,
-                frequency_penalty: nil,
-                presence_penalty: nil,
-                stop: nil,
-                n: nil,
-                tools: nil,
-                tool_choice: nil,
-                session_id: sessionId
+            let request = ResponsesInferenceRequest(
+                model: model, input: history,
+                generation: ResponsesGenerationOptions(temperature: temperature, maxOutputTokens: maxTokens),
+                sessionID: sessionId
             )
-
-            var visible = ""
-            var reasoning = ""
-            var unclosed = false
-            var tokenCount: Int?
-            var decodeTps: Double?
             do {
-                let stream = try await engine.streamChat(request: request)
-                for try await delta in stream {
-                    if let fragment = StreamingReasoningHint.decode(delta) {
-                        reasoning += fragment
-                        continue
-                    }
-                    if let stats = StreamingStatsHint.decode(delta) {
-                        if stats.unclosedReasoning { unclosed = true }
-                        if stats.tokenCount > 0 { tokenCount = stats.tokenCount }
-                        if stats.tokensPerSecond > 0 { decodeTps = stats.tokensPerSecond }
-                        continue
-                    }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    visible += delta
-                }
+                let result = try await engine.completeResponse(request: request, endAt: .streamEnd)
+                turns.append(ReasoningChannelTurn(
+                    visibleText: result.text, reasoningText: result.reasoning,
+                    unclosedReasoning: result.completion.unclosedReasoning,
+                    tokenCount: result.completion.tokenCount,
+                    decodeTokensPerSecond: result.completion.tokensPerSecond
+                ))
+                // Native reasoning, encrypted/provider Items and their IDs must
+                // survive the next request; never reconstruct a text-only echo.
+                history.append(try result.completedAssistantInput())
             } catch {
                 return ReasoningChannelTranscript(
-                    turns: turns,
-                    error: "turn \(turns.count + 1)/\(queries.count) failed: \(error)",
+                    turns: turns, error: "turn \(index + 1)/\(queries.count) failed: \(error)",
                     modelSupportsThinking: supportsThinking
                 )
             }
-
-            turns.append(
-                ReasoningChannelTurn(
-                    visibleText: visible,
-                    reasoningText: reasoning,
-                    unclosedReasoning: unclosed,
-                    tokenCount: tokenCount,
-                    decodeTokensPerSecond: decodeTps
-                )
-            )
-            // Echo the assistant turn — with its reasoning — back into
-            // history like the chat surface (DeepSeek-style providers
-            // 400 without `reasoning_content` on assistant turns).
-            history.append(
-                ChatMessage(
-                    role: "assistant",
-                    content: visible.isEmpty ? nil : visible,
-                    tool_calls: nil,
-                    tool_call_id: nil,
-                    reasoning_content: reasoning.isEmpty ? nil : reasoning
-                )
-            )
         }
-
-        return ReasoningChannelTranscript(
-            turns: turns,
-            modelSupportsThinking: supportsThinking
-        )
+        return ReasoningChannelTranscript(turns: turns, modelSupportsThinking: supportsThinking)
     }
 }

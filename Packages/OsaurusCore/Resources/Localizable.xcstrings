@@ -1,6 +1,40 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Evaluation" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Evaluierung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "평가"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оценка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "评估"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "評估"
+          }
+        }
+      }
+    },
     "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size without a free-space cap. This is a maximum cache size, not reserved space. Saving updates loaded models without unloading them; a lower cap applies on the next cache write." : {
       "localizations" : {
         "de" : {
@@ -10602,6 +10636,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 個手動模型提供者"
+          }
+        }
+      }
+    },
+    "%lld min" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Min."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld분"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld мин"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分钟"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分鐘"
+          }
+        }
+      }
+    },
+    "%lld min (%lld h)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld Min. (%2$lld Std.)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld분(%2$lld시간)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld мин (%2$lld ч)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 分钟（%2$lld 小时）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 分鐘（%2$lld 小時）"
+          }
+        }
+      }
+    },
+    "%lld min (%lld h %lld min)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld Min. (%2$lld Std. %3$lld Min.)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld분(%2$lld시간 %3$lld분)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld мин (%2$lld ч %3$lld мин)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 分钟（%2$lld 小时 %3$lld 分钟）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 分鐘（%2$lld 小時 %3$lld 分鐘）"
           }
         }
       }
@@ -48132,6 +48268,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "透過此工作區共享代理發起的呼叫會在這裡列出供團隊查看。每次呼叫均已向發起該呼叫的 Osaurus 所屬成員扣費。"
+          }
+        }
+      }
+    },
+    "Calls that keep reporting progress can run this long. The timeout above is the longest gap between updates." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufrufe, die weiter Fortschritt melden, dürfen so lange laufen. Das Timeout oben ist die längste Pause zwischen zwei Meldungen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "진행 상황을 계속 보고하는 호출은 이 시간까지 실행할 수 있습니다. 위의 시간 초과는 업데이트 사이의 최대 간격입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вызовы, которые продолжают сообщать о прогрессе, могут выполняться столько времени. Тайм-аут выше — это максимальный интервал между обновлениями."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "持续报告进度的调用最长可运行这么久。上面的超时是两次更新之间的最长间隔。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "持續回報進度的呼叫最長可執行這麼久。上面的逾時是兩次更新之間的最長間隔。"
           }
         }
       }
@@ -133433,6 +133603,41 @@
         }
       }
     },
+    "Load Allocator Cap" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocator-Obergrenze beim Laden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로드 시 할당자 한도"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит распределителя при загрузке"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加载时分配器上限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "載入時分配器上限"
+          }
+        }
+      }
+    },
     "Load from Discord" : {
       "comment" : "Button title for refreshing the list of servers and channels from Discord.",
       "isCommentAutoGenerated" : true,
@@ -139972,6 +140177,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每輪最大連續工具調用次數"
+          }
+        }
+      }
+    },
+    "Max Duration with Progress" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximale Dauer mit Fortschritt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "진행 상황 보고 시 최대 실행 시간"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Макс. длительность с прогрессом"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有进度时的最长时长"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有進度時的最長時長"
           }
         }
       }
@@ -214460,6 +214699,41 @@
     "Result (preview)" : {
 
     },
+    "Result not received" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ergebnis nicht empfangen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "결과를 받지 못함"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Результат не получен"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未收到结果"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未收到結果"
+          }
+        }
+      }
+    },
     "Results" : {
       "comment" : "A label for the number of results.",
       "isCommentAutoGenerated" : true
@@ -247989,6 +248263,41 @@
         }
       }
     },
+    "Stopped waiting before a remote tool result was received. Its outcome is unknown." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Warten wurde beendet, bevor ein Ergebnis des Remote-Tools empfangen wurde. Der Ausgang der Ausführung ist unbekannt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원격 도구 결과를 받기 전에 대기를 중지했습니다. 실행 결과는 알 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидание прекращено до получения результата удалённого инструмента. Итог его выполнения неизвестен."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在收到远程工具结果前停止了等待。该工具的执行结果未知。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在收到遠端工具結果前停止了等待。該工具的執行結果未知。"
+          }
+        }
+      }
+    },
     "Stopped: %@" : {
       "localizations" : {
         "de" : {
@@ -258132,6 +258441,41 @@
         }
       }
     },
+    "The load allocator cap sets a freed-buffer reuse target while loading. Inference uses a separate process-wide target based on loaded models and the active execution path. An explicit Allocator Cache Cap bounds the selected target in both phases. The pool can exceed that target until the next allocation trims it. These targets do not cap live weights, KV state, or physical RAM." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Allocator-Obergrenze beim Laden legt ein Wiederverwendungsziel für nicht mehr benötigte Puffer fest. Bei der Inferenz gilt ein separates prozessweites Ziel, das von den geladenen Modellen und dem aktiven Ausführungspfad abhängt. Eine explizite Allocator-Cache-Obergrenze begrenzt das gewählte Ziel in beiden Phasen. Der Pufferpool kann dieses Ziel überschreiten, bis die nächste Speicherzuweisung ihn verkleinert. Diese Ziele begrenzen weder aktive Modellgewichte noch den KV-Zustand oder den physischen RAM-Verbrauch."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로드 시 할당자 한도는 더 이상 사용하지 않는 버퍼의 재사용 목표를 설정합니다. 추론은 로드된 모델과 활성 실행 경로에 따라 별도의 프로세스 전체 목표를 사용합니다. 명시적인 할당자 캐시 한도는 두 단계에서 선택하는 목표의 상한입니다. 버퍼 풀은 이 목표를 초과할 수 있으며, 다음 메모리 할당 시 초과분이 정리됩니다. 이 목표는 사용 중인 모델 가중치, KV 상태 또는 실제 RAM 사용량을 제한하지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит распределителя при загрузке задаёт целевой объём повторного использования освобождённых буферов. При инференсе используется отдельный целевой объём для всего процесса, зависящий от загруженных моделей и активного пути выполнения. Явно заданный лимит кэша распределителя ограничивает выбранный целевой объём на обоих этапах. Пул может превышать его до следующего выделения памяти, когда излишки удаляются. Эти значения не ограничивают используемые веса модели, состояние KV или физическую оперативную память."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加载分配器上限用于设置已释放缓冲区的复用目标。推理会根据已加载的模型和当前执行路径，使用单独的进程级目标。显式设置分配器缓存上限会约束这两个阶段所选的目标。缓冲池可能超过该目标，直到下一次分配内存时清理超出部分。这些目标不限制正在使用的模型权重、KV 状态或实际 RAM 占用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "載入配置器上限用於設定已釋放緩衝區的重用目標。推論會根據已載入的模型和目前執行路徑，使用獨立的處理程序層級目標。明確設定配置器快取上限會約束這兩個階段所選的目標。緩衝池可能超過該目標，直到下一次配置記憶體時清除超出部分。這些目標不限制使用中的模型權重、KV 狀態或實際 RAM 用量。"
+          }
+        }
+      }
+    },
     "The local %@ server stopped unexpectedly." : {
       "localizations" : {
         "de" : {
@@ -259945,6 +260289,76 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "遠端代理"
+          }
+        }
+      }
+    },
+    "The remote connection failed before a tool result was received. Its outcome is unknown." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Remote-Verbindung ist ausgefallen, bevor ein Tool-Ergebnis empfangen wurde. Der Ausgang der Tool-Ausführung ist unbekannt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 결과를 받기 전에 원격 연결에 문제가 발생했습니다. 도구의 실행 결과는 알 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалённое соединение прервалось до получения результата инструмента. Итог его выполнения неизвестен."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在收到工具结果前远程连接发生故障。该工具的执行结果未知。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在收到工具結果前遠端連線發生故障。該工具的執行結果未知。"
+          }
+        }
+      }
+    },
+    "The remote stream ended without a tool result. Its outcome is unknown." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Remote-Stream wurde ohne Tool-Ergebnis beendet. Der Ausgang der Tool-Ausführung ist unbekannt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 결과 없이 원격 스트림이 종료되었습니다. 도구의 실행 결과는 알 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалённый поток завершился без результата инструмента. Итог его выполнения неизвестен."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "远程流已结束，未收到工具结果。该工具的执行结果未知。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "遠端串流已結束，未收到工具結果。該工具的執行結果未知。"
           }
         }
       }

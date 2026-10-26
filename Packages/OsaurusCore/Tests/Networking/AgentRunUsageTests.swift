@@ -23,3 +23,18 @@ struct AgentRunUsageTests {
         #expect(absent.tokensPerSecond == nil)
     }
 }
+
+extension AgentRunUsageTests {
+    @Test func missingCountsDoNotBecomeCompleteUsage() {
+        var usage = AgentRunUsage()
+        #expect(!usage.hasCompleteTokenCounts)
+        usage.append(promptTokens: 20, completionTokens: 10, tokensPerSecond: 5)
+        #expect(usage.hasCompleteTokenCounts)
+        usage.append(promptTokens: nil, completionTokens: 3, tokensPerSecond: 5)
+        #expect(!usage.hasCompleteTokenCounts)
+        #expect(usage.promptTokens == 20 && usage.completionTokens == 13)
+        var absent = AgentRunUsage()
+        absent.append(promptTokens: 3, completionTokens: nil, tokensPerSecond: 50)
+        #expect(!absent.hasCompleteTokenCounts && absent.tokensPerSecond == nil)
+    }
+}

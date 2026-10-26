@@ -762,7 +762,7 @@ final class NativeToolCallGroupView: NSView {
             // Gating on `isStreaming` + an unresolved result keeps loaded chats
             // and reuse static.
             var appear: CFTimeInterval? = nil
-            if isStreaming, item.result == nil, !bloomedCallIds.contains(item.call.id) {
+            if isStreaming, item.result == nil, item.unobservedResult == nil, !bloomedCallIds.contains(item.call.id) {
                 bloomedCallIds.insert(item.call.id)
                 appear =
                     (index == connectIndex)
@@ -1065,6 +1065,8 @@ final class NativeToolCallRowView: NSView {
         self.lastConfiguredTheme = theme
 
         let isNew = item.call.id != currentItemId
+        let argumentsChanged = item.call.function.arguments != currentItem?.call.function.arguments
+        if argumentsChanged { cachedArgs = nil }
         currentItemId = item.call.id
         currentItem = item
 
@@ -1126,12 +1128,14 @@ final class NativeToolCallRowView: NSView {
             // A completed call that returned an error keeps its red node but must
             // not claim success in the title — reflect the failure verdict here.
             let failed = item.result.map { isErrorResult($0, callId: item.call.id) } ?? false
-            let past = ToolDisplayName.friendly(
-                for: item.call.function.name,
-                running: false,
-                arguments: item.call.function.arguments,
-                failed: failed
-            )
+            let past = item.unobservedResult != nil
+                ? "\(item.call.function.name) · \(L("Result not received"))"
+                : ToolDisplayName.friendly(
+                    for: item.call.function.name,
+                    running: false,
+                    arguments: item.call.function.arguments,
+                    failed: failed
+                )
             runningTitle = ToolDisplayName.friendly(
                 for: item.call.function.name,
                 running: true,
@@ -1264,7 +1268,7 @@ final class NativeToolCallRowView: NSView {
             applyToolDetailSectionHeading(to: argumentsSectionTitle, text: "ARGUMENTS", theme: theme)
 
             let rawArgs = item.call.function.arguments
-            if isNew || cachedArgs == nil {
+            if isNew || argumentsChanged || cachedArgs == nil {
                 let pretty = JSONFormatter.prettyJSON(rawArgs)
                 cachedArgs = pretty.isEmpty ? rawArgs : pretty
             }
@@ -1396,7 +1400,7 @@ final class NativeToolCallRowView: NSView {
 
         // 3) Markdown fallback for everything else.
         tearDownTerminalView()
-        guard let result = item.result else {
+        guard let result = item.result ?? item.unobservedResult?.localizedUnobservedResult else {
             tearDownResultSection()
             return
         }
@@ -2181,6 +2185,7 @@ final class NativeToolCallRowView: NSView {
     /// A call is "running" while it has no result yet, or while a `speak` call
     /// is still playing its audio (matched via `TTSService.activeSpeakCallId`).
     private func isRunning(_ item: ToolCallItem) -> Bool {
+        if item.unobservedResult != nil { return false }
         if item.result == nil { return true }
         return item.call.function.name == "speak"
             && TTSService.shared.activeSpeakCallId == item.call.id
@@ -2223,6 +2228,7 @@ final class NativeToolCallRowView: NSView {
     /// Color of the node (icon + fill tint + ring), driven by run status:
     /// running = accent, error = red, success = green.
     private func nodeStatusColor(item: ToolCallItem, theme: any ThemeProtocol) -> NSColor {
+        if item.unobservedResult != nil { return NSColor(theme.secondaryText) }
         if isRunning(item) { return NSColor(theme.accentColor) }
         if let r = item.result, isErrorResult(r, callId: item.call.id) {
             return NSColor(theme.errorColor)

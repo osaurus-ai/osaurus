@@ -63,6 +63,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Provider-native Responses output Items retained for exact stateless
     /// replay. Empty for legacy sessions and non-Responses providers.
     public var responsesOutputItems: [JSONValue]
+    public var anthropicThinkingBlocks: [JSONValue] = []
     public var inputTokenCount: Int?
     public var cachedInputTokenCount: Int?
     /// An abandoned reasoning/protocol attempt can remain visible in the
@@ -169,6 +170,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
         responsesOutputItems =
             try container.decodeIfPresent([JSONValue].self, forKey: .responsesOutputItems) ?? []
+        anthropicThinkingBlocks = try container.decodeIfPresent([JSONValue].self, forKey: .anthropicThinkingBlocks) ?? []
         inputTokenCount = try container.decodeIfPresent(Int.self, forKey: .inputTokenCount)
         cachedInputTokenCount =
             try container.decodeIfPresent(Int.self, forKey: .cachedInputTokenCount)
@@ -220,6 +222,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         if !responsesOutputItems.isEmpty {
             try container.encode(responsesOutputItems, forKey: .responsesOutputItems)
         }
+        if !anthropicThinkingBlocks.isEmpty { try container.encode(anthropicThinkingBlocks, forKey: .anthropicThinkingBlocks) }
         try container.encodeIfPresent(inputTokenCount, forKey: .inputTokenCount)
         try container.encodeIfPresent(cachedInputTokenCount, forKey: .cachedInputTokenCount)
         if modelContextExcluded {
@@ -238,7 +241,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case createdAt, completedAt, lastOutputAt, generationTokenCount, timeToFirstToken
         case generationTokensPerSecond, modelLoadSeconds, requestedAt
         case terminalStopReason
-        case reasoningItemId, reasoningEncrypted, responsesOutputItems
+        case reasoningItemId, reasoningEncrypted, responsesOutputItems, anthropicThinkingBlocks
         case inputTokenCount, cachedInputTokenCount
         case modelContextExcluded
         case routerBilling
@@ -289,6 +292,7 @@ extension ChatTurnData {
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
         self.responsesOutputItems = turn.responsesOutputItems
+        self.anthropicThinkingBlocks = turn.anthropicThinkingBlocks
         self.inputTokenCount = turn.inputTokenCount
         self.cachedInputTokenCount = turn.cachedInputTokenCount
         self.modelContextExcluded = turn.modelContextExcluded
@@ -329,6 +333,7 @@ extension ChatTurn {
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
         self.responsesOutputItems = data.responsesOutputItems
+        self.anthropicThinkingBlocks = data.anthropicThinkingBlocks
         self.inputTokenCount = data.inputTokenCount
         self.cachedInputTokenCount = data.cachedInputTokenCount
         self.modelContextExcluded = data.modelContextExcluded

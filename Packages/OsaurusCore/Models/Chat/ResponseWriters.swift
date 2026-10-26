@@ -567,6 +567,24 @@ final class SSEResponseWriter: ResponseWriter {
         writeSSEChunk(chunk, context: context)
     }
 
+    /// Osaurus extension for measurements that do not form a complete
+    /// protocol usage tuple. No missing count or rate is synthesized.
+    func writeGenerationMetrics(
+        _ metrics: [String: JSONValue], model: String, responseId: String,
+        created: Int, context: ChannelHandlerContext
+    ) {
+        struct Chunk: Encodable {
+            let id: String
+            let object = "chat.completion.chunk"
+            let created: Int
+            let model: String
+            let choices: [StreamChoice] = []
+            let generation_metrics: [String: JSONValue]
+        }
+        writeSSEChunk(Chunk(id: responseId, created: created, model: model,
+            generation_metrics: metrics), context: context)
+    }
+
     /// Emit the `osaurus_artifacts` extension chunk of a hosted shared-agent
     /// run (empty `choices`; see `RemoteRunArtifacts`).
     func writeArtifactsChunk(
@@ -612,6 +630,8 @@ final class SSEResponseWriter: ResponseWriter {
 final class NDJSONResponseWriter: ResponseWriter {
     private var inputTokens: Int?
     private var outputTokens: Int?
+    private var doneReason = "stop"
+    func setDoneReason(_ reason: String) { doneReason = reason }
 
     func setInputTokens(_ count: Int) { inputTokens = max(0, count) }
     func setOutputTokens(_ count: Int) { outputTokens = max(0, count) }
@@ -652,6 +672,12 @@ final class NDJSONResponseWriter: ResponseWriter {
     ) {
         guard !content.isEmpty else { return }
         writeNDJSONMessage(content, model: model, done: false, context: context)
+    }
+
+    func writeThinking(_ text: String, model: String, context: ChannelHandlerContext) {
+        guard !text.isEmpty else { return }
+        writeJSONObject(["model": model, "created_at": Date().ISO8601Format(),
+            "message": ["role": "assistant", "content": "", "thinking": text], "done": false], context: context)
     }
 
     @inline(__always)
@@ -724,6 +750,7 @@ final class NDJSONResponseWriter: ResponseWriter {
     private func writeJSONObject(_ response: [String: Any], context: ChannelHandlerContext) {
         var response = response
         if response["done"] as? Bool == true, response["error"] == nil {
+            response["done_reason"] = doneReason
             if let inputTokens { response["prompt_eval_count"] = inputTokens }
             if let outputTokens { response["eval_count"] = outputTokens }
         }
@@ -765,6 +792,8 @@ final class NDJSONResponseWriter: ResponseWriter {
 final class OllamaGenerateNDJSONResponseWriter {
     private var inputTokens: Int?
     private var outputTokens: Int?
+    private var doneReason = "stop"
+    func setDoneReason(_ reason: String) { doneReason = reason }
 
     func setInputTokens(_ count: Int) { inputTokens = max(0, count) }
     func setOutputTokens(_ count: Int) { outputTokens = max(0, count) }
@@ -792,6 +821,12 @@ final class OllamaGenerateNDJSONResponseWriter {
     ) {
         guard !content.isEmpty else { return }
         writeMessage(content, model: model, done: false, context: context)
+    }
+
+    func writeThinking(_ text: String, model: String, context: ChannelHandlerContext) {
+        guard !text.isEmpty else { return }
+        writeJSONObject(["model": model, "created_at": Date().ISO8601Format(),
+            "response": "", "thinking": text, "done": false], context: context)
     }
 
     func writeFinish(
@@ -868,6 +903,7 @@ final class OllamaGenerateNDJSONResponseWriter {
     private func writeJSONObject(_ response: [String: Any], context: ChannelHandlerContext) {
         var response = response
         if response["done"] as? Bool == true, response["error"] == nil {
+            response["done_reason"] = doneReason
             if let inputTokens { response["prompt_eval_count"] = inputTokens }
             if let outputTokens { response["eval_count"] = outputTokens }
         }
@@ -888,13 +924,14 @@ final class OllamaGenerateNDJSONResponseWriter {
 final class AnthropicSSEResponseWriter {
     private var messageId: String = ""
     private var model: String = ""
-    private var inputTokens: Int = 0
+    private var inputTokens: Int?
     private var messageStartConfigured = false
     private var hasStartedMessage = false
-    private var outputTokens: Int = 0
+    private var outputTokens: Int?
     private var currentBlockIndex: Int = 0
     private var hasStartedTextBlock: Bool = false
     private var hasStartedThinkingBlock: Bool = false
+    private var accumulatedThinking = ""
 
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
@@ -916,14 +953,14 @@ final class AnthropicSSEResponseWriter {
     func writeMessageStart(
         messageId: String,
         model: String,
-        inputTokens: Int,
+        inputTokens: Int?,
         context: ChannelHandlerContext,
         deferUntilInput: Bool = false
     ) {
         self.messageId = messageId
         self.model = model
         self.inputTokens = inputTokens
-        self.outputTokens = 0
+        self.outputTokens = nil
         self.currentBlockIndex = 0
         self.hasStartedTextBlock = false
         self.hasStartedThinkingBlock = false
@@ -939,7 +976,7 @@ final class AnthropicSSEResponseWriter {
     }
 
     private func ensureMessageStart(context: ChannelHandlerContext) {
-        guard messageStartConfigured, !hasStartedMessage else { return }
+        guard messageStartConfigured, !hasStartedMessage, let inputTokens else { return }
         hasStartedMessage = true
         let event = MessageStartEvent(id: messageId, model: model, inputTokens: inputTokens)
         writeSSEEvent("message_start", payload: event, context: context)
@@ -970,7 +1007,6 @@ final class AnthropicSSEResponseWriter {
             writeTextBlockStart(context: context)
         }
 
-        outputTokens += TokenEstimator.estimate(text)
 
         let event = ContentBlockDeltaEvent(index: currentBlockIndex, text: text)
         writeSSEEvent("content_block_delta", payload: event, context: context)
@@ -983,6 +1019,7 @@ final class AnthropicSSEResponseWriter {
         currentBlockIndex += 1
         hasStartedTextBlock = false
         hasStartedThinkingBlock = false
+        accumulatedThinking = ""
     }
 
     /// Write content_block_start for a thinking block (Anthropic extended
@@ -997,6 +1034,7 @@ final class AnthropicSSEResponseWriter {
         }
 
         hasStartedThinkingBlock = true
+        accumulatedThinking = ""
         let event = ContentBlockStartEvent(thinkingBlockAt: currentBlockIndex)
         writeSSEEvent("content_block_start", payload: event, context: context)
     }
@@ -1012,10 +1050,44 @@ final class AnthropicSSEResponseWriter {
             writeThinkingBlockStart(context: context)
         }
 
-        outputTokens += TokenEstimator.estimate(thinking)
 
+        accumulatedThinking += thinking
         let event = ContentBlockDeltaEvent(thinkingAt: currentBlockIndex, text: thinking)
         writeSSEEvent("content_block_delta", payload: event, context: context)
+    }
+
+    /// Final signed/opaque block from the actual provider. Never invent a
+    /// signature or rewrite its associated thinking text.
+    func writeCompletedThinkingBlock(_ value: JSONValue, context: ChannelHandlerContext) throws {
+        guard case .object(let fields) = value, case .string(let type) = fields["type"] else {
+            throw NSError(domain: "OsaurusAnthropicProtocol", code: 502)
+        }
+        if type == "thinking", case .string(let text) = fields["thinking"] {
+            guard text.hasPrefix(accumulatedThinking) else {
+                throw NSError(domain: "OsaurusAnthropicProtocol", code: 502,
+                    userInfo: [NSLocalizedDescriptionKey: "Signed thinking differs from the streamed thinking block."])
+            }
+            let remainder = String(text.dropFirst(accumulatedThinking.count))
+            if !hasStartedThinkingBlock { writeThinkingBlockStart(context: context) }
+            if !remainder.isEmpty { writeThinkingDelta(remainder, context: context) }
+            if case .string(let signature) = fields["signature"] {
+                writeSSEEvent("content_block_delta", payload: ContentBlockDeltaEvent(signatureAt: currentBlockIndex,
+                    signature: signature), context: context)
+            }
+            writeBlockStop(context: context)
+        } else if type == "redacted_thinking" {
+            if hasStartedThinkingBlock || hasStartedTextBlock { writeBlockStop(context: context) }
+            struct Block: Encodable {
+                let type = "content_block_start"
+                let index: Int
+                let content_block: JSONValue
+            }
+            writeSSEEvent("content_block_start", payload: Block(index: currentBlockIndex, content_block: value), context: context)
+            writeBlockStop(context: context)
+        } else {
+            throw NSError(domain: "OsaurusAnthropicProtocol", code: 502,
+                userInfo: [NSLocalizedDescriptionKey: "Unsupported Anthropic thinking block type: \(type)."])
+        }
     }
 
     func setOutputTokens(_ tokenCount: Int) {
@@ -1049,6 +1121,10 @@ final class AnthropicSSEResponseWriter {
 
     /// Write message_delta with stop_reason
     func writeMessageDelta(stopReason: String, context: ChannelHandlerContext) {
+        guard let inputTokens, let outputTokens else {
+            writeError("Anthropic compatibility requires reported input and output token counts.", context: context)
+            return
+        }
         let event = MessageDeltaEvent(stopReason: stopReason, outputTokens: outputTokens, inputTokens: inputTokens)
         writeSSEEvent("message_delta", payload: event, context: context)
     }
@@ -1113,6 +1189,10 @@ final class AnthropicSSEResponseWriter {
 
     /// Complete the stream with stop reason and close connection
     func writeFinish(stopReason: String, context: ChannelHandlerContext) {
+        guard inputTokens != nil, outputTokens != nil else {
+            writeError("Anthropic compatibility requires reported input and output token counts.", context: context)
+            return
+        }
         // Close any open block (text or thinking) before finishing.
         if hasStartedTextBlock || hasStartedThinkingBlock {
             writeBlockStop(context: context)
@@ -1163,9 +1243,14 @@ final class AnthropicSSEResponseWriter {
 final class OpenResponsesSSEWriter {
     private var responseId: String = ""
     private var model: String = ""
-    private var inputTokens: Int = 0
-    private var outputTokens: Int = 0
+    private var createdAt: Int = 0
+    private var proxyingProviderEvents = false
+    private var hasProviderResponseSnapshot = false
+    private var inputTokens: Int?
+    private var outputTokens: Int?
     private var tokensPerSecond: Double?
+    private var cachedInputTokens: Int?
+    func setCachedInputTokens(_ count: Int) { cachedInputTokens = count }
     private var completedOutput: [OpenResponsesOutputItem] = []
     private var completedOutputIDs: Set<String> = []
     private var sequenceNumber: Int = 0
@@ -1208,14 +1293,16 @@ final class OpenResponsesSSEWriter {
     func writeResponseCreated(
         responseId: String,
         model: String,
-        inputTokens: Int,
+        inputTokens: Int? = nil,
         context: ChannelHandlerContext
     ) {
         self.responseId = responseId
+        self.createdAt = Int(Date().timeIntervalSince1970)
         self.model = model
         self.inputTokens = inputTokens
-        self.outputTokens = 0
+        self.outputTokens = nil
         self.tokensPerSecond = nil
+        self.cachedInputTokens = nil
         self.completedOutput = []
         self.completedOutputIDs = []
         self.sequenceNumber = 0
@@ -1229,7 +1316,7 @@ final class OpenResponsesSSEWriter {
 
         let response = OpenResponsesResponse(
             id: responseId,
-            createdAt: Int(Date().timeIntervalSince1970),
+            createdAt: createdAt,
             status: .inProgress,
             model: model,
             output: [],
@@ -1243,7 +1330,7 @@ final class OpenResponsesSSEWriter {
     func writeResponseInProgress(context: ChannelHandlerContext) {
         let response = OpenResponsesResponse(
             id: responseId,
-            createdAt: Int(Date().timeIntervalSince1970),
+            createdAt: createdAt,
             status: .inProgress,
             model: model,
             output: [],
@@ -1324,7 +1411,6 @@ final class OpenResponsesSSEWriter {
         }
 
         accumulatedReasoning += text
-        outputTokens += TokenEstimator.estimate(text)
 
         let event = ReasoningSummaryTextDeltaEvent(
             sequenceNumber: nextSequenceNumber(),
@@ -1339,7 +1425,7 @@ final class OpenResponsesSSEWriter {
     /// Close the reasoning item: emit `summary_text.done` then
     /// `output_item.done`, advance `currentOutputIndex` so the message item
     /// that follows lives at the next slot.
-    func writeReasoningItemDone(context: ChannelHandlerContext) {
+    func writeReasoningItemDone(status: OpenResponsesItemStatus = .completed, context: ChannelHandlerContext) {
         guard hasOpenReasoningItem else { return }
 
         let doneEvent = ReasoningSummaryTextDoneEvent(
@@ -1353,7 +1439,7 @@ final class OpenResponsesSSEWriter {
 
         let finalItem = OpenResponsesReasoningItem(
             id: reasoningItemId,
-            status: .completed,
+            status: status,
             summary: [OpenResponsesReasoningSummaryText(text: accumulatedReasoning)]
         )
         let itemDone = OutputItemDoneEvent(
@@ -1374,7 +1460,6 @@ final class OpenResponsesSSEWriter {
         guard !text.isEmpty else { return }
 
         accumulatedText += text
-        outputTokens += TokenEstimator.estimate(text)
 
         let event = OutputTextDeltaEvent(
             sequenceNumber: nextSequenceNumber(),
@@ -1409,10 +1494,10 @@ final class OpenResponsesSSEWriter {
     }
 
     /// Write response.output_item.done event for a completed message
-    func writeMessageItemDone(context: ChannelHandlerContext) {
+    func writeMessageItemDone(status: OpenResponsesItemStatus = .completed, context: ChannelHandlerContext) {
         let messageItem = OpenResponsesOutputMessage(
             id: currentItemId,
-            status: .completed,
+            status: status,
             content: [.outputText(OpenResponsesOutputText(text: accumulatedText))]
         )
         let event = OutputItemDoneEvent(
@@ -1490,11 +1575,12 @@ final class OpenResponsesSSEWriter {
     func writeFunctionCallItemDone(
         callId: String,
         name: String,
+        status: OpenResponsesItemStatus = .completed,
         context: ChannelHandlerContext
     ) {
         let functionCall = OpenResponsesFunctionCall(
             id: currentItemId,
-            status: .completed,
+            status: status,
             callId: callId,
             name: name,
             arguments: accumulatedText
@@ -1509,19 +1595,71 @@ final class OpenResponsesSSEWriter {
         currentOutputIndex += 1
     }
 
-    /// Write response.completed event
+    /// Authoritative usage only. Missing counts remain absent; text chunks
+    /// are never converted into estimated usage.
+    private var reportedUsage: OpenResponsesUsage? {
+        guard let inputTokens, let outputTokens else { return nil }
+        return .init(inputTokens: inputTokens, outputTokens: outputTokens, tokensPerSecond: tokensPerSecond, cachedInputTokens: cachedInputTokens)
+    }
+
     func writeResponseCompleted(context: ChannelHandlerContext) {
-        let response = OpenResponsesResponse(
-            id: responseId,
-            createdAt: Int(Date().timeIntervalSince1970),
-            status: .completed,
-            model: model,
-            output: completedOutput,
-            usage: OpenResponsesUsage(inputTokens: inputTokens, outputTokens: outputTokens,
-                                      tokensPerSecond: tokensPerSecond)
-        )
-        let event = ResponseCompletedEvent(sequenceNumber: nextSequenceNumber(), response: response)
-        writeSSEEvent("response.completed", payload: event, context: context)
+        writeResponseTerminal(status: .completed, context: context)
+    }
+
+    func writeResponseTerminal(
+        status: OpenResponsesStatus,
+        incompleteReason: String? = nil,
+        metadata: [String: String]? = nil,
+        context: ChannelHandlerContext
+    ) {
+        let response = OpenResponsesResponse(id: responseId, createdAt: createdAt, status: status,
+            model: model, output: completedOutput, usage: reportedUsage,
+            metadata: metadata, incompleteReason: incompleteReason)
+        let name = "response." + status.rawValue
+        struct Terminal: Encodable {
+            let type: String
+            let sequence_number: Int
+            let response: OpenResponsesResponse
+        }
+        writeSSEEvent(name, payload: Terminal(type: name, sequence_number: nextSequenceNumber(), response: response), context: context)
+    }
+
+    /// The typed remote adapter supplies privacy-processed native SSE JSON
+    /// before its portable projections. Proxy its exact identities/indices and
+    /// terminal lifecycle instead of opening a second synthetic response.
+    func writeProviderEvent(_ value: JSONValue, context: ChannelHandlerContext) throws {
+        guard case .object(let fields) = value, case .string(let type) = fields["type"], !type.isEmpty else {
+            throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                userInfo: [NSLocalizedDescriptionKey: "Native Responses event is missing its type."])
+        }
+        proxyingProviderEvents = true
+        func integer(_ value: JSONValue?) -> Int? {
+            guard case .number(let number) = value, number.isFinite, number >= 0,
+                number < Double(Int.max), number.rounded(.towardZero) == number else { return nil }
+            return Int(number)
+        }
+        if let sequence = integer(fields["sequence_number"]) { sequenceNumber = max(sequenceNumber, sequence) }
+        if case .string(let id) = fields["response_id"], !id.isEmpty { responseId = id }
+        if case .object(let response) = fields["response"] {
+            if case .string(let id) = response["id"], !id.isEmpty { responseId = id }
+            if case .string(let name) = response["model"] { model = name }
+            if let timestamp = integer(response["created_at"]) { createdAt = timestamp }
+            if !responseId.isEmpty, !model.isEmpty, integer(response["created_at"]) != nil {
+                hasProviderResponseSnapshot = true
+            }
+        }
+        writeSSEEvent(type, payload: value, context: context)
+    }
+
+    func writePrefillProgress(_ progress: PrefillProgressState, context: ChannelHandlerContext) {
+        struct Progress: Encodable {
+            let type = "response.prefill_progress"
+            let sequence_number: Int
+            let response_id: String
+            let progress: PrefillProgressState
+        }
+        writeSSEEvent("response.prefill_progress", payload: Progress(sequence_number: nextSequenceNumber(),
+            response_id: responseId, progress: progress), context: context)
     }
 
     /// Write error event
@@ -1530,6 +1668,11 @@ final class OpenResponsesSSEWriter {
     }
 
     func writeErrorFromThrown(_ error: Error, context: ChannelHandlerContext) {
+        if proxyingProviderEvents, responseId.isEmpty,
+            let actualID = (error as NSError).userInfo["response_id"] as? String,
+            !actualID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            responseId = actualID
+        }
         if let pfError = error as? PrivacyFilterPipelineError {
             writeStructuredOpenResponsesError(
                 message: pfError.localizedDescription,
@@ -1550,9 +1693,25 @@ final class OpenResponsesSSEWriter {
         code: String,
         context: ChannelHandlerContext
     ) {
+        if proxyingProviderEvents && !hasProviderResponseSnapshot {
+            // An early upstream failure may never supply a complete response
+            // snapshot. Emit the protocol error event, carrying only known
+            // identity rather than inventing a failed response object.
+            struct Event: Encodable {
+                let type = "error"
+                let sequence_number: Int
+                let code: String
+                let message: String
+                let param: JSONValue = .null
+                let response_id: String?
+            }
+            writeSSEEvent("error", payload: Event(sequence_number: nextSequenceNumber(), code: code,
+                message: message, response_id: responseId.isEmpty ? nil : responseId), context: context)
+            return
+        }
         let response = OpenResponsesResponse(
             id: responseId,
-            createdAt: Int(Date().timeIntervalSince1970),
+            createdAt: createdAt,
             status: .failed,
             model: model,
             output: [],

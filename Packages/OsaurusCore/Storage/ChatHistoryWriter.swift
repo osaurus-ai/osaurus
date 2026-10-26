@@ -205,7 +205,7 @@ enum ChatHistoryWriter {
                 // shows only what was typed.
                 let injected =
                     msg.role == "user" ? InjectedContextSpans.splittingLeadingBlocks(msg.content ?? "") : nil
-                return ChatTurnData(
+                var turn = ChatTurnData(
                     id: UUID(),
                     role: MessageRole(rawValue: msg.role) ?? .assistant,
                     content: injected?.rest ?? msg.content ?? "",
@@ -217,9 +217,14 @@ enum ChatHistoryWriter {
                     toolCalls: msg.tool_calls,
                     toolCallId: msg.tool_call_id,
                     toolResults: [:],
-                    thinking: "",
+                    thinking: msg.reasoning_content ?? "",
+                    reasoningItemId: msg.reasoning_item_id,
+                    reasoningEncrypted: msg.reasoning_encrypted,
+                    responsesOutputItems: msg.responses_output_items ?? [],
                     injectedContextPrefix: injected?.prefix
                 )
+                turn.anthropicThinkingBlocks = msg.anthropic_thinking_blocks ?? []
+                return turn
             }
     }
 

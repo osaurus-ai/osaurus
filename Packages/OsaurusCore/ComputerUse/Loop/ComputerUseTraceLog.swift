@@ -18,8 +18,8 @@ enum ComputerUseTraceLog {
     private static let queue = DispatchQueue(label: "com.osaurus.computer-use-trace")
 
     static func record(
-        request: ChatCompletionRequest,
-        response: ChatCompletionResponse,
+        request: ResponsesInferenceRequest,
+        response: ResponsesGenerationResult,
         elapsedSeconds: TimeInterval
     ) {
         guard isEnabled else { return }
@@ -27,11 +27,11 @@ enum ComputerUseTraceLog {
         let stamp = ISO8601DateFormatter().string(from: Date())
         lines.append(
             "==== computer-use model step \(stamp) model=\(request.model) "
-                + "requested_enable_thinking=\(String(reflecting: request.enable_thinking)) "
+                + "requested_enable_thinking=\(String(reflecting: request.generation.enableThinking)) "
                 + String(format: "elapsed=%.2fs ====", elapsedSeconds)
         )
-        lines.append("request: \(request.messages.count) message(s)")
-        for (index, message) in request.messages.enumerated() {
+        lines.append("request: \(request.input.count) message(s)")
+        for (index, message) in request.input.enumerated() {
             var line = "  [\(index)] role=\(message.role) chars=\(message.content?.count ?? 0)"
             if message.role == "tool", let content = message.content {
                 line += " content=\(String(reflecting: content))"
@@ -41,21 +41,20 @@ enum ComputerUseTraceLog {
             }
             lines.append(line)
         }
-        let usage = response.usage
         lines.append(
-            "response: finish=\(response.choices.first?.finish_reason ?? "(no choice)") "
-                + "prompt_tokens=\(usage.prompt_tokens) completion_tokens=\(usage.completion_tokens)"
-                + (usage.tokens_per_second.map { String(format: " tok/s=%.1f", $0) } ?? "")
+            "response: id=\(response.completion.responseID) status=\(response.completion.status) "
+                + "stop=\(String(reflecting: response.completion.stopReason)) "
+                + "prompt_tokens=\(String(reflecting: response.inputTokenCount)) "
+                + "completion_tokens=\(String(reflecting: response.completion.tokenCount))"
+                + (response.completion.tokensPerSecond.map { " tok/s=\(String(reflecting: $0))" } ?? " tok/s=unreported")
         )
-        if let message = response.choices.first?.message {
-            lines.append("content: \(String(reflecting: message.content ?? ""))")
-            lines.append("reasoning_chars: \(message.reasoning_content?.count ?? 0)")
-            for (index, call) in (message.tool_calls ?? []).enumerated() {
-                lines.append(
-                    "tool_call[\(index)]: name=\(call.function.name) "
-                        + "arguments=\(String(reflecting: call.function.arguments))"
-                )
-            }
+        lines.append("content: \(String(reflecting: response.text))")
+        lines.append("reasoning_chars: \(response.reasoning.count) provider_items=\(response.providerOutputItems.count)")
+        for (index, call) in response.completion.functionCalls.enumerated() {
+            lines.append(
+                "tool_call[\(index)]: id=\(call.id) call_id=\(call.callID) name=\(call.name) "
+                    + "arguments=\(String(reflecting: call.arguments))"
+            )
         }
         write(lines.joined(separator: "\n"))
     }
@@ -65,7 +64,7 @@ enum ComputerUseTraceLog {
     /// while ChatEngine applies the agent/tool default; logging only the raw
     /// request made an effective false look like an unproven nil.
     static func recordEffectiveDispatch(
-        request: ChatCompletionRequest,
+        request: ResponsesInferenceRequest,
         modelOptions: [String: ModelOptionValue]
     ) {
         guard isEnabled,
@@ -75,8 +74,8 @@ enum ComputerUseTraceLog {
             "\(key)=\(String(describing: modelOptions[key]!))"
         }.joined(separator: ",")
         write(
-            "dispatch model=\(request.model) is_agent=\(request.isAgentRequest) "
-                + "requested_enable_thinking=\(String(reflecting: request.enable_thinking)) "
+            "dispatch model=\(request.model) is_agent=\(request.context.isAgentRequest) "
+                + "requested_enable_thinking=\(String(reflecting: request.generation.enableThinking)) "
                 + "effective_options={\(options)}"
         )
     }

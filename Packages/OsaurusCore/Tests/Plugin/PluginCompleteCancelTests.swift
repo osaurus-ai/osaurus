@@ -9,11 +9,7 @@
 //    cancellation flag for a registered stream id.
 //  - Whitespace / empty stream ids are ignored.
 //
-//  Tests do NOT exercise an end-to-end streaming run (which would require a
-//  real chat engine); the registry is the unit under test here. The
-//  `completeStream` integration with the registry is verified by the
-//  request-parse path in PluginHostAPI.swift and an `MockChatEngine`-backed
-//  smoke test would be a future addition.
+//  Paused typed-stream integration coverage lives in ResponsesPluginCancellationTests.
 //
 
 import Foundation
@@ -54,11 +50,12 @@ struct PluginCompleteCancelTests {
         let ctx = try PluginHostContext(pluginId: "com.test.cancel.registry")
         defer { ctx.teardown() }
         let id = "stream-1"
-        // Initially not cancelled.
+        let owner = UUID()
+        ctx.registerStream(id, owner: owner, cancel: {})
+        defer { ctx.unregisterStream(id, owner: owner) }
         #expect(ctx.isStreamCancelled(id) == false)
         ctx.completeCancel(streamId: id)
-        // Cancellation flag is now set so completeStream's next delta-loop
-        // iteration would observe it and unwind.
+        // Active registration is cancelled immediately.
         #expect(ctx.isStreamCancelled(id) == true)
     }
 
@@ -79,6 +76,9 @@ struct PluginCompleteCancelTests {
     @Test func completeCancelTrimsStreamId() throws {
         let ctx = try PluginHostContext(pluginId: "com.test.cancel.trim")
         defer { ctx.teardown() }
+        let owner = UUID()
+        ctx.registerStream("stream-X", owner: owner, cancel: {})
+        defer { ctx.unregisterStream("stream-X", owner: owner) }
         ctx.completeCancel(streamId: "  stream-X  ")
         // The trimmed form is what gets registered.
         #expect(ctx.isStreamCancelled("stream-X") == true)
@@ -92,6 +92,13 @@ struct PluginCompleteCancelTests {
             ctxB.teardown()
         }
         let id = "shared-id"
+        let ownerA = UUID(), ownerB = UUID()
+        ctxA.registerStream(id, owner: ownerA, cancel: {})
+        ctxB.registerStream(id, owner: ownerB, cancel: {})
+        defer {
+            ctxA.unregisterStream(id, owner: ownerA)
+            ctxB.unregisterStream(id, owner: ownerB)
+        }
         ctxA.completeCancel(streamId: id)
         // Cancelling on plugin A's context must not flip plugin B's flag —
         // plugins can't interfere with each other's streams.

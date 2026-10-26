@@ -19,6 +19,8 @@ enum BlockPosition: Equatable {
 struct ToolCallItem: Equatable {
     let call: ToolCall
     let result: String?
+    /// Settled observation without an actual remote execution verdict.
+    var unobservedResult: RemoteToolStreamEnd? = nil
     /// How long the call took to finish (seconds), shown as "· 1.2s". Nil until
     /// measured / for calls whose duration wasn't recorded.
     var duration: TimeInterval? = nil
@@ -31,8 +33,11 @@ struct ToolCallItem: Equatable {
     var repeatCount: Int = 1
 
     static func == (lhs: ToolCallItem, rhs: ToolCallItem) -> Bool {
-        lhs.call.id == rhs.call.id && lhs.result == rhs.result && lhs.duration == rhs.duration
-            && lhs.repeatCount == rhs.repeatCount
+        lhs.call.id == rhs.call.id && lhs.call.type == rhs.call.type
+            && lhs.call.function.name == rhs.call.function.name
+            && lhs.call.function.arguments == rhs.call.function.arguments
+            && lhs.result == rhs.result && lhs.duration == rhs.duration
+            && lhs.repeatCount == rhs.repeatCount && lhs.unobservedResult == rhs.unobservedResult
     }
 }
 
@@ -237,6 +242,9 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
     let turnId: UUID
     let kind: ContentBlockKind
     var position: BlockPosition
+    /// Correlated to this block's own turn; global/background inference
+    /// must never supply another chat's prompt-processing percentage.
+    var prefillProgress: PrefillProgressState? = nil
 
     var role: MessageRole {
         switch kind {
@@ -253,6 +261,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
     static func == (lhs: ContentBlock, rhs: ContentBlock) -> Bool {
         // Check id first (cheapest), then position, then kind (most expensive)
         lhs.id == rhs.id && lhs.position == rhs.position && lhs.kind == rhs.kind
+            && lhs.prefillProgress == rhs.prefillProgress
     }
 
     /// Hash on `id` only — used by NSDiffableDataSource for item identity.
@@ -262,7 +271,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
     }
 
     func withPosition(_ newPosition: BlockPosition) -> ContentBlock {
-        ContentBlock(id: id, turnId: turnId, kind: kind, position: newPosition)
+        ContentBlock(id: id, turnId: turnId, kind: kind, position: newPosition, prefillProgress: prefillProgress)
     }
 
     /// Raw text the find bar (Cmd+F) highlighter scans for this block, or
@@ -439,13 +448,15 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
     static func typingIndicator(
         turnId: UUID,
         phase: TypingIndicatorPhase = .generating,
+        prefillProgress: PrefillProgressState? = nil,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
             id: "typing-\(turnId.uuidString)",
             turnId: turnId,
             kind: .typingIndicator(phase: phase),
-            position: position
+            position: position,
+            prefillProgress: phase == .generating ? prefillProgress : nil
         )
     }
 
@@ -700,7 +711,7 @@ extension ContentBlock {
                         turnId: turn.id,
                         index: 0,
                         text: turn.thinking,
-                        isStreaming: isStreaming && !hasVisibleContent,
+                        isStreaming: isStreaming && turn.isReasoningActive,
                         duration: turn.thinkingDuration,
                         position: .middle
                     )
@@ -721,6 +732,7 @@ extension ContentBlock {
                         ToolCallItem(
                             call: call,
                             result: turn.remoteToolResults[call.id],
+                            unobservedResult: turn.remoteToolUnobservedResults[call.id],
                             duration: nil
                         )
                     }
@@ -776,6 +788,7 @@ extension ContentBlock {
                     .typingIndicator(
                         turnId: turn.id,
                         phase: isStreaming ? .generating : .finishing,
+                        prefillProgress: turn.prefillProgress,
                         position: .middle
                     )
                 )

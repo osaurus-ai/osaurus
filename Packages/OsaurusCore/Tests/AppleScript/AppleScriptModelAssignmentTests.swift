@@ -32,12 +32,49 @@ struct AppleScriptModelAssignmentTests {
     }
 
     @Test("blank or whitespace assignment falls through to automatic selection")
-    func blankAssignmentUsesAutomatic() {
-        // No curated model is installed in the test environment, so automatic
-        // selection has nothing to offer — the point is that a blank string is
-        // treated as "unassigned", not as a missing assignment.
-        #expect(AppleScriptModelCatalog.resolveAssignment(preferred: "   ") == .noneInstalled)
-        #expect(AppleScriptModelCatalog.resolveAssignment(preferred: nil) == .noneInstalled)
+    func blankAssignmentUsesAutomatic() async throws {
+        try await OsaurusTestGlobals.withPathsLock {
+            let fm = FileManager.default
+            let manifestRoot = fm.temporaryDirectory.appendingPathComponent(
+                "osaurus-applescript-auto-manifest-\(UUID().uuidString)", isDirectory: true)
+            let modelsRoot = fm.temporaryDirectory.appendingPathComponent(
+                "osaurus-applescript-auto-models-\(UUID().uuidString)", isDirectory: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.testRootsOverride = []
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? fm.removeItem(at: manifestRoot)
+                try? fm.removeItem(at: modelsRoot)
+            }
+
+            // OSU_MODELS_DIR isolates the primary directory in the unit harness;
+            // explicitly empty the separate external inventory too. Real curated
+            // bundles in ~/models must not change this fixture's empty case.
+            ExternalModelLocator.rescan()
+            #expect(AppleScriptModelCatalog.resolveAssignment(preferred: "   ") == .noneInstalled)
+            #expect(AppleScriptModelCatalog.resolveAssignment(preferred: nil) == .noneInstalled)
+
+            // Positive automatic-selection coverage uses a tiny owned discovery
+            // fixture, not whichever real model the machine happens to contain.
+            // No model weights are loaded or generated from these fixture bytes.
+            let curatedId = AppleScriptModelCatalog.model8BId
+            let bundle = modelsRoot.appendingPathComponent(curatedId, isDirectory: true)
+            try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: bundle.appendingPathComponent("config.json"))
+            try Data("{}".utf8).write(to: bundle.appendingPathComponent("tokenizer.json"))
+            try Data("fixture".utf8).write(to: bundle.appendingPathComponent("model.safetensors"))
+            ExternalModelLocator.testRootsOverride = [
+                (root: modelsRoot, source: .customModelFolder)
+            ]
+            ExternalModelLocator.rescan()
+            #expect(AppleScriptModelCatalog.resolveAssignment(preferred: "   ") == .resolved(curatedId))
+            #expect(AppleScriptModelCatalog.resolveAssignment(preferred: nil) == .resolved(curatedId))
+        }
     }
 
     @Test("an installed bundle resolves by explicit assignment regardless of repo prefix")

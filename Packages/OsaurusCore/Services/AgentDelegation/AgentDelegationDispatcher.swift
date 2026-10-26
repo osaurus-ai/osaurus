@@ -544,7 +544,7 @@ enum AgentDelegationDispatcher {
         // A caller that announced the session ahead of the run (background
         // ack) passes the same `freshSessionId`, so ack and result agree.
         let sessionId = continueSessionId ?? freshSessionId ?? UUID()
-        let request = DispatchRequest(
+        var request = DispatchRequest(
             id: sessionId,
             prompt: delegatedPrompt(
                 input: input,
@@ -571,8 +571,10 @@ enum AgentDelegationDispatcher {
             delegationResponseTokenCap: maxResponseTokens,
             delegationContextPositionCap: maxContextPositions,
             delegationAssistantTurnCap: maxAssistantTurns,
-            delegationModel: target.isWorkspace ? nil : model
+            delegationModel: target.isWorkspace ? nil : model,
+            taskIntent: ChatTaskIntent(userText: input)
         )
+        request.inferenceSourceOverride = ChatExecutionContext.inferenceSourceOverride
 
         // The child is a REAL chat session of the target agent, not a
         // nested subagent loop: clear the family recursion guard so the

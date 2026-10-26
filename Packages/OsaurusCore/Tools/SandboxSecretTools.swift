@@ -464,7 +464,7 @@ public enum SecretArgumentScrubber {
         if zip(calls, scrubbed).allSatisfy({ $0.function.arguments == $1.function.arguments }) {
             return message
         }
-        return ChatMessage(
+        var recorded = ChatMessage(
             role: message.role,
             content: message.content,
             contentParts: message.contentParts,
@@ -478,6 +478,11 @@ public enum SecretArgumentScrubber {
             // arguments. Never persist/replay them after secret scrubbing.
             responses_output_items: nil
         )
+        // Argument redaction does not rewrite provider thinking/signatures.
+        // Preserve their bytes; privacy filtering separately rejects a
+        // requested transformation of immutable signed thinking.
+        recorded.anthropic_thinking_blocks = message.anthropic_thinking_blocks
+        return recorded
     }
 
     /// Copy a completion response for persistence while preserving transport

@@ -604,6 +604,9 @@ struct AgentLoopStepProgressTracker: Sendable {
 /// registration are.
 @MainActor
 public enum AgentLoopEvaluator {
+    /// A headless run has no chat window, but remains eligible for the
+    /// ordinary local-parent handoff/restore ownership contract.
+    static let inferenceSource: RequestSource = .evaluation
 
     /// A processed-call cancellation fixture specifies an exact interruption
     /// boundary, which cannot be observed after parallel dispatch has already
@@ -635,9 +638,9 @@ public enum AgentLoopEvaluator {
     ///   - contextWindowOverride: when set, the budget manager is built
     ///     against this window instead of the model's real one — the
     ///     compaction-stress lever ("long tool outputs on a small window").
-    ///   - streaming: when true (default, matching the chat surface) each
-    ///     model step uses the streaming path — where the delta routing,
-    ///     tool-call assembly, and most local-model parser bugs live.
+    ///   - streaming: when true (default) emit per-channel live progress.
+    ///     Both modes consume canonical typed Responses events and completed
+    ///     whole call batches; neither routes through Chat Completions.
     ///   - enableThinking: explicit chat-toggle choice copied to every model
     ///     step. nil preserves the production unspecified-agent policy.
     ///   - maxTokens: explicit per-step response cap. nil follows the same
@@ -676,6 +679,42 @@ public enum AgentLoopEvaluator {
         useHostFolder: Bool = true,
         cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
+        await ChatExecutionContext.$inferenceSourceOverride.withValue(inferenceSource) {
+            await runConversation(
+                task: task,
+                workspace: workspace,
+                agentId: agentId,
+                maxIterations: maxIterations,
+                model: model,
+                contextWindowOverride: contextWindowOverride,
+                streaming: streaming,
+                maxTokens: maxTokens,
+                enableThinking: enableThinking,
+                stopOnToolRejection: stopOnToolRejection,
+                sandbox: sandbox,
+                useHostFolder: useHostFolder,
+                cancelAfterToolCalls: cancelAfterToolCalls,
+                engine: ChatEngine(source: inferenceSource)
+            )
+        }
+    }
+
+    static func runConversation(
+        task: String,
+        workspace: URL,
+        agentId: UUID? = nil,
+        maxIterations: Int = 10,
+        model: String? = nil,
+        contextWindowOverride: Int? = nil,
+        streaming: Bool = true,
+        maxTokens: Int? = nil,
+        enableThinking: Bool? = nil,
+        stopOnToolRejection: Bool = false,
+        sandbox: AgentLoopSandboxMode? = nil,
+        useHostFolder: Bool = true,
+        cancelAfterToolCalls: Int? = nil,
+        engine: any ResponsesEngineProtocol
+    ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
         // configure baseline (folder write tools enter only via
         // `capabilities_load`), which is not the surface these agentic
@@ -695,7 +734,6 @@ public enum AgentLoopEvaluator {
         // `.httpAPI` engine marks it as unrelated protected work and a real
         // different-local spawn handoff is rejected before execution.
         let sessionSource: SessionSource = .chat
-        let engine = ChatEngine(source: sessionSource.inferenceSource)
 
         // Workspace context + folder tools, mirroring the chat path's
         // host-folder mode. Pure sandbox mode composes with NO host folder
@@ -805,11 +843,15 @@ public enum AgentLoopEvaluator {
         let sessionId = "agent-loop-eval-\(UUID().uuidString)"
         let state = AgentTaskState()
         var transcriptCalls: [AgentLoopTranscript.ToolInvocation] = []
+        var pendingBatch = ResponsesToolBatchHistory()
+        var pendingTranscript: [String: AgentLoopTranscript.ToolInvocation] = [:]
+        var currentAssistantContent = ""
+        var processedCallCount = 0
         var noticesSeen: [String] = []
         var stepDiagnostics: [AgentLoopTranscript.StepDiagnostic] = []
         var finalText = ""
         // Per-run generation telemetry, accumulated across model steps
-        // from the streaming `StreamingStatsHint`. Token-weighted so a
+        // from typed response completion. Token-weighted so a
         // long decode step dominates the mean over a 2-token step. TTFT
         // and prefill speed are recorded from the FIRST step only (the
         // cold prefill); later steps reuse the KV prefix and aren't
@@ -817,6 +859,7 @@ public enum AgentLoopEvaluator {
         var decodeTpsWeightedSum = 0.0
         var decodeTpsTokenWeight = 0
         var completionTokensTotal = 0
+        var completionUsageComplete = true
         var firstStepTtftMs: Double?
         var firstStepPrefillTps: Double?
         let loopStarted = Date()
@@ -873,7 +916,7 @@ public enum AgentLoopEvaluator {
                 prefillTokensPerSecond: firstStepPrefillTps,
                 ttftMs: firstStepTtftMs,
                 firstActionMs: firstActionMs,
-                completionTokens: sawAnyModelStep ? completionTokensTotal : nil,
+                completionTokens: sawAnyModelStep && completionUsageComplete ? completionTokensTotal : nil,
                 promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
                 peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
                 modelSteps: modelStepCount > 0 ? modelStepCount : nil,
@@ -893,34 +936,17 @@ public enum AgentLoopEvaluator {
 
         func makeRequest(
             _ messages: [ChatMessage],
-            stream: Bool,
             includeTools: Bool = true
-        ) -> ChatCompletionRequest {
-            let iterationToolSpecs = toolScope.modelVisibleSpecs
-            var request = ChatCompletionRequest(
-                model: resolvedModel,
-                messages: messages,
-                // Match the real chat surface: nil means the installed
-                // bundle's generation_config/JANG defaults win. A hidden
-                // greedy override can trap tool-capable models in a
-                // deterministic action loop that users never see with their
-                // configured sampler.
-                temperature: nil,
-                max_tokens: resolvedMaxTokens,
-                stream: stream,
-                top_p: nil,
-                frequency_penalty: nil,
-                presence_penalty: nil,
-                stop: nil,
-                n: nil,
-                tools: (includeTools && !iterationToolSpecs.isEmpty)
-                    ? iterationToolSpecs : nil,
-                tool_choice: (includeTools && !iterationToolSpecs.isEmpty) ? .auto : nil,
-                session_id: sessionId
-            )
-            request.samplingParametersAreImplicit = true
-            request.enable_thinking = enableThinking
-            request.isAgentRequest = includeTools && !iterationToolSpecs.isEmpty
+        ) -> ResponsesInferenceRequest {
+            let specs = toolScope.modelVisibleSpecs
+            var request = ResponsesInferenceRequest(model: resolvedModel, input: messages)
+            request.generation.maxOutputTokens = resolvedMaxTokens
+            request.generation.enableThinking = enableThinking
+            request.tools = includeTools && !specs.isEmpty ? specs : nil
+            request.toolChoice = includeTools && !specs.isEmpty ? .auto : nil
+            request.sessionID = sessionId
+            request.context.samplingParametersAreImplicit = true
+            request.context.isAgentRequest = includeTools && !specs.isEmpty
             return request
         }
 
@@ -986,43 +1012,19 @@ public enum AgentLoopEvaluator {
             )
         }
 
-        /// Append the assistant turn carrying this step's tool calls.
-        /// Call ids are pre-assigned (preserving model-supplied ids) so the
-        /// history's `tool_calls[].id` and the driver's per-call ids match.
-        /// Provider reasoning state is carried through like the chat surface
-        /// does: Gemini 3.x 400s if a functionCall part is re-sent without
-        /// its thought signature, and DeepSeek thinking mode 400s if
-        /// `reasoning_content` is not echoed back on assistant turns.
-        func appendAssistantToolCalls(
-            _ invocations: [ServiceToolInvocation],
-            content: String?,
-            reasoning: String? = nil
-        ) -> [ServiceToolInvocation] {
-            let withIds = invocations.map { inv in
-                ServiceToolInvocation(
-                    toolName: inv.toolName,
-                    jsonArguments: inv.jsonArguments,
-                    toolCallId: AgentToolLoop.callId(for: inv),
-                    geminiThoughtSignature: inv.geminiThoughtSignature
-                )
+        func commitBatch(_ commit: ResponsesToolBatchHistory.Commit?) {
+            guard let commit else { return }
+            history.append(contentsOf: commit.messages)
+            let calls = commit.assistant.tool_calls ?? []
+            for (call, result) in zip(calls, commit.results) {
+                transcriptCalls.append(pendingTranscript[call.id] ?? .init(
+                    name: call.function.name, arguments: call.function.arguments,
+                    resultPreview: String((result.content ?? "").prefix(300)),
+                    wasDeduped: false, wasError: ToolEnvelope.isError(result.content ?? ""),
+                    step: modelStepCount
+                ))
             }
-            history.append(
-                ChatMessage(
-                    role: "assistant",
-                    content: (content?.isEmpty == false) ? content : nil,
-                    tool_calls: withIds.map {
-                        ToolCall(
-                            id: $0.toolCallId ?? "",
-                            type: "function",
-                            function: ToolCallFunction(name: $0.toolName, arguments: $0.jsonArguments),
-                            geminiThoughtSignature: $0.geminiThoughtSignature
-                        )
-                    },
-                    tool_call_id: nil,
-                    reasoning_content: (reasoning?.isEmpty == false) ? reasoning : nil
-                )
-            )
-            return withIds
+            pendingTranscript.removeAll(keepingCapacity: true)
         }
 
         /// Registry dispatch for one call (shared by the serial hook and
@@ -1079,11 +1081,9 @@ public enum AgentLoopEvaluator {
                         .prefersCompactPrompt
                 )
                 : result
-            history.append(
-                ChatMessage(role: "tool", content: modelVisible, tool_calls: nil, tool_call_id: callId)
-            )
-            transcriptCalls.append(
-                .init(
+            pendingBatch.record(callID: callId, result: modelVisible)
+            processedCallCount += 1
+            pendingTranscript[callId] = .init(
                     name: inv.toolName,
                     arguments: inv.jsonArguments,
                     resultPreview: String(result.prefix(300)),
@@ -1094,7 +1094,6 @@ public enum AgentLoopEvaluator {
                         tool: inv.toolName, arguments: inv.jsonArguments, result: result),
                     spawnSummary: AgentLoopTranscript.spawnSummary(from: result, tool: inv.toolName)
                 )
-            )
             // Agent-loop intercepts, mirroring the chat surface: a
             // successful `complete` ends the run and a successful `clarify`
             // ends the run awaiting user input (headless: no answer ever
@@ -1108,10 +1107,7 @@ public enum AgentLoopEvaluator {
             // bare-`complete` behavior the chat banner still renders).
             if inv.toolName == "complete", !isError {
                 completedViaTool = true
-                let answer =
-                    history.last(where: { $0.role == "assistant" })?
-                    .content?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let answer = currentAssistantContent.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !answer.isEmpty {
                     finalText = answer
                 } else if let summary = CompleteTool.parseSummary(from: inv.jsonArguments) {
@@ -1137,7 +1133,7 @@ public enum AgentLoopEvaluator {
                 // budget is reached. Reads the same transcript array the
                 // executors append to (all on the main actor, so no race).
                 guard let cancelAfterToolCalls else { return false }
-                return transcriptCalls.count >= cancelAfterToolCalls
+                return processedCallCount >= cancelAfterToolCalls
             },
             buildMessages: { notices in
                 // Canonical notice contract: trim with the system prefix
@@ -1169,314 +1165,91 @@ public enum AgentLoopEvaluator {
                 Self.emitStepProgress(
                     AgentLoopStepProgressTracker.startMessage(step: modelStepCount)
                 )
-                if streaming {
-                    // Streaming path (default, matching chat): delta routing
-                    // and tool-call assembly — where most local-model parser
-                    // bugs live — are part of what's under test.
-                    var content = ""
-                    // Reasoning deltas are kept (not shown in finalText) so
-                    // assistant turns can echo `reasoning_content` back to
-                    // providers that require it in thinking mode (DeepSeek).
-                    var reasoning = ""
-                    var terminalStopReason: String?
-                    var terminalUnclosedReasoning = false
-                    var streamedToolName: String?
-                    var streamedToolArgumentCharacters = 0
-                    var sawToolCallProgress = false
-                    var stepCompletionTokens: Int?
-                    var stepDecodeTokensPerSecond: Double?
-                    var stepMTP: MTPStatsSummary?
-                    var stepThroughputAttribution = "unavailable_stream_ended_without_vmlx_info"
-                    let stepStarted = Date()
-                    var stepProgress = AgentLoopStepProgressTracker(
-                        step: modelStepCount,
-                        startedAt: stepStarted
-                    )
-                    let isFirstStep = !sawAnyModelStep
-                    sawAnyModelStep = true
-                    do {
-                        let stream = try await engine.streamChat(
-                            request: makeRequest(effective, stream: true)
-                        )
-                        for try await delta in stream {
-                            // Prepared usage and other control metadata are
-                            // not generated tokens and must not shorten TTFT.
-                            if isFirstStep, firstStepTtftMs == nil,
-                                AgentLoopStepProgressTracker.isGeneratedOutput(delta)
-                            {
-                                firstStepTtftMs = Date().timeIntervalSince(stepStarted) * 1000
-                            }
-                            if let toolName = StreamingToolHint.decode(delta) {
-                                if let progress = stepProgress.observe(
-                                    channel: .toolEnvelope,
-                                    characterCount: toolName.count,
-                                    at: Date()
-                                ) {
-                                    Self.emitStepProgress(progress)
-                                }
-                                sawToolCallProgress = true
-                                streamedToolName = toolName.isEmpty ? nil : toolName
-                                // Local envelope-first parsing replays canonical
-                                // arguments after the name commits.
-                                streamedToolArgumentCharacters = 0
-                                continue
-                            }
-                            if let fragment = StreamingToolHint.decodeArgs(delta) {
-                                if let progress = stepProgress.observe(
-                                    channel: .toolEnvelope,
-                                    characterCount: fragment.count,
-                                    at: Date()
-                                ) {
-                                    Self.emitStepProgress(progress)
-                                }
-                                sawToolCallProgress = true
-                                streamedToolArgumentCharacters += fragment.utf8.count
-                                continue
-                            }
-                            if let fragment = StreamingToolCallProgressHint.decode(delta) {
-                                if let progress = stepProgress.observe(
-                                    channel: .toolEnvelope,
-                                    characterCount: fragment.count,
-                                    at: Date()
-                                ) {
-                                    Self.emitStepProgress(progress)
-                                }
-                                sawToolCallProgress = true
-                                streamedToolArgumentCharacters += fragment.utf8.count
-                                continue
-                            }
-                            if let fragment = StreamingReasoningHint.decode(delta) {
-                                if let progress = stepProgress.observe(
-                                    channel: .reasoning,
-                                    characterCount: fragment.count,
-                                    at: Date()
-                                ) {
-                                    Self.emitStepProgress(progress)
-                                }
-                                reasoning += fragment
-                                continue
-                            }
-                            if let stats = StreamingStatsHint.decode(delta) {
-                                terminalStopReason = stats.stopReason
-                                terminalUnclosedReasoning = stats.unclosedReasoning
-                                if let mtp = stats.mtp { stepMTP = mtp }
-                                // Authoritative end-of-step runtime stats:
-                                // token-weight the decode tps, sum tokens,
-                                // and keep the first step's prefill speed.
-                                if stats.tokensPerSecond > 0, stats.tokenCount > 0 {
-                                    decodeTpsWeightedSum += stats.tokensPerSecond * Double(stats.tokenCount)
-                                    decodeTpsTokenWeight += stats.tokenCount
-                                    stepDecodeTokensPerSecond = stats.tokensPerSecond
-                                    stepThroughputAttribution = "measured_vmlx_info"
-                                } else if stepDecodeTokensPerSecond == nil {
-                                    stepThroughputAttribution =
-                                        "unavailable_nonpositive_vmlx_info"
-                                }
-                                completionTokensTotal += max(0, stats.tokenCount)
-                                stepCompletionTokens = max(0, stats.tokenCount)
-                                // Prefill speed: keep the FIRST measured reading
-                                // (the cold prompt-processing pass). Not gated to
-                                // the first model step — an early step that ends
-                                // in a tool call throws `ServiceToolInvocations`
-                                // before emitting its end-of-step stats hint, so
-                                // the first prefill reading often arrives on a
-                                // later step. Take the first positive value seen.
-                                if firstStepPrefillTps == nil,
-                                    let prefill = stats.prefillTokensPerSecond,
-                                    prefill > 0
-                                {
-                                    firstStepPrefillTps = prefill
-                                }
-                                continue
-                            }
-                            if StreamingToolHint.isSentinel(delta) { continue }
-                            if let progress = stepProgress.observe(
-                                channel: .content,
-                                characterCount: delta.count,
-                                at: Date()
-                            ) {
-                                Self.emitStepProgress(progress)
-                            }
-                            content += delta
+                let stepStarted = Date()
+                let isFirstStep = !sawAnyModelStep
+                sawAnyModelStep = true
+                var progress = AgentLoopStepProgressTracker(step: modelStepCount, startedAt: stepStarted)
+                var pendingToolName: String?
+                var argumentCharacters = 0
+                var sawToolProgress = false
+                let response: ResponsesGenerationResult
+                do {
+                    response = try await ResponsesEvaluationStep.collect(
+                        engine: engine, request: makeRequest(effective)
+                    ) { event in
+                        if isFirstStep, firstStepTtftMs == nil, event.isGeneratedOutput {
+                            firstStepTtftMs = Date().timeIntervalSince(stepStarted) * 1000
                         }
-                        finalText = content
-                        recordStepDiagnostic(
-                            step: modelStepCount,
-                            stopReason: terminalStopReason,
-                            content: content,
-                            reasoning: reasoning,
-                            sawToolCallProgress: sawToolCallProgress,
-                            pendingToolName: streamedToolName,
-                            toolArgumentCharacters: streamedToolArgumentCharacters,
-                            completionTokens: stepCompletionTokens,
-                            decodeTokensPerSecond: stepDecodeTokensPerSecond,
-                            decodeThroughputAttribution: stepThroughputAttribution,
-                            mtp: stepMTP
-                        )
-                        if terminalStopReason == "length",
-                            sawToolCallProgress,
-                            streamedToolArgumentCharacters > 0
-                        {
-                            return .truncatedToolCall(
-                                toolName: streamedToolName,
-                                argumentCharacters: streamedToolArgumentCharacters
-                            )
+                        guard streaming else { return }
+                        let channel: AgentLoopStepProgressTracker.Channel
+                        let count: Int
+                        switch event {
+                        case .outputTextDelta(let text): channel = .content; count = text.count
+                        case .reasoningDelta(let text): channel = .reasoning; count = text.count
+                        case .functionNamePreview(let name):
+                            pendingToolName = name; sawToolProgress = true
+                            channel = .toolEnvelope; count = name.count
+                        case .functionArgumentsPreview(let fragment):
+                            sawToolProgress = true; argumentCharacters += fragment.utf8.count
+                            channel = .toolEnvelope; count = fragment.count
+                        case .toolEnvelopeDelta(let fragment):
+                            sawToolProgress = true
+                            channel = .toolEnvelope; count = fragment.count
+                        default: return
                         }
-                        return AgentLoopModelStep.classifyTerminal(
-                            contentIsBlank: content.trimmingCharacters(in: .whitespacesAndNewlines)
-                                .isEmpty,
-                            thinkingIsBlank: reasoning.trimmingCharacters(
-                                in: .whitespacesAndNewlines
-                            ).isEmpty,
-                            stopReason: terminalStopReason,
-                            unclosedReasoning: terminalUnclosedReasoning,
-                            requiresVisibleFinalResponse: true
-                        )
-                    } catch let invs as ServiceToolInvocations {
-                        recordStepDiagnostic(
-                            step: modelStepCount,
-                            stopReason: "tool_calls",
-                            content: content,
-                            reasoning: reasoning,
-                            sawToolCallProgress: true,
-                            pendingToolName: streamedToolName,
-                            toolArgumentCharacters: streamedToolArgumentCharacters,
-                            completionTokens: stepCompletionTokens,
-                            decodeTokensPerSecond: stepDecodeTokensPerSecond,
-                            decodeThroughputAttribution: stepDecodeTokensPerSecond == nil
-                                ? "unavailable_tool_call_before_vmlx_info"
-                                : stepThroughputAttribution,
-                            mtp: stepMTP
-                        )
-                        // Interim prose preceding tool calls is NOT the
-                        // final answer (never let it go stale into the
-                        // transcript's finalText) — but it DOES stay in
-                        // history, like the chat surface: the model's
-                        // narrated findings must survive later compaction
-                        // of the tool results they describe.
-                        finalText = ""
-                        return .toolCalls(
-                            appendAssistantToolCalls(
-                                invs.invocations,
-                                content: content,
-                                reasoning: reasoning
-                            )
-                        )
-                    } catch let inv as ServiceToolInvocation {
-                        recordStepDiagnostic(
-                            step: modelStepCount,
-                            stopReason: "tool_call",
-                            content: content,
-                            reasoning: reasoning,
-                            sawToolCallProgress: true,
-                            pendingToolName: inv.toolName,
-                            toolArgumentCharacters: inv.jsonArguments.utf8.count,
-                            completionTokens: stepCompletionTokens,
-                            decodeTokensPerSecond: stepDecodeTokensPerSecond,
-                            decodeThroughputAttribution: stepDecodeTokensPerSecond == nil
-                                ? "unavailable_tool_call_before_vmlx_info"
-                                : stepThroughputAttribution,
-                            mtp: stepMTP
-                        )
-                        finalText = ""
-                        return .toolCalls(
-                            appendAssistantToolCalls([inv], content: content, reasoning: reasoning)
-                        )
+                        if let message = progress.observe(channel: channel, characterCount: count, at: Date()) {
+                            Self.emitStepProgress(message)
+                        }
                     }
+                } catch {
+                    completionUsageComplete = false
+                    throw error
                 }
-
-                let response = try await engine.completeChat(
-                    request: makeRequest(effective, stream: false)
-                )
-                guard let choice = response.choices.first else {
-                    recordStepDiagnostic(
-                        step: modelStepCount,
-                        stopReason: nil,
-                        content: "",
-                        reasoning: "",
-                        sawToolCallProgress: false,
-                        pendingToolName: nil,
-                        toolArgumentCharacters: 0,
-                        completionTokens: response.usage.completion_tokens,
-                        decodeTokensPerSecond: response.usage.tokens_per_second,
-                        decodeThroughputAttribution: response.usage.tokens_per_second == nil
-                            ? "unavailable_response_without_vmlx_info"
-                            : "measured_vmlx_info"
-                    )
-                    return .finalResponse
+                let terminal = response.completion
+                if let count = terminal.tokenCount {
+                    completionTokensTotal += count
+                } else { completionUsageComplete = false }
+                if let count = terminal.tokenCount, count > 0,
+                    let rate = terminal.tokensPerSecond, rate > 0
+                {
+                    decodeTpsWeightedSum += rate * Double(count)
+                    decodeTpsTokenWeight += count
                 }
-                guard let calls = choice.message.tool_calls, !calls.isEmpty else {
-                    let text = choice.message.content ?? ""
-                    let reasoning = choice.message.reasoning_content ?? ""
-                    finalText = text
-                    recordStepDiagnostic(
-                        step: modelStepCount,
-                        stopReason: choice.finish_reason,
-                        content: text,
-                        reasoning: reasoning,
-                        sawToolCallProgress: false,
-                        pendingToolName: nil,
-                        toolArgumentCharacters: 0,
-                        completionTokens: response.usage.completion_tokens,
-                        decodeTokensPerSecond: response.usage.tokens_per_second,
-                        decodeThroughputAttribution: response.usage.tokens_per_second == nil
-                            ? "unavailable_response_without_vmlx_info"
-                            : "measured_vmlx_info"
-                    )
-                    return AgentLoopModelStep.classifyTerminal(
-                        contentIsBlank: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                        thinkingIsBlank: reasoning
-                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                        stopReason: choice.finish_reason,
-                        requiresVisibleFinalResponse: true
-                    )
-                }
+                // Only the first step qualifies as the cold-prefill sample.
+                // A later cached step must not be substituted if it was absent.
+                if isFirstStep { firstStepPrefillTps = terminal.promptTokensPerSecond }
+                let calls = terminal.functionCalls
                 recordStepDiagnostic(
-                    step: modelStepCount,
-                    stopReason: choice.finish_reason,
-                    content: choice.message.content ?? "",
-                    reasoning: choice.message.reasoning_content ?? "",
-                    sawToolCallProgress: true,
-                    pendingToolName: calls.first?.function.name,
-                    toolArgumentCharacters: calls.reduce(0) { $0 + $1.function.arguments.utf8.count },
-                    completionTokens: response.usage.completion_tokens,
-                    decodeTokensPerSecond: response.usage.tokens_per_second,
-                    decodeThroughputAttribution: response.usage.tokens_per_second == nil
-                        ? "unavailable_tool_call_before_vmlx_info"
-                        : "measured_vmlx_info"
+                    step: modelStepCount, stopReason: terminal.stopReason,
+                    content: response.text, reasoning: response.reasoning,
+                    sawToolCallProgress: sawToolProgress || !calls.isEmpty,
+                    pendingToolName: calls.first?.name ?? pendingToolName,
+                    toolArgumentCharacters: calls.isEmpty ? argumentCharacters : calls.reduce(0) { $0 + $1.arguments.utf8.count },
+                    completionTokens: terminal.tokenCount,
+                    decodeTokensPerSecond: terminal.tokensPerSecond,
+                    decodeThroughputAttribution: terminal.tokensPerSecond == nil
+                        ? "unavailable_unreported_typed_response" : "measured_typed_response",
+                    mtp: terminal.mtp
                 )
-                // Tool calls present: any prose on this turn is interim
-                // narration, not the final answer. `reasoning_content` is
-                // preserved for providers that require it echoed (DeepSeek).
-                finalText = ""
-                history.append(
-                    ChatMessage(
-                        role: "assistant",
-                        content: choice.message.content,
-                        tool_calls: calls,
-                        tool_call_id: nil,
-                        reasoning_content: choice.message.reasoning_content
-                    )
-                )
-                return .toolCalls(
-                    calls.map {
-                        ServiceToolInvocation(
-                            toolName: $0.function.name,
-                            jsonArguments: $0.function.arguments,
-                            toolCallId: $0.id
-                        )
-                    }
-                )
+                finalText = response.text
+                let step = try ResponsesEvaluationStep.classify(response, toolsWereOffered: !toolScope.modelVisibleSpecs.isEmpty)
+                if case .toolCalls = step {
+                    try pendingBatch.begin(SecretArgumentScrubber.recordedAssistantMessage(try response.completedAssistantInput()))
+                    pendingTranscript.removeAll(keepingCapacity: true)
+                    currentAssistantContent = response.text
+                    finalText = ""
+                } else {
+                    finalText = response.text
+                }
+                return step
             },
             onDedupedResult: { inv, callId, held in
                 if firstActionMs == nil {
                     firstActionMs = Date().timeIntervalSince(loopStarted) * 1000
                 }
-                history.append(
-                    ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
-                )
-                transcriptCalls.append(
-                    .init(
+                pendingBatch.record(callID: callId, result: held)
+                processedCallCount += 1
+                pendingTranscript[callId] = .init(
                         name: inv.toolName,
                         arguments: inv.jsonArguments,
                         resultPreview: String(held.prefix(300)),
@@ -1486,7 +1259,6 @@ public enum AgentLoopEvaluator {
                             tool: inv.toolName, arguments: inv.jsonArguments, result: held),
                         spawnSummary: AgentLoopTranscript.spawnSummary(from: held, tool: inv.toolName)
                     )
-                )
             },
             executeTool: { inv, callId in
                 if firstActionMs == nil {
@@ -1544,6 +1316,20 @@ public enum AgentLoopEvaluator {
                 }
                 return executions
             },
+            onBatchComplete: { outcomes in
+                // Preserve the production spawn-result compaction while the
+                // shared batch owner incorporates guarded results in order.
+                let modelOutcomes = outcomes.map { outcome in
+                    let visible = outcome.invocation.toolName == SubagentCapabilityRegistry.spawnAgentToolName
+                        && SpawnResultCompaction.applies(to: outcome.result)
+                        ? SpawnResultCompaction.modelVisible(outcome.result,
+                            prefersCompactPrompt: ContextSizeResolver.resolve(modelId: resolvedModel).prefersCompactPrompt)
+                        : outcome.result
+                    return AgentLoopToolOutcome(invocation: outcome.invocation, callId: outcome.callId,
+                        result: visible, wasDeduped: outcome.wasDeduped, wasError: outcome.wasError)
+                }
+                commitBatch(pendingBatch.complete(modelOutcomes))
+            },
             // Production parity: chat wires the todo-staleness nudge
             // (unchecked items + N iterations without a `todo` call →
             // one-line notice). Without it the eval lane silently drops a
@@ -1597,6 +1383,7 @@ public enum AgentLoopEvaluator {
                     }
                 }
             }
+            commitBatch(pendingBatch.finish(runExit: Self.describe(runResult.exit)))
             // Production parity (ChatView): when the iteration budget is
             // exhausted mid-task, chat sends ONE final tool-free request over
             // the same trimmed history and streams that as the visible
@@ -1623,27 +1410,20 @@ public enum AgentLoopEvaluator {
                 // production drives here, and a failure must be visible in
                 // the transcript notices — not silently swallowed.
                 do {
-                    var content = ""
-                    let stream = try await engine.streamChat(
-                        request: makeRequest(trimmed, stream: true, includeTools: false)
+                    let response = try await ResponsesEvaluationStep.collect(
+                        engine: engine, request: makeRequest(trimmed, includeTools: false)
                     )
-                    for try await delta in stream {
-                        if StreamingReasoningHint.decode(delta) != nil { continue }
-                        if let stats = StreamingStatsHint.decode(delta) {
-                            if stats.tokensPerSecond > 0, stats.tokenCount > 0 {
-                                decodeTpsWeightedSum +=
-                                    stats.tokensPerSecond * Double(stats.tokenCount)
-                                decodeTpsTokenWeight += stats.tokenCount
-                            }
-                            completionTokensTotal += max(0, stats.tokenCount)
-                            continue
+                    if let count = response.completion.tokenCount {
+                        completionTokensTotal += count
+                        if count > 0, let rate = response.completion.tokensPerSecond, rate > 0 {
+                            decodeTpsWeightedSum += rate * Double(count)
+                            decodeTpsTokenWeight += count
                         }
-                        if StreamingToolHint.isSentinel(delta) { continue }
-                        content += delta
-                    }
-                    let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !text.isEmpty { finalText = text }
+                    } else { completionUsageComplete = false }
+                    finalText = response.text
+                    try ResponsesEvaluationStep.requireNaturalFinal(response)
                 } catch {
+                    completionUsageComplete = false
                     noticesSeen.append("[post-cap wrap-up failed: \(error)]")
                 }
             }
@@ -1674,6 +1454,7 @@ public enum AgentLoopEvaluator {
                 recoveryRetryTotal: exitDiagnostics?.counters.total ?? 0
             )
         } catch {
+            commitBatch(pendingBatch.finish(runExit: "errored"))
             // Same hygiene on the abort path — a crashed model step must
             // not leak pending tool specs into the next run.
             _ = await CapabilityLoadBuffer.shared.drain()

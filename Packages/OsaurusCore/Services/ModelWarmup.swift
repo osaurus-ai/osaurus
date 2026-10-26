@@ -66,6 +66,20 @@ public enum ModelWarmup {
     /// `false` when it was a coalesced no-op or the warm-up failed.
     @discardableResult
     public static func warmUp(modelId: String) async -> Bool {
+        // Local services only — warm-up never reaches out to remote providers.
+        await warmUp(
+            modelId: modelId,
+            engine: ChatEngine(
+                services: [FoundationModelService(), MLXService()],
+                installedModelsProvider: { MLXService.getAvailableModels() },
+                remoteServicesProvider: { [] }
+            )
+        )
+    }
+
+    /// Shared production path with an injected engine for lifecycle regression
+    /// tests. The public entry point always constructs a local-only engine.
+    static func warmUp(modelId: String, engine: any ResponsesEngineProtocol) async -> Bool {
         let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         guard claimSlot(trimmed) else { return false }
@@ -75,33 +89,28 @@ public enum ModelWarmup {
         // which GPU matmul/attention/sampling kernels compile — so a no-tool
         // warm-up compiles the same kernels the scored, tool-carrying requests
         // hit. Output is discarded.
-        let request = ChatCompletionRequest(
+        let request = ResponsesInferenceRequest(
             model: trimmed,
-            messages: [ChatMessage(role: "user", content: "Hi")],
-            temperature: 0.0,
-            max_tokens: 8,
-            stream: true,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: nil,
-            tool_choice: nil,
-            session_id: nil
+            input: [ChatMessage(role: "user", content: "Hi")],
+            generation: ResponsesGenerationOptions(temperature: 0.0, maxOutputTokens: 8)
         )
 
-        // Local services only — warm-up never reaches out to remote providers.
-        let engine = ChatEngine(
-            services: [FoundationModelService(), MLXService()],
-            installedModelsProvider: { MLXService.getAvailableModels() },
-            remoteServicesProvider: { [] }
-        )
         let startedAt = Date()
         log("warm-up start model=\(trimmed) (compiling kernels off the request path)")
         do {
-            let stream = try await engine.streamChat(request: request)
-            for try await _ in stream { /* discard — warm-up output is irrelevant */  }
+            let result = try await engine.completeResponse(request: request, endAt: .streamEnd)
+            switch result.completion.status {
+            case .cancelled:
+                throw CancellationError()
+            case .incomplete:
+                // The explicit eight-token JIT diagnostic may reach its cap;
+                // that compiles kernels but is never a coherent-chat pass.
+                guard result.completion.stopReason == "length" else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(result.completion.stopReason)
+                }
+            case .completed:
+                break
+            }
             let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
             log("warm-up done  model=\(trimmed) elapsedMs=\(ms) (one-time JIT now off the request path)")
             return true

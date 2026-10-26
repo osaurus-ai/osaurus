@@ -89,6 +89,9 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
     /// We surface this rather than ship unscrubbed text on a privacy
     /// feature that the user explicitly enabled.
     case scrubNoOp(approvedCount: Int)
+    /// Signed provider reasoning is immutable; redact neither its text nor
+    /// signature. Refuse the send if an approved redaction would alter it.
+    case signedReasoningRedactionUnsupported
 
     /// Post-scrub invariant tripped: at least one PII pattern still
     /// matches in the outbound payload after substitution. The
@@ -116,6 +119,8 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
             return count == 1
                 ? "Privacy Filter: 1 approved redaction didn't apply (substitution mismatch). The message was not sent. This is a bug — please report."
                 : "Privacy Filter: \(count) approved redactions didn't apply (substitution mismatch). The message was not sent. This is a bug — please report."
+        case .signedReasoningRedactionUnsupported:
+            return "Privacy Filter cannot redact signed provider reasoning without invalidating its signature. The message was not sent. Start a new conversation or change the privacy setting explicitly."
         case .scrubLeaked(let counts):
             return Self.formatScrubLeaked(categoryCounts: counts)
         case .reviewRequiresInteractive(let count):
@@ -134,6 +139,7 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
         case .reviewCanceled: return "privacy_filter_review_canceled"
         case .engineUnavailable: return "privacy_filter_engine_unavailable"
         case .scrubNoOp: return "privacy_filter_scrub_no_op"
+        case .signedReasoningRedactionUnsupported: return "privacy_filter_signed_reasoning_unsupported"
         case .scrubLeaked: return "privacy_filter_scrub_leaked"
         case .reviewRequiresInteractive: return "privacy_filter_review_required"
         }
@@ -148,7 +154,7 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
         switch self {
         case .reviewCanceled: return 499  // client-closed-request analog
         case .engineUnavailable: return 503
-        case .scrubNoOp, .scrubLeaked, .reviewRequiresInteractive: return 422
+        case .scrubNoOp, .scrubLeaked, .signedReasoningRedactionUnsupported, .reviewRequiresInteractive: return 422
         }
     }
 
@@ -563,7 +569,7 @@ enum PrivacyFilterPipeline {
             if carryOverApproved.isEmpty {
                 return (messages, map)
             }
-            let scrubbedHistory = messages.applyingScrub(approved: carryOverApproved)
+            let scrubbedHistory = try scrubOutboundMessages(messages, approved: carryOverApproved)
             return (scrubbedHistory, map)
         }
 
@@ -645,7 +651,7 @@ enum PrivacyFilterPipeline {
         let skippedCount = approvedFromReview.count - approvedFromReview.filter { $0.approved }.count
         print("[PrivacyFilter] Review outcome: \(approvedCount) approved, \(skippedCount) skipped")
 
-        let scrubbed = messages.applyingScrub(approved: approved)
+        let scrubbed = try scrubOutboundMessages(messages, approved: approved)
 
         // Substitution sanity check. If the user approved entities but
         // not a single message field actually changed, something is
@@ -865,6 +871,17 @@ enum PrivacyFilterPipeline {
         return counts
     }
 
+    static func scrubOutboundMessages(_ messages: [ChatMessage], approved: [DetectedEntity]) throws -> [ChatMessage] {
+        let mapping = Dictionary(approved.filter { $0.approved }.map { ($0.original, $0.placeholder.token) }, uniquingKeysWith: { _, last in last })
+        let order = mapping.keys.sorted { $0.count > $1.count }
+        if messages.contains(where: {
+            ResponsesItemPayload.signedThinkingWouldChange(
+                ($0.responses_output_items ?? []) + ($0.anthropic_thinking_blocks ?? []), mapping: mapping, order: order
+            )
+        }) { throw PrivacyFilterPipelineError.signedReasoningRedactionUnsupported }
+        return messages.applyingScrub(approved: approved)
+    }
+
     /// Compare scrubbable fields across two parallel message arrays
     /// and return both the count of changed messages and the indices
     /// (relative to `after`) that changed. Mismatched lengths fall
@@ -872,7 +889,7 @@ enum PrivacyFilterPipeline {
     /// so the caller's no-op detection still triggers on the
     /// suspicious case AND the leak scan won't accidentally treat the
     /// shorter array as fully clean.
-    private static func diffMessages(
+    static func diffMessages(
         before: [ChatMessage],
         after: [ChatMessage]
     ) -> (changedCount: Int, dirtyIndices: Set<Int>) {
@@ -885,6 +902,16 @@ enum PrivacyFilterPipeline {
         for (idx, pair) in zip(before, after).enumerated() {
             let (a, b) = pair
             if a.content != b.content {
+                changedCount += 1
+                dirty.insert(idx)
+                continue
+            }
+            if a.anthropic_thinking_blocks != b.anthropic_thinking_blocks {
+                changedCount += 1
+                dirty.insert(idx)
+                continue
+            }
+            if a.responses_output_items != b.responses_output_items {
                 changedCount += 1
                 dirty.insert(idx)
                 continue
@@ -1084,6 +1111,19 @@ enum PrivacyFilterPipeline {
             resolvedCalls = out
         }
         return (resolvedContent, resolvedCalls)
+    }
+
+    /// Restore a complete provider-native Item/event through the same payload
+    /// view used for outbound scanning. Identity, opaque reasoning and media
+    /// bytes remain untouched. Delta fragments need a per-item streaming
+    /// unscrubber before this full-object helper, not stateless replacement.
+    static func unscrubInboundJSON(_ value: JSONValue, map: RedactionMap?) async -> JSONValue {
+        guard let map else { return value }
+        let entries = await map.snapshot()
+        let mapping = Dictionary(uniqueKeysWithValues: entries.map { ($0.0.token, $0.1) })
+        guard !mapping.isEmpty else { return value }
+        let order = mapping.keys.sorted { $0.count > $1.count }
+        return ResponsesItemPayload.applyingScrub([value], mapping: mapping, order: order)[0]
     }
 
     // MARK: - One-shot placeholder replacement

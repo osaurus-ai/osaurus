@@ -18,13 +18,17 @@ enum ModelFileDigest: Equatable, Sendable {
         var sha256 = SHA256()
         var sha1 = Insecure.SHA1()
         if case .gitBlobSHA1 = self { sha1.update(data: Data("blob \(size)\0".utf8)) }
-        while let data = try handle.read(upToCount: 4 * 1024 * 1024), !data.isEmpty {
+        while try autoreleasepool(invoking: { () throws -> Bool in
+            guard let data = try handle.read(upToCount: 4 * 1024 * 1024), !data.isEmpty else {
+                return false
+            }
             try checkCancellation()
             switch self {
             case .sha256: sha256.update(data: data)
             case .gitBlobSHA1: sha1.update(data: data)
             }
-        }
+            return true
+        }) {}
         switch self {
         case .sha256(let expected):
             return sha256.finalize().map { String(format: "%02x", $0) }.joined() == expected.lowercased()

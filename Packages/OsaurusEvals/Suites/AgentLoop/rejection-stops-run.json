@@ -2,12 +2,14 @@
   "id": "agent_loop.rejection-stops-run",
   "domain": "agent_loop",
   "label": "agent loop \u2022 a real rejected write terminates under chat policy",
-  "query": "Call file_write once with path report.pptx and content exactly hello. Report the actual tool result; do not substitute another format or use another tool.",
-  "notes": "The native file_write tool rejects unsupported presentation formats with kind=rejected before creating a file. This pins stopOnToolRejection without confusing recoverable not_found with denial. Unit regressions separately pin both rejected and user_denied and verify no later serial side effect executes.",
+  "query": "Call file_write once with path report.pptm and content exactly hello. Report the actual tool result; do not substitute another format or use another tool.",
+  "notes": "The native file_write tool rejects the unsupported macro-enabled .pptm presentation format with kind=rejected before creating a file. This pins stopOnToolRejection without confusing recoverable not_found with denial. Unit regressions separately pin both rejected and user_denied and verify no later serial side effect executes.",
   "fixtures": {},
   "expect": {
     "agentLoop": {
       "maxIterations": 4,
+      "maxModelSteps": 1,
+      "maxToolCalls": 1,
       "stopOnToolRejection": true,
       "mustCallTools": [
         "file_write"
@@ -17,7 +19,7 @@
       ],
       "files": [
         {
-          "path": "report.pptx",
+          "path": "report.pptm",
           "exists": false
         }
       ]

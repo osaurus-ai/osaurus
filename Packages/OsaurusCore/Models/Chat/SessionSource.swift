@@ -177,7 +177,10 @@ extension SessionSource {
         // reclaim the helper's model afterwards — chat-owned residency is
         // exactly the class that restore may evict; a `.scheduled` owner
         // would be protected and block the parent's reload.
-        case .chat, .imported, .delegation: return .chatUI
+        // Headless evaluations preserve this ownership class for handoff,
+        // while carrying their own configured idle policy through children.
+        case .chat, .imported, .delegation:
+            return ChatExecutionContext.resolvedInferenceSource(.chatUI)
         // A teammate's run arrives over the same authenticated HTTP surface
         // as any API caller and carries no chat-window residency intent.
         case .http, .workspace: return .httpAPI

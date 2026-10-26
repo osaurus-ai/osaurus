@@ -28,14 +28,21 @@ enum RemoteSessionContinuation {
         guard !turn.modelContextExcluded, turn.role != .system else { return nil }
         let hasContent = !turn.content.isEmpty
         let hasCalls = !(turn.toolCalls?.isEmpty ?? true)
-        guard hasContent || hasCalls else { return nil }
+        let hasReasoning = !turn.thinking.isEmpty || turn.reasoningItemId != nil || turn.reasoningEncrypted != nil
+        let hasNativeState = !turn.responsesOutputItems.isEmpty || !turn.anthropicThinkingBlocks.isEmpty
+        guard hasContent || hasCalls || hasReasoning || hasNativeState else { return nil }
         // The blocks the turn was sent with go back in front, so the model
         // reads the same bytes again and a local model's cache still matches.
         return ChatMessage(
             role: turn.role.rawValue,
             content: (turn.injectedContextPrefix ?? "") + turn.content,
             tool_calls: turn.toolCalls,
-            tool_call_id: turn.toolCallId
+            tool_call_id: turn.toolCallId,
+            reasoning_content: turn.thinking.isEmpty ? nil : turn.thinking,
+            reasoning_item_id: turn.reasoningItemId,
+            reasoning_encrypted: turn.reasoningEncrypted,
+            responses_output_items: turn.responsesOutputItems.isEmpty ? nil : turn.responsesOutputItems,
+            anthropic_thinking_blocks: turn.anthropicThinkingBlocks.isEmpty ? nil : turn.anthropicThinkingBlocks
         )
     }
 

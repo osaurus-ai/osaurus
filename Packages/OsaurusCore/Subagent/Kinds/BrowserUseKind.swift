@@ -282,6 +282,11 @@ final class BrowserUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning
                     message: "Browser Use was cancelled with the parent run.",
                     retryable: false
                 )
+            case .upstream:
+                throw SubagentError.executionFailed(
+                    message: "Browser Use was cancelled by its model or provider.",
+                    retryable: false
+                )
             case .deadline, .none:
                 throw SubagentError.timedOut(
                     "Browser Use hit its \(Int(Self.defaultWallClockSeconds))s time budget."

@@ -1802,7 +1802,7 @@ public actor ModelRuntime {
     }
 
     nonisolated static func isChatOwnedResidencySource(_ source: RequestSource?) -> Bool {
-        source == nil || source == .chatUI
+        source == nil || source == .chatUI || source == .evaluation
     }
 
     /// Nested subagents may reuse a model resident for another surface. They
@@ -3084,9 +3084,10 @@ public actor ModelRuntime {
     ///   proportionally less, while large Macs do not turn spare RAM into an
     ///   unbounded allocator pool).
     ///
-    /// The admitted memory limit and any user-entered allocator maximum are
-    /// hard ceilings. A profile's default load allowance is not an explicit
-    /// user maximum and must not disable the dynamic reuse policy.
+    /// The selected reuse target never exceeds the admitted budget or an
+    /// explicit user maximum. Native pooled occupancy can cross that target
+    /// until the next allocation trims it. A profile's default load allowance
+    /// is not an explicit user maximum and must not disable dynamic reuse.
     nonisolated static func effectiveGenerationMLXCacheLimit(
         persistentLimit: Int,
         admittedMemoryLimit: Int,
@@ -5898,7 +5899,7 @@ public actor ModelRuntime {
         toolChoice: ToolChoiceOption?,
         modelId: String,
         modelName: String
-    ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+    ) async throws -> ModelRuntimeEventStream {
         let trace = parameters.ttftTrace
         trace?.mark("runtime_start")
 
@@ -6103,7 +6104,7 @@ public actor ModelRuntime {
             activeTask.cancel()
         }
 
-        return GenerationEventMapper.map(
+        let events = GenerationEventMapper.map(
             events: prepared.stream,
             modelName: modelName,
             promptTokenCount: prepared.promptTokens.count,
@@ -6143,6 +6144,13 @@ public actor ModelRuntime {
                 }
             }
         )
+        return ModelRuntimeEventStream(events: events, waitForProducerDrain: {
+            await withTaskCancellationHandler {
+                await activeTask.value
+            } onCancel: {
+                activeTask.cancel()
+            }
+        })
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -6174,12 +6182,7 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> String {
-        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: toolChoice,
-            modelName: modelName
-        )
-        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
+        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
                 try ModelRuntime.mapOpenAIChatToMLX(
@@ -6195,7 +6198,7 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
-        return try await Self.collectToolEventResponse(events)
+        return try await Self.collectToolEventResponse(events.events)
     }
 
     nonisolated static func collectToolEventResponse(
@@ -6264,7 +6267,7 @@ public actor ModelRuntime {
         let producerTask = Task {
             var cachedInputTokens: Int?
             do {
-                for try await ev in events {
+                for try await ev in events.events {
                     if case .cachedInputTokenCount(let count) = ev {
                         cachedInputTokens = count
                         continue
@@ -6316,13 +6319,34 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<String, Error> {
-        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
+        let events = try await streamResponseEvents(
+            messages: messages,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools,
             toolChoice: toolChoice,
+            modelId: modelId,
             modelName: modelName
         )
-        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
-        let events = try await generateEventStream(
+        return Self.bridgeToolEventStream(
+            events.events,
+            collectCompleteResponse: parameters.collectCompleteToolResponse
+        )
+    }
+
+    /// Native typed entry point shared by Responses and the legacy boundary.
+    /// Generation, admission and cache-lease ownership stay in one pipeline.
+    func streamResponseEvents(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        modelId: String,
+        modelName: String
+    ) async throws -> ModelRuntimeEventStream {
+        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
+        return try await generateEventStream(
             chatBuilder: {
                 try ModelRuntime.mapOpenAIChatToMLX(
                     augmented,
@@ -6336,10 +6360,6 @@ public actor ModelRuntime {
             toolChoice: toolChoice,
             modelId: modelId,
             modelName: modelName
-        )
-        return Self.bridgeToolEventStream(
-            events,
-            collectCompleteResponse: parameters.collectCompleteToolResponse
         )
     }
 
@@ -7029,71 +7049,6 @@ public actor ModelRuntime {
         } else {
             return tools.map { $0.toTokenizerToolSpec() }
         }
-    }
-
-    nonisolated static func applyForcedToolChoiceDirective(
-        _ messages: [ChatMessage],
-        toolChoice: ToolChoiceOption?,
-        modelName: String? = nil
-    ) -> [ChatMessage] {
-        guard let toolChoice else { return messages }
-
-        let requiredToolName: String?
-        switch toolChoice {
-        case .function(let target):
-            requiredToolName = target.function.name
-        case .required:
-            requiredToolName = nil
-        case .auto, .none:
-            return messages
-        }
-
-        // Named `tool_choice` is primarily enforced by `makeTokenizerTools`:
-        // the tokenizer sees only the requested function's schema. Keep that
-        // no-op behavior for most families; DSV4 DSML in particular treats
-        // out-of-template prose as ordinary instruction text and regressed
-        // when this was generic.
-        //
-        // Gemma 4's native template already has a required-tool contract in
-        // its fallback path. Live Osaurus agent runs add a much larger system
-        // prompt than strict `/v1/chat/completions`; for Gemma, schema
-        // filtering alone lets forced `complete` degrade into a plain-text
-        // summary. Add the same required-tool wording as a request-local
-        // directive so the bundle-native parser sees a real function-call
-        // turn instead of a textual paraphrase. This is scoped to Gemma and
-        // to explicit `required` / named tool choice only.
-        guard let modelName, ModelFamilyNames.isGemmaFamily(modelName) else {
-            return messages
-        }
-
-        var directive = "The current assistant response MUST be a function call."
-        if let requiredToolName {
-            directive += " Use the `\(requiredToolName)` function."
-        }
-
-        var out = messages
-        if let lastUserIndex = out.lastIndex(where: { $0.role == "user" }) {
-            let original = out[lastUserIndex]
-            let existing = original.content ?? ""
-            let suffix = existing.isEmpty ? directive : "\n\n" + directive
-            // Keep media and in-process carriers when augmenting the request.
-            // Parts and flattened text must carry the same added directive.
-            out[lastUserIndex] = ChatMessage(
-                role: original.role,
-                content: existing + suffix,
-                contentParts: original.contentParts.map { $0 + [.text(suffix)] },
-                localAudioSamples: original.localAudioSamples,
-                tool_calls: original.tool_calls,
-                tool_call_id: original.tool_call_id,
-                reasoning_content: original.reasoning_content,
-                reasoning_item_id: original.reasoning_item_id,
-                reasoning_encrypted: original.reasoning_encrypted,
-                responses_output_items: original.responses_output_items
-            )
-        } else {
-            out.append(ChatMessage(role: "user", content: directive))
-        }
-        return out
     }
 
     /// When `jsonMode` is true, prepend (or augment) a system instruction

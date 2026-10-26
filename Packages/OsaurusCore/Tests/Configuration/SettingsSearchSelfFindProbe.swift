@@ -104,6 +104,7 @@ struct SettingsSearchSelfFindProbe {
             ("On Adaptive", "server.speculative"),
             ("Off AR", "server.speculative"),
             ("Keep Model in Memory", "server.memorySafety.keepModelInMemory"),
+            ("Load Allocator Cap", "server.memorySafety.loadAllocatorCap"),
             ("keep model loaded", "server.residency"),
             ("unload after", "server.residency"),
             ("eviction policy", "server.residency"),

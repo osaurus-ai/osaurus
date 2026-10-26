@@ -92,7 +92,6 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 {{ system_message | trim + '\n\n' }}
             {%- endif -%}
             {{ 'You have access to the following functions.\n' }}
-            {{ 'When a function call is required, do not explain, do not summarize, and do not answer in prose.\n' }}
             {{ 'Output exactly one function call using this grammar:\n' }}
             {{ '<start_function_call>call:FUNCTION_NAME{ARGUMENT_NAME:<escape>ARGUMENT_VALUE<escape>}<end_function_call>\n' }}
             {{ 'Example:\nUser asks: Count the lines in this text: alpha\nbeta\ngamma\n' }}
@@ -107,12 +106,6 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     {{ 'Parameters: ' + (fn['parameters'] | tojson) + '\n' }}
                 {%- endif -%}
             {%- endfor -%}
-            {%- if tool_choice is defined and tool_choice == 'required' -%}
-                {{ '\nThe current assistant response MUST be a function call.' }}
-                {%- if tool_choice_name is defined and tool_choice_name -%}
-                    {{ ' Use the `' + tool_choice_name + '` function.' }}
-                {%- endif -%}
-            {%- endif -%}
             {{ '<end_of_turn>\n' }}
         {%- endif -%}
         {%- for message in loop_messages -%}
@@ -601,15 +594,11 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     (chatTemplateTools?.isEmpty ?? true) || modelTypeIsGemma3n
                     ? MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal
                     : MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools
-                let fallbackMessages =
-                    Self.requiresToolChoice(adjustedContext)
-                    ? Self.compactCompletedToolHistoryForRequiredChoice(messages)
-                    : messages
                 let fallbackTools = modelTypeIsGemma3n ? nil : chatTemplateTools
                 return try fallback(
                     label: "Gemma4",
                     template: template,
-                    messages: fallbackMessages,
+                    messages: messages,
                     tools: fallbackTools,
                     additionalContext: adjustedContext,
                     addGenerationPrompt: addGenerationPrompt

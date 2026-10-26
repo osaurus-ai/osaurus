@@ -621,11 +621,10 @@ struct SubagentAdmission16GBRegressionTests {
     }
 
     /// WIRING PIN: the clamped `effectiveMaxTokensForAgent` is the ONLY
-    /// value the chat surface passes as the generation request's
-    /// `max_tokens`, and the delegation clamp is applied at its single
-    /// definition site before any use. Reads the production source so a
-    /// regression that adds an unclamped `max_tokens:` feed, or drops the
-    /// clamp, fails this test.
+    /// value the chat surface passes as the typed Responses generation
+    /// request's `maxOutputTokens`, and the delegation clamp is applied at
+    /// its single definition site before any use. Both loop and wrap-up
+    /// requests must preserve that bound; no legacy wire feed may bypass it.
     @Test("clamped max tokens is the only generation-request feed")
     func clampedMaxTokensIsOnlyRequestFeed() throws {
         let testFile = URL(fileURLWithPath: #filePath)
@@ -646,15 +645,17 @@ struct SubagentAdmission16GBRegressionTests {
                 ".clampedResponseTokens(agentConfigured: effectiveMaxTokensForAgent)"),
             "the delegation clamp guards the definition")
 
-        // Every `max_tokens:` the surface sends comes from that variable.
-        let feeds = source.components(separatedBy: "max_tokens:").dropFirst()
-        #expect(!feeds.isEmpty)
+        // The live loop and budget wrap-up both construct typed Responses
+        // requests. Their generation ceiling must be the already-clamped value.
+        let feeds = source.components(separatedBy: "maxOutputTokens:").dropFirst()
+        #expect(!feeds.isEmpty, "typed Responses requests must carry the response budget")
         for feed in feeds {
-            let value = feed.trimmingCharacters(in: .whitespaces)
+            let value = feed.trimmingCharacters(in: .whitespacesAndNewlines)
             #expect(
                 value.hasPrefix("effectiveMaxTokensForAgent"),
-                "every request max_tokens must be the clamped value")
+                "every Responses generation ceiling must be the clamped value")
         }
+        #expect(!source.contains("max_tokens:"), "chat must not reintroduce a legacy budget feed")
     }
 
     /// CAUSAL: a longer seed (system prompt + schemas + instruction all

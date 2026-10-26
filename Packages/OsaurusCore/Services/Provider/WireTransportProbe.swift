@@ -42,6 +42,7 @@
 //
 
 import Foundation
+import CryptoKit
 import os
 
 /// Probe instance shared across a single remote send. Pass through
@@ -62,9 +63,14 @@ public final class WireTransportProbe: @unchecked Sendable {
     /// instead of two.
     private struct Bodies {
         var req: Data?
+        var endpointURL: URL?
         var resp: Data
         var truncated: Bool
         var privacy: PrivacyOutcome?
+        var acceptedRequest: Data? = nil
+        var acceptedEndpoint: URL? = nil
+        var attempts: [Attempt] = []
+        var attemptsTruncated = false
     }
 
     /// What the Privacy Filter did to this request before it left the
@@ -77,6 +83,16 @@ public final class WireTransportProbe: @unchecked Sendable {
         public let redactedCount: Int
     }
 
+    /// Bounded network-head receipts, separate from first-built evidence.
+    public struct Attempt: Sendable, Equatable {
+        public let endpoint: URL?
+        public let statusCode: Int
+        public let accepted: Bool
+        public let bodyBytes: Int
+        public let bodySHA256: String
+    }
+    public static let maxAttempts = 8
+
     /// Hard cap on captured response bytes. Streamed assistant
     /// outputs can easily run into MBs; Insights only ever shows
     /// the head + tail. This keeps memory bounded for users who
@@ -84,7 +100,7 @@ public final class WireTransportProbe: @unchecked Sendable {
     public static let maxResponseBytes: Int = 1_048_576  // 1 MiB
 
     private let bodies = OSAllocatedUnfairLock<Bodies>(
-        initialState: Bodies(req: nil, resp: Data(), truncated: false, privacy: nil)
+        initialState: Bodies(req: nil, endpointURL: nil, resp: Data(), truncated: false, privacy: nil)
     )
 
     /// Record the Privacy Filter outcome for this request. Last write wins
@@ -112,9 +128,18 @@ public final class WireTransportProbe: @unchecked Sendable {
     /// novel request can't balloon process memory; the Insights UI
     /// only renders head/tail anyway, so the trimmed bytes carry
     /// the same diagnostic value.
-    public func recordRequestBody(_ data: Data) {
+    public func recordRequestBody(_ data: Data, endpointURL: URL? = nil) {
+        // Endpoint metadata only: never store credentials or query values.
+        // Keep it paired with the first built request, just like its body.
+        var endpoint = endpointURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        endpoint?.user = nil
+        endpoint?.password = nil
+        endpoint?.query = nil
+        endpoint?.fragment = nil
+        let sanitizedEndpoint = endpoint?.url
         bodies.withLock { state in
             if state.req == nil {
+                state.endpointURL = sanitizedEndpoint
                 if data.count <= Self.maxResponseBytes {
                     state.req = data
                 } else {
@@ -123,6 +148,40 @@ public final class WireTransportProbe: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    private static func sanitizedEndpoint(_ url: URL?) -> URL? {
+        var value = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        value?.user = nil; value?.password = nil; value?.query = nil; value?.fragment = nil
+        return value?.url
+    }
+
+    /// Called only after a real HTTP response head arrives. A capability
+    /// fallback retains the rejected first attempt and the accepted wire body.
+    func recordAttempt(request: URLRequest, statusCode: Int, accepted: Bool) {
+        let body = request.httpBody ?? Data()
+        let endpoint = Self.sanitizedEndpoint(request.url)
+        let receipt = Attempt(endpoint: endpoint, statusCode: statusCode, accepted: accepted,
+            bodyBytes: body.count, bodySHA256: SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined())
+        bodies.withLock { state in
+            if state.attempts.count < Self.maxAttempts { state.attempts.append(receipt) }
+            else { state.attemptsTruncated = true }
+            if accepted {
+                state.acceptedEndpoint = endpoint
+                state.acceptedRequest = Data(body.prefix(Self.maxResponseBytes))
+                if body.count > Self.maxResponseBytes { state.truncated = true }
+            }
+        }
+    }
+    var attempts: [Attempt] { bodies.withLock { $0.attempts } }
+    var attemptsTruncated: Bool { bodies.withLock { $0.attemptsTruncated } }
+    var acceptedRequestEndpointURL: URL? { bodies.withLock { $0.acceptedEndpoint } }
+    func firstBuiltSnapshot() -> (request: Data?, endpoint: URL?) { bodies.withLock { ($0.req, $0.endpointURL) } }
+
+    /// The selected first URLRequest's endpoint, stripped of credentials and
+    /// query/fragment values. Construction alone does not prove network send.
+    var requestEndpointURL: URL? {
+        bodies.withLock { $0.endpointURL }
     }
 
     /// Append a chunk of raw inbound bytes. Called from inside the
@@ -170,7 +229,7 @@ public final class WireTransportProbe: @unchecked Sendable {
     /// empty for a non-stream that failed).
     public func snapshot() -> (request: Data?, response: Data, truncated: Bool) {
         bodies.withLock { state in
-            (state.req, state.resp, state.truncated)
+            (state.acceptedRequest ?? state.req, state.resp, state.truncated)
         }
     }
 }

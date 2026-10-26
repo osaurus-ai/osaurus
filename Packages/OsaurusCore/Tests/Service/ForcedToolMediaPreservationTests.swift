@@ -17,9 +17,24 @@ struct ForcedToolMediaPreservationTests {
             : .required
     }
 
-    private static func directive(named: Bool) -> String {
-        "The current assistant response MUST be a function call."
-            + (named ? " Use the `record_visual` function." : "")
+    /// The production runtime applies only the caller-explicit JSON-mode
+    /// transform before mapping; tool choice changes schemas, never messages.
+    private static func preparedInput(
+        _ messages: [ChatMessage], toolChoice: ToolChoiceOption?, modelName: String?
+    ) -> [ChatMessage] {
+        let tools = ["record_visual", "other_visual"].map { name in
+            Tool(type: "function", function: ToolFunction(name: name, description: "Fixture", parameters: .object([:])))
+        }
+        let request = ResponsesInferenceRequest(model: modelName ?? "fixture", input: messages,
+            tools: tools, toolChoice: toolChoice)
+        #expect(request.generation.temperature == nil && request.generation.topP == nil && request.generation.topK == nil)
+        let schemas = ModelRuntime.makeTokenizerTools(tools: request.tools, toolChoice: request.toolChoice)
+        switch toolChoice {
+        case .some(.function(_)): #expect(schemas?.count == 1)
+        case .some(.none): #expect(schemas == nil)
+        default: #expect(schemas?.count == 2)
+        }
+        return ModelRuntime.applyJSONMode(request.input, jsonMode: false)
     }
 
     private static func encoded<T: Encodable>(_ value: T) throws -> Data {
@@ -51,7 +66,9 @@ struct ForcedToolMediaPreservationTests {
             reasoning_content: "retained reasoning",
             reasoning_item_id: "rs_test",
             reasoning_encrypted: "opaque-test-reasoning",
-            responses_output_items: [.object(["type": .string("reasoning"), "id": .string("rs_test")])]
+            responses_output_items: [.object(["type": .string("reasoning"), "id": .string("rs_test")])],
+            anthropic_thinking_blocks: [.object(["type": .string("thinking"), "thinking": .string("native thought"),
+                "signature": .string("native signature")])]
         )
     }
 
@@ -63,15 +80,17 @@ struct ForcedToolMediaPreservationTests {
             .imageUrl(url: Self.firstImage, detail: nil), .text("After."),
         ]
         let original = ChatMessage(role: "user", content: "Before.Between.After.", contentParts: parts)
-        let result = try #require(ModelRuntime.applyForcedToolChoiceDirective(
+        let result = try #require(Self.preparedInput(
             [original], toolChoice: Self.choice(named: named), modelName: Self.model
         ).first)
-        let expectedText = "Before.Between.After.\n\n" + Self.directive(named: named)
+        let expectedText = "Before.Between.After."
         #expect(result.content == expectedText)
         #expect(result.imageUrls == [Self.firstImage, Self.secondImage, Self.firstImage])
         let actualParts = try #require(result.contentParts)
         #expect(try Self.encoded(Array(actualParts.prefix(parts.count))) == Self.encoded(parts))
-        #expect(actualParts.count == parts.count + 1)
+        #expect(actualParts.count == parts.count)
+        let mapped = try ModelRuntime.mapOpenAIChatToMLX([result])
+        #expect(mapped.first?.content == expectedText && mapped.first?.images.count == 3)
         let decoded = try JSONDecoder().decode(ChatMessage.self, from: Self.encoded(result))
         #expect(decoded.content == expectedText)
         #expect(decoded.imageUrls == result.imageUrls)
@@ -84,20 +103,20 @@ struct ForcedToolMediaPreservationTests {
         let original = ChatMessage(role: "user", content: nil, contentParts: [
             .imageUrl(url: Self.firstImage, detail: nil),
         ])
-        let result = ModelRuntime.applyForcedToolChoiceDirective(
+        let result = Self.preparedInput(
             [original], toolChoice: Self.choice(named: named), modelName: Self.model
         )
-        #expect(result.first?.content == Self.directive(named: named))
+        #expect(result.first?.content == nil)
         #expect(result.first?.imageUrls == [Self.firstImage])
         let mapped = try ModelRuntime.mapOpenAIChatToMLX(result)
         #expect(mapped.first?.images.count == 1)
-        #expect(mapped.first?.content == Self.directive(named: named))
+        #expect(mapped.first?.content == "")
     }
 
     @Test(arguments: [false, true])
     func nonTextAndOpaqueCarriersStayIntact(named: Bool) throws {
         let original = Self.richMessage()
-        let result = try #require(ModelRuntime.applyForcedToolChoiceDirective(
+        let result = try #require(Self.preparedInput(
             [original], toolChoice: Self.choice(named: named), modelName: Self.model
         ).first)
         #expect(result.imageUrls == original.imageUrls)
@@ -112,10 +131,11 @@ struct ForcedToolMediaPreservationTests {
         #expect(result.reasoning_item_id == original.reasoning_item_id)
         #expect(result.reasoning_encrypted == original.reasoning_encrypted)
         #expect(result.responses_output_items == original.responses_output_items)
+        #expect(result.anthropic_thinking_blocks == original.anthropic_thinking_blocks)
     }
 
     @Test(arguments: [false, true])
-    func onlyLastUserChangesAndFollowingToolHistorySurvives(named: Bool) throws {
+    func allUserTurnsAndFollowingToolHistorySurvive(named: Bool) throws {
         let earlier = Self.richMessage()
         let messages = [
             ChatMessage(role: "system", content: "Context."),
@@ -127,24 +147,24 @@ struct ForcedToolMediaPreservationTests {
             ChatMessage(role: "assistant", content: nil, tool_calls: earlier.tool_calls, tool_call_id: nil),
             ChatMessage(role: "tool", content: "Observed result.", tool_calls: nil, tool_call_id: "prior-call"),
         ]
-        let result = ModelRuntime.applyForcedToolChoiceDirective(
+        let result = Self.preparedInput(
             messages, toolChoice: Self.choice(named: named), modelName: Self.model
         )
         #expect(result.count == messages.count)
-        for index in [0, 1, 2, 4, 5] {
+        for index in messages.indices {
             #expect(try Self.encoded(result[index]) == Self.encoded(messages[index]))
         }
         #expect(result[1].localAudioSamples == earlier.localAudioSamples)
         #expect(result[1].responses_output_items == earlier.responses_output_items)
         #expect(result[3].imageUrls == [Self.secondImage])
-        #expect(result[3].content == "Next image.\n\n" + Self.directive(named: named))
+        #expect(result[3].content == "Next image.")
     }
 
     @Test func automaticAndNoToolChoiceRemainNoOps() throws {
         let message = Self.richMessage()
         let choices: [ToolChoiceOption?] = [nil, .auto, ToolChoiceOption.none]
         for choice in choices {
-            let result = try #require(ModelRuntime.applyForcedToolChoiceDirective(
+            let result = try #require(Self.preparedInput(
                 [message], toolChoice: choice, modelName: Self.model
             ).first)
             #expect(try Self.encoded(result) == Self.encoded(message))
@@ -157,7 +177,7 @@ struct ForcedToolMediaPreservationTests {
     func nonGemmaAndUnknownModelsRemainNoOps(named: Bool) throws {
         let message = Self.richMessage()
         for model in [nil, "DeepSeek-V4-Flash", "Qwen3.5-27B"] as [String?] {
-            let result = try #require(ModelRuntime.applyForcedToolChoiceDirective(
+            let result = try #require(Self.preparedInput(
                 [message], toolChoice: Self.choice(named: named), modelName: model
             ).first)
             #expect(try Self.encoded(result) == Self.encoded(message))
@@ -167,39 +187,48 @@ struct ForcedToolMediaPreservationTests {
     }
 
     @Test(arguments: [false, true])
-    func textOnlyAndEmptyContentKeepExistingDirective(named: Bool) throws {
+    func textOnlyAndEmptyContentRemainUnmodified(named: Bool) throws {
         for content in [nil, "", "Finish."] as [String?] {
             let original = ChatMessage(role: "user", content: content, tool_calls: nil, tool_call_id: nil)
-            let result = try #require(ModelRuntime.applyForcedToolChoiceDirective(
+            let result = try #require(Self.preparedInput(
                 [original], toolChoice: Self.choice(named: named), modelName: Self.model
             ).first)
-            let prefix = (content?.isEmpty == false) ? content! + "\n\n" : ""
-            #expect(result.content == prefix + Self.directive(named: named))
+            #expect(result.content == content)
             #expect(result.contentParts == nil)
         }
     }
 
     @Test(arguments: [false, true])
-    func emptyPartsDoNotLoseDirectiveOnRoundTrip(named: Bool) throws {
+    func emptyPartsDoNotAcquireSyntheticTextOnRoundTrip(named: Bool) throws {
         let original = ChatMessage(role: "user", content: nil, contentParts: [])
-        let result = try #require(ModelRuntime.applyForcedToolChoiceDirective(
+        let result = try #require(Self.preparedInput(
             [original], toolChoice: Self.choice(named: named), modelName: Self.model
         ).first)
         let decoded = try JSONDecoder().decode(ChatMessage.self, from: Self.encoded(result))
-        #expect(decoded.content == Self.directive(named: named))
+        #expect(decoded.content == nil)
         #expect(result.imageUrls.isEmpty)
     }
 
     @Test(arguments: [false, true])
-    func noUserKeepsExistingAppendBehavior(named: Bool) throws {
+    func noUserDoesNotInventAnAdditionalTurn(named: Bool) throws {
         let messages = [ChatMessage(role: "system", content: "System only.")]
-        let result = ModelRuntime.applyForcedToolChoiceDirective(
+        let result = Self.preparedInput(
             messages, toolChoice: Self.choice(named: named), modelName: Self.model
         )
-        #expect(result.count == 2)
+        #expect(result.count == 1)
         #expect(try Self.encoded(result[0]) == Self.encoded(messages[0]))
-        #expect(result[1].role == "user")
-        #expect(result[1].content == Self.directive(named: named))
-        #expect(result[1].contentParts == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func explicitJSONModeKeepsUserMediaAndToolHistory(named: Bool) throws {
+        let original = Self.richMessage()
+        let prepared = Self.preparedInput([original], toolChoice: Self.choice(named: named), modelName: Self.model)
+        let result = ModelRuntime.applyJSONMode(prepared, jsonMode: true)
+        #expect(result.count == 2 && result.first?.role == "system")
+        #expect(result.first?.content?.contains("single valid JSON object") == true)
+        #expect(try Self.encoded(result[1]) == Self.encoded(original))
+        #expect(result[1].localAudioSamples == original.localAudioSamples)
+        #expect(result[1].responses_output_items == original.responses_output_items)
+        #expect(result[1].anthropic_thinking_blocks == original.anthropic_thinking_blocks)
     }
 }

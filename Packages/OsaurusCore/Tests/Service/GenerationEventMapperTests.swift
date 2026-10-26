@@ -651,7 +651,7 @@ struct GenerationEventMapperTests {
         }
     }
 
-    @Test func missing_terminal_info_synthesizes_completion_for_reasoning_only_stream() async throws {
+    @Test func missingTerminalInfoPreservesReasoningWithoutInventingCompletionOrUsage() async throws {
         let out = try await collect(
             events: [
                 .reasoning("The user is straightforward greeting. "),
@@ -659,13 +659,22 @@ struct GenerationEventMapperTests {
             ],
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ"
         )
-        guard case .completionInfo(let count, _, let unclosed, let stopReason, _, _) = out.last else {
-            Issue.record("expected synthesized completionInfo at end, got \(String(describing: out.last))")
-            return
-        }
-        #expect(count > 0)
-        #expect(unclosed == true)
-        #expect(stopReason == nil)
+        #expect(out.compactMap { if case .reasoning(let text) = $0 { text } else { nil } }.joined()
+            == "The user is straightforward greeting. I should answer briefly.")
+        #expect(!out.contains { if case .completionInfo = $0 { true } else { false } })
+        let native = ResponsesGenerationStream.native(
+            GenerationEventMapper.map(events: makeStream([.reasoning("partial")]))
+        )
+        var reasoning = ""
+        do {
+            for try await event in native {
+                if case .reasoningDelta(let text) = event { reasoning += text }
+                if case .responseCompleted = event { Issue.record("Missing info became a completed response") }
+            }
+            Issue.record("Missing native completion must fail")
+        } catch ResponsesGenerationStream.StreamError.missingCompletion {
+            #expect(reasoning == "partial")
+        } catch { Issue.record("Unexpected error: \(error)") }
     }
 
     @Test("consumer cancellation directly cancels the owned runtime generation")

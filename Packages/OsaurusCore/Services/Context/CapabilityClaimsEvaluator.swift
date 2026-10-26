@@ -8,7 +8,7 @@
 //  `CapabilityLoadBuffer` → continue — so eval cases can assert on what
 //  the model SAYS and DOES when asked "do you have X".
 //
-//  The internal `ChatCompletionRequest` / `ChatMessage` / `Tool` types
+//  The internal Responses request / `ChatMessage` / `Tool` types
 //  stay encapsulated; the public surface is a decode-friendly transcript
 //  (ordered tool calls + final assistant text) plus an LLM-judge verdict
 //  so the runner can combine deterministic transcript checks with a
@@ -194,14 +194,36 @@ public enum CapabilityClaimsEvaluator {
         autoApproveToolPrompts: Bool = false,
         denyUnapprovedToolPrompts: Bool = false
     ) async -> CapabilityClaimsTranscript {
+        await runConversation(
+            query: query,
+            agentId: agentId,
+            maxIterations: maxIterations,
+            model: model,
+            toolExecutionTimeout: toolExecutionTimeout,
+            autoApproveToolPrompts: autoApproveToolPrompts,
+            denyUnapprovedToolPrompts: denyUnapprovedToolPrompts,
+            engine: ChatEngine()
+        )
+    }
+
+    static func runConversation(
+        query: String,
+        agentId: UUID? = nil,
+        maxIterations: Int = 6,
+        model: String? = nil,
+        toolExecutionTimeout: TimeInterval? = nil,
+        autoApproveToolPrompts: Bool = false,
+        denyUnapprovedToolPrompts: Bool = false,
+        engine: any ResponsesEngineProtocol
+    ) async -> CapabilityClaimsTranscript {
         let resolvedAgentId = agentId ?? AgentManager.shared.activeAgent.id
         let resolvedModel =
             model
             ?? ChatConfigurationStore.load().coreModelIdentifier
             ?? "foundation"
-        let engine = ChatEngine()
 
         var history: [ChatMessage] = [ChatMessage(role: "user", content: query)]
+        var pendingBatch = ResponsesToolBatchHistory()
         var toolCalls: [CapabilityClaimsTranscript.ToolInvocation] = []
         var loadedToolNames: [String] = []
         var finalText = ""
@@ -246,14 +268,12 @@ public enum CapabilityClaimsEvaluator {
             dedupeNoticeEnabled: true
         ).budgetWarningThreshold
         var pendingBudgetNotice: String?
-        // Decode speed, token-weighted across model steps so a long final
-        // answer dominates a 2-token tool-call turn (same weighting as the
-        // agent-loop evaluator). Only the no-tool answer step carries an
-        // authoritative `tokens_per_second`; tool-call turns report 0 and
-        // contribute nothing. Recorded so every generation row has token/s.
+        // Token-weighted measured decode across typed model steps. Missing
+        // usage/rates stay absent; prompt estimates are accounted separately.
         var decodeTpsWeightedSum = 0.0
         var decodeTpsTokenWeight = 0
         var completionTokensTotal = 0
+        var completionUsageComplete = true
         var promptTokensTotal = 0
         var peakContextTokens = 0
         var modelStepCount = 0
@@ -333,31 +353,12 @@ public enum CapabilityClaimsEvaluator {
                         )
                     }
 
-                    let request = ChatCompletionRequest(
-                        model: resolvedModel,
-                        messages: requestMessages,
-                        // nil = the model bundle's generation_config defaults
-                        // (production parity; AgentLoopEvaluator does the same).
-                        // The lane used to pin 0.0, but greedy decode is a mode
-                        // the shipped app never uses and it drove sampled-decode
-                        // models (Ornith ships do_sample temperature 0.6 /
-                        // top_k 20) into repetition collapse ("." loops) the
-                        // production path does not exhibit — and it made
-                        // repeated runs byte-identical replays, voiding
-                        // mean/min statistics. The judge request below stays
-                        // at 0.0: scoring must remain deterministic.
-                        temperature: nil,
-                        max_tokens: 2048,
-                        stream: false,
-                        top_p: nil,
-                        frequency_penalty: nil,
-                        presence_penalty: nil,
-                        stop: nil,
-                        n: nil,
-                        tools: frozenTools,
-                        tool_choice: .auto,
-                        session_id: runSessionId
-                    )
+                    var request = ResponsesInferenceRequest(model: resolvedModel, input: requestMessages)
+                    request.tools = frozenTools
+                    request.toolChoice = .auto
+                    request.sessionID = runSessionId
+                    request.context.samplingParametersAreImplicit = true
+                    request.context.isAgentRequest = !frozenTools.isEmpty
 
                     let stepInputTokens =
                         ContextBudgetManager.estimateTokens(for: requestMessages)
@@ -365,23 +366,28 @@ public enum CapabilityClaimsEvaluator {
                     promptTokensTotal += stepInputTokens
                     peakContextTokens = max(peakContextTokens, stepInputTokens)
                     modelStepCount += 1
-                    let response = try await engine.completeChat(request: request)
-                    // Fold this step's authoritative runtime stats into the
-                    // token-weighted decode-speed accumulators.
-                    let usage = response.usage
-                    if let tps = usage.tokens_per_second, tps > 0, usage.completion_tokens > 0 {
-                        decodeTpsWeightedSum += tps * Double(usage.completion_tokens)
-                        decodeTpsTokenWeight += usage.completion_tokens
+                    let response: ResponsesGenerationResult
+                    do {
+                        response = try await ResponsesEvaluationStep.collect(engine: engine, request: request)
+                    } catch {
+                        completionUsageComplete = false
+                        throw error
                     }
-                    completionTokensTotal += max(0, usage.completion_tokens)
-                    guard let choice = response.choices.first else {
-                        finalText = ""
-                        break
+                    if let count = response.completion.tokenCount {
+                        completionTokensTotal += count
+                        if count > 0, let rate = response.completion.tokensPerSecond, rate > 0 {
+                            decodeTpsWeightedSum += rate * Double(count)
+                            decodeTpsTokenWeight += count
+                        }
+                    } else { completionUsageComplete = false }
+                    finalText = response.text
+                    let step = try ResponsesEvaluationStep.classify(response, toolsWereOffered: !frozenTools.isEmpty)
+                    switch step {
+                    case .lengthExhausted, .incompleteReasoning:
+                        throw ResponsesEvaluationStep.Failure.incomplete(response.completion.stopReason)
+                    default: break
                     }
-                    let message = choice.message
-                    if let content = message.content, !content.isEmpty {
-                        finalText = content
-                    }
+                    let message = try response.completedAssistantInput()
 
                     guard let calls = message.tool_calls, !calls.isEmpty else {
                         let visible = (message.content ?? "")
@@ -424,16 +430,10 @@ public enum CapabilityClaimsEvaluator {
 
                     // Echo the assistant tool-call turn back into history
                     // so the model sees its own request alongside results.
-                    history.append(
-                        ChatMessage(
-                            role: "assistant",
-                            content: message.content,
-                            tool_calls: calls,
-                            tool_call_id: nil
-                        )
-                    )
+                    try pendingBatch.begin(SecretArgumentScrubber.recordedAssistantMessage(message))
 
                     for call in calls {
+                        try Task.checkCancellation()
                         toolCalls.append(
                             .init(name: call.function.name, arguments: call.function.arguments)
                         )
@@ -449,14 +449,7 @@ public enum CapabilityClaimsEvaluator {
                                 arguments: call.function.arguments,
                                 resultPreview: String(held.prefix(500))
                             )
-                            history.append(
-                                ChatMessage(
-                                    role: "tool",
-                                    content: held,
-                                    tool_calls: nil,
-                                    tool_call_id: call.id
-                                )
-                            )
+                            pendingBatch.record(callID: call.id, result: held)
                             if let escalation = taskState.lastReplayNotice {
                                 pendingStateNotice = "[System Notice] " + escalation
                             } else {
@@ -513,14 +506,7 @@ public enum CapabilityClaimsEvaluator {
                                     .prefersCompactPrompt
                             )
                             : toolResult
-                        history.append(
-                            ChatMessage(
-                                role: "tool",
-                                content: modelVisible,
-                                tool_calls: nil,
-                                tool_call_id: call.id
-                            )
-                        )
+                        pendingBatch.record(callID: call.id, result: modelVisible)
                         // Repeated-identical-call nudge, mirroring the
                         // production driver's `state.record` + `nextStepBias`
                         // sequence (3+ identical calls arms an advisory
@@ -533,6 +519,10 @@ public enum CapabilityClaimsEvaluator {
                         if let bias = taskState.nextStepBias() {
                             pendingStateNotice = "[System Notice] " + bias
                         }
+                    }
+
+                    if let commit = pendingBatch.complete([]) {
+                        history.append(contentsOf: commit.messages)
                     }
 
                     // Drain tools loaded via capabilities_load: record them
@@ -572,55 +562,48 @@ public enum CapabilityClaimsEvaluator {
                     // final tool-free request so the user still sees a
                     // wrap-up answer. Score what production shows, not the
                     // empty string the loop was cut off with.
-                    let wrapUpRequest = ChatCompletionRequest(
+                    var wrapUpRequest = ResponsesInferenceRequest(
                         model: resolvedModel,
-                        messages: [ChatMessage(role: "system", content: firstTurnPrompt)] + history,
-                        // Bundle defaults, same as the loop requests above.
-                        temperature: nil,
-                        max_tokens: 2048,
-                        stream: false,
-                        top_p: nil,
-                        frequency_penalty: nil,
-                        presence_penalty: nil,
-                        stop: nil,
-                        n: nil,
-                        tools: nil,
-                        tool_choice: nil,
-                        session_id: runSessionId
+                        input: [ChatMessage(role: "system", content: firstTurnPrompt)] + history
                     )
+                    wrapUpRequest.sessionID = runSessionId
+                    wrapUpRequest.context.samplingParametersAreImplicit = true
                     let wrapUpInputTokens = ContextBudgetManager.estimateTokens(
-                        for: wrapUpRequest.messages
+                        for: wrapUpRequest.input
                     )
                     promptTokensTotal += wrapUpInputTokens
                     peakContextTokens = max(peakContextTokens, wrapUpInputTokens)
                     modelStepCount += 1
-                    // Same non-streaming call shape as this evaluator's own
-                    // loop steps. A wrap-up failure must not sink the whole
-                    // case (the loop itself succeeded) — but it must be
-                    // visible, so it lands in the transcript's finalText
-                    // rather than being silently swallowed.
+                    // Preserve the explicit post-cap diagnostic. A partial,
+                    // cancelled or failed wrap-up stays an error with the real
+                    // visible output retained; it is not a successful answer.
                     do {
-                        let response = try await engine.completeChat(request: wrapUpRequest)
-                        let usage = response.usage
-                        if let tps = usage.tokens_per_second, tps > 0, usage.completion_tokens > 0 {
-                            decodeTpsWeightedSum += tps * Double(usage.completion_tokens)
-                            decodeTpsTokenWeight += usage.completion_tokens
-                        }
-                        completionTokensTotal += max(0, usage.completion_tokens)
-                        let text = (response.choices.first?.message.content ?? "")
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !text.isEmpty { finalText = text }
+                        let response = try await ResponsesEvaluationStep.collect(engine: engine, request: wrapUpRequest)
+                        if let count = response.completion.tokenCount {
+                            completionTokensTotal += count
+                            if count > 0, let rate = response.completion.tokensPerSecond, rate > 0 {
+                                decodeTpsWeightedSum += rate * Double(count)
+                                decodeTpsTokenWeight += count
+                            }
+                        } else { completionUsageComplete = false }
+                        finalText = response.text
+                        try ResponsesEvaluationStep.requireNaturalFinal(response)
                     } catch {
-                        finalText = "[post-cap wrap-up failed: \(error)]"
+                        completionUsageComplete = false
+                        return (finalText, toolCalls, loadedToolNames, iterations, hitCap, firstTurnPrompt,
+                            "post-cap wrap-up failed: \(error.localizedDescription)")
                     }
                 }
                 return (finalText, toolCalls, loadedToolNames, iterations, hitCap, firstTurnPrompt, nil)
               }
             }
         } catch {
+            if let commit = pendingBatch.finish(runExit: "errored") {
+                history.append(contentsOf: commit.messages)
+            }
             return CapabilityClaimsTranscript(
                 toolCalls: toolCalls,
-                finalText: "",
+                finalText: finalText,
                 iterations: iterations,
                 hitIterationCap: false,
                 systemPrompt: firstTurnPrompt,
@@ -629,7 +612,7 @@ public enum CapabilityClaimsEvaluator {
                 decodeTokensPerSecond: decodeTpsTokenWeight > 0
                     ? decodeTpsWeightedSum / Double(decodeTpsTokenWeight)
                     : nil,
-                completionTokens: completionTokensTotal > 0 ? completionTokensTotal : nil,
+                completionTokens: modelStepCount > 0 && completionUsageComplete ? completionTokensTotal : nil,
                 promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
                 peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
                 modelSteps: modelStepCount > 0 ? modelStepCount : nil
@@ -647,7 +630,7 @@ public enum CapabilityClaimsEvaluator {
             decodeTokensPerSecond: decodeTpsTokenWeight > 0
                 ? decodeTpsWeightedSum / Double(decodeTpsTokenWeight)
                 : nil,
-            completionTokens: completionTokensTotal > 0 ? completionTokensTotal : nil,
+            completionTokens: modelStepCount > 0 && completionUsageComplete ? completionTokensTotal : nil,
             promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
             peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
             modelSteps: modelStepCount > 0 ? modelStepCount : nil
@@ -798,45 +781,28 @@ public enum CapabilityClaimsEvaluator {
             \(numbered)
             """
 
-        let request = ChatCompletionRequest(
+        // Explicit deterministic judge contract, not chat/model defaults.
+        var request = ResponsesInferenceRequest(
             model: resolvedModel,
-            messages: [
-                ChatMessage(role: "system", content: judgeSystem),
-                ChatMessage(role: "user", content: judgeUser),
-            ],
-            temperature: 0.0,
-            max_tokens: 1024,
-            stream: false,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: nil,
-            tool_choice: nil,
-            session_id: nil
+            input: [ChatMessage(role: "system", content: judgeSystem), ChatMessage(role: "user", content: judgeUser)]
         )
-
-        // One bounded retry ladder on a THROWN judge call. A remote judge
-        // (xAI / Gemini) occasionally drops a request mid-flight — a matrix run
-        // surfaced a transient `CancellationError` from the provider's own
-        // timeout (NOT our task being cancelled) that zeroed an entire case's
-        // rubric even though every deterministic matcher passed. Retrying a
-        // temperature-0 judge is idempotent and safe, and a flaky judge call
-        // must never masquerade as a real model failure (it would pollute a
-        // pre/post fix diff). We only retry a THROWN error; an unparseable reply
-        // is deterministic at temperature 0, so we return it immediately rather
-        // than burning retries. We also honor genuine task cancellation
-        // (`Task.isCancelled`) so a killed run still stops promptly instead of
-        // looping on its own teardown.
+        request.generation.temperature = 0
+        request.generation.maxOutputTokens = 1024
+        let judgeAttempt = DesktopResponsesAttempt()
+        // Retry only transient transport failure before any typed output.
+        // A deterministic judge is still a request: partial output, protocol,
+        // auth, rate, incomplete and cancellation errors must not be replayed.
         let maxJudgeAttempts = 3
         var lastError: Error?
         var attemptsUsed = 0
         for attempt in 1 ... maxJudgeAttempts {
             attemptsUsed = attempt
             do {
-                let response = try await engine.completeChat(request: request)
-                let raw = response.choices.first?.message.content ?? ""
+                let response = try await ResponsesEvaluationStep.collect(engine: engine, request: request) {
+                    judgeAttempt.observe($0)
+                }
+                try ResponsesEvaluationStep.requireNaturalFinal(response)
+                let raw = response.text
                 if let parsed = parseVerdicts(raw, expected: conditions.count) {
                     return CapabilityClaimsJudgeAudit(
                         verdicts: parsed,
@@ -858,7 +824,7 @@ public enum CapabilityClaimsEvaluator {
                 )
             } catch {
                 lastError = error
-                if Task.isCancelled { break }
+                if Task.isCancelled || !judgeAttempt.permitsRetry(error) { break }
                 if attempt < maxJudgeAttempts {
                     // Linear backoff (0.5s, 1.0s) before the next attempt.
                     try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)

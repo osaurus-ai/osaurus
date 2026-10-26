@@ -230,7 +230,7 @@ public final class ExecutionContext: ObservableObject {
     }
 
     /// Begin execution with the given prompt.
-    public func start(prompt: String) async {
+    public func start(prompt: String, taskIntent: ChatTaskIntent? = nil) async {
         let folderFailure = await activateFolderContextIfNeeded()
         if let folderFailure {
             // The dispatch NAMED a folder and that folder cannot be read.
@@ -240,10 +240,10 @@ public final class ExecutionContext: ObservableObject {
             // of files. The run still executes (the result must reach the
             // watcher log/UI), but the model is told the truth up front so it
             // reports the real problem instead of inventing one.
-            chatSession.send(folderFailure + "\n\n" + prompt)
+            chatSession.send(folderFailure + "\n\n" + prompt, taskIntent: taskIntent)
             return
         }
-        chatSession.send(prompt)
+        chatSession.send(prompt, taskIntent: taskIntent)
     }
 
     /// Resolve the stored bookmark onto THIS context's session folder state
