@@ -1833,7 +1833,7 @@ final class ChatSession: ObservableObject {
     /// outbound request while the UI still displayed them in the bubble —
     /// far worse than the alternative failure, where a text-only remote
     /// model rejects the image part with a visible provider error.
-    static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
+    nonisolated static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
         if let local = ModelManager.findInstalledMLXModelFromCache(named: modelId) {
             return local.mediaCapabilities.supportsImage
