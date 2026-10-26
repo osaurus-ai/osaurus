@@ -181,8 +181,9 @@ struct HostContinuationMemoryProvenanceTests {
                         session.forceChatEngineRouteForTests = true
                         session.toolsDisabledForTestingOverride = true
                         session.chatEngineFactory = { _ in engine }
-                        let task = "My name is Eric. " + String(repeating:
-                            "Summarize this completed fixture conversation without running tools. ", count: 4)
+                        let task = (["My name is Eric."] + Array(repeating:
+                            "Summarize this completed fixture conversation without running tools.", count: 4))
+                            .joined(separator: " ")
                         await execution.start(prompt: task)
                         try await waitUntil { await capture.messages.count >= index + 1 && !session.isStreaming }
                         if let send = session.currentSendTaskForTesting { await send.value }
