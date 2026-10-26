@@ -1,6 +1,7 @@
 import AppKit
 @preconcurrency import Combine
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import OsaurusCore
@@ -40,6 +41,20 @@ struct ResponsesRunningToolPresentationTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         throw NSError(domain: "ResponsesRunningToolPresentationTests.timeout", code: 1, userInfo: [NSLocalizedDescriptionKey: phase])
+    }
+
+    /// Marker subscribers use the same scheduler, after the row's observers.
+    /// Deliver their initial snapshots before late registration so an initial
+    /// no-entry render cannot win or lose a race with the test's dispatch.
+    private func deliverRegistrySnapshots() async throws {
+        var liveDelivered = false
+        var feedDelivered = false
+        let live = LiveExecRegistry.shared.entriesPublisher.receive(on: RunLoop.main)
+            .prefix(1).sink { _ in liveDelivered = true }
+        let feed = SubagentFeedRegistry.shared.feedsPublisher.receive(on: RunLoop.main)
+            .prefix(1).sink { _ in feedDelivered = true }
+        defer { live.cancel(); feed.cancel() }
+        try await wait("registry marker snapshots delivered") { liveDelivered && feedDelivered }
     }
 
     @Test func completedToolCallAppearsBeforeAnyResultOrFurtherText() throws {
@@ -131,6 +146,8 @@ struct ResponsesRunningToolPresentationTests {
                 theme: LightTheme(), onToggle: {}, onHeightChanged: {})
         }
         configure(item)
+        try await deliverRegistrySnapshots()
+        #expect(descendants(row, as: TerminalDisplayView.self).isEmpty)
         let stream = Stream()
         let terminations = Terminations()
         let entry = LiveExecRegistry.Entry(toolCallId: id, pid: "fixture", command: "printf old",
@@ -163,5 +180,53 @@ struct ResponsesRunningToolPresentationTests {
         #expect(completed._test_terminateHidden)
         #expect(completed._test_textStorageString.contains("live output"))
         #expect(completed._test_statusLabelString.contains("terminated"))
+    }
+
+    @Test func lateSubagentFeedSurvivesEmptySnapshotsRemovalCollapseAndReuse() async throws {
+        let row = NativeToolCallRowView(frame: .zero)
+        let id = "responses-late-feed-" + UUID().uuidString
+        let replacementId = "responses-reused-feed-" + UUID().uuidString
+        func configure(_ callId: String, expanded: Bool = true) {
+            row.configure(item: ToolCallItem(call: call(callId, name: "spawn_agent"), result: nil),
+                index: 0, totalCount: 1, isExpanded: expanded, width: 640,
+                theme: LightTheme(), onToggle: {}, onHeightChanged: {})
+        }
+        func panes() -> [NSHostingView<SubagentFeedView>] {
+            descendants(row, as: NSHostingView<SubagentFeedView>.self)
+        }
+        let registry = SubagentFeedRegistry.shared
+        defer { registry.removeNow(toolCallId: id); registry.removeNow(toolCallId: replacementId) }
+        configure(id)
+        try await deliverRegistrySnapshots()
+        #expect(panes().isEmpty)
+        let feed = SubagentFeed(toolCallId: id, kindId: "spawn", title: "Late helper",
+            suppressActivityMirror: true)
+        registry.register(feed)
+        try await wait("late helper pane mounted") { panes().count == 1 }
+        let first = try #require(panes().first)
+        registry.removeNow(toolCallId: id)
+        try await wait("removed helper pane unmounted") { panes().isEmpty }
+        registry.register(feed)
+        try await wait("helper pane remounted after missing feed") { panes().count == 1 }
+        #expect(panes().first !== first)
+
+        configure(id, expanded: false)
+        registry.removeNow(toolCallId: id)
+        registry.register(feed)
+        try await deliverRegistrySnapshots()
+        #expect(panes().isEmpty, "A collapsed row must not mount a registry update")
+        configure(id)
+        try await wait("helper pane restored on expansion") { panes().count == 1 }
+        let beforeReuse = try #require(panes().first)
+
+        configure(replacementId)
+        registry.register(feed)
+        try await deliverRegistrySnapshots()
+        #expect(panes().isEmpty, "A reused row must not display its previous call's feed")
+        let replacement = SubagentFeed(toolCallId: replacementId, kindId: "spawn", title: "Next helper",
+            suppressActivityMirror: true)
+        registry.register(replacement)
+        try await wait("replacement helper pane mounted") { panes().count == 1 }
+        #expect(panes().first !== beforeReuse)
     }
 }
