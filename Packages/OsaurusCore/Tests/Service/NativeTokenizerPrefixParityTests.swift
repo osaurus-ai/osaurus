@@ -36,7 +36,7 @@ struct NativeTokenizerPrefixParityTests {
     private struct Request: Decodable {
         var model: String
         var input: [ChatMessage]
-        var tools: [Tool]
+        var tools: [OsaurusCore.Tool]
         var toolChoice: ToolChoiceOption
         var generation: [String: OsaurusCore.JSONValue]
     }
