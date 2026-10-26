@@ -67,16 +67,21 @@ enum GroundedFileSideEffectCheck {
     /// "appended the file", "wrote the note", "saved this report",
     /// "creating the markdown document", "saving it to the file".
     private static let claimPatterns: [NSRegularExpression] = {
-        let writePredicate = "\\b(?:append(?:ed|ing)?|wrote|written|writing|saved|saving|created|creating)\\b"
+        let writePredicate = "\\b(?:append(?:ed|ing)?|wrote|writing|saved|saving|created|creating)\\b"
+        let destinationPredicate = "(?:" + writePredicate + "|\\b(?:added|adding|pasted|pasting)\\b)"
+        let fileObject = "(?:it\\s+|this\\s+|that\\s+|the\\s+|your\\s+|a\\s+|an\\s+)?"
+            + "(?:file|note|document|markdown|report)s?\\b"
         let sources = [
-            writePredicate + "\\s+"
-                + "(?:it\\s+|this\\s+|that\\s+|the\\s+|your\\s+|a\\s+|an\\s+)?"
-                + "(?:file|note|document|markdown|report)s?\\b",
+            writePredicate + "\\s+" + fileObject,
             // A destination alone is not a write claim: "stale relative to
             // the file on disk" is a read-result comparison. Require a
             // governing write predicate in the same clause, preserving
             // "appended the summary to the file" and passive "written to".
-            writePredicate + "\\s+[^.!?\\n,;]*?\\bto\\s+(?:the\\s+|your\\s+)?file\\b",
+            destinationPredicate + "\\s+[^.!?\\n,;]*?\\bto\\s+(?:the\\s+|your\\s+)?file\\b",
+            // "Written report" is an adjective, not an executed action.
+            // Keep actual perfect/passive predicates and "written to".
+            "\\b(?:have|has|had|was|were|is|are|been|being)\\s+written\\s+" + fileObject,
+            "\\bwritten\\s+to\\s+(?:the\\s+|your\\s+)?file\\b",
         ]
         return sources.compactMap {
             try? NSRegularExpression(pattern: $0, options: [.caseInsensitive])

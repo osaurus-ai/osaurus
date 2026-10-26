@@ -133,6 +133,9 @@ struct GroundedFileSideEffectCheckTests {
         "The memory entry appears stale relative to the file on disk.",
         "These values are identical to the file contents.",
         "The report refers to the file we read.",
+        "The written report contains the nonce ABC and value 42.",
+        "The written report points to the file.",
+        "The written instructions refer to the file.",
     ])
     func fileDestinationWithoutWritePredicateIsNotAClaim(text: String) {
         #expect(!GroundedFileSideEffectCheck.containsFileSideEffectClaim(text))
@@ -142,6 +145,9 @@ struct GroundedFileSideEffectCheckTests {
         "The summary was written to the file.",
         "Appended it to your file.",
         "Wrote the extracted content to the file.",
+        "I added the summary to the file.",
+        "I pasted the result to the file.",
+        "I have written the report.",
     ])
     func affirmativeWritePredicateWithDestinationStillTrips(text: String) {
         #expect(GroundedFileSideEffectCheck.containsFileSideEffectClaim(text))
@@ -301,7 +307,11 @@ struct FileClaimLoopDriverTests {
         )
     }
 
-    @Test func liveReadOnlyExchangeExecutesOneReadAndAcceptsItsFirstFinalWithoutRetry() async throws {
+    @Test(arguments: [
+        LiveReadOnlyFileRegression.answer,
+        "The written report contains the nonce ABC and value 42.",
+    ])
+    func readOnlyExchangeExecutesOneReadAndAcceptsItsFirstFinalWithoutRetry(answer: String) async throws {
         let call = ServiceToolInvocation(
             toolName: "file_read", jsonArguments: #"{"path":"probe.json"}"#, toolCallId: "call_live_read"
         )
@@ -326,7 +336,7 @@ struct FileClaimLoopDriverTests {
                 modelInputs.append(messages)
                 if modelInputs.count == 1 { return .toolCalls([call]) }
                 finalSteps += 1
-                visibleText = finalSteps == 1 ? LiveReadOnlyFileRegression.answer : "Unexpected regeneration"
+                visibleText = finalSteps == 1 ? answer : "Unexpected regeneration"
                 return .finalResponse
             },
             executeTool: { invocation, _ in
@@ -348,7 +358,7 @@ struct FileClaimLoopDriverTests {
         let result = try await AgentToolLoop.run(policy: policy, state: AgentTaskState(), hooks: hooks)
         #expect(result.exit == .finalResponse && result.iterations == 2)
         #expect(retryPreparations == 0, "The valid final must not be excluded or regenerated")
-        #expect(finalSteps == 1 && visibleText == LiveReadOnlyFileRegression.answer)
+        #expect(finalSteps == 1 && visibleText == answer)
         #expect(deliveredNotices.allSatisfy(\.isEmpty))
         #expect(executedCalls.map(\.toolName) == ["file_read"])
         #expect(executedCalls.first?.jsonArguments == #"{"path":"probe.json"}"#)
