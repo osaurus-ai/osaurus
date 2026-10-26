@@ -174,6 +174,11 @@ struct HostContinuationMemoryProvenanceTests {
                 // still recalls memory keyed on what the user typed.
                 let followUp = "What did the Responses Proof Worker return?"
                 try await waitUntil { !session.isStreaming }
+                // In a full-suite process a picker refresh driven by another
+                // suite's catalog work can renormalize the selection to the
+                // always-present Foundation model between sends (observed:
+                // "Model 'foundation' is not installed"). Pin the fixture.
+                session.selectedModel = Self.modelID
                 session.send(followUp)
                 try await waitUntil { await capture.messages.count >= 2 && !session.isStreaming }
                 if let task = session.currentSendTaskForTesting { await task.value }
