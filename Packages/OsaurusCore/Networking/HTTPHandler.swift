@@ -5514,7 +5514,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     name: item.displayName,
                     provider: item.source.displayName,
                     source: source,
-                    vision: item.isVLM,
+                    // Same image gate as the desktop composer, so remote chat
+                    // models (isVLM false, no capability metadata) are not
+                    // reported as text-only. Image models keep their own flag.
+                    vision: cloud == nil && !item.isPhoneImageModel
+                        ? ChatSession.modelSupportsImages(modelId: item.id, pickerItems: allItems)
+                        : item.isVLM,
                     // An image model never thinks, whatever chat profile its name matches.
                     thinking: cloud == nil && !item.isPhoneImageModel
                         && ModelProfileRegistry.profile(for: item.id)?.thinkingOption != nil,
