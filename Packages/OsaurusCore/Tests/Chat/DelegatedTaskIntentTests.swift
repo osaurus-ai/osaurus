@@ -82,6 +82,10 @@ struct DelegatedTaskIntentTests {
             let session = context.chatSession
             session.selectedModel = "task-intent-fixture"
             session.forceChatEngineRouteForTests = true
+            // The shared storage fixture disables tools for ordinary lifecycle
+            // tests. This regression intentionally needs the real callable
+            // share_artifact schema to exercise the production choice policy.
+            session.toolsDisabledForTestingOverride = false
             session.chatEngineFactory = { _ in engine }
             let input = " \nReturn exactly BG_TOKEN_9.\t "
             let prompt = AgentDelegationDispatcher.delegatedPrompt(input: input)

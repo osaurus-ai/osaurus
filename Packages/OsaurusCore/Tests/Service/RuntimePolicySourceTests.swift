@@ -3431,11 +3431,30 @@ struct RuntimePolicySourceTests {
             evaluator.contains("ChatExecutionContext.$currentModelName.withValue(resolvedModel)"),
             "Agent-loop tools must see the exact invoking parent model so residency handoff stays production-equivalent."
         )
+        let runStart = try #require(evaluator.range(of: "    public static func run("))
+        let runEnd = try #require(evaluator.range(of: "    static func runConversation(",
+            range: runStart.upperBound ..< evaluator.endIndex))
+        let publicRun = String(evaluator[runStart.lowerBound ..< runEnd.lowerBound])
+        let evaluationScope = try #require(publicRun.range(of:
+            "ChatExecutionContext.$inferenceSourceOverride.withValue(inferenceSource)"))
+        let wholeConversation = try #require(publicRun.range(of: "await runConversation("))
+        let engineConstruction = try #require(publicRun.range(of: "engine: ChatEngine(source: inferenceSource)"))
+        #expect(evaluationScope.lowerBound < wholeConversation.lowerBound)
+        #expect(wholeConversation.lowerBound < engineConstruction.lowerBound)
+        let dispatch = try Self.source("Services/AgentDelegation/AgentDelegationDispatcher.swift")
+        let background = try Self.source("Managers/BackgroundTaskManager.swift")
+        let execution = try Self.source("Folder/ChatExecutionContext.swift")
+        let engine = try Self.source("Services/Chat/ChatEngine.swift")
         #expect(
-            evaluator.contains("let sessionSource: SessionSource = .chat")
-                && evaluator.contains("ChatEngine(source: SessionSource.chat.inferenceSource)")
-                && evaluator.contains("ChatExecutionContext.$currentSessionSource.withValue("),
-            "Agent-loop eval inference and tool dispatch must share Chat provenance so parent residency ownership matches the live UI."
+            evaluator.contains("static let inferenceSource: RequestSource = .evaluation")
+                && evaluator.contains("let sessionSource: SessionSource = .chat")
+                && evaluator.contains("ChatExecutionContext.$currentSessionSource.withValue(")
+                && dispatch.contains("request.inferenceSourceOverride = ChatExecutionContext.inferenceSourceOverride")
+                && background.contains("ChatExecutionContext.$inferenceSourceOverride.withValue(request.inferenceSourceOverride)")
+                && background.contains("await context.start(prompt: request.prompt, taskIntent: request.taskIntent)")
+                && execution.contains("source == .chatUI && inferenceSourceOverride == .evaluation ? .evaluation : source")
+                && engine.contains("ChatExecutionContext.resolvedInferenceSource(baseInferenceSource)"),
+            "The whole evaluation conversation and detached delegated start must carry scoped headless ownership without rewriting persisted Chat/Agent provenance, borrowing HTTP protection or leaving a reused engine sticky."
         )
         #expect(
             evaluator.contains("ChatExecutionContext.$currentEnableThinking.withValue(enableThinking)"),
