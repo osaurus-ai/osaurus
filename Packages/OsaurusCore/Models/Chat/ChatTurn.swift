@@ -705,7 +705,8 @@ final class ChatTurn: ObservableObject, Identifiable {
 // MARK: - Persistence
 
 extension ChatTurn {
-    /// Lightweight Codable representation for database persistence
+    /// Lightweight Codable snapshot. Production SQLite persistence uses
+    /// `ChatTurnData` and `ChatHistoryDatabase`'s explicit column codec.
     struct Persisted: Codable {
         let id: String
         let role: String
@@ -716,7 +717,12 @@ extension ChatTurn {
         let toolCallId: String?
         var injectedContextPrefix: String? = nil
         var modelContextExcluded: Bool? = nil
+        var reasoningItemId: String? = nil
+        var reasoningEncrypted: String? = nil
+        var responsesOutputItems: [JSONValue]? = nil
         var anthropicThinkingBlocks: [JSONValue]? = nil
+        var inputTokenCount: Int? = nil
+        var cachedInputTokenCount: Int? = nil
     }
 
     /// Converts this turn to a persistable representation
@@ -731,7 +737,12 @@ extension ChatTurn {
             toolCallId: toolCallId,
             injectedContextPrefix: injectedContextPrefix,
             modelContextExcluded: modelContextExcluded ? true : nil,
-            anthropicThinkingBlocks: anthropicThinkingBlocks.isEmpty ? nil : anthropicThinkingBlocks
+            reasoningItemId: reasoningItemId,
+            reasoningEncrypted: reasoningEncrypted,
+            responsesOutputItems: responsesOutputItems.isEmpty ? nil : responsesOutputItems,
+            anthropicThinkingBlocks: anthropicThinkingBlocks.isEmpty ? nil : anthropicThinkingBlocks,
+            inputTokenCount: inputTokenCount,
+            cachedInputTokenCount: cachedInputTokenCount
         )
     }
 
@@ -754,7 +765,12 @@ extension ChatTurn {
         turn.toolCallId = p.toolCallId
         turn.injectedContextPrefix = p.injectedContextPrefix
         turn.modelContextExcluded = p.modelContextExcluded ?? false
+        turn.reasoningItemId = p.reasoningItemId
+        turn.reasoningEncrypted = p.reasoningEncrypted
+        turn.responsesOutputItems = p.responsesOutputItems ?? []
         turn.anthropicThinkingBlocks = p.anthropicThinkingBlocks ?? []
+        turn.inputTokenCount = p.inputTokenCount
+        turn.cachedInputTokenCount = p.cachedInputTokenCount
 
         return turn
     }

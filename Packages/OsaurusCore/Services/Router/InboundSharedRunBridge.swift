@@ -263,6 +263,11 @@ final class InboundSharedRunBridge {
                 && old.toolCallId == new.toolCallId
                 && (try? encoder.encode(old.toolCalls)) == (try? encoder.encode(new.toolCalls))
                 && (try? encoder.encode(old.attachments)) == (try? encoder.encode(new.attachments))
+                && (new.thinking.isEmpty || old.thinking == new.thinking)
+                && (new.reasoningItemId == nil || old.reasoningItemId == new.reasoningItemId)
+                && (new.reasoningEncrypted == nil || old.reasoningEncrypted == new.reasoningEncrypted)
+                && (new.responsesOutputItems.isEmpty || old.responsesOutputItems == new.responsesOutputItems)
+                && (new.anthropicThinkingBlocks.isEmpty || old.anthropicThinkingBlocks == new.anthropicThinkingBlocks)
         }
     }
 
@@ -362,12 +367,12 @@ final class InboundSharedRunBridge {
         if let id = streamingTurns[handle.runKey], turns.first?.role == .assistant,
             let streamed = session.turns.first(where: { $0.id == id })
         {
-            // The completed message adds tool calls; its text has already
-            // arrived as deltas. Keep the streamed turn and its reasoning.
+            // Reconcile only the same visible answer. The completed snapshot
+            // carries native replay state and folded tool results that deltas
+            // alone cannot reconstruct.
             if let completed = turns.first, completed.content == streamed.content {
                 turns.removeFirst()
-                streamed.toolCalls = completed.toolCalls
-                streamed.completedAt = Date()
+                Self.mergeCompletedTurn(completed, into: streamed)
             }
             streamed.notifyContentChanged()
             streamingTurns.removeValue(forKey: handle.runKey)
@@ -381,6 +386,39 @@ final class InboundSharedRunBridge {
         // when the step's text was all streamed and there is no turn to add.
         session.rebuildVisibleBlocks()
         session.save()
+    }
+
+    /// Keep the streamed identity/text while applying the completed snapshot.
+    /// Missing measurements never erase actual streamed measurements or become zero.
+    static func mergeCompletedTurn(_ completed: ChatTurnData, into streamed: ChatTurn) {
+        guard completed.role == .assistant, completed.content == streamed.content else { return }
+        if !completed.thinking.isEmpty { streamed.thinking = completed.thinking }
+        streamed.toolCalls = completed.toolCalls
+        streamed.toolResults.merge(completed.toolResults) { _, completed in completed }
+        streamed.toolCallDurations.merge(completed.toolCallDurations) { _, completed in completed }
+        streamed.toolCallLogs.merge(completed.toolCallLogs) { _, completed in completed }
+        // ChatMessage's completion projection carries only inline images,
+        // and has no shared-artifact field. Empty lists therefore do not
+        // revoke media/artifacts already recorded by the hosted run.
+        if !completed.attachments.isEmpty { streamed.attachments = completed.attachments }
+        if !completed.sharedArtifacts.isEmpty { streamed.sharedArtifacts = completed.sharedArtifacts }
+        if let value = completed.reasoningItemId { streamed.reasoningItemId = value }
+        if let value = completed.reasoningEncrypted { streamed.reasoningEncrypted = value }
+        if !completed.responsesOutputItems.isEmpty { streamed.responsesOutputItems = completed.responsesOutputItems }
+        if !completed.anthropicThinkingBlocks.isEmpty { streamed.anthropicThinkingBlocks = completed.anthropicThinkingBlocks }
+        if let value = completed.inputTokenCount { streamed.inputTokenCount = value }
+        if let value = completed.cachedInputTokenCount { streamed.cachedInputTokenCount = value }
+        if let value = completed.generationTokenCount { streamed.generationTokenCount = value }
+        if let value = completed.generationTokensPerSecond { streamed.generationTokensPerSecond = value }
+        if let value = completed.timeToFirstToken { streamed.timeToFirstToken = value }
+        if let value = completed.modelLoadSeconds { streamed.modelLoadSeconds = value }
+        if let value = completed.thinkingDuration { streamed.thinkingDuration = value }
+        if let value = completed.lastOutputAt { streamed.lastOutputAt = value }
+        if let value = completed.requestedAt { streamed.requestedAt = value }
+        if let value = completed.terminalStopReason { streamed.terminalStopReason = value }
+        if let value = completed.routerBilling { streamed.routerBilling = value }
+        streamed.modelContextExcluded = completed.modelContextExcluded
+        streamed.completedAt = completed.completedAt ?? streamed.completedAt ?? Date()
     }
 
     /// Finish the run. Idempotent. The hosted task only goes terminal once
