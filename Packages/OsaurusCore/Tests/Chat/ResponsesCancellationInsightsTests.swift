@@ -74,7 +74,7 @@ struct ResponsesCancellationInsightsTests {
         }
         func streamResponses(
             messages: [ChatMessage], parameters: GenerationParameters, stopSequences: [String],
-            tools: [Tool], toolChoice: ToolChoiceOption?, requestedModel: String?
+            tools: [OsaurusCore.Tool], toolChoice: ToolChoiceOption?, requestedModel: String?
         ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
             record(typed: true)
             return events

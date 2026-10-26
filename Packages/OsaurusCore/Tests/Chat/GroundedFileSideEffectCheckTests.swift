@@ -359,7 +359,7 @@ struct FileClaimLoopDriverTests {
         #expect(result.exit == .finalResponse && result.iterations == 2)
         #expect(retryPreparations == 0, "The valid final must not be excluded or regenerated")
         #expect(finalSteps == 1 && visibleText == answer)
-        #expect(deliveredNotices.allSatisfy(\.isEmpty))
+        #expect(deliveredNotices.allSatisfy { $0.isEmpty })
         #expect(executedCalls.map(\.toolName) == ["file_read"])
         #expect(executedCalls.first?.jsonArguments == #"{"path":"probe.json"}"#)
         try #require(modelInputs.count == 2)
