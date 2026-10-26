@@ -569,7 +569,8 @@ struct InboundSharedRunBridgeTests {
             let committed = try #require(
                 ChatHistoryDatabase.shared.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID }
             )
-            #expect(try ResponsesHistoryFixture.encoded(committed) == ResponsesHistoryFixture.encoded(expected))
+            let committedDifferences = try ResponsesHistoryFixture.differingFields(committed, expected)
+            #expect(committedDifferences.isEmpty)
             // Drain/close the actual writer and clear pending overlays, then
             // read through an independent connection as after process restart.
             ChatSessionStore._resetForTesting()
@@ -577,7 +578,8 @@ struct InboundSharedRunBridgeTests {
             try disk.open()
             defer { disk.close() }
             let loaded = try #require(disk.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID })
-            #expect(try ResponsesHistoryFixture.encoded(loaded) == ResponsesHistoryFixture.encoded(expected))
+            let reloadedDifferences = try ResponsesHistoryFixture.differingFields(loaded, expected)
+            #expect(reloadedDifferences.isEmpty)
         }
     }
 

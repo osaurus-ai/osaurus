@@ -51,6 +51,20 @@ enum ResponsesHistoryFixture {
         encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(turn)
     }
+
+    /// Keep exact whole-snapshot comparison, but expose the actual differing
+    /// keys/values in Swift Testing instead of an opaque Data inequality.
+    static func differingFields(_ actual: ChatTurnData, _ expected: ChatTurnData) throws -> [String] {
+        let actualJSON = try JSONDecoder().decode(JSONValue.self, from: encoded(actual))
+        let expectedJSON = try JSONDecoder().decode(JSONValue.self, from: encoded(expected))
+        guard case .object(let actualFields) = actualJSON, case .object(let expectedFields) = expectedJSON else {
+            return ["Turn snapshot did not encode as a JSON object"]
+        }
+        return Set(actualFields.keys).union(expectedFields.keys).sorted().compactMap { key in
+            guard actualFields[key] != expectedFields[key] else { return nil }
+            return "\(key): actual=\(String(describing: actualFields[key])) expected=\(String(describing: expectedFields[key]))"
+        }
+    }
 }
 
 @Suite(.serialized)
