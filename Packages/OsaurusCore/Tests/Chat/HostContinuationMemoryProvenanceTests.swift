@@ -92,13 +92,17 @@ struct HostContinuationMemoryProvenanceTests {
             await MemoryContextAssembler.shared.invalidateCache()
             let report = helperReport(workerSessionID: UUID())
 
-            // Control: recall keyed on the report's words reproduces the
-            // replay's block, stale instruction included.
+            // Control: recall keyed on the report's words still recalls the
+            // fact that shares its content words (Responses, Proof, Worker,
+            // BG_TOKEN_9). The stale instruction shares only function words
+            // with the report, which recall no longer matches on
+            // (`FTSQueryTerms`, `MemoryDistillQualityTests`).
             let keyedOnReport = await SystemPromptComposer.composeChatContext(ComposeRequest(
                 agentId: Agent.defaultId, executionMode: .none, model: Self.modelID,
                 query: report, toolsDisabled: true))
-            try #require(keyedOnReport.memorySection?.contains(Self.staleInstruction) == true,
-                "Control: the fixture must recall the stale instruction from the report's own words")
+            try #require(keyedOnReport.memorySection?.contains(Self.staleDelegationFact) == true,
+                "Control: the fixture must recall memory from the report's own words")
+            #expect(keyedOnReport.memorySection?.contains(Self.staleInstruction) == false)
 
             let hostAuthored = await SystemPromptComposer.composeChatContext(ComposeRequest(
                 agentId: Agent.defaultId, executionMode: .none, model: Self.modelID,
