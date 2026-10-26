@@ -1266,7 +1266,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         case .artifacts: return .artifact
         case .responseCompleted(let completion):
             return .stats(StreamLogStats(tokenCount: completion.tokenCount,
-                inputTokenCount: completion.inputTokenCount, stopReason: completion.stopReason,
+                inputTokenCount: completion.inputTokenCount,
+                stopReason: completion.status == .cancelled ? "cancelled" : completion.stopReason,
                 calls: completion.dispatchableFunctionCalls))
         case .drainFailed(let message): return .drainFailure(message)
         default: return .control
@@ -1311,6 +1312,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         // Metal/cache work.  This lock-backed latch distinguishes that normal
         // terminal race from a real pre-terminal disconnect.
         let terminalStatsObserved = OSAllocatedUnfairLock(initialState: false)
+        let consumerCancelledBeforeTerminal = OSAllocatedUnfairLock(initialState: false)
 
         // Capture the background-task id at construction time (still on
         // the parent task) so the detached producer below can forward
@@ -1359,11 +1361,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             let mlxErrorEpoch = MLXErrorRecovery.errorSequence()
 
             let startTime = Date()
+            // Estimates remain useful for conservative live budget charging;
+            // only runtime/provider counts belong in persisted usage fields.
             var outputTokenCount = 0
-            var resolvedInputTokens = inputTokens
+            var authoritativeInputTokens: Int?
+            var authoritativeOutputTokens: Int?
             var reportedInputTokens = initialInputTokens
             func recordInputTokens(_ count: Int) {
-                resolvedInputTokens = count
+                authoritativeInputTokens = count
                 // The estimate was charged at admission. Only add newly known
                 // input work; never refund a budget reservation mid-request.
                 if let bgId, count > reportedInputTokens {
@@ -1417,7 +1422,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                         if let count = stats.inputTokenCount { recordInputTokens(count) }
                         terminalStatsObserved.withLock { $0 = true }
                         statsHintCount += 1
-                        if let count = stats.tokenCount { outputTokenCount = count }
+                        if let count = stats.tokenCount {
+                            authoritativeOutputTokens = count
+                            outputTokenCount = count
+                        }
                         // Stats hint carries the authoritative cumulative
                         // output-token count from the model runtime. Push
                         // only the delta since our last report so we
@@ -1450,8 +1458,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     // Check for task cancellation to allow early termination
                     if Task.isCancelled {
                         print("[Osaurus][Stream] Task cancelled after \(deltaCount) deltas")
-                        continuation.finish()
-                        return
+                        break
                     }
 
                     if case .reasoning(let reasoning) = event {
@@ -1560,7 +1567,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 // almost certainly that error (the global handler swallowed the
                 // would-be fatalError, so generation just produced nothing).
                 // Surface it as a failed stream rather than an empty success.
-                if deltaCount == 0, let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch) {
+                if Task.isCancelled, !terminalStatsObserved.withLock({ $0 }) {
+                    finishReason = .cancelled
+                    continuation.finish(throwing: CancellationError())
+                } else if deltaCount == 0, let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch) {
                     print("[Osaurus][Stream] Empty stream after MLX error: \(mlxErr)")
                     finishReason = .error
                     errorMsg = mlxErr
@@ -1586,16 +1596,23 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 // Check if this is a CancellationError (expected when consumer stops)
                 if Task.isCancelled || error is CancellationError {
                     print("[Osaurus][Stream] Stream cancelled after \(deltaCount) deltas")
-                    continuation.finish()
-                    return
+                    if !terminalStatsObserved.withLock({ $0 }) { finishReason = .cancelled }
+                    continuation.finish(throwing: CancellationError())
+                } else {
+                    print("[Osaurus][Stream] Stream error after \(deltaCount) deltas: \(error.localizedDescription)")
+                    finishReason = .error
+                    errorMsg = error.localizedDescription
+                    continuation.finish(throwing: error)
                 }
-                print("[Osaurus][Stream] Stream error after \(deltaCount) deltas: \(error.localizedDescription)")
-                finishReason = .error
-                errorMsg = error.localizedDescription
-                continuation.finish(throwing: error)
             }
 
-            // Log the completed inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
+            // A terminal event may already be buffered when the consumer
+            // cancels. Keep any real measured usage, but do not turn that
+            // pre-terminal cancellation race into a natural-stop log.
+            if consumerCancelledBeforeTerminal.withLock({ $0 }) { finishReason = .cancelled }
+
+            // Log once for every terminal outcome, including cancellation.
+            // HTTP requests are logged by HTTPHandler instead.
             if shouldLogToInsights {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 let toolCallsLog = toolInvocation.map {
@@ -1627,8 +1644,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     parentTurnId: parentTurnId,
                     requestId: requestId,
                     model: model,
-                    inputTokens: resolvedInputTokens,
-                    outputTokens: outputTokenCount,
+                    inputTokens: authoritativeInputTokens,
+                    outputTokens: authoritativeOutputTokens,
                     durationMs: durationMs,
                     temperature: temperature,
                     maxTokens: maxTokens,
@@ -1672,6 +1689,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     print("[Osaurus][Stream] Consumer closed after terminal stats - draining producer")
                 } else {
                     print("[Osaurus][Stream] Consumer cancelled before terminal stats - stopping producer task")
+                    consumerCancelledBeforeTerminal.withLock { $0 = true }
                     producerTask.cancel()
                 }
             case .finished:

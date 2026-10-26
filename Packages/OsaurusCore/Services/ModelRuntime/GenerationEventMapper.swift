@@ -78,7 +78,7 @@ enum GenerationEventMapper {
             )
             let startedAt = CFAbsoluteTimeGetCurrent()
             var firstChunk = true
-            var finalTokenCount = 0
+            var finalTokenCount: Int?
             var sawCompletionInfo = false
             var reportedFailure = false
             var sawReasoning = false
@@ -293,53 +293,45 @@ enum GenerationEventMapper {
             }
 
             if !sawCompletionInfo {
-                finalTokenCount = estimatedTextTokens
                 mapperLog.notice(
-                    "generation stream ended without vmlx completion info; synthesizing stats model=\(modelName, privacy: .public) estimatedTokens=\(estimatedTextTokens, privacy: .public) unclosedReasoning=\(sawReasoning, privacy: .public)"
+                    "generation stream ended without vmlx completion info; terminal usage unknown model=\(modelName, privacy: .public) cancelled=\(Task.isCancelled, privacy: .public) diagnosticEstimatedTokens=\(estimatedTextTokens, privacy: .public) unclosedReasoning=\(sawReasoning, privacy: .public)"
                 )
-                continuation.yield(
-                    .completionInfo(
-                        tokenCount: estimatedTextTokens,
-                        tokensPerSecond: 0,
-                        unclosedReasoning: sawReasoning,
-                        stopReason: nil,
-                        promptTokensPerSecond: 0,
-                        mtp: nil
-                    )
-                )
+                // EOF is not a model stop or measured usage. The typed
+                // Responses adapter rejects EOF without logical completion;
+                // an explicitly cancelled mapper retains cancellation instead.
+                if Task.isCancelled { continuation.finish(throwing: CancellationError()) }
             }
 
             let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
             mapperSignposter.endInterval(
                 "generation",
                 interval,
-                "\(finalTokenCount, privacy: .public) tokens"
+                "\(finalTokenCount.map(String.init) ?? "unknown", privacy: .public) tokens"
             )
             mapperLog.info(
-                "[perf] generation durationMs=\(durationMs, privacy: .public) tokenCount=\(finalTokenCount, privacy: .public)"
+                "[perf] generation durationMs=\(durationMs, privacy: .public) tokenCount=\(finalTokenCount.map(String.init) ?? "unknown", privacy: .public)"
             )
 
             // Decode diagnostics: per-step decode timing for EVERY step,
             // including tool-call steps that never reach `.info`. ttftMs is
             // prefill+queue time to first output; decodeMs/decodeTps cover the
-            // generation itself. genTokens is exact when vmlx info arrived,
-            // otherwise an estimate (text/reasoning only — tool-call arg tokens
-            // are not counted).
+            // generation itself. A missing terminal event leaves both token
+            // count and decode rate unknown; chunk estimates are diagnostic only.
             let nowEnd = CFAbsoluteTimeGetCurrent()
             let logicalEnd = terminalInfoAt ?? nowEnd
             let ttftMs = firstOutputAt.map { Int(($0 - startedAt) * 1000) }
             let decodeMs = firstOutputAt.map { Int((logicalEnd - $0) * 1000) }
-            let decodeTps =
-                (firstOutputAt != nil && decodeMs! > 0)
-                ? Double(finalTokenCount) / (Double(decodeMs!) / 1000.0)
-                : 0
+            let decodeTps: Double? = finalTokenCount.flatMap { count in
+                guard let decodeMs, decodeMs > 0 else { return nil }
+                return Double(count) / (Double(decodeMs) / 1000.0)
+            }
             let logicalTotalMs = Int((logicalEnd - startedAt) * 1000)
             let cleanupDrainMs = max(0, Int((nowEnd - logicalEnd) * 1000))
             PrefillDebugLog.shared.log(
                 "     STEP-DECODE endedInToolCall=\(sawToolCall) "
                     + "ttftMs=\(ttftMs.map(String.init) ?? "?") decodeMs=\(decodeMs.map(String.init) ?? "?") "
-                    + "genTokens=\(finalTokenCount)\(sawCompletionInfo ? "" : "(est)") "
-                    + "decodeTps=\(String(format: "%.1f", decodeTps)) totalMs=\(durationMs)"
+                    + "genTokens=\(finalTokenCount.map(String.init) ?? "unknown") "
+                    + "decodeTps=\(decodeTps.map { String(format: "%.1f", $0) } ?? "unknown") totalMs=\(durationMs)"
             )
 
             PrefillDebugLog.shared.log(
