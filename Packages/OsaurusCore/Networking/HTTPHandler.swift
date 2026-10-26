@@ -5517,7 +5517,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     name: item.displayName,
                     provider: item.source.displayName,
                     source: source,
-                    vision: item.isVLM,
+                    // Same image gate as the desktop composer, so remote chat
+                    // models (isVLM false, no capability metadata) are not
+                    // reported as text-only. Image models keep their own flag.
+                    vision: cloud == nil && !item.isPhoneImageModel
+                        ? ChatSession.modelSupportsImages(modelId: item.id, pickerItems: allItems)
+                        : item.isVLM,
                     // An image model never thinks, whatever chat profile its name matches.
                     thinking: cloud == nil && !item.isPhoneImageModel
                         && ModelProfileRegistry.profile(for: item.id)?.thinkingOption != nil,
@@ -9655,9 +9660,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // the relay can carry too (`MobilePairingService.connectEntry`).
             let needsConnectIdentity = ownerCaller && !agents.contains { !$0.isBuiltIn && $0.agentAddress != nil }
             let connectAddress = needsConnectIdentity ? MobileConnectIdentity.address() : nil
+            // Same image gate as the desktop composer, so remote provider
+            // models are not reported as text-only just because they have
+            // no local bundle for `VLMDetection` to read.
+            let pickerItems = await ModelPickerItemCache.shared.currentItems()
             let items = agents.map { agent in
                 let modelId = effectiveModels[agent.id] ?? agent.defaultModel
-                let supportsVision = modelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
+                let supportsVision = modelId.map { ChatSession.modelSupportsImages(modelId: $0, pickerItems: pickerItems) } ?? false
                 let supportsThinking =
                     modelId.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption } != nil
                 return AgentListItem(
@@ -9808,7 +9817,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 await MainActor.run {
                     AgentManager.shared.effectiveModel(for: agent.id)
                 } ?? agent.defaultModel
-            let supportsVision = effectiveModelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
+            let pickerItems = await ModelPickerItemCache.shared.currentItems()
+            let supportsVision = effectiveModelId.map { ChatSession.modelSupportsImages(modelId: $0, pickerItems: pickerItems) } ?? false
             let supportsThinking =
                 effectiveModelId.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption } != nil
             // Same stored-memory count as the `/agents` listing (episodes +

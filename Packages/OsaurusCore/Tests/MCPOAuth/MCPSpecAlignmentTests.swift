@@ -225,6 +225,26 @@ struct MCPSpecAlignmentTests {
         #expect(!provider.summary.hasOutputSchema)
     }
 
+    /// The registry's fixed 120s race fired before progress could extend a
+    /// call; `callMCPTool` owns the deadline instead.
+    @Test func deadlineReasonNamesTheLimitThatTripped() {
+        #expect(
+            MCPProviderManager.deadlineReason(elapsed: 46, idleTimeout: 45, hardCap: 3_600)
+                == "No progress for 45s")
+        #expect(
+            MCPProviderManager.deadlineReason(elapsed: 3_600, idleTimeout: 45, hardCap: 3_600)
+                == "Reached the 60 min limit for calls that report progress")
+    }
+
+    @Test func mcpToolBypassesRegistryTimeout() {
+        let provider = MCPProviderTool(
+            mcpTool: MCP.Tool(name: "run_eval", description: nil, inputSchema: .object([:])),
+            providerId: UUID(),
+            providerName: "Evals"
+        )
+        #expect(provider.bypassRegistryTimeout)
+    }
+
     // MARK: Hint-driven approval defaults
 
     private func tool(_ annotations: MCP.Tool.Annotations) -> MCPProviderTool {
@@ -350,7 +370,7 @@ struct MCPSpecAlignmentTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(await observed.handlerCancelled)
-        #expect(await observed.reasons.first??.hasPrefix("Timed out") == true)
+        #expect(await observed.reasons.first??.hasPrefix("No progress for") == true)
         await client.disconnect()
         await server.stop()
     }
