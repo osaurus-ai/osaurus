@@ -34,6 +34,7 @@ struct QueuedSend: Equatable {
     var text: String
     var attachments: [Attachment]
     var oneOffSkillId: UUID?
+    var taskIntent: ChatTaskIntent? = nil
 }
 
 /// A manual model change made after a conversation already has content.
@@ -2915,7 +2916,7 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments)
+        send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
     }
 
     /// Appends a `user`-role turn carrying a plugin-supplied interrupt
@@ -4861,7 +4862,7 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments)
+        send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
     }
 
     /// Dispatch any queued send when the run ended naturally (no `stop()`
@@ -4875,7 +4876,7 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments)
+        send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
     }
 
     /// Reused across runs so we don't pay the ICU date-symbol allocation that a
@@ -6329,7 +6330,12 @@ final class ChatSession: ObservableObject {
         isDirty = true
     }
 
-    func send(_ text: String, attachments: [Attachment] = [], directUserSend: Bool = false) {
+    func send(
+        _ text: String,
+        attachments: [Attachment] = [],
+        directUserSend: Bool = false,
+        taskIntent: ChatTaskIntent? = nil
+    ) {
         let alignmentRepairModel = directUserSend && source == .chat && !isRemoteAgentTarget
             ? selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id } : nil
         // The user's clock starts here, not when generation does. Everything
@@ -6338,6 +6344,7 @@ final class ChatSession: ObservableObject {
         // reported TTFT excluded it and the wait was unattributable. See #2347.
         let sendRequestedAt = Date()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTaskIntent = taskIntent ?? ChatTaskIntent(userText: text)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
@@ -6356,7 +6363,7 @@ final class ChatSession: ObservableObject {
         // the phone's run in this chat too; a message is held, not lost.
         if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
             if hasContent {
-                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId)
+                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId, taskIntent: resolvedTaskIntent)
             }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
@@ -6407,6 +6414,7 @@ final class ChatSession: ObservableObject {
         guard warmupController.needsPreSendHandshake else {
             dispatchSend(
                 trimmed: trimmed,
+                taskIntent: resolvedTaskIntent,
                 attachments: attachments,
                 hasContent: hasContent,
                 sendRequestedAt: sendRequestedAt,
@@ -6451,6 +6459,7 @@ final class ChatSession: ObservableObject {
             self.awaitingPreSendHandshake = false
             self.dispatchSend(
                 trimmed: trimmed,
+                taskIntent: resolvedTaskIntent,
                 attachments: attachments,
                 hasContent: hasContent,
                 preAppendedUserTurn: preAppendedUserTurn,
@@ -6468,6 +6477,7 @@ final class ChatSession: ObservableObject {
     /// yielded the MainActor.
     private func dispatchSend(
         trimmed: String,
+        taskIntent: ChatTaskIntent,
         attachments: [Attachment],
         hasContent: Bool,
         preAppendedUserTurn: ChatTurn? = nil,
@@ -8114,7 +8124,7 @@ final class ChatSession: ObservableObject {
                             #endif
                             let requestedToolChoice = ChatToolChoicePolicy.resolve(
                                 tools: iterationToolSpecs,
-                                userText: trimmed,
+                                taskIntent: taskIntent,
                                 attempt: attempt
                             )
                             forcedToolGate.arm(requestedToolChoice)

@@ -3492,9 +3492,10 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             chatView.contains("tools: iterationToolSpecs,")
-                && chatView.contains("userText: trimmed,")
+                && chatView.contains("taskIntent: taskIntent,")
+                && chatView.contains("let resolvedTaskIntent = taskIntent ?? ChatTaskIntent(userText: text)")
                 && chatView.contains("attempt: attempt"),
-            "Chat UI tool-choice policy must see the current iteration tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
+            "Chat UI tool-choice policy must see the current iteration tools, this send's original task provenance, and attempt count so host delivery wrappers cannot force a tool call or repeat the first-turn policy."
         )
         #expect(
             chatView.contains("finalReq.context.samplingParametersAreImplicit = true"),

@@ -9,12 +9,26 @@
 
 import Foundation
 
+/// The original task supplied by the caller, before the app adds delivery or
+/// execution instructions. Host-only provenance: never decoded from model/API
+/// output and never substituted for the complete model-visible prompt.
+public struct ChatTaskIntent: Sendable, Equatable {
+    public let userText: String
+
+    public init(userText: String) {
+        self.userText = userText
+    }
+}
+
 // MARK: - Request
 
 /// Describes a task to dispatch as a (possibly headless) chat session.
 public struct DispatchRequest: Sendable {
     public let id: UUID
     public let prompt: String
+    /// Optional original-task provenance when `prompt` contains app-authored
+    /// wrappers. Nil means the prompt itself is the caller's task.
+    public let taskIntent: ChatTaskIntent?
     /// Who runs this: an agent hosted here, or a teammate's shared workspace
     /// agent (run on their Mac over the relay). nil = anonymous, which every
     /// non-Chat surface refuses (`Agent.rejectBuiltInForExternalSurface`).
@@ -137,10 +151,12 @@ public struct DispatchRequest: Sendable {
         delegationResponseTokenCap: Int? = nil,
         delegationContextPositionCap: Int? = nil,
         delegationAssistantTurnCap: Int? = nil,
-        delegationModel: String? = nil
+        delegationModel: String? = nil,
+        taskIntent: ChatTaskIntent? = nil
     ) {
         self.id = id
         self.prompt = prompt
+        self.taskIntent = taskIntent
         self.target = target ?? agentId.map(AgentDispatchTarget.local)
         self.title = title
         self.parameters = parameters
