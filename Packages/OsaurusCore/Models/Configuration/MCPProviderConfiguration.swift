@@ -236,8 +236,12 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         self.streamingEnabled = try container.decodeIfPresent(Bool.self, forKey: .streamingEnabled) ?? false
         self.discoveryTimeout = try container.decodeIfPresent(TimeInterval.self, forKey: .discoveryTimeout) ?? 20
         self.toolCallTimeout = try container.decodeIfPresent(TimeInterval.self, forKey: .toolCallTimeout) ?? 45
-        self.progressHardCap =
+        // Clamped to the settings slider's range so a hand-edited value
+        // cannot show a mismatched thumb or silently fall back to the idle timeout.
+        let decodedCap =
             try container.decodeIfPresent(TimeInterval.self, forKey: .progressHardCap) ?? Self.defaultProgressHardCap
+        self.progressHardCap = min(
+            max(decodedCap, Self.progressHardCapRange.lowerBound), Self.progressHardCapRange.upperBound)
         self.autoConnect = try container.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
         self.secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
         // Migration: legacy configs default to .bearerToken so the existing token-from-Keychain path works.
@@ -257,6 +261,7 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
     }
 
     public static let defaultProgressHardCap: TimeInterval = 600
+    public static let progressHardCapRange: ClosedRange<TimeInterval> = 300 ... 14_400
 
     /// Get all headers including secret headers from Keychain
     public func resolvedHeaders() -> [String: String] {

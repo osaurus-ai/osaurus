@@ -2455,7 +2455,7 @@ private struct ProviderEditSheet: View {
                                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                                         .foregroundColor(themeManager.currentTheme.accentColor)
                                 }
-                                Slider(value: $progressHardCap, in: 300 ... 14_400, step: 300)
+                                Slider(value: $progressHardCap, in: MCPProvider.progressHardCapRange, step: 300)
                                     .tint(themeManager.currentTheme.accentColor)
                                 Text(
                                     "Calls that keep reporting progress can run this long. The timeout above is the longest gap between updates.",

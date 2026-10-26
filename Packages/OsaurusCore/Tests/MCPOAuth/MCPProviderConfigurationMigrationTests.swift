@@ -43,6 +43,16 @@ struct MCPProviderConfigurationMigrationTests {
         #expect(decoded.progressHardCap == 7_200)
     }
 
+    @Test func outOfRangeProgressHardCapIsClamped() throws {
+        func decode(_ cap: Int) throws -> TimeInterval {
+            let json = #"{"id":"11111111-1111-1111-1111-111111111111","name":"E","url":"https://e","progressHardCap":\#(cap)}"#
+            return try JSONDecoder().decode(MCPProvider.self, from: Data(json.utf8)).progressHardCap
+        }
+        #expect(try decode(60) == MCPProvider.progressHardCapRange.lowerBound)
+        #expect(try decode(0) == MCPProvider.progressHardCapRange.lowerBound)
+        #expect(try decode(1_000_000) == MCPProvider.progressHardCapRange.upperBound)
+    }
+
     @Test func newJSONRoundTripsOAuth() throws {
         let provider = MCPProvider(
             id: UUID(),
