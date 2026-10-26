@@ -332,9 +332,11 @@ let package = Package(
         // self-speculation for K2 Horizon bundles that ship a uno/ adapter.
         // Nemotron 3.5 Super-VL: image-only bundle loading, quantized projector,
         // physical capability checks and staged recurrent MTP state handling.
+        // vmlx-swift#659: DeepSeek-V4.1 JANGHT bundles (JANGT trellis experts, MXFP8 projections,
+        // JANGHT dSpark drafter), exact sampled dSpark at temperature > 0, multi-row MXFP8 QMV.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "b6c7016306ff6c503874e8888c5f85ebea2b8c84"
+            revision: "00c369f64596164edcfe8fe036b16f85f4459a86"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
