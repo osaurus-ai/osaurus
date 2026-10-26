@@ -559,17 +559,25 @@ struct InboundSharedRunBridgeTests {
             #expect(streamed.reasoningEncrypted == assistant.reasoning_encrypted)
             #expect(streamed.responsesOutputItems == (assistant.responses_output_items ?? []))
             #expect(streamed.anthropicThinkingBlocks == (assistant.anthropic_thinking_blocks ?? []))
-            // Exercise the actual SQLite writer, not the manager's pending
-            // in-memory overlay, after the real streamed-completion merge.
-            let snapshot = session.toSessionData()
+            // Commit the snapshots queued by the real session.save path on
+            // its existing FIFO database queue before opening another handle.
+            // An independent migration transaction racing that writer is not
+            // a relaunch. Do not substitute a direct test-only snapshot save.
+            ChatSessionStore.flushPendingSaves()
+            try #require(!ChatSessionStore._hasPendingSaveForTesting(handle.taskId))
+            let expected = ChatTurnData(from: streamed)
+            let committed = try #require(
+                ChatHistoryDatabase.shared.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID }
+            )
+            #expect(try ResponsesHistoryFixture.encoded(committed) == ResponsesHistoryFixture.encoded(expected))
+            // Drain/close the actual writer and clear pending overlays, then
+            // read through an independent connection as after process restart.
+            ChatSessionStore._resetForTesting()
             let disk = ChatHistoryDatabase()
-            try disk.open()
-            try disk.saveSession(snapshot)
-            disk.close()
             try disk.open()
             defer { disk.close() }
             let loaded = try #require(disk.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID })
-            #expect(try ResponsesHistoryFixture.encoded(loaded) == ResponsesHistoryFixture.encoded(ChatTurnData(from: streamed)))
+            #expect(try ResponsesHistoryFixture.encoded(loaded) == ResponsesHistoryFixture.encoded(expected))
         }
     }
 

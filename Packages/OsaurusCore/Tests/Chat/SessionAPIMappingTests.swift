@@ -126,8 +126,9 @@ struct RemoteSessionContinuationTests {
             var signedOnly = ChatTurnData(role: .assistant, content: "")
             signedOnly.anthropicThinkingBlocks = try ResponsesHistoryFixture.signedBlocks()
             let reasoningOnly = ChatTurnData(role: .assistant, content: "", thinking: "Retained earlier reasoning")
-            var excluded = native
+            var excluded = try ResponsesHistoryFixture.turn()
             excluded.modelContextExcluded = true
+            try #require(excluded.id != native.id, "Excluded fixture is a distinct SQL row, not an update of the native row")
             let session = ChatSessionData(turns: [
                 ChatTurnData(role: .system, content: "Not replayed"), native, opaqueOnly, signedOnly, reasoningOnly, excluded,
             ])
@@ -138,7 +139,7 @@ struct RemoteSessionContinuationTests {
             // No store/manager save or pending overlay was populated. The
             // production continuation reader must reopen the committed row.
             let history = await RemoteSessionContinuation.history(for: session.id)
-            #expect(history.count == 4)
+            try #require(history.count == 4)
             let replay = try #require(history.first)
             #expect(replay.reasoning_content == native.thinking)
             #expect(replay.reasoning_item_id == native.reasoningItemId && replay.reasoning_encrypted == native.reasoningEncrypted)
