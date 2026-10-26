@@ -258237,6 +258237,41 @@
         }
       }
     },
+    "The load allocator cap applies while loading. Inference uses a separate process-wide reuse limit based on loaded models and the active execution path. An explicit Allocator Cache Cap remains a hard maximum." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Allocator-Obergrenze beim Laden gilt während des Ladevorgangs. Bei der Inferenz gilt eine separate prozessweite Wiederverwendungsgrenze, die von den geladenen Modellen und dem aktiven Ausführungspfad abhängt. Eine explizite Allocator-Cache-Obergrenze bleibt ein festes Maximum."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로드 시 할당자 한도는 로드하는 동안 적용됩니다. 추론은 로드된 모델과 활성 실행 경로에 따라 결정되는 별도의 프로세스 전체 재사용 한도를 사용합니다. 명시적으로 설정한 할당자 캐시 한도는 계속 엄격한 최댓값으로 적용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит распределителя при загрузке действует во время загрузки. Для инференса используется отдельный лимит повторного использования на уровне процесса, зависящий от загруженных моделей и активного пути выполнения. Явно заданный лимит кэша распределителя остаётся жёстким максимумом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加载时分配器上限仅在加载期间生效。推理使用单独的进程级复用上限，该上限取决于已加载的模型和当前执行路径。显式设置的分配器缓存上限始终是不可超过的最大值。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "載入時分配器上限僅在載入期間生效。推論使用單獨的程序級重複使用上限，該上限取決於已載入的模型和目前執行路徑。明確設定的分配器快取上限始終是不可超過的最大值。"
+          }
+        }
+      }
+    },
     "The local %@ server stopped unexpectedly." : {
       "localizations" : {
         "de" : {

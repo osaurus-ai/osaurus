@@ -82,7 +82,7 @@ struct MemorySafetySection: View {
                         summaryPill(L("Concurrency"), value: concurrencySummary)
                     }
 
-                    Text("The load allocator cap applies while loading. Inference uses a separate process-wide reuse limit based on loaded models and the active execution path. An explicit Allocator Cache Cap remains a hard maximum.")
+                    Text(L("The load allocator cap applies while loading. Inference uses a separate process-wide reuse limit based on loaded models and the active execution path. An explicit Allocator Cache Cap remains a hard maximum."))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
