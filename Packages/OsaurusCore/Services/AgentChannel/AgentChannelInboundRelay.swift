@@ -255,7 +255,8 @@ final class AgentChannelInboundRelay {
         content: String,
         target: AgentDispatchTarget,
         rule: String,
-        partition: AgentChannelSessionPartition
+        partition: AgentChannelSessionPartition,
+        notifyOnDenial: Bool = false
     ) async -> AgentChannelInboundRelaySubmission {
         let agentId = target.localId
         let safety = await safetyGate.authorize(
@@ -282,6 +283,11 @@ final class AgentChannelInboundRelay {
                     metadata: ["reason": safety.reason.rawValue]
                 )
             )
+            // A queued batch has no caller left to report the denial, so
+            // tell the sender instead of dropping their messages silently.
+            if notifyOnDenial {
+                await sendDenialNotice(request, agentId: agentId, partition: partition, safety: safety)
+            }
             await finishTurn(target: target, partition: partition)
             return .suppressed(safety.reason.rawValue)
         }
@@ -316,6 +322,12 @@ final class AgentChannelInboundRelay {
                 partition: partition,
                 prompt: prompt
             )
+            // Free the remote task slot before the queue drains, or the next
+            // batch's authorize can still see this turn and be denied (#3184).
+            await self?.safetyGate.finishRemoteTask(
+                identity: request.identity,
+                taskId: request.providerEventId
+            )
             await self?.finishTurn(target: target, partition: partition)
         }
         return .dispatched(target: target, rule: rule)
@@ -339,8 +351,39 @@ final class AgentChannelInboundRelay {
             content: merged.content,
             target: target,
             rule: batch.last?.rule ?? first.rule,
-            partition: partition
+            partition: partition,
+            notifyOnDenial: true
         )
+    }
+
+    /// Replies to a sender whose queued messages the safety gate refused.
+    private func sendDenialNotice(
+        _ request: AgentChannelInboundRelayRequest,
+        agentId: UUID?,
+        partition: AgentChannelSessionPartition,
+        safety: ChannelRemoteSafetyDecision
+    ) async {
+        guard request.settings.autoReplyEnabled, let responder = request.reply else { return }
+        let notice = Self.denialNotice(retryAfterSeconds: safety.retryAfterSeconds)
+        let activity = Self.replyActivity(for: request, agentId: agentId, sessionId: partition.sessionId)
+        do {
+            try await responder(notice)
+            activity.finish(
+                contentLength: notice.utf8.count, outcome: "refusal_sent", error: nil,
+                extraDetails: ["reason": safety.reason.rawValue])
+        } catch {
+            activity.finish(
+                contentLength: notice.utf8.count, outcome: "failed",
+                error: error.localizedDescription, extraDetails: ["reason": safety.reason.rawValue])
+        }
+    }
+
+    nonisolated static func denialNotice(retryAfterSeconds: TimeInterval?) -> String {
+        if let retryAfterSeconds, retryAfterSeconds > 0 {
+            let seconds = Int(retryAfterSeconds.rounded(.up))
+            return "Couldn't start your last message. Please send it again in \(seconds) seconds."
+        }
+        return "Couldn't start your last message. Please send it again."
     }
 
     /// Folds queued messages into one request, in arrival order. The last
@@ -441,14 +484,6 @@ final class AgentChannelInboundRelay {
         prompt: String
     ) async {
         let agentId = target.localId
-        defer {
-            Task {
-                await safetyGate.finishRemoteTask(
-                    identity: request.identity,
-                    taskId: request.providerEventId
-                )
-            }
-        }
 
         // Artifacts created before this run belong to earlier turns of a
         // reused channel session and must not be re-sent with this reply.
