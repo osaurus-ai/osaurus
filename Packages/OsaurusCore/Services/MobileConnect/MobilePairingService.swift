@@ -130,7 +130,7 @@ final class MobilePairingService: ObservableObject {
     /// Names of every phone that has paired, by device id, kept after it
     /// unpairs so its chats still say which phone they came from.
     private static let phoneNamesDefaultsKey = "mobileConnectPhoneNames"
-    static let maxPairedDevices = 3
+    nonisolated static let maxPairedDevices = 3
     /// Label of every pairing key minted from now on; phone chats keep it as
     /// their caller name and it is the row label under Identity → Access Keys.
     nonisolated static let keyLabel = "Mobile"
