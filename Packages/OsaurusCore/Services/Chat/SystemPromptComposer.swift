@@ -180,7 +180,8 @@ public struct SystemPromptComposer: Sendable {
             frozenToolSpecs: request.frozenToolSpecs,
             frozenManifest: request.frozenManifest,
             frozenSoul: request.frozenSoul,
-            trace: trace
+            trace: trace,
+            recallsMemory: request.recallsMemory
         )
         trace?.mark("compose_context_done")
         return result
@@ -224,7 +225,8 @@ public struct SystemPromptComposer: Sendable {
         frozenToolSpecs: [Tool]? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
-        trace: TTFTTrace? = nil
+        trace: TTFTTrace? = nil,
+        recallsMemory: Bool = true
     ) async -> ComposedContext {
         var comp = composer
         // Memory and SOUL are independent — overlap their reads. Memory
@@ -234,6 +236,7 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             agentId: agentId,
             query: query,
+            recallsMemory: recallsMemory,
             trace: trace
         )
         async let soulAsync = resolveSoul(
@@ -352,14 +355,17 @@ public struct SystemPromptComposer: Sendable {
     /// query through so retrieval can rank pinned, episode, and
     /// transcript memory. The memory block is injected into the user message
     /// instead of the system prompt, so query-specific recall does not
-    /// destabilize the static system/tool cache prefix.
+    /// destabilize the static system/tool cache prefix. Nil for a
+    /// host-authored turn (`recallsMemory == false`), which has no user query.
     @MainActor
     private static func resolveMemory(
         snapshot: AgentConfigSnapshot,
         agentId: UUID,
         query: String,
+        recallsMemory: Bool,
         trace: TTFTTrace?
     ) async -> String? {
+        guard recallsMemory else { return nil }
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
         // Tiny-context models can't spare room for memory at all — hard skip
         // for both lanes, regardless of project sharing.

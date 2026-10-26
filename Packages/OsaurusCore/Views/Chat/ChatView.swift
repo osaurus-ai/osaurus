@@ -4255,6 +4255,11 @@ final class ChatSession: ObservableObject {
     private struct RunContext {
         let hasContent: Bool
         let userContent: String
+        /// True when `userContent` is a host-authored helper report rather
+        /// than something the user typed. Memory must never record it as a
+        /// user turn: the distiller reads every buffered `userMessage` as
+        /// "User:", so a report became pinned "facts" about the delegated task.
+        let userContentIsHostAuthored: Bool
         let memoryAgentId: String
         let memoryConversationId: String
         /// Project membership captured at send time, so memory records the
@@ -4970,31 +4975,34 @@ final class ChatSession: ObservableObject {
             // synchronously here (against the database's serial
             // queue), which blocked the chat view's main-thread
             // post-stream cleanup. The companion Vectura calls were
-            // already detached.
-            Task.detached {
-                let db = MemoryDatabase.shared
-                do {
-                    try db.insertTranscriptTurn(
-                        agentId: aid,
+            // already detached. A helper report is not indexed as a user
+            // turn; the assistant's reply to it still is.
+            if !context.userContentIsHostAuthored {
+                Task.detached {
+                    let db = MemoryDatabase.shared
+                    do {
+                        try db.insertTranscriptTurn(
+                            agentId: aid,
+                            conversationId: convId,
+                            chunkIndex: userChunkIndex,
+                            role: "user",
+                            content: userContent,
+                            tokenCount: userTokenCount,
+                            title: conversationTitle
+                        )
+                    } catch {
+                        MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
+                    }
+                    let userTurn = TranscriptTurn(
                         conversationId: convId,
                         chunkIndex: userChunkIndex,
                         role: "user",
                         content: userContent,
                         tokenCount: userTokenCount,
-                        title: conversationTitle
+                        agentId: aid
                     )
-                } catch {
-                    MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
+                    await MemorySearchService.shared.indexTranscriptTurn(userTurn)
                 }
-                let userTurn = TranscriptTurn(
-                    conversationId: convId,
-                    chunkIndex: userChunkIndex,
-                    role: "user",
-                    content: userContent,
-                    tokenCount: userTokenCount,
-                    agentId: aid
-                )
-                await MemorySearchService.shared.indexTranscriptTurn(userTurn)
             }
 
             if let assistantContent, !assistantContent.isEmpty {
@@ -5040,16 +5048,18 @@ final class ChatSession: ObservableObject {
             let conversationTitle = title
             let userContent = context.userContent
             let userTokenCount = TokenEstimator.estimate(userContent)
-            Task.detached {
-                await MemoryService.shared.mirrorTranscriptToProject(
-                    projectId: projectId,
-                    conversationId: convId,
-                    chunkIndex: userChunkIndex,
-                    role: "user",
-                    content: userContent,
-                    tokenCount: userTokenCount,
-                    title: conversationTitle
-                )
+            if !context.userContentIsHostAuthored {
+                Task.detached {
+                    await MemoryService.shared.mirrorTranscriptToProject(
+                        projectId: projectId,
+                        conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: userTokenCount,
+                        title: conversationTitle
+                    )
+                }
             }
             if let assistantContent, !assistantContent.isEmpty {
                 let assistantTokenCount = TokenEstimator.estimate(assistantContent)
@@ -5067,7 +5077,9 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        if bufferForMemory, context.hasContent {
+        // Distillation reads each buffered `userMessage` as the user's words,
+        // so a helper-report turn is never buffered.
+        if bufferForMemory, context.hasContent, !context.userContentIsHostAuthored {
             let formatter = Self.sessionDateFormatter
             formatter.timeZone = .current
             let today = formatter.string(from: Date())
@@ -6604,6 +6616,11 @@ final class ChatSession: ObservableObject {
 
         let memoryAgentId = (agentId ?? Agent.defaultId).uuidString
         let memoryConversationId = (sessionId ?? UUID()).uuidString
+        // A helper report sent as `.hostContinuation` carries host text, not
+        // user words. Regenerate and folder continuation are also host
+        // continuations but send no text: their latest user turn is genuine
+        // and already carries its frozen recall.
+        let hostAuthoredTurn = hasContent && taskIntent == .hostContinuation
 
         let runId = UUID()
         beginRun(
@@ -6611,6 +6628,7 @@ final class ChatSession: ObservableObject {
             context: RunContext(
                 hasContent: hasContent,
                 userContent: trimmed,
+                userContentIsHostAuthored: hostAuthoredTurn,
                 memoryAgentId: memoryAgentId,
                 memoryConversationId: memoryConversationId,
                 memoryProjectId: projectId
@@ -6961,7 +6979,10 @@ final class ChatSession: ObservableObject {
                             frozenManifest: cachedSession?.frozenManifest,
                             frozenSoul: cachedSession?.frozenSoul,
                             trace: ttftTrace,
-                            projectId: projectId
+                            projectId: projectId,
+                            // No recall keyed on a helper report: it froze the
+                            // delegated task's own memory onto the report.
+                            recallsMemory: !hostAuthoredTurn
                         )
                     )
                     guard isRunActive(runId) else { return }
