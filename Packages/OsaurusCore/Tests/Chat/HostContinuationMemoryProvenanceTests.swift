@@ -71,6 +71,17 @@ struct HostContinuationMemoryProvenanceTests {
             summary: "BG_TOKEN_9", completedEnvelope: completed)
     }
 
+    /// Bounded wait. In a full-suite process an earlier warm-up can route a
+    /// send through the async pre-send handshake, and run cleanup can trail
+    /// the awaited run task, so neither "send returned" nor "task finished"
+    /// means the session is idle.
+    private func waitUntil(_ condition: @MainActor () async -> Bool) async throws {
+        for _ in 0 ..< 400 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
     @Test func composerSkipsRecallOnlyWhenTheTurnIsHostAuthored() async throws {
         try await ChatHistoryTestStorage.run {
             try seedStaleMemory()
@@ -149,6 +160,7 @@ struct HostContinuationMemoryProvenanceTests {
                     completedEnvelope: ToolEnvelope.success(tool: "spawn_agent", result: [
                         "kind": "spawn_result", "session_id": workerSessionID.uuidString, "summary": "BG_TOKEN_9"]),
                     to: WeakChatSessionBox(session))
+                try await waitUntil { await capture.messages.count >= 1 && !session.isStreaming }
                 if let task = session.currentSendTaskForTesting { await task.value }
 
                 var batches = await capture.messages
@@ -161,10 +173,13 @@ struct HostContinuationMemoryProvenanceTests {
                 // Host provenance must not stick: the next genuine user turn
                 // still recalls memory keyed on what the user typed.
                 let followUp = "What did the Responses Proof Worker return?"
+                try await waitUntil { !session.isStreaming }
                 session.send(followUp)
+                try await waitUntil { await capture.messages.count >= 2 && !session.isStreaming }
                 if let task = session.currentSendTaskForTesting { await task.value }
                 batches = await capture.messages
-                try #require(batches.count == 2)
+                try #require(batches.count == 2,
+                    "follow-up never reached the engine: streaming=\(session.isStreaming) error=\(session.lastStreamError ?? "nil")")
                 let followUpMessage = try #require(batches[1].last(where: { $0.role == "user" })?.content)
                 #expect(followUpMessage.hasSuffix(followUp))
                 #expect(followUpMessage.contains("[Memory]"))
