@@ -17131,6 +17131,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         geminiThoughtSignature: $0.geminiThoughtSignature)
                 }
                 hop {
+                    writerBound.value.setInputTokens(usage.prompt_tokens, context: ctx.value)
                     writerBound.value.setOutputTokens(usage.completion_tokens)
                     for call in calls { self.writeAnthropicToolUse(call, writer: writerBound.value, context: ctx.value) }
                     writerBound.value.writeFinish(stopReason: finish == .length ? "max_tokens" : (calls.isEmpty ? "end_turn" : "tool_use"), context: ctx.value)
