@@ -334,7 +334,7 @@ let package = Package(
         // physical capability checks and staged recurrent MTP state handling.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "e297f73412e5f5ce391ddc7ac42f03c3513dd3b0"
+            revision: "3f8b4297d82fb93c2af41a6fbd31c8cc79fc4350"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
