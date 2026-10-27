@@ -262,6 +262,9 @@ enum ChatResidencyHandoff {
     }
 
     static func requiredResidentBytes(for model: MLXModel) -> Int64 {
+        // INVARIANT: price resident weights rather than SSD-backed tables;
+        // unknown sizes retain the existing directory fallback and admission
+        // policy. Guarded by ChatResidencyHandoffPreflightSizingTests.
         if let bytes = model.residentWeightEstimateBytes { return bytes }
         return directorySizeBytes(model.localDirectory)
     }

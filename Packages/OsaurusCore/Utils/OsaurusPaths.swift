@@ -226,6 +226,9 @@ public enum OsaurusPaths {
     /// figure. Never waits on CacheDelete while the strict figure is positive.
     /// Returns `nil` if both queries fail — callers should treat `nil` as
     /// "unknown, render 'unknown'" rather than coercing to zero.
+    // INVARIANT: known purgeable capacity may increase strict free space, but
+    // the slow query must not block the positive-strict path. Guarded by
+    // ModelDownloadServiceStorageTests and VolumeAvailableCapacityCacheTests.
     public static func volumeFreeBytes(forPath path: String) -> Int64? {
         var legacyFree: Int64?
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),

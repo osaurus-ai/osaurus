@@ -768,6 +768,9 @@ public final class ModelManager: NSObject, ObservableObject {
     /// `deduplicatedModels()`), computed wherever the caller is. Pure over
     /// its input so a background task can run it on a main-actor snapshot.
     nonisolated static func installedModels(among candidates: [MLXModel]) -> [MLXModel] {
+        // INVARIANT: UI, configuration and setup checks share this installed
+        // subset; catalog refresh preserves local evidence. Guarded by
+        // InstalledModelInventoryTests (landing orders and surface counts).
         candidates.filter { $0.isDownloaded }
     }
 
