@@ -3556,7 +3556,22 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         }
         request.responsesProviderOptions = parameters.responsesProviderOptions
         request.runAsRemoteAgent = parameters.runAsRemoteAgent
-        if !isAgentRun { request.chat_template_kwargs = reasoningOff.templateKwargs }
+        if !isAgentRun {
+            request.top_k = parameters.topKOverride
+            request.min_p = parameters.minPOverride
+            var kwargs = reasoningOff.templateKwargs?.mapValues(JSONValue.bool) ?? [:]
+            kwargs.merge(parameters.templateKwargs ?? [:]) { _, explicit in explicit }
+            // Match local dispatch precedence when both representations exist.
+            if let disabled = parameters.modelOptions["disableThinking"]?.boolValue {
+                for key in ["enable_thinking", "thinking"] where kwargs[key] != nil {
+                    kwargs[key] = .bool(!disabled)
+                }
+            }
+            if kwargs["reasoning_effort"] != nil, let effortValue {
+                kwargs["reasoning_effort"] = .string(effortValue)
+            }
+            request.chat_template_kwargs = kwargs.isEmpty ? nil : kwargs
+        }
         // Mode 2 against an Osaurus peer: thread the conversation id so the
         // host groups this chat's turns into one history row (see
         // `remoteAgentSessionId`).
@@ -4066,6 +4081,20 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         // tool-heavy payloads) for zero wire benefit.
         let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: false)
 
+        if (requestProviderType == .anthropic || requestProviderType == .gemini
+            || requestProviderType == .openAICodex),
+            request.chat_template_kwargs?.isEmpty == false
+        {
+            throw RemoteProviderServiceError.unsupportedParameter(
+                "This provider protocol cannot represent chat_template_kwargs. Use an OpenAI-compatible or compatible Responses endpoint."
+            )
+        }
+        if (requestProviderType == .anthropic || requestProviderType == .gemini), request.min_p != nil {
+            throw RemoteProviderServiceError.unsupportedParameter("This provider protocol cannot represent min_p.")
+        }
+        if requestProviderType == .openAICodex, request.top_k != nil || request.min_p != nil {
+            throw RemoteProviderServiceError.unsupportedParameter("This provider protocol cannot represent top_k or min_p.")
+        }
         var bodyData: Data
         switch requestProviderType {
         case .anthropic:
@@ -4946,7 +4975,9 @@ struct RemoteChatRequest: Encodable {
     /// the chat template. Only set when reasoning is explicitly turned off
     /// and the host is not a strict hosted schema (see
     /// `RemoteReasoningPolicy.reasoningOffControls`).
-    var chat_template_kwargs: [String: Bool]? = nil
+    var chat_template_kwargs: [String: JSONValue]? = nil
+    var top_k: Int? = nil
+    var min_p: Float? = nil
     /// Router-only billing behavior. `false` keeps insufficient-balance
     /// requests explicit (402) instead of silently shrinking the token cap.
     var clamp_to_balance: Bool? = nil
@@ -5021,7 +5052,7 @@ struct RemoteChatRequest: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
-        case top_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
+        case top_p, top_k, min_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
         case reasoning_effort
         case reasoning
         case thinking
@@ -5083,6 +5114,8 @@ struct RemoteChatRequest: Encodable {
 
         try container.encode(stream, forKey: .stream)
         try container.encodeIfPresent(top_p, forKey: .top_p)
+        try container.encodeIfPresent(top_k, forKey: .top_k)
+        try container.encodeIfPresent(min_p, forKey: .min_p)
         try container.encodeIfPresent(frequency_penalty, forKey: .frequency_penalty)
         try container.encodeIfPresent(presence_penalty, forKey: .presence_penalty)
         try container.encodeIfPresent(stop, forKey: .stop)
@@ -5330,7 +5363,7 @@ struct RemoteChatRequest: Encodable {
             stream: stream,
             temperature: deprecatesSamplerKnobs ? nil : temperature.map { Double($0) },
             top_p: deprecatesSamplerKnobs ? nil : top_p.map { Double($0) },
-            top_k: nil,
+            top_k: deprecatesSamplerKnobs ? nil : top_k,
             stop_sequences: stop,
             tools: anthropicTools,
             tool_choice: anthropicToolChoice,
@@ -5539,7 +5572,7 @@ struct RemoteChatRequest: Encodable {
             effort: reasoning_effort
         )
         var generationConfig: GeminiGenerationConfig?
-        if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil
+        if temperature != nil || max_completion_tokens != nil || top_p != nil || top_k != nil || stop != nil
             || responseModalities != nil || imageConfig != nil
             || seed != nil || jsonMimeType != nil
             || thinkingConfig != nil
@@ -5548,7 +5581,7 @@ struct RemoteChatRequest: Encodable {
                 temperature: temperature.map { Double($0) },
                 maxOutputTokens: max_completion_tokens,
                 topP: top_p.map { Double($0) },
-                topK: nil,
+                topK: top_k,
                 stopSequences: stop,
                 responseModalities: responseModalities,
                 imageConfig: imageConfig,
@@ -6017,7 +6050,7 @@ struct RemoteChatRequest: Encodable {
             )
             : nil
 
-        return OpenResponsesRequest(
+        var result = OpenResponsesRequest(
             model: model,
             input: input,
             stream: stream,
@@ -6037,10 +6070,19 @@ struct RemoteChatRequest: Encodable {
             prompt_cache_key: promptCacheKey,
             text: responsesProviderOptions?.text ?? responseText
         )
+        result.top_k = top_k
+        result.min_p = min_p
+        result.chat_template_kwargs = chat_template_kwargs
+        return result
     }
 
     func toCodexOpenResponsesRequest() throws -> OpenResponsesRequest {
-        try toOpenResponsesRequest(alwaysUseInputItems: true)
+        guard chat_template_kwargs?.isEmpty != false, top_k == nil, min_p == nil else {
+            throw RemoteProviderServiceError.unsupportedParameter(
+                "Codex does not represent chat_template_kwargs, top_k or min_p."
+            )
+        }
+        return try toOpenResponsesRequest(alwaysUseInputItems: true)
     }
 }
 

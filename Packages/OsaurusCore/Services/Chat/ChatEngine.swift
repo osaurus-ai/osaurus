@@ -235,14 +235,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             } else {
                 nil
             }
+        try ChatTemplateParameters.validate(request.generation.templateKwargs)
         var modelOptions = Self.normalizedModelOptions(
             for: request.model,
             requestOptions: requestModelOptions
         )
         let isHy3 = Hy3ReasoningProfile.matches(modelId: request.model)
+        let templateThinking = request.generation.templateKwargs?["enable_thinking"]?.boolValue
+            ?? request.generation.templateKwargs?["thinking"]?.boolValue
+        let explicitEnableThinking = request.generation.enableThinking ?? templateThinking
         let requestReasoningEffort: String? = {
             guard
-                let value = request.generation.reasoningEffort?
+                let value = (request.generation.reasoningEffort
+                    ?? request.generation.templateKwargs?["reasoning_effort"]?.stringValue)?
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                 !value.isEmpty
             else { return nil }
@@ -261,13 +266,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             !isHy3,
             let agentEnableThinking = AgentReasoningPolicy.defaultEnableThinking(
                 isAgentOrToolRequest: isAgentOrToolRequest,
-                explicitEnableThinking: request.generation.enableThinking,
+                explicitEnableThinking: explicitEnableThinking,
                 explicitReasoningEffort: requestReasoningEffort,
                 modelOptions: modelOptions,
                 usesReasoningEffortControl: usesReasoningEffortControl,
                 capability: reasoningCapabilityProvider(request.model)
             ),
-            request.generation.enableThinking == nil,
+            explicitEnableThinking == nil,
             modelOptions["disableThinking"] == nil
         {
             modelOptions["disableThinking"] = .bool(!agentEnableThinking)
@@ -279,13 +284,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     Hy3ReasoningProfile.normalizedEffort(requestReasoningEffort)
                 )
             } else if modelOptions["reasoningEffort"] == nil,
-                let enableThinking = request.generation.enableThinking
+                let enableThinking = explicitEnableThinking
             {
                 modelOptions["reasoningEffort"] = .string(enableThinking ? "high" : "no_think")
             }
             modelOptions.removeValue(forKey: "disableThinking")
         } else {
-            if let enableThinking = request.generation.enableThinking {
+            if let enableThinking = explicitEnableThinking {
                 modelOptions["disableThinking"] = .bool(!enableThinking)
             }
             if let requestReasoningEffort {
@@ -318,6 +323,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             jsonMode: isJSONObject,
             jsonSchema: jsonSchema,
             modelOptions: modelOptions,
+            templateKwargs: request.generation.templateKwargs,
             sessionId: request.sessionID,
             activitySource: activitySource,
             ttftTrace: trace,

@@ -102,6 +102,11 @@ public struct OpenResponsesRequest: Codable, Sendable {
     public let prompt_cache_key: String?
     /// Responses-native output formatting (`text.format`).
     public let text: OpenResponsesTextConfig?
+    /// Optional local/OpenAI-compatible extensions; omitted by standard clients.
+    public var top_k: Int? = nil
+    public var min_p: Float? = nil
+    public var enable_thinking: Bool? = nil
+    public var chat_template_kwargs: [String: JSONValue]? = nil
 }
 
 /// Input can be a string or array of input items
@@ -1296,6 +1301,7 @@ extension OpenResponsesRequest {
     /// Canonical builtin harness input, without an intermediate Chat
     /// Completions schema. Never silently weaken a named-tool contract.
     func toResponsesInferenceRequest() throws -> ResponsesInferenceRequest {
+        try ChatTemplateParameters.validate(chat_template_kwargs)
         var messages: [ChatMessage] = []
         var assistant = OpenResponsesAssistantInput()
         func flushAssistant() {
@@ -1372,6 +1378,10 @@ extension OpenResponsesRequest {
         request.generation.topP = top_p
         request.generation.maxOutputTokens = max_output_tokens
         request.generation.reasoningEffort = reasoning?.effort
+        request.generation.topK = top_k
+        request.generation.minP = min_p
+        request.generation.enableThinking = enable_thinking
+        request.generation.templateKwargs = chat_template_kwargs
         if let format = text?.format {
             request.generation.outputFormat = ResponseFormat(type: format.type,
                 json_schema: format.schema.map { ResponseJSONSchema(name: format.name ?? "",
@@ -1638,6 +1648,7 @@ extension OpenResponsesRequest {
             max_tokens: max_output_tokens,
             stream: stream,
             top_p: top_p,
+            top_k: top_k,
             frequency_penalty: nil,
             presence_penalty: nil,
             stop: nil,
@@ -1656,6 +1667,9 @@ extension OpenResponsesRequest {
             }
         )
         request.reasoning_effort = reasoning?.effort
+        request.min_p = min_p
+        request.enable_thinking = enable_thinking
+        request.chat_template_kwargs = chat_template_kwargs
         if let format = text?.format {
             request.response_format = ResponseFormat(type: format.type,
                 json_schema: format.schema.map {

@@ -53,6 +53,8 @@ struct GenerationParameters: Sendable {
     let jsonSchema: String?
     /// Model-specific options resolved from the active `ModelProfile` (e.g. aspect ratio).
     let modelOptions: [String: ModelOptionValue]
+    /// JSON variables for the active chat template, scoped to this generation.
+    let templateKwargs: [String: JSONValue]?
     /// Session identifier for chat/history grouping. Not threaded into the
     /// MLX cache layer — vmlx's `CacheCoordinator` handles prefix reuse
     /// autonomously via content addressing.
@@ -163,6 +165,7 @@ struct GenerationParameters: Sendable {
         jsonMode: Bool = false,
         jsonSchema: String? = nil,
         modelOptions: [String: ModelOptionValue] = [:],
+        templateKwargs: [String: JSONValue]? = nil,
         sessionId: String? = nil,
         activityID: UUID = UUID(),
         activitySource: RequestSource? = nil,
@@ -199,6 +202,7 @@ struct GenerationParameters: Sendable {
         self.jsonMode = jsonMode
         self.jsonSchema = jsonSchema
         self.modelOptions = modelOptions
+        self.templateKwargs = templateKwargs
         self.sessionId = sessionId
         self.activityID = activityID
         self.activitySource = activitySource ?? requestSource

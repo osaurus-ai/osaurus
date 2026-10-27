@@ -6514,7 +6514,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             maxTokens: request.resolvedMaxTokens ?? 4096,
             maxTokensExplicit: request.resolvedMaxTokens != nil,
             topPOverride: request.top_p,
-            topKOverride: request.top_k
+            topKOverride: request.top_k,
+            templateKwargs: request.chat_template_kwargs
         )
         let stopSequences = request.stop ?? []
 

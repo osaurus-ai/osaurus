@@ -50,6 +50,7 @@ struct ResponsesGenerationOptions: Sendable, Encodable {
     var outputFormat: ResponseFormat? = nil
     var enableThinking: Bool? = nil
     var reasoningEffort: String? = nil
+    var templateKwargs: [String: JSONValue]? = nil
 }
 
 extension ResponsesInferenceRequest {
@@ -77,6 +78,7 @@ extension ResponsesInferenceRequest {
         request.min_p = generation.minP
         request.enable_thinking = generation.enableThinking
         request.reasoning_effort = generation.reasoningEffort
+        request.chat_template_kwargs = generation.templateKwargs
         request.inferenceContext = context
         return request
     }
@@ -98,7 +100,8 @@ extension ResponsesInferenceRequest {
             seed: request.seed,
             outputFormat: request.response_format,
             enableThinking: request.enable_thinking,
-            reasoningEffort: request.reasoning_effort
+            reasoningEffort: request.reasoning_effort,
+            templateKwargs: request.chat_template_kwargs
         )
         tools = request.tools
         toolChoice = request.tool_choice
