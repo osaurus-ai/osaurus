@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -18,9 +19,14 @@ struct DirectoryPickerCLIBridgeTests {
 
         init() throws {
             let id = UUID().uuidString
-            root = FileManager.default.temporaryDirectory
-                .resolvingSymlinksInPath()
-                .appendingPathComponent("directory-cli-\(id)", isDirectory: true)
+            let tempParent = FileManager.default.temporaryDirectory.path
+            let physicalParent = try #require(tempParent.withCString { realpath($0, nil) })
+            defer { free(physicalParent) }
+            root = URL(
+                fileURLWithFileSystemRepresentation: physicalParent,
+                isDirectory: true,
+                relativeTo: nil
+            ).appendingPathComponent("directory-cli-\(id)", isDirectory: true)
             let appName = "test.osaurus.directory.app.\(id)"
             let sharedName = "test.osaurus.directory.shared.\(id)"
             appDomain = appName
