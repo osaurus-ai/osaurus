@@ -103,6 +103,19 @@ struct DeepseekV41RequestControlsTests {
                 as? Bool == false)
     }
 
+    /// V4.1 dSpark drafts only on the engine's exclusive solo path, so under continuous batching a
+    /// second dSpark request must queue on the solo lease (as DFlash 2 does) instead of running
+    /// without speculation. Ordinary and native-MTP requests keep sharing the batched engine.
+    @Test func v41DSparkTakesTheSoloLeaseUnderContinuousBatching() {
+        let drafter = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "dspark", isDirectory: true)
+        #expect(MLXBatchAdapter.requiresSoloLease(maxBatchSize: 4, draftStrategy: .dspark(drafterPath: drafter)))
+        #expect(MLXBatchAdapter.requiresSoloLease(maxBatchSize: 4, draftStrategy: .dflash2(drafterPath: drafter)))
+        #expect(!MLXBatchAdapter.requiresSoloLease(maxBatchSize: 4, draftStrategy: nil))
+        #expect(!MLXBatchAdapter.requiresSoloLease(maxBatchSize: 4, draftStrategy: .nativeMTP(depth: 2)))
+        #expect(MLXBatchAdapter.requiresSoloLease(maxBatchSize: 1, draftStrategy: nil))
+    }
+
     /// Renders through the V4.1 bundle's own tokenizer (no weights are loaded).
     /// Skipped when the bundle is absent.
     @Test func v41TokenizerRendersChatRailWhenThinkingIsOff() async throws {
