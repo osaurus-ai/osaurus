@@ -38,3 +38,24 @@ extension AgentRunUsageTests {
         #expect(!absent.hasCompleteTokenCounts && absent.tokensPerSecond == nil)
     }
 }
+
+extension AgentRunUsageTests {
+    /// `/agents/{id}/run` streaming usage reports prefix-cache hits like chat completions do.
+    @Test func cachedPromptTokensSumAcrossStepsAndStayAbsentWhenCold() {
+        var usage = AgentRunUsage()
+        usage.append(promptTokens: 6012, completionTokens: 40, tokensPerSecond: 20, cachedPromptTokens: 6000)
+        usage.append(promptTokens: 6100, completionTokens: 10, tokensPerSecond: 20, cachedPromptTokens: nil)
+        usage.append(promptTokens: 6200, completionTokens: 10, tokensPerSecond: 20, cachedPromptTokens: 6090)
+        #expect(usage.cachedPromptTokens == 12090)
+        #expect(usage.promptTokens == 18312)
+
+        var clamped = AgentRunUsage()
+        clamped.append(promptTokens: 10, completionTokens: 1, tokensPerSecond: 5, cachedPromptTokens: 50)
+        #expect(clamped.cachedPromptTokens == 10)
+
+        var cold = AgentRunUsage()
+        cold.append(promptTokens: 10, completionTokens: 1, tokensPerSecond: 5, cachedPromptTokens: 0)
+        cold.append(promptTokens: 10, completionTokens: 1, tokensPerSecond: 5)
+        #expect(cold.cachedPromptTokens == nil)
+    }
+}

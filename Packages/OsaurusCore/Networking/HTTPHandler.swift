@@ -10965,7 +10965,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     let response = try accumulator.result()
                     runUsage.append(promptTokens: response.inputTokenCount, completionTokens: response.completion.tokenCount,
-                        tokensPerSecond: response.completion.tokensPerSecond)
+                        tokensPerSecond: response.completion.tokensPerSecond,
+                        cachedPromptTokens: response.completion.cachedInputTokenCount)
                     switch response.completion.status {
                     case .cancelled:
                         throw NSError(domain: "OsaurusUpstreamCancellation", code: 499,
@@ -11426,6 +11427,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         promptTokens: finalUsage.promptTokens,
                         completionTokens: finalUsage.completionTokens,
                         tokensPerSecond: finalUsage.tokensPerSecond,
+                        cachedPromptTokens: finalUsage.cachedPromptTokens,
                         model: model, responseId: responseId, created: created, context: ctx.value
                     )
                 }
