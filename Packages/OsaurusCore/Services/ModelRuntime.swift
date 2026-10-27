@@ -87,6 +87,33 @@ struct ModelRuntimeResidencyLedger: Sendable {
     }
 }
 
+/// Request-owned allocator windows. A producer-drain callback and its outer
+/// fallback may both finish the same request; only its first finish can remove
+/// ownership or restore the shared allocator pool. Accessed on ModelRuntime's actor.
+struct ModelRuntimeGenerationAllocatorWindows: Sendable {
+    struct Token: Hashable, Sendable {
+        fileprivate let id: UUID
+        fileprivate var diagnosticID: String { String(id.uuidString.prefix(8)) }
+    }
+
+    private var active: Set<Token> = []
+
+    var count: Int { active.count }
+
+    mutating func begin() -> Token {
+        let token = Token(id: UUID())
+        active.insert(token)
+        return token
+    }
+
+    @discardableResult
+    mutating func finish(_ token: Token?, restoreWhenIdle: () -> Void) -> Bool {
+        guard let token, active.remove(token) != nil else { return false }
+        if active.isEmpty { restoreWhenIdle() }
+        return true
+    }
+}
+
 // Force-link both trampolines so ModelFactoryRegistry discovers them at runtime.
 // `loadModelContainer` iterates factories in order — without touching each
 // `.shared` the trampoline's static initializer may never run, and a model
@@ -633,11 +660,11 @@ public actor ModelRuntime {
     }
     private var activeGenerationTasks: [UInt64: ActiveGenerationRecord] = [:]
     private var nextGenerationTaskID: UInt64 = 0
-    /// Number of in-flight generations whose resolved decode path needs the
+    /// Request ownership for in-flight generations whose resolved decode path needs the
     /// admitted MLX freed-buffer ceiling. The ceiling is request-scoped: a
     /// long-lived app must not retain up to the full RAM-admission budget after
     /// the request ends.
-    private var admittedAllocatorGenerationCount = 0
+    private var generationAllocatorWindows = ModelRuntimeGenerationAllocatorWindows()
 
     /// Last request source (chat UI / HTTP API / plugin / P2P) that generated
     /// against each resident model. Read by the chat-window-close path so it
@@ -2218,9 +2245,10 @@ public actor ModelRuntime {
             loaded: holder.draftStrategy,
             mtp: warmupRuntime.mtp
         )
-        let usesWarmupAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
+        let warmupAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
             holder: holder,
-            requestStrategy: warmupStrategy
+            requestStrategy: warmupStrategy,
+            source: "warmup"
         )
         await MLXBatchAdapter.warmupNativeMTPAtLoad(
             modelName: name,
@@ -2230,7 +2258,7 @@ public actor ModelRuntime {
             runtime: warmupRuntime,
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
-        finishGenerationAllocatorWindowIfNeeded(usesWarmupAllocatorWindow)
+        finishGenerationAllocatorWindowIfNeeded(warmupAllocatorWindow, source: "warmup")
         return holder
     }
 
@@ -3111,16 +3139,27 @@ public actor ModelRuntime {
 
     private func beginGenerationAllocatorWindowIfNeeded(
         holder: SessionHolder,
-        requestStrategy: MLXLMCommon.DraftStrategy?
-    ) -> Bool {
+        requestStrategy: MLXLMCommon.DraftStrategy?,
+        source: StaticString
+    ) -> ModelRuntimeGenerationAllocatorWindows.Token? {
         let usesAdmittedCeiling = Self.requiresAdmittedMLXAllocatorCeiling(
             isPlainDeepseekV4AffineJANG: holder.requiresAdmittedMLXAllocatorCeiling,
             usesNativeMTP: requestStrategy?.usesNativeMTP == true
         )
-        guard usesAdmittedCeiling else { return false }
-        admittedAllocatorGenerationCount += 1
+        guard usesAdmittedCeiling else {
+            if PrefillDebugLog.shared.isEnabled {
+                PrefillDebugLog.shared.log(
+                    "==ALLOC-WINDOW event=begin source=\(source) token=nil activeCount=\(generationAllocatorWindows.count)")
+            }
+            return nil
+        }
+        let window = generationAllocatorWindows.begin()
         Memory.cacheLimit = generationAllocatorCacheLimit(holder: holder, requestStrategy: requestStrategy)
-        return true
+        if PrefillDebugLog.shared.isEnabled {
+            PrefillDebugLog.shared.log(
+                "==ALLOC-WINDOW event=begin source=\(source) token=\(window.diagnosticID) activeCount=\(generationAllocatorWindows.count)")
+        }
+        return window
     }
 
     /// Shared by generation and resident-child admission. The allocator is
@@ -3144,17 +3183,27 @@ public actor ModelRuntime {
         )
     }
 
-    private func finishGenerationAllocatorWindowIfNeeded(_ active: Bool) {
-        guard active else { return }
-        admittedAllocatorGenerationCount = max(0, admittedAllocatorGenerationCount - 1)
-        guard admittedAllocatorGenerationCount == 0 else { return }
-        // Every producer has reached its engine-owned terminal fence before
-        // this wrapper completes. Drain once more, return only freed buffers,
-        // then restore the persistent user-visible ceiling. Resident weights,
-        // KV state and disk/SSM companion caches are untouched.
-        Stream.gpu.synchronize()
-        Memory.clearCache()
-        Memory.cacheLimit = mlxCacheLimit()
+    private func finishGenerationAllocatorWindowIfNeeded(
+        _ window: ModelRuntimeGenerationAllocatorWindows.Token?,
+        source: StaticString
+    ) {
+        var restored = false
+        let accepted = generationAllocatorWindows.finish(window) {
+            // Only the request's first cleanup can reach this restoration.
+            // The adapter invokes it before releasing its generation gate;
+            // the outer completion/error fallback is then an ownership no-op.
+            // Preserve the fallback for requests that fail before producing a stream.
+            // Resident weights, KV and disk/SSM companion state stay untouched.
+            Stream.gpu.synchronize()
+            Memory.clearCache()
+            Memory.cacheLimit = mlxCacheLimit()
+            restored = true
+        }
+        if PrefillDebugLog.shared.isEnabled {
+            let result = accepted ? "accepted" : (window == nil ? "inactive" : "duplicate")
+            PrefillDebugLog.shared.log(
+                "==ALLOC-WINDOW event=finish source=\(source) token=\(window?.diagnosticID ?? "nil") result=\(result) restored=\(restored) activeCount=\(generationAllocatorWindows.count)")
+        }
     }
 
     /// Flexible-mode resident-weights soft cap. Also read by
@@ -6038,9 +6087,10 @@ public actor ModelRuntime {
         await InferenceActivityRegistry.shared.update(id: activityID, phase: .prefilling)
 
         let prepared: MLXBatchAdapter.PreparedStream
-        let usesGenerationAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
+        let generationAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
             holder: holder,
-            requestStrategy: requestStrategy
+            requestStrategy: requestStrategy,
+            source: "request"
         )
         do {
             prepared = try await MLXBatchAdapter.generate(
@@ -6060,7 +6110,7 @@ public actor ModelRuntime {
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize,
                 onEngineDrained: { [weak self] in
                     await self?.finishGenerationAllocatorWindowIfNeeded(
-                        usesGenerationAllocatorWindow
+                        generationAllocatorWindow, source: "engine_drained"
                     )
                 }
             )
@@ -6072,7 +6122,7 @@ public actor ModelRuntime {
             }
             await ModelLease.shared.release(modelName)
             await scheduleIdleResidency(for: modelName)
-            finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
+            finishGenerationAllocatorWindowIfNeeded(generationAllocatorWindow, source: "setup_error")
             await InferenceActivityRegistry.shared.finish(id: activityID)
             throw error
         }
@@ -6093,7 +6143,7 @@ public actor ModelRuntime {
             } onCancel: {
                 innerProducer.cancel()
             }
-            finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
+            finishGenerationAllocatorWindowIfNeeded(generationAllocatorWindow, source: "outer_completion")
             await ModelLease.shared.release(modelName)
             await self.scheduleIdleResidency(for: modelName)
             self.clearGenerationTask(id: genID)
