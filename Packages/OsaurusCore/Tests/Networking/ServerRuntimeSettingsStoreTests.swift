@@ -1036,6 +1036,10 @@ struct ServerRuntimeSettingsStoreTests {
             var original = VMLXServerRuntimeSettings()
             original.network.port = 1200
             ServerRuntimeSettingsStore.save(original)
+            // Establish the canonical disk baseline before testing a process-only
+            // override. A legitimate pending cold reader may otherwise finish
+            // the initial one-time migrations after the raw save's byte capture.
+            _ = try #require(ServerRuntimeSettingsStore.load())
             let persisted = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let readReady = AsyncStream<Void>.makeStream()
