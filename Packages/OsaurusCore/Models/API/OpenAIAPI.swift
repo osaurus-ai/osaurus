@@ -717,6 +717,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// probability cutoff relative to the top token. Mapped to
     /// `GenerationParameters.minPOverride`.
     var min_p: Float? = nil
+    /// Explicit multiplicative repetition penalty; absent preserves the model default.
+    var repetition_penalty: Float? = nil
     let frequency_penalty: Float?
     let presence_penalty: Float?
     let stop: [String]?
@@ -922,7 +924,7 @@ struct ChatCompletionRequest: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_tokens, max_completion_tokens, stream, top_p, top_k
-        case min_p
+        case min_p, repetition_penalty
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
@@ -966,6 +968,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         // Preserve admission, residency, routing and attribution as one value.
         copy.inferenceContext = inferenceContext
         copy.min_p = min_p
+        copy.repetition_penalty = repetition_penalty
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
         copy.chat_template_kwargs = chat_template_kwargs
@@ -1002,6 +1005,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         // Preserve admission, residency, routing and attribution as one value.
         copy.inferenceContext = inferenceContext
         copy.min_p = min_p
+        copy.repetition_penalty = repetition_penalty
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
         copy.chat_template_kwargs = chat_template_kwargs
@@ -1031,6 +1035,11 @@ extension ChatCompletionRequest {
         top_p = try container.decodeIfPresent(Float.self, forKey: .top_p)
         top_k = try container.decodeIfPresent(Int.self, forKey: .top_k)
         min_p = try container.decodeIfPresent(Float.self, forKey: .min_p)
+        repetition_penalty = try container.decodeIfPresent(Float.self, forKey: .repetition_penalty)
+        if let reason = RequestValidator.repetitionPenaltyReason(repetition_penalty) {
+            throw DecodingError.dataCorruptedError(forKey: .repetition_penalty, in: container,
+                debugDescription: reason)
+        }
         frequency_penalty = try container.decodeIfPresent(Float.self, forKey: .frequency_penalty)
         presence_penalty = try container.decodeIfPresent(Float.self, forKey: .presence_penalty)
         if let singleStop = try? container.decode(String.self, forKey: .stop) {

@@ -22,11 +22,8 @@ struct GenerationParameters: Sendable {
     let topKOverride: Int?
     /// Optional per-request min_p override (falls back to model configuration when nil).
     let minPOverride: Float?
-    /// Optional repetition penalty (applies when supported by backend).
-    /// Mapped from OpenAI `frequency_penalty` only — `presence_penalty`
-    /// has no MLX analog. The raw OpenAI values below are kept on the
-    /// struct so remote services that natively support both can forward
-    /// them straight through.
+    /// Explicit multiplicative repetition penalty, independent of the additive
+    /// frequency/presence controls below. Nil preserves the bundle default.
     let repetitionPenalty: Float?
     /// True when sampling fields were filled from app/UI defaults rather than
     /// an explicit client request. Local MLX must treat these as defaults to

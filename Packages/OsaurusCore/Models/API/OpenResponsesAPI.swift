@@ -105,6 +105,9 @@ public struct OpenResponsesRequest: Codable, Sendable {
     /// Optional local/OpenAI-compatible extensions; omitted by standard clients.
     public var top_k: Int? = nil
     public var min_p: Float? = nil
+    /// Optional extensions for local and compatible Responses endpoints.
+    public var seed: Int? = nil
+    public var repetition_penalty: Float? = nil
     public var enable_thinking: Bool? = nil
     public var chat_template_kwargs: [String: JSONValue]? = nil
 }
@@ -1302,6 +1305,10 @@ extension OpenResponsesRequest {
     /// Completions schema. Never silently weaken a named-tool contract.
     func toResponsesInferenceRequest() throws -> ResponsesInferenceRequest {
         try ChatTemplateParameters.validate(chat_template_kwargs)
+        if let reason = RequestValidator.repetitionPenaltyReason(repetition_penalty) {
+            throw NSError(domain: "OsaurusGenerationParameters", code: 400,
+                userInfo: [NSLocalizedDescriptionKey: reason])
+        }
         var messages: [ChatMessage] = []
         var assistant = OpenResponsesAssistantInput()
         func flushAssistant() {
@@ -1380,6 +1387,8 @@ extension OpenResponsesRequest {
         request.generation.reasoningEffort = reasoning?.effort
         request.generation.topK = top_k
         request.generation.minP = min_p
+        request.generation.seed = seed
+        request.generation.repetitionPenalty = repetition_penalty
         request.generation.enableThinking = enable_thinking
         request.generation.templateKwargs = chat_template_kwargs
         if let format = text?.format {
@@ -1668,6 +1677,8 @@ extension OpenResponsesRequest {
         )
         request.reasoning_effort = reasoning?.effort
         request.min_p = min_p
+        request.seed = seed
+        request.repetition_penalty = repetition_penalty
         request.enable_thinking = enable_thinking
         request.chat_template_kwargs = chat_template_kwargs
         if let format = text?.format {

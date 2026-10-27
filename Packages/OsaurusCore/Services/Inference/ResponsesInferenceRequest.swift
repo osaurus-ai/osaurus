@@ -43,6 +43,7 @@ struct ResponsesGenerationOptions: Sendable, Encodable {
     var topP: Float? = nil
     var topK: Int? = nil
     var minP: Float? = nil
+    var repetitionPenalty: Float? = nil
     var frequencyPenalty: Float? = nil
     var presencePenalty: Float? = nil
     var stop: [String]? = nil
@@ -76,6 +77,7 @@ extension ResponsesInferenceRequest {
             response_format: generation.outputFormat
         )
         request.min_p = generation.minP
+        request.repetition_penalty = generation.repetitionPenalty
         request.enable_thinking = generation.enableThinking
         request.reasoning_effort = generation.reasoningEffort
         request.chat_template_kwargs = generation.templateKwargs
@@ -94,6 +96,7 @@ extension ResponsesInferenceRequest {
             topP: request.top_p,
             topK: request.top_k,
             minP: request.min_p,
+            repetitionPenalty: request.repetition_penalty,
             frequencyPenalty: request.frequency_penalty,
             presencePenalty: request.presence_penalty,
             stop: request.stop,

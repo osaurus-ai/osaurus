@@ -206,15 +206,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         }
         let temperature = request.generation.temperature
         let maxTokens = request.generation.maxOutputTokens ?? 16384
-        // OpenAI `frequency_penalty` / `presence_penalty` ride
-        // `GenerationParameters` verbatim: vmlx natively implements both as
-        // additive count-scaled penalties (`GenerateParameters
-        // .frequencyPenalty`/`.presencePenalty`), so the old lossy mapping
-        // of frequency_penalty onto a multiplicative repetition penalty
-        // (which also silently dropped negative values) is gone. A
-        // per-request repetition_penalty is not an OpenAI field; model
-        // bundle / server defaults still apply downstream.
-        let repPenalty: Float? = nil
+        // Multiplicative repetition and additive frequency/presence are
+        // independent explicit controls. Nil preserves each bundle default.
+        if let reason = RequestValidator.repetitionPenaltyReason(request.generation.repetitionPenalty) {
+            throw EngineError(kind: .invalidStructuredOutput(reason))
+        }
+        let repPenalty = request.generation.repetitionPenalty
         let seedBits: UInt64? = request.generation.seed.map { UInt64(bitPattern: Int64($0)) }
         let isJSONObject = (request.generation.outputFormat?.type == "json_object")
         // Internal UI-owned agent loops (Computer Use, AppleScript, and
@@ -380,6 +377,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             remoteServices: []
         )
         if case .service(let service, _) = localRoute {
+            try Self.validateSamplingExtensions(params, for: service)
             if jsonSchema != nil && !(service is MLXService) {
                 throw EngineError(kind: .invalidStructuredOutput(
                     "JSON schema output is currently supported only by the local MLX runtime."))
@@ -486,6 +484,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             stream: stream
         )
         Task { @MainActor in FeatureTelemetry.messageSent(info) }
+    }
+
+    /// This Foundation service's implemented options carry neither field.
+    /// Reject explicit requests instead of accepting and silently ignoring them.
+    static func validateSamplingExtensions(_ parameters: GenerationParameters, for service: ModelService) throws {
+        guard service is FoundationModelService,
+            parameters.seed != nil || parameters.repetitionPenalty != nil
+        else { return }
+        throw EngineError(kind: .invalidStructuredOutput(
+            "This Foundation Models route does not support seed or repetition_penalty overrides."))
     }
 
     private static func normalizedModelOptions(

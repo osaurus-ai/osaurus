@@ -14,6 +14,16 @@ import Foundation
 import MLXLMCommon
 
 public enum RequestValidator {
+    /// Multiplicative penalties divide positive logits; zero, negatives and
+    /// nonfinite values have no valid sampling meaning. Omission is untouched.
+    static func repetitionPenaltyReason(_ value: Float?) -> String? {
+        guard let value else { return nil }
+        guard value.isFinite, value > 0 else {
+            return "Parameter 'repetition_penalty' must be a finite number greater than zero."
+        }
+        return nil
+    }
+
     /// Validate original schema bytes before JSONValue's Double representation
     /// can round numeric const/enum values. Ordinary request numbers are untouched.
     static func rawResponseSchemaReason(_ data: Data, responses: Bool) -> String? {
