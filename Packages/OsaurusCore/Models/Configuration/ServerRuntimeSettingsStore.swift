@@ -32,12 +32,26 @@ public enum ServerRuntimeSettingsStore {
         "ai.osaurus.serverRuntimeSettings.didSave"
     )
 
-    /// When set, configuration reads/writes use this directory instead
-    /// of the default. Used by tests.
-    /// Note: nonisolated(unsafe) since this is only set during test
-    /// setup before any concurrent access, matching the pattern used
-    /// by `OsaurusPaths.overrideRoot`.
-    public nonisolated(unsafe) static var overrideDirectory: URL?
+    /// Serializes disk publication and migration decisions. Cold reads capture
+    /// a revision before releasing this lock; a newer save or fixture-directory
+    /// change invalidates that read before it can normalize or publish anything.
+    /// The hot snapshot still uses its short, independent lock below.
+    private static let persistenceLock = NSRecursiveLock()
+    private nonisolated(unsafe) static var storageRevision: UInt64 = 0
+    private nonisolated(unsafe) static var directoryOverride: URL?
+
+    /// Tests may select a fixture directory. Changing it also invalidates any
+    /// in-flight cold read, so an outgoing fixture cannot write into the next.
+    public nonisolated static var overrideDirectory: URL? {
+        get { persistenceLock.withLock { directoryOverride } }
+        set {
+            persistenceLock.withLock {
+                directoryOverride = newValue
+                storageRevision &+= 1
+                cachedSnapshot = nil
+            }
+        }
+    }
 
     /// Hot snapshot accessed by non-MainActor runtime code paths
     /// (`ModelRuntime.buildCacheCoordinatorConfig`, `MLXBatchAdapter`).
@@ -76,21 +90,104 @@ public enum ServerRuntimeSettingsStore {
     /// and no migration source is present (caller should fall back to
     /// `migratedFromLegacy(...)`).
     public nonisolated static func load() -> VMLXServerRuntimeSettings? {
+        readSettings(useCachedSnapshot: false, afterReading: nil)
+    }
+
+    /// Per-call read barrier for deterministic concurrent-reader regressions.
+    /// No process-global hook or timing-dependent scheduling is required.
+    nonisolated static func load(
+        afterReading: @escaping @Sendable () -> Void
+    ) -> VMLXServerRuntimeSettings? {
+        readSettings(useCachedSnapshot: false, afterReading: afterReading)
+    }
+
+    private struct DiskRead {
+        let url: URL
+        let revision: UInt64
+        let settings: VMLXServerRuntimeSettings?
+    }
+
+    private struct ReadOutcome {
+        let settings: VMLXServerRuntimeSettings?
+        let didPersist: Bool
+    }
+
+    private nonisolated static func captureDiskRead() -> DiskRead {
         let url = fileURL()
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        do {
-            let raw = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
-            let decoded = normalizeLoadedSettings(raw)
-            if decoded != raw {
-                persist(decoded, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
+        let settings: VMLXServerRuntimeSettings?
+        if FileManager.default.fileExists(atPath: url.path) {
+            do {
+                settings = try JSONDecoder().decode(
+                    VMLXServerRuntimeSettings.self,
+                    from: Data(contentsOf: url)
+                )
+            } catch {
+                print("[Osaurus] Failed to load ServerRuntimeSettings: \(error)")
+                settings = nil
             }
-            writeLegacyConcurrencyMigrationMarker()
-            cachedSnapshot = decoded
-            return decoded
-        } catch {
-            print("[Osaurus] Failed to load ServerRuntimeSettings: \(error)")
-            return nil
+        } else {
+            settings = nil
         }
+        return DiskRead(url: url, revision: storageRevision, settings: settings)
+    }
+
+    private nonisolated static func readSettings(
+        useCachedSnapshot: Bool,
+        afterReading: (@Sendable () -> Void)?
+    ) -> VMLXServerRuntimeSettings? {
+        if useCachedSnapshot, afterReading == nil, let cached = cachedSnapshot { return cached }
+        let captured = persistenceLock.withLock { captureDiskRead() }
+        afterReading?()
+        let outcome = persistenceLock.withLock {
+            // INVARIANT: a read may never normalize, rewrite, or publish a value
+            // captured before a newer save, snapshot override, or directory
+            // change. Atomic file replacement alone does not prevent that lost
+            // update. Check under the same lock that owns all publications.
+            if captured.revision != storageRevision || captured.url != fileURL() {
+                if let current = cachedSnapshot {
+                    return ReadOutcome(settings: current, didPersist: false)
+                }
+                return resolveDiskRead(captureDiskRead(), useFallback: useCachedSnapshot)
+            }
+            return resolveDiskRead(captured, useFallback: useCachedSnapshot)
+        }
+        postSaveNotification(if: outcome.didPersist)
+        return outcome.settings
+    }
+
+    /// Called only with persistenceLock held. All migration marker decisions
+    /// and the full settings publication belong to this same transaction.
+    private nonisolated static func resolveDiskRead(
+        _ read: DiskRead,
+        useFallback: Bool
+    ) -> ReadOutcome {
+        if let raw = read.settings {
+            let normalized = normalizeLoadedSettings(raw)
+            let didPersist =
+                normalized != raw
+                && persistLocked(normalized, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
+            if !useFallback { writeLegacyConcurrencyMigrationMarker() }
+            if !didPersist {
+                cachedSnapshot = normalized
+                storageRevision &+= 1
+            }
+            return ReadOutcome(settings: normalized, didPersist: didPersist)
+        }
+        guard useFallback else { return ReadOutcome(settings: nil, didPersist: false) }
+        let serverConfiguration = diskBackedServerConfiguration() ?? .default
+        let fallback =
+            legacyConcurrencyMigrationCompleted
+            ? resetDefaults(serverConfiguration: serverConfiguration)
+            : migratedFromLegacy(serverConfiguration: serverConfiguration, userDefaults: .standard)
+        cachedSnapshot = fallback
+        storageRevision &+= 1
+        return ReadOutcome(settings: fallback, didPersist: false)
+    }
+
+    /// Observers may synchronously read settings from another thread. Never
+    /// post while holding the disk/publication transaction lock.
+    private nonisolated static func postSaveNotification(if didPersist: Bool) {
+        if didPersist { NotificationCenter.default.post(name: didSaveNotification, object: nil) }
     }
 
     /// Loads or builds the settings, performing one-time migration from
@@ -101,22 +198,24 @@ public enum ServerRuntimeSettingsStore {
     public static func loadOrMigrate(
         userDefaults: UserDefaults = .standard
     ) -> VMLXServerRuntimeSettings {
-        if let existing = load() { return existing }
-        // Brand-new install (no settings file): run the freshly-migrated
-        // settings through the same normalization as a loaded file so the
-        // product defaults (q6 tied head, diffusion denoising budget, cache
-        // repairs) are seeded on the very first launch, not only on reload.
-        let serverConfiguration = ServerConfigurationStore.load() ?? .default
-        let migrated = normalizeLoadedSettings(
-            legacyConcurrencyMigrationCompleted
-                ? resetDefaults(serverConfiguration: serverConfiguration)
-                : migratedFromLegacy(
-                    serverConfiguration: serverConfiguration,
-                    userDefaults: userDefaults
-                )
-        )
-        persist(migrated, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
-        return migrated
+        let outcome = persistenceLock.withLock {
+            let loaded = resolveDiskRead(captureDiskRead(), useFallback: false)
+            if loaded.settings != nil { return loaded }
+            let serverConfiguration = ServerConfigurationStore.load() ?? .default
+            let migrated = normalizeLoadedSettings(
+                legacyConcurrencyMigrationCompleted
+                    ? resetDefaults(serverConfiguration: serverConfiguration)
+                    : migratedFromLegacy(serverConfiguration: serverConfiguration, userDefaults: userDefaults)
+            )
+            let didPersist = persistLocked(
+                migrated,
+                mtpSelectionIsFamilyDefault: false,
+                recordMTPChoice: false
+            )
+            return ReadOutcome(settings: migrated, didPersist: didPersist)
+        }
+        postSaveNotification(if: outcome.didPersist)
+        return outcome.settings!
     }
 
     /// Persists the settings to disk and updates the nonisolated
@@ -136,6 +235,21 @@ public enum ServerRuntimeSettingsStore {
         mtpSelectionIsFamilyDefault: Bool,
         recordMTPChoice: Bool = true
     ) {
+        let didPersist = persistenceLock.withLock {
+            persistLocked(
+                settings,
+                mtpSelectionIsFamilyDefault: mtpSelectionIsFamilyDefault,
+                recordMTPChoice: recordMTPChoice
+            )
+        }
+        postSaveNotification(if: didPersist)
+    }
+
+    private nonisolated static func persistLocked(
+        _ settings: VMLXServerRuntimeSettings,
+        mtpSelectionIsFamilyDefault: Bool,
+        recordMTPChoice: Bool = true
+    ) -> Bool {
         // Do not call snapshot(): its normalization path can itself save.
         let previousMTP =
             cachedSnapshot?.mtp
@@ -171,12 +285,11 @@ public enum ServerRuntimeSettingsStore {
             }
             writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = settings
-            NotificationCenter.default.post(
-                name: didSaveNotification,
-                object: nil
-            )
+            storageRevision &+= 1
+            return true
         } catch {
             print("[Osaurus] Failed to save ServerRuntimeSettings: \(error)")
+            return false
         }
     }
 
@@ -186,38 +299,22 @@ public enum ServerRuntimeSettingsStore {
     /// is updated on every `save(_:)` so the runtime always sees the
     /// last persisted configuration without a MainActor hop.
     public nonisolated static func snapshot() -> VMLXServerRuntimeSettings {
-        if let cached = cachedSnapshot { return cached }
-        // Cold path: read from disk synchronously the first time the
-        // runtime needs the snapshot before any `MainActor` consumer
-        // has loaded it. JSON decode is cheap enough to do off-actor.
-        let url = directoryURL().appendingPathComponent(fileName)
-        if FileManager.default.fileExists(atPath: url.path),
-            let data = try? Data(contentsOf: url),
-            let raw = try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
-        {
-            let normalized = normalizeLoadedSettings(raw)
-            if normalized != raw {
-                persist(normalized, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
-            }
-            cachedSnapshot = normalized
-            return normalized
-        }
-        let serverConfiguration = diskBackedServerConfiguration() ?? .default
-        let fallback =
-            legacyConcurrencyMigrationCompleted
-            ? resetDefaults(serverConfiguration: serverConfiguration)
-            : migratedFromLegacy(
-                serverConfiguration: serverConfiguration,
-                userDefaults: .standard
-            )
-        cachedSnapshot = fallback
-        return fallback
+        readSettings(useCachedSnapshot: true, afterReading: nil)!
+    }
+
+    nonisolated static func snapshot(
+        afterReading: @escaping @Sendable () -> Void
+    ) -> VMLXServerRuntimeSettings {
+        readSettings(useCachedSnapshot: true, afterReading: afterReading)!
     }
 
     /// Reset the in-memory snapshot. Tests use this to force the next
     /// call to re-read from disk.
     public nonisolated static func invalidateSnapshot() {
-        cachedSnapshot = nil
+        persistenceLock.withLock {
+            cachedSnapshot = nil
+            storageRevision &+= 1
+        }
     }
 
     /// Pin the in-memory snapshot for THIS PROCESS ONLY, WITHOUT persisting to
@@ -227,7 +324,10 @@ public enum ServerRuntimeSettingsStore {
     /// self-declared `OSAURUS_EVALS_KV_REGIME` provenance matches the actual
     /// runtime instead of silently inheriting the persisted/default config.
     public nonisolated static func overrideSnapshotInMemory(_ settings: VMLXServerRuntimeSettings) {
-        cachedSnapshot = settings
+        persistenceLock.withLock {
+            cachedSnapshot = settings
+            storageRevision &+= 1
+        }
     }
 
     /// Whether the user explicitly selected the dangerous profile with no
