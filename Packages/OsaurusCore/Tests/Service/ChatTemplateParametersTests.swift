@@ -171,6 +171,12 @@ struct ChatTemplateParametersTests {
         #expect(second != first)
         #expect(tokenizer.decode(tokenIds: second).contains("birth_year"))
         #expect(try tokens(template: schema, instruction: "Use the full name.", thinking: true) == first)
+        let invalid = GenerationParameters(temperature: nil, maxTokens: 64,
+            templateKwargs: ["mode": .string("structured")])
+        #expect(throws: (any Error).self) {
+            try tokenizer.applyChatTemplate(messages: messages, tools: nil,
+                additionalContext: MLXBatchAdapter.additionalContext(for: invalid, modelName: "numind/NuExtract3"))
+        }
     }
 
 }

@@ -214,6 +214,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         additionalContext: [String: any Sendable]?,
         addGenerationPrompt: Bool
     ) throws -> [Int] {
+        var additionalContext = additionalContext
+        let requiresConfiguredTemplate = additionalContext?.removeValue(
+            forKey: ChatTemplateParameters.explicitContextKey) as? Bool == true
         let env = ProcessInfo.processInfo.environment
         let chatTemplateTools = Self.normalizedToolsForChatTemplate(tools)
         if let path = env["VMLX_CHAT_TEMPLATE_OVERRIDE"], !path.isEmpty,
@@ -540,7 +543,10 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 additionalContext: adjustedContext
             )
         } catch VMLXTokenizers.TokenizerError.missingChatTemplate {
-            guard (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
+            // Explicit template variables require that bundle's template. A
+            // generic fallback could silently turn extraction into plain chat.
+            guard !requiresConfiguredTemplate,
+                (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
                 throw MLXLMCommon.TokenizerError.missingChatTemplate
             }
             if hasLagunaSentinel {
@@ -618,7 +624,8 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
             throw MLXLMCommon.TokenizerError.missingChatTemplate
         } catch {
-            guard (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
+            guard !requiresConfiguredTemplate,
+                (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
                 throw error
             }
             let isGemma = upstream.bosToken == "<bos>" && !hasZayaToolChatSentinel

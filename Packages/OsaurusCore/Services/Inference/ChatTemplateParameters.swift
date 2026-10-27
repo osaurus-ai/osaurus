@@ -2,6 +2,8 @@ import Foundation
 
 /// The request owns conversation structure; model-specific variables remain JSON.
 enum ChatTemplateParameters {
+    /// Internal app-to-tokenizer signal, removed before rendering.
+    static let explicitContextKey = "_osaurus_explicit_template_parameters"
     struct InvalidParameter: Error, LocalizedError {
         let key: String
         var errorDescription: String? {
@@ -10,7 +12,7 @@ enum ChatTemplateParameters {
     }
 
     static func validate(_ values: [String: JSONValue]?) throws {
-        for key in ["messages", "tools", "add_generation_prompt"] where values?[key] != nil {
+        for key in ["messages", "tools", "add_generation_prompt", explicitContextKey] where values?[key] != nil {
             throw InvalidParameter(key: key)
         }
     }
