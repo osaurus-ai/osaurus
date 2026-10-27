@@ -187,6 +187,7 @@ struct FloatingInputCard: View {
         showVoiceOverlay: Binding<Bool>,
         pickerItems: [ModelPickerItem],
         activeModelOptions: Binding<[String: ModelOptionValue]>,
+        turnOverrides: Binding<ChatTurnOverrides>? = nil,
         isStreaming: Bool,
         isPrivacyReviewSheetVisible: Bool = false,
         supportsImages: Bool,
@@ -241,6 +242,7 @@ struct FloatingInputCard: View {
         self._showVoiceOverlay = showVoiceOverlay
         self.pickerItems = pickerItems
         self._activeModelOptions = activeModelOptions
+        self.turnOverrides = turnOverrides
         self.isStreaming = isStreaming
         self.isPrivacyReviewSheetVisible = isPrivacyReviewSheetVisible
         self.supportsImages = supportsImages
