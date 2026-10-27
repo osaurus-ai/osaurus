@@ -126,9 +126,13 @@ public final class KnowledgeManager: ObservableObject {
         // A repo without a remote stays local-only (gitRemoteURL nil).
         // `isGitRepository` calls FileManager.fileExists (lstat) which can
         // block on slow/network volumes. Run it off the main actor so the UI
-        // is never stalled. KnowledgeCollection is a value type, so the
-        // capture is safe.
-        if await Task.detached(priority: .userInitiated) { collection.isGitRepository }.value {
+        // is never stalled. KnowledgeCollection is Sendable (struct), so the
+        // capture across the task boundary is safe.
+        let isGitRepo = await Task.detached(
+            priority: .userInitiated,
+            operation: { @Sendable in collection.isGitRepository }
+        ).value
+        if isGitRepo {
             collection.gitRemoteURL = await KnowledgeGitSyncService.shared.remoteURL(of: collection.folderURL)
         }
         KnowledgeCollectionStore.save(collection)
