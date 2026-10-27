@@ -2241,6 +2241,9 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
                 current.args += jsonDelta.partial_json
                 state.accumulatedToolCalls[idx] = current
                 yield(StreamingToolHint.encodeArgs(jsonDelta.partial_json))
+            } else if case .thinkingDelta(let thinkingDelta) = deltaEvent.delta, !thinkingDelta.thinking.isEmpty {
+                // Summarized thinking goes to the Think panel, not the answer.
+                yield(StreamingReasoningHint.encode(thinkingDelta.thinking))
             }
 
         case "content_block_start":
@@ -3418,10 +3421,13 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         // `thinking` / `output_config.effort` fields (see
         // `AnthropicReasoningContract`). Read the raw picker value because the
         // generic effort translation strips the Off (`none`) id.
+        let anthropicCapabilities =
+            provider.providerType == .anthropic
+            ? AnthropicModelCatalog.info(providerId: provider.id, modelId: model)?.capabilities : nil
         let anthropicReasoning: AnthropicReasoningContract.WireControls? =
             provider.providerType == .anthropic && !isAgentRun
             ? AnthropicReasoningContract.wireControls(
-                capabilities: AnthropicModelCatalog.info(providerId: provider.id, modelId: model)?.capabilities,
+                capabilities: anthropicCapabilities,
                 effort: RemoteReasoningPolicy.requestsReasoningOff(parameters.modelOptions)
                     ? AnthropicReasoningContract.offLevelId
                     : parameters.modelOptions["reasoningEffort"]?.stringValue,
@@ -3510,6 +3516,13 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             idempotencyKey: provider.providerType == .osaurusRouter
                 ? (parameters.idempotencyKey ?? "auto-\(UUID().uuidString)") : nil
         )
+        request.anthropicReasoning = anthropicReasoning
+        request.anthropicAcceptsSamplerKnobs =
+            provider.providerType == .anthropic
+            ? AnthropicReasoningContract.acceptsSamplerKnobs(anthropicCapabilities) : nil
+        request.requestsReasoningSummary =
+            !isAgentRun
+            && Self.requestsReasoningSummary(providerType: provider.providerType, host: provider.host, model: model)
 
         // Workspace-billed inference (router only). Precedence:
         // 1. An explicit `workspaceBillingContext` bound by the HTTP agent-run
@@ -3519,11 +3532,6 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         // 2. The agent's own billing preference (Settings → Workspaces), keyed by
         //    the send-turn TaskLocal agent id.
         // Turns with neither bill the personal wallet as before.
-        request.anthropicReasoning = anthropicReasoning
-        request.requestsReasoningSummary =
-            !isAgentRun
-            && Self.requestsReasoningSummary(providerType: provider.providerType, host: provider.host, model: model)
-
         if provider.providerType == .osaurusRouter {
             if let bound = ChatExecutionContext.workspaceBillingContext {
                 request.workspaceContext = bound
@@ -5063,6 +5071,10 @@ struct RemoteChatRequest: Encodable {
     /// provider's Models API capabilities in `buildChatRequest`. Encoded only
     /// by `toAnthropicRequest`; absent from `CodingKeys`.
     var anthropicReasoning: AnthropicReasoningContract.WireControls? = nil
+    /// Native Anthropic sampler-knob support from the Models API catalog
+    /// (`AnthropicReasoningContract.acceptsSamplerKnobs`). Nil when the model
+    /// is uncatalogued; absent from `CodingKeys`.
+    var anthropicAcceptsSamplerKnobs: Bool? = nil
     /// Responses-only: send `reasoning.summary` even without an effort. Set
     /// by `buildChatRequest`; absent from `CodingKeys`.
     var requestsReasoningSummary: Bool = false
@@ -5345,13 +5357,13 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
-        // The newer adaptive-thinking Claude generations reject sampler knobs
-        // outright — HTTP 400 "`temperature` is deprecated for this model."
-        // (observed live on claude-fable-5 and claude-opus-4-8). Omit them so
-        // the model runs on its native defaults instead of failing the whole
-        // request. Older dated snapshots (claude-sonnet-4-5, claude-haiku-4-5,
-        // …) still accept the knobs, so match only the affected families by
-        // prefix rather than stripping for every Claude model.
+        // The newer Claude generations reject sampler knobs outright — HTTP 400
+        // "`temperature` is deprecated for this model." — even with thinking
+        // off. Omit them so the model runs on its native defaults instead of
+        // failing the whole request. Catalogued models answer from their
+        // Models API capabilities; the prefix list covers uncatalogued ones
+        // (proxies, requests before discovery). Older dated snapshots
+        // (claude-sonnet-4-5, claude-haiku-4-5, …) still accept the knobs.
         let bareModel =
             model.lowercased().split(separator: "/").last.map(String.init)
             ?? model.lowercased()
@@ -5364,19 +5376,17 @@ struct RemoteChatRequest: Encodable {
             "claude-sonnet-5",
             // claude-opus-5 (released 2026-07-24) is an adaptive-thinking
             // model of the same generation as sonnet-5 / fable-5 and shares
-            // their sampler-knob deprecation. Added from the documented
-            // model contract; confirm with a live HTTP 400 trace when an
-            // Anthropic key is available.
+            // their sampler-knob deprecation (confirmed live, as is haiku-5-5).
             "claude-opus-5",
+            "claude-haiku-5",
         ]
         // Thinking is incompatible with temperature/top_k changes on every
         // Claude model, so an active thinking config drops the knobs too.
         let thinkingActive = ["adaptive", "enabled"].contains(anthropicReasoning?.thinking?.type ?? "")
         let deprecatesSamplerKnobs =
             thinkingActive
-            || knobDeprecatingClaudePrefixes.contains {
-                bareModel.hasPrefix($0)
-            }
+            || anthropicAcceptsSamplerKnobs.map { !$0 }
+                ?? knobDeprecatingClaudePrefixes.contains { bareModel.hasPrefix($0) }
 
         return AnthropicMessagesRequest(
             model: model,

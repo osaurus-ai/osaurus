@@ -88,6 +88,16 @@ enum AnthropicReasoningContract {
             && capabilities.thinking?.types?.enabled?.isSupported == true
     }
 
+    /// Generations without manual `enabled` thinking also reject `temperature`,
+    /// `top_p` and `top_k` (HTTP 400 "… is deprecated for this model") even with
+    /// thinking off; generations that keep `enabled` accept them. The Models API
+    /// has no sampler capability, so this is the advertised signal that tracks
+    /// it. Nil when the capabilities are unknown.
+    static func acceptsSamplerKnobs(_ capabilities: AnthropicModelCapabilities?) -> Bool? {
+        guard let capabilities, supportsThinking(capabilities) else { return nil }
+        return capabilities.thinking?.types?.enabled?.isSupported == true
+    }
+
     static func offMode(_ capabilities: AnthropicModelCapabilities) -> OffMode? {
         guard supportsThinking(capabilities), let types = capabilities.thinking?.types else { return nil }
         if types.disabled?.isSupported == true { return .disabled }

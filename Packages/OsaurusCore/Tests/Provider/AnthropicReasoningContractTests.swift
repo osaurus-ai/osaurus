@@ -277,6 +277,51 @@ struct AnthropicReasoningContractTests {
         #expect(offRequest.toAnthropicRequest().temperature == Double(Float(0.7)))
     }
 
+    @Test func samplerKnobs_followTheManualThinkingGeneration() {
+        #expect(AnthropicReasoningContract.acceptsSamplerKnobs(Self.adaptiveWithDisabled) == false)
+        #expect(AnthropicReasoningContract.acceptsSamplerKnobs(Self.sonnet55) == false)
+        #expect(AnthropicReasoningContract.acceptsSamplerKnobs(Self.adaptiveAndManual) == true)
+        #expect(AnthropicReasoningContract.acceptsSamplerKnobs(Self.manualOnly) == true)
+        #expect(AnthropicReasoningContract.acceptsSamplerKnobs(nil) == nil)
+    }
+
+    @Test func buildChatRequest_thinkingOffKeepsSamplersOnlyWhereAccepted() async {
+        let service = Self.makeService()
+        let providerId = await service.provider.id
+        AnthropicModelCatalog.replace(
+            providerId: providerId,
+            models: [
+                Self.model("claude-haiku-5-5", capabilities: Self.adaptiveWithDisabled),
+                Self.model("claude-sonnet-4-6", capabilities: Self.adaptiveAndManual),
+            ]
+        )
+        defer { AnthropicModelCatalog.remove(providerId: providerId) }
+
+        func offRequest(_ model: String) async -> AnthropicMessagesRequest {
+            await service.buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: GenerationParameters(
+                    temperature: 0.7, maxTokens: 1024, modelOptions: ["reasoningEffort": .string("none")]),
+                model: model,
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            ).toAnthropicRequest()
+        }
+
+        let haiku = await offRequest("claude-haiku-5-5")
+        #expect(haiku.thinking == AnthropicThinkingConfig(type: "disabled"))
+        #expect(haiku.temperature == nil, "rejected with HTTP 400 even when thinking is off")
+
+        let sonnet46 = await offRequest("claude-sonnet-4-6")
+        #expect(sonnet46.thinking == AnthropicThinkingConfig(type: "disabled"))
+        #expect(sonnet46.temperature == Double(Float(0.7)))
+
+        let uncatalogued = await offRequest("claude-haiku-5-6")
+        #expect(uncatalogued.thinking == nil)
+        #expect(uncatalogued.temperature == nil, "uncatalogued models fall back to the family prefix")
+    }
+
     @Test func buildChatRequest_uncataloguedModelSendsNoThinking() async {
         let service = Self.makeService()
         let request = await service.buildChatRequest(
@@ -372,6 +417,9 @@ struct AnthropicReasoningContractTests {
     static let sonnet55 = capabilities(adaptive: true, enabled: false, disabled: false, betweenTools: true)
     /// Opus 5.5 / Fable 5.1: thinking cannot be turned off.
     static let alwaysOn = capabilities(adaptive: true, enabled: false, disabled: false)
+    /// 4.6 generation: adaptive plus manual budgets.
+    static let adaptiveAndManual = capabilities(
+        adaptive: true, enabled: true, disabled: true, efforts: ["low", "medium", "high", "max"])
     static let lowHighOnly = capabilities(
         adaptive: true, enabled: false, disabled: true, efforts: ["low", "high"])
     /// 4.5 generation: manual `enabled` + `budget_tokens` only.

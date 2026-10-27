@@ -194,6 +194,30 @@ struct AnthropicStreamFinishReasonTests {
         #expect(yielded.compactMap { StreamingToolHint.decodeArgs($0) }.joined() == arguments)
     }
 
+    @Test func thinkingDelta_routesToReasoningChannelNotVisibleText() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: true)
+        var yielded: [String] = []
+        let events = [
+            #"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+            #"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Weighing the options."}}"#,
+            #"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}"#,
+            #"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            #"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Answer."}}"#,
+        ]
+        for event in events {
+            _ = RemoteProviderService.handleStreamEvent(
+                jsonData: Data(event.utf8),
+                providerType: .anthropic,
+                state: &state,
+                yield: { yielded.append($0) }
+            )
+        }
+
+        #expect(yielded.compactMap { StreamingReasoningHint.decode($0) } == ["Weighing the options."])
+        #expect(yielded.filter { StreamingReasoningHint.decode($0) == nil } == ["Answer."])
+        #expect(state.accumulatedContent == "Answer.")
+    }
+
     @Test func maxTokensWithPendingToolCallIsTruncationError() {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
         let start =
