@@ -14,12 +14,30 @@ import Foundation
 import MLXLMCommon
 
 public enum RequestValidator {
+    private static let repetitionPenaltyValidationMessage =
+        "Parameter 'repetition_penalty' must be a finite number greater than zero."
+
+    /// Expose only known, fixed validation diagnostics. Decoder descriptions
+    /// for malformed JSON or unrelated fields can contain caller input.
+    static func chatRequestDecodingMessage(for error: Error) -> String {
+        if let parameter = error as? ChatTemplateParameters.InvalidParameter {
+            return parameter.localizedDescription
+        }
+        if let decoding = error as? DecodingError, case .dataCorrupted(let context) = decoding,
+            context.codingPath.map(\.stringValue) == ["repetition_penalty"],
+            context.debugDescription == repetitionPenaltyValidationMessage
+        {
+            return context.debugDescription
+        }
+        return "Invalid request format"
+    }
+
     /// Multiplicative penalties divide positive logits; zero, negatives and
     /// nonfinite values have no valid sampling meaning. Omission is untouched.
     static func repetitionPenaltyReason(_ value: Float?) -> String? {
         guard let value else { return nil }
         guard value.isFinite, value > 0 else {
-            return "Parameter 'repetition_penalty' must be a finite number greater than zero."
+            return repetitionPenaltyValidationMessage
         }
         return nil
     }

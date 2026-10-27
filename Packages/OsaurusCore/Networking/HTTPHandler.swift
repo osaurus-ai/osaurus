@@ -14471,8 +14471,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        guard var req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
-            let body = Self.errorBody(.openai(type: "invalid_request_error"), message: "Invalid request format")
+        var req: ChatCompletionRequest
+        do {
+            req = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
+        } catch {
+            let message = RequestValidator.chatRequestDecodingMessage(for: error)
+            let body = Self.errorBody(.openai(type: "invalid_request_error"), message: message)
             sendResponse(
                 context: context,
                 version: head.version,
@@ -14487,7 +14491,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: requestBodyString,
                 responseStatus: 400,
                 startTime: startTime,
-                errorMessage: "Invalid request format"
+                errorMessage: message
             )
             return
         }

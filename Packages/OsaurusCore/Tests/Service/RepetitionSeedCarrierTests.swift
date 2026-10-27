@@ -302,18 +302,87 @@ struct RepetitionSeedCarrierTests {
                     let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
                     let error = try #require(object["error"] as? [String: Any])
                     #expect(error[path.hasSuffix("responses") ? "code" : "type"] as? String == "invalid_request_error")
-                    #expect((error["message"] as? String)?.contains(invalidField) == true)
                     let text = String(decoding: data, as: UTF8.self)
+                    #expect((error["message"] as? String)?.contains(invalidField) == true,
+                        "\(path) \(invalidField) stream=\(streaming) response=\(text)")
                     #expect(!text.contains("data: ") && !text.contains("response.completed"))
                     #expect(!text.contains("[DONE]"))
                     #expect(await capture.values().isEmpty)
                 }
+            }
+            let marker = "private-fixture-body-must-not-echo"
+            let malformedBodies = [
+                Data("{\"stream\":\(streaming),\"content\":\"\(marker)".utf8),
+                try JSONSerialization.data(withJSONObject: ["model": "carrier", "messages": [],
+                    "stream": streaming, "temperature": marker]),
+            ]
+            for body in malformedBodies {
+                var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/v1/chat/completions")!)
+                request.httpMethod = "POST"
+                request.timeoutInterval = 10
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("false", forHTTPHeaderField: "X-Persist")
+                request.httpBody = body
+                let (data, response) = try await session.data(for: request)
+                #expect((response as? HTTPURLResponse)?.statusCode == 400)
+                let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                let error = try #require(object["error"] as? [String: Any])
+                #expect(error["message"] as? String == "Invalid request format")
+                #expect(error["type"] as? String == "invalid_request_error")
+                #expect(!String(decoding: data, as: UTF8.self).contains(marker))
+                #expect(await capture.values().isEmpty)
             }
         } catch {
             await server.shutdown()
             throw error
         }
         await server.shutdown()
+    }
+
+    @Test func chatDecodeErrorsExposeOnlyKnownParameterValidation() throws {
+        let invalidFields: [[String: Any]] = [
+            ["repetition_penalty": 0],
+            ["chat_template_kwargs": ["messages": []] as [String: [String]]],
+        ]
+        for fields in invalidFields {
+            do {
+                _ = try chat(fields)
+                Issue.record("Invalid parameter unexpectedly decoded")
+            } catch {
+                let message = RequestValidator.chatRequestDecodingMessage(for: error)
+                #expect(message.contains(fields.keys.first!))
+                #expect(message != "Invalid request format")
+            }
+        }
+        let secret = "private-fixture-contents-must-not-echo"
+        let unrelatedErrors: [Error] = [
+            NSError(domain: "fixture", code: 400, userInfo: [NSLocalizedDescriptionKey: secret]),
+            DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: secret)),
+            DecodingError.dataCorrupted(.init(codingPath: [FixtureCodingKey(stringValue: "repetition_penalty")],
+                debugDescription: secret)),
+            DecodingError.dataCorrupted(.init(codingPath: [FixtureCodingKey(stringValue: "other")],
+                debugDescription: "Parameter 'repetition_penalty' must be a finite number greater than zero.")),
+        ]
+        for error in unrelatedErrors {
+            #expect(RequestValidator.chatRequestDecodingMessage(for: error) == "Invalid request format")
+            #expect(!RequestValidator.chatRequestDecodingMessage(for: error).contains(secret))
+        }
+        for data in [Data("{\"content\":\"\(secret)".utf8),
+            try JSONSerialization.data(withJSONObject: ["model": "carrier", "messages": [], "temperature": secret])] {
+            do {
+                _ = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
+                Issue.record("Malformed fixture unexpectedly decoded")
+            } catch {
+                #expect(RequestValidator.chatRequestDecodingMessage(for: error) == "Invalid request format")
+            }
+        }
+    }
+
+    private struct FixtureCodingKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
     }
 
 }
