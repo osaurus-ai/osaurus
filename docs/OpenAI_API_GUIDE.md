@@ -554,6 +554,16 @@ curl http://127.0.0.1:1337/v1/responses \
 | `temperature` | float | Sampling temperature |
 | `max_output_tokens` | integer | Maximum tokens to generate |
 | `top_p` | float | Top-p sampling parameter |
+| `top_k` | integer | Optional Osaurus extension; 0 disables this filter |
+| `min_p` | float | Optional Osaurus extension for minimum-probability sampling |
+| `seed` | integer | Optional Osaurus/compatible-endpoint extension; 0 is explicit |
+| `repetition_penalty` | float | Optional Osaurus extension; finite and greater than 0, independent of additive frequency/presence penalties |
+| `enable_thinking` | boolean | Optional explicit model-template thinking control |
+| `chat_template_kwargs` | object | Model-defined JSON variables passed to its own chat template |
+
+Omitted extensions preserve the existing model and request defaults. These extensions are not promises that an upstream Responses provider supports them: compatible routes forward supported values, and routes without a representation reject explicit unsupported controls before inference. Chat Completions also accepts `seed`, `repetition_penalty`, and `chat_template_kwargs`.
+
+Template variables preserve nested objects, arrays, `null`, `false`, and zero. Explicit typed thinking/reasoning options take precedence over their template aliases. Request-owned `messages`, `tools`, and `add_generation_prompt`, tokenizer-owned special-token variables, and internal transport markers cannot be overridden at the top level. Template errors are returned rather than replaced with a generic chat prompt.
 
 ---
 

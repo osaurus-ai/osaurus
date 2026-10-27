@@ -67,7 +67,7 @@ Use **Next turn** in the input bar to set Temperature, Top P, Top K, or the mode
 
 The choices stay with that message through its tool steps and regeneration, including after reopening the chat. A queued message keeps its own choices and waits for a new run when they differ from the active turn. Choices you prepare for a later draft are kept separately.
 
-**Template parameters (JSON)** passes a JSON object to a supporting model’s own chat template, for example `{"template":{"city":null}}` for an extraction template. Nested `null` values are preserved. The object cannot replace the conversation, tool list, or generation-prompt structure. Unsupported provider or shared-workspace-agent controls are reported rather than silently ignored; a shared agent uses its host’s settings.
+**Template parameters (JSON)** passes a JSON object to a supporting model’s own chat template, for example `{"template":"{\"city\":\"\"}"}` for NuExtract. The model’s template defines each variable’s type; nested `null` values are preserved. The object cannot replace the conversation, tool list, generation-prompt structure, or tokenizer-owned special tokens. Unsupported provider or shared-workspace-agent controls are reported rather than silently ignored; a shared agent uses its host’s settings.
 
 ## Useful chat extras
 

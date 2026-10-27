@@ -207,14 +207,21 @@ forwarded rather than silently dropped, with per-format support:
   the upstream's own error.
 - **Gemini**: `seed` maps to `generationConfig.seed` and JSON mode maps to
   `generationConfig.responseMimeType: "application/json"`.
-- **Anthropic**: the Messages API has no `seed` equivalent. Its structured
-  outputs feature (`output_config.format`) only accepts a strict
+- **Compatible Responses endpoints**: explicit `seed`, `repetition_penalty`,
+  `top_k`, `min_p`, and `chat_template_kwargs` use Osaurus extensions. The
+  upstream remains responsible for accepting them. The Codex protocol rejects
+  unsupported extensions explicitly.
+- **Anthropic**: the Messages API has no `seed` or multiplicative
+  `repetition_penalty` equivalent; either explicit override returns a typed
+  client error before HTTP. Gemini also rejects `repetition_penalty`.
+  Anthropic's structured outputs feature (`output_config.format`) only accepts a strict
   `json_schema` (every object level must set `additionalProperties: false`),
   which has no faithful mapping from schema-free `json_object` mode — so
   JSON mode is omitted on that wire and the model may still fence or
   preface its JSON.
-- **Remote agent runs (Mode 2)**: all caller sampling fields, including seed
-  and JSON mode, are stripped — the remote agent owns its generation config.
+- **Remote agent runs (Mode 2)**: the remote agent owns its generation config.
+  Explicit seed or repetition-penalty overrides are rejected; the existing
+  host-owned handling of other sampling and JSON-mode settings is unchanged.
 
 Media inputs follow the same reject-loudly rule: audio (`input_audio`) and
 video (`video_url`) content parts have no mapping on the Anthropic and Gemini
