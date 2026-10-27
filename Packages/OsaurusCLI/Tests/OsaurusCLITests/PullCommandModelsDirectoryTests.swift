@@ -48,7 +48,17 @@ final class PullCommandModelsDirectoryTests: XCTestCase {
         }
     }
 
-    func testVisibleModelRootsUseCanonicalCurrentLegacyAndCLIPrecedence() throws {
+    func testExplicitLegacyCLIFolderRemainsSelectable() throws {
+        try withFixture { home, app, shared in
+            let selected = home.appendingPathComponent(".osaurus/models")
+            let result = PullCommand.resolveLocalDirectory(
+                for: "org/model", environment: ["OSU_MODELS_DIR": selected.path],
+                appDefaults: app, sharedDefaults: shared, home: home)
+            XCTAssertEqual(result?.path, selected.appendingPathComponent("org/model").path)
+        }
+    }
+
+    func testVisibleModelRootsUseAppDefaultsAndIgnoreOldCLIFolder() throws {
         try withFixture { home, app, shared in
             let current = try directory("MLXModels", under: home)
             let legacy = try directory("Documents/MLXModels", under: home)
@@ -64,15 +74,15 @@ final class PullCommandModelsDirectoryTests: XCTestCase {
             try FileManager.default.removeItem(at: current)
             try FileManager.default.removeItem(at: legacy)
             XCTAssertEqual(try resolved(home: home, app: app, shared: shared).path,
-                fallback.appendingPathComponent("org/model").path)
+                current.appendingPathComponent("org/model").path)
         }
     }
 
-    func testEmptyExistingRootsUseCurrentThenLegacyThenCLIFallback() throws {
+    func testEmptyExistingRootsUseAppDefaultsAndIgnoreOldCLIFolder() throws {
         try withFixture { home, app, shared in
             let current = try directory("MLXModels", under: home)
             let legacy = try directory("Documents/MLXModels", under: home)
-            let fallback = try directory(".osaurus/models", under: home)
+            _ = try directory(".osaurus/models", under: home)
             XCTAssertEqual(try resolved(home: home, app: app, shared: shared).path,
                 current.appendingPathComponent("org/model").path)
             try FileManager.default.removeItem(at: current)
@@ -80,7 +90,7 @@ final class PullCommandModelsDirectoryTests: XCTestCase {
                 legacy.appendingPathComponent("org/model").path)
             try FileManager.default.removeItem(at: legacy)
             XCTAssertEqual(try resolved(home: home, app: app, shared: shared).path,
-                fallback.appendingPathComponent("org/model").path)
+                current.appendingPathComponent("org/model").path)
         }
     }
 
