@@ -1050,22 +1050,26 @@ extension ChatCompletionRequest {
         // the effort with `chat_template_kwargs.reasoning_effort`. Without this the
         // kwargs were dropped and an explicit `false` still rendered the thinking
         // rail. The top-level fields win when both are sent. Other families keep
-        // their request contract unchanged.
-        if ModelFamilyNames.isDSV41Family(model) {
-            let kwargsContainer = try decoder.container(keyedBy: TemplateKwargsCodingKeys.self)
-            if let kwargs = try? kwargsContainer.decodeIfPresent(
-                [String: JSONValue].self, forKey: .chat_template_kwargs)
-            {
-                if enable_thinking == nil {
-                    if case .bool(let enabled)? = kwargs["enable_thinking"] {
-                        enable_thinking = enabled
-                    } else if case .bool(let enabled)? = kwargs["thinking"] {
-                        enable_thinking = enabled
-                    }
+        // their request contract unchanged. V4.1 is detected from the installed
+        // bundle's `model_type` (name fallback), and only when the kwargs would
+        // change something, so other requests never touch the bundle lookup.
+        let kwargsContainer = try decoder.container(keyedBy: TemplateKwargsCodingKeys.self)
+        if let kwargs = try? kwargsContainer.decodeIfPresent(
+            [String: JSONValue].self, forKey: .chat_template_kwargs),
+            (enable_thinking == nil
+                && (kwargs["enable_thinking"] != nil || kwargs["thinking"] != nil))
+                || (reasoning_effort == nil && kwargs["reasoning_effort"] != nil),
+            DSV41ModelDetection.isDSV41(modelId: model)
+        {
+            if enable_thinking == nil {
+                if case .bool(let enabled)? = kwargs["enable_thinking"] {
+                    enable_thinking = enabled
+                } else if case .bool(let enabled)? = kwargs["thinking"] {
+                    enable_thinking = enabled
                 }
-                if reasoning_effort == nil, case .string(let effort)? = kwargs["reasoning_effort"] {
-                    reasoning_effort = effort
-                }
+            }
+            if reasoning_effort == nil, case .string(let effort)? = kwargs["reasoning_effort"] {
+                reasoning_effort = effort
             }
         }
         let osaurus = try decoder.container(keyedBy: OsaurusCodingKeys.self)

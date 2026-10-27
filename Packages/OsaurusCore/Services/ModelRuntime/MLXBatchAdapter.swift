@@ -1393,21 +1393,24 @@ struct MLXBatchAdapter {
             return context
         }
 
-        if DSV4ReasoningProfile.matches(modelId: modelName) {
+        // V4.1 from the bundle's `model_type` (as prompt rendering decides), so a
+        // renamed V4.1 bundle still gets V4.1 controls; the name is the fallback.
+        let isDSV41 = DSV41ModelDetection.isDSV41(modelId: modelName)
+        if DSV4ReasoningProfile.matches(modelId: modelName) || isDSV41 {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
             }
             // DeepSeek-V4.1: an explicit thinking-off request selects the chat rail
             // even when an effort is also present (a profile default or a stale
             // option must not reopen thinking). DSV4-0731 keeps effort precedence.
-            if disableThinking == true, ModelFamilyNames.isDSV41Family(modelName) {
+            if disableThinking == true, isDSV41 {
                 context["enable_thinking"] = false
                 return context
             }
             if let normalizedReasoningEffort {
                 // V4.1 accepts the full low/medium/high/xhigh/max ladder; 0731 only low/high/max.
                 let effort =
-                    ModelFamilyNames.isDSV41Family(modelName)
+                    isDSV41
                     ? DSV41ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
                     : DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
                 if let effort {

@@ -77,6 +77,40 @@ struct DeepseekV41RequestControlsTests {
         #expect(request.reasoning_effort == nil)
     }
 
+    /// Prompt rendering keys off the bundle's `model_type`, so the request controls must too: a
+    /// renamed V4.1 bundle keeps the kwargs switch and V4.1's thinking-off precedence, and the
+    /// bundle's type beats a V4.1-looking name. Without a local bundle the name decides.
+    @Test func v41ControlsFollowTheBundleModelType() throws {
+        let renamed = "local-flash-renamed"
+        let mislabelled = "dsv41-actually-0731"
+        try DSV41ModelDetection.$bundleModelTypesForTests.withValue(
+            [renamed: "deepseek_v41", mislabelled: "deepseek_v4"]
+        ) {
+            #expect(DSV41ModelDetection.isDSV41(modelId: renamed))
+            #expect(DSV41ModelDetection.isDSV41(modelId: renamed.uppercased()))
+            #expect(!DSV41ModelDetection.isDSV41(modelId: mislabelled))
+            #expect(DSV41ModelDetection.isDSV41(modelId: "dsv41-not-installed"))
+            #expect(!DSV41ModelDetection.isDSV41(modelId: "qwen3-not-installed"))
+
+            let request = try Self.decode(
+                """
+                {"model":"\(renamed)","messages":[{"role":"user","content":"hi"}],
+                 "chat_template_kwargs":{"enable_thinking":false,"reasoning_effort":"medium"}}
+                """)
+            #expect(request.enable_thinking == false)
+            #expect(request.reasoning_effort == "medium")
+
+            let generation = GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["disableThinking": .bool(true), "reasoningEffort": .string("high")]
+            )
+            let context = MLXBatchAdapter.additionalContext(for: generation, modelName: renamed)
+            #expect(context["enable_thinking"] as? Bool == false)
+            #expect(context["reasoning_effort"] == nil)
+        }
+    }
+
     @Test func v41ExplicitThinkingOffBeatsAnEffort() {
         let generation = GenerationParameters(
             temperature: nil,
